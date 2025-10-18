@@ -1,0 +1,41 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//Users/constantinpristavita/**)",
+      "Bash(npm init:*)",
+      "Bash(npm install:*)",
+      "Bash(npm run build:*)",
+      "Bash(timeout 5 npm run start:dev)",
+      "Bash(npm run migration:generate:*)",
+      "Bash(psql:*)",
+      "Bash(npm run migration:run)",
+      "Bash(chmod:*)",
+      "Bash(npm run test:*)",
+      "Bash(npm run dev:*)",
+      "Bash(npm run:*)",
+      "Bash(cat:*)",
+      "Bash(git rev-parse:*)",
+      "Bash(npm ls:*)",
+      "Bash(find:*)",
+      "Bash(awk:*)",
+      "Bash(curl:*)",
+      "Bash(mkdir:*)",
+      "Bash(lsof:*)",
+      "Bash(wc:*)",
+      "Bash(echo \"$DATABASE_URL\")",
+      "Bash(ls:*)",
+      "Bash(cd:*)",
+      "Bash(kill:*)",
+      "WebFetch(domain:app.gohighlevel.com)",
+      "Bash(redis-cli:*)",
+      "Bash(echo $DATABASE_URL)",
+      "Bash(grep:*)",
+      "Bash(git remote remove:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git init:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

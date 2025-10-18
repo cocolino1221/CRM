@@ -1,0 +1,107 @@
+services:
+  # PostgreSQL Database
+  - type: pserv
+    name: slackcrm-db
+    env: docker
+    plan: starter
+    region: oregon
+    dockerfilePath: ./Dockerfile.postgres
+    disk:
+      name: slackcrm-postgres-data
+      mountPath: /var/lib/postgresql/data
+      sizeGB: 10
+    envVars:
+      - key: POSTGRES_USER
+        value: postgres
+      - key: POSTGRES_PASSWORD
+        generateValue: true
+      - key: POSTGRES_DB
+        value: slackcrm
+
+  # Redis Cache
+  - type: pserv
+    name: slackcrm-redis
+    env: docker
+    plan: starter
+    region: oregon
+    image:
+      url: docker.io/redis:7-alpine
+    disk:
+      name: slackcrm-redis-data
+      mountPath: /data
+      sizeGB: 1
+
+  # Backend API
+  - type: web
+    name: slackcrm-backend
+    env: node
+    region: oregon
+    plan: starter
+    buildCommand: npm install && npm run build
+    startCommand: npm run start:prod
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000
+      - key: DB_HOST
+        fromService:
+          type: pserv
+          name: slackcrm-db
+          property: host
+      - key: DB_PORT
+        fromService:
+          type: pserv
+          name: slackcrm-db
+          property: port
+      - key: DB_USERNAME
+        value: postgres
+      - key: DB_PASSWORD
+        fromService:
+          type: pserv
+          name: slackcrm-db
+          envVarKey: POSTGRES_PASSWORD
+      - key: DB_NAME
+        value: slackcrm
+      - key: REDIS_HOST
+        fromService:
+          type: pserv
+          name: slackcrm-redis
+          property: host
+      - key: REDIS_PORT
+        fromService:
+          type: pserv
+          name: slackcrm-redis
+          property: port
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_EXPIRES_IN
+        value: 24h
+      - key: FRONTEND_URL
+        sync: false
+      - key: SENDGRID_API_KEY
+        sync: false
+      - key: SLACK_CLIENT_ID
+        sync: false
+      - key: SLACK_CLIENT_SECRET
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: CLAUDE_API_KEY
+        sync: false
+
+  # Frontend
+  - type: web
+    name: slackcrm-frontend
+    env: static
+    region: oregon
+    plan: starter
+    buildCommand: npm install && npm run build
+    staticPublishPath: ./.next
+    envVars:
+      - key: NEXT_PUBLIC_API_URL
+        fromService:
+          type: web
+          name: slackcrm-backend
+          property: host

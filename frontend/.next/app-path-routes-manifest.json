@@ -1,0 +1,19 @@
+{
+  "/_not-found/page": "/_not-found",
+  "/page": "/",
+  "/(dashboard)/analytics/page": "/analytics",
+  "/(dashboard)/dashboard/page": "/dashboard",
+  "/(dashboard)/automation/page": "/automation",
+  "/(dashboard)/companies/page": "/companies",
+  "/(dashboard)/integrations/callback/page": "/integrations/callback",
+  "/(dashboard)/contacts/page": "/contacts",
+  "/(dashboard)/leads/page": "/leads",
+  "/(dashboard)/calendar/page": "/calendar",
+  "/(dashboard)/integrations/page": "/integrations",
+  "/(dashboard)/settings/page": "/settings",
+  "/(auth)/register/page": "/register",
+  "/(dashboard)/companies/[id]/page": "/companies/[id]",
+  "/(dashboard)/integrations/[id]/page": "/integrations/[id]",
+  "/(auth)/login/page": "/login",
+  "/(dashboard)/tasks/page": "/tasks"
+}
