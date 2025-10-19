@@ -10,12 +10,13 @@ export const validationSchema = Joi.object({
   PORT: Joi.number().default(3000),
   FRONTEND_URL: Joi.string().uri().required(),
 
-  // Database
-  DB_HOST: Joi.string().required(),
+  // Database - Either DATABASE_URL or individual connection parameters
+  DATABASE_URL: Joi.string().optional(),
+  DB_HOST: Joi.string().optional(),
   DB_PORT: Joi.number().default(5432),
-  DB_USERNAME: Joi.string().required(),
-  DB_PASSWORD: Joi.string().required(),
-  DB_NAME: Joi.string().required(),
+  DB_USERNAME: Joi.string().optional(),
+  DB_PASSWORD: Joi.string().optional(),
+  DB_NAME: Joi.string().optional(),
   DB_SSL: Joi.boolean().default(false),
   DB_SYNC: Joi.boolean().default(false),
   DB_LOGGING: Joi.boolean().default(false),
@@ -30,6 +31,11 @@ export const validationSchema = Joi.object({
   REDIS_PORT: Joi.number().default(6379),
   REDIS_PASSWORD: Joi.string().allow('').optional(),
   REDIS_DB: Joi.number().default(0),
+
+  // Stack Auth Configuration
+  NEXT_PUBLIC_STACK_PROJECT_ID: Joi.string().optional(),
+  NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY: Joi.string().optional(),
+  STACK_SECRET_SERVER_KEY: Joi.string().optional(),
 
   // JWT Authentication
   JWT_SECRET: Joi.string().min(32).required()

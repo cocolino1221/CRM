@@ -12,16 +12,14 @@ const configService = new ConfigService();
  * TypeORM Data Source Configuration
  * Used for migrations, CLI commands, and application database connection
  */
-const AppDataSource = new DataSource({
-  type: 'postgres',
-  host: configService.get('DB_HOST', 'localhost'),
-  port: configService.get('DB_PORT', 5432),
-  username: configService.get('DB_USERNAME', 'postgres'),
-  password: configService.get('DB_PASSWORD', 'password'),
-  database: configService.get('DB_NAME', 'slackcrm'),
+const databaseUrl = configService.get('DATABASE_URL');
 
-  // SSL Configuration for production
-  ssl: configService.get('NODE_ENV') === 'production'
+// Build base configuration
+const baseConfig: any = {
+  type: 'postgres',
+
+  // SSL Configuration
+  ssl: databaseUrl || configService.get('DB_SSL') === 'true' || configService.get('NODE_ENV') === 'production'
     ? { rejectUnauthorized: false }
     : false,
 
@@ -66,6 +64,19 @@ const AppDataSource = new DataSource({
   // Connection options
   dropSchema: configService.get('NODE_ENV') === 'test',
   name: 'default',
-});
+};
+
+// Add connection parameters based on whether DATABASE_URL is provided
+if (databaseUrl) {
+  baseConfig.url = databaseUrl;
+} else {
+  baseConfig.host = configService.get('DB_HOST', 'localhost');
+  baseConfig.port = configService.get('DB_PORT', 5432);
+  baseConfig.username = configService.get('DB_USERNAME', 'postgres');
+  baseConfig.password = configService.get('DB_PASSWORD', 'password');
+  baseConfig.database = configService.get('DB_NAME', 'slackcrm');
+}
+
+const AppDataSource = new DataSource(baseConfig);
 
 export default AppDataSource;
