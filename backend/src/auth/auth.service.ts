@@ -535,7 +535,7 @@ export class AuthService {
         // Create default workspace for new user
         const workspace = this.workspaceRepository.create({
           name: `${given_name}'s Workspace`,
-          slug: `${given_name.toLowerCase()}-workspace-${Date.now()}`,
+          domain: `${given_name.toLowerCase()}-${Date.now()}`,
         });
         await this.workspaceRepository.save(workspace);
 
@@ -545,7 +545,7 @@ export class AuthService {
           firstName: given_name,
           lastName: family_name,
           password: await bcrypt.hash(Math.random().toString(36), 10), // Random password
-          role: UserRole.OWNER,
+          role: UserRole.ADMIN,
           status: UserStatus.ACTIVE,
           workspaceId: workspace.id,
           // Store Google ID if you have a field for it
@@ -614,7 +614,7 @@ export class AuthService {
         // Create default workspace for new user
         const workspace = this.workspaceRepository.create({
           name: `${firstName}'s Workspace`,
-          slug: `${firstName.toLowerCase()}-workspace-${Date.now()}`,
+          domain: `${firstName.toLowerCase()}-${Date.now()}`,
         });
         await this.workspaceRepository.save(workspace);
 
@@ -624,7 +624,7 @@ export class AuthService {
           firstName,
           lastName,
           password: await bcrypt.hash(Math.random().toString(36), 10), // Random password
-          role: UserRole.OWNER,
+          role: UserRole.ADMIN,
           status: UserStatus.ACTIVE,
           workspaceId: workspace.id,
         });
