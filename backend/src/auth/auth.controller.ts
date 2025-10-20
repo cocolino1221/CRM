@@ -9,7 +9,10 @@ import {
   HttpCode,
   HttpStatus,
   Ip,
+  Res,
+  Query,
 } from '@nestjs/common';
+import { Response } from 'express';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
@@ -21,6 +24,7 @@ import { VerifyEmailDto } from './dto/verify-email.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { AuthResponse } from './interfaces/auth-response.interface';
 import { Public } from '../common/decorators/public.decorator';
+import { ConfigService } from '@nestjs/config';
 
 /**
  * Authentication controller with comprehensive security
@@ -30,7 +34,10 @@ import { Public } from '../common/decorators/public.decorator';
 @Controller('auth')
 @UseGuards(ThrottlerGuard) // Rate limiting
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    private readonly configService: ConfigService,
+  ) {}
 
   @Public()
   @Post('login')
@@ -234,5 +241,105 @@ export class AuthController {
   })
   async verifyEmail(@Body() verifyEmailDto: VerifyEmailDto) {
     return this.authService.verifyEmail(verifyEmailDto.token);
+  }
+
+  // OAuth Authentication Routes
+  @Public()
+  @Get('google')
+  @ApiOperation({ summary: 'Start Google OAuth login flow' })
+  @ApiResponse({ status: 302, description: 'Redirect to Google OAuth' })
+  async googleAuth(@Res() res: Response): Promise<void> {
+    const googleClientId = this.configService.get('GOOGLE_CLIENT_ID');
+    const callbackUrl = this.configService.get('GOOGLE_CALLBACK_URL');
+
+    const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +
+      `client_id=${googleClientId}` +
+      `&redirect_uri=${encodeURIComponent(callbackUrl)}` +
+      `&response_type=code` +
+      `&scope=${encodeURIComponent('openid email profile')}` +
+      `&access_type=offline` +
+      `&prompt=consent`;
+
+    res.redirect(authUrl);
+  }
+
+  @Public()
+  @Get('google/callback')
+  @ApiOperation({ summary: 'Handle Google OAuth callback' })
+  @ApiResponse({ status: 302, description: 'Redirect to frontend with tokens' })
+  async googleCallback(
+    @Query('code') code: string,
+    @Query('error') error: string,
+    @Res() res: Response,
+  ): Promise<void> {
+    const frontendUrl = this.configService.get('FRONTEND_URL') || 'http://localhost:3001';
+
+    if (error) {
+      res.redirect(`${frontendUrl}/login?error=${encodeURIComponent(error)}`);
+      return;
+    }
+
+    try {
+      const authResponse = await this.authService.googleLogin(code);
+
+      // Redirect to frontend with tokens in URL (will be stored in localStorage)
+      res.redirect(
+        `${frontendUrl}/auth/callback?` +
+        `token=${authResponse.accessToken}` +
+        `&refreshToken=${authResponse.refreshToken}` +
+        `&user=${encodeURIComponent(JSON.stringify(authResponse.user))}`
+      );
+    } catch (err) {
+      res.redirect(`${frontendUrl}/login?error=${encodeURIComponent('Authentication failed')}`);
+    }
+  }
+
+  @Public()
+  @Get('slack')
+  @ApiOperation({ summary: 'Start Slack OAuth login flow' })
+  @ApiResponse({ status: 302, description: 'Redirect to Slack OAuth' })
+  async slackAuth(@Res() res: Response): Promise<void> {
+    const slackClientId = this.configService.get('SLACK_CLIENT_ID');
+    const callbackUrl = this.configService.get('SLACK_CALLBACK_URL') ||
+      `${this.configService.get('BACKEND_URL')}/api/v1/auth/slack/callback`;
+
+    const authUrl = `https://slack.com/oauth/v2/authorize?` +
+      `client_id=${slackClientId}` +
+      `&redirect_uri=${encodeURIComponent(callbackUrl)}` +
+      `&scope=${encodeURIComponent('openid email profile')}` +
+      `&user_scope=`;
+
+    res.redirect(authUrl);
+  }
+
+  @Public()
+  @Get('slack/callback')
+  @ApiOperation({ summary: 'Handle Slack OAuth callback' })
+  @ApiResponse({ status: 302, description: 'Redirect to frontend with tokens' })
+  async slackCallback(
+    @Query('code') code: string,
+    @Query('error') error: string,
+    @Res() res: Response,
+  ): Promise<void> {
+    const frontendUrl = this.configService.get('FRONTEND_URL') || 'http://localhost:3001';
+
+    if (error) {
+      res.redirect(`${frontendUrl}/login?error=${encodeURIComponent(error)}`);
+      return;
+    }
+
+    try {
+      const authResponse = await this.authService.slackLogin(code);
+
+      // Redirect to frontend with tokens
+      res.redirect(
+        `${frontendUrl}/auth/callback?` +
+        `token=${authResponse.accessToken}` +
+        `&refreshToken=${authResponse.refreshToken}` +
+        `&user=${encodeURIComponent(JSON.stringify(authResponse.user))}`
+      );
+    } catch (err) {
+      res.redirect(`${frontendUrl}/login?error=${encodeURIComponent('Authentication failed')}`);
+    }
   }
 }

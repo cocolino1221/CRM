@@ -10,6 +10,8 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
+import { HttpService } from '@nestjs/axios';
+import { firstValueFrom } from 'rxjs';
 import * as bcrypt from 'bcrypt';
 import { User, UserRole, UserStatus } from '../database/entities/user.entity';
 import { Workspace } from '../database/entities/workspace.entity';
@@ -33,6 +35,7 @@ export class AuthService {
     private workspaceRepository: Repository<Workspace>,
     private jwtService: JwtService,
     private configService: ConfigService,
+    private httpService: HttpService,
   ) {}
 
   /**
@@ -495,6 +498,162 @@ export class AuthService {
         throw new BadRequestException('Invalid email verification token');
       }
       throw error;
+    }
+  }
+
+  /**
+   * Google OAuth login - exchange code for tokens and user info
+   */
+  async googleLogin(code: string): Promise<AuthResponse> {
+    try {
+      // Exchange authorization code for access token
+      const tokenResponse = await firstValueFrom(
+        this.httpService.post('https://oauth2.googleapis.com/token', {
+          code,
+          client_id: this.configService.get('GOOGLE_CLIENT_ID'),
+          client_secret: this.configService.get('GOOGLE_CLIENT_SECRET'),
+          redirect_uri: this.configService.get('GOOGLE_CALLBACK_URL'),
+          grant_type: 'authorization_code',
+        })
+      );
+
+      const { access_token } = tokenResponse.data;
+
+      // Get user info from Google
+      const userInfoResponse = await firstValueFrom(
+        this.httpService.get('https://www.googleapis.com/oauth2/v2/userinfo', {
+          headers: { Authorization: `Bearer ${access_token}` },
+        })
+      );
+
+      const { email, given_name, family_name, id: googleId } = userInfoResponse.data;
+
+      // Find or create user
+      let user = await this.userRepository.findOne({ where: { email } });
+
+      if (!user) {
+        // Create default workspace for new user
+        const workspace = this.workspaceRepository.create({
+          name: `${given_name}'s Workspace`,
+          slug: `${given_name.toLowerCase()}-workspace-${Date.now()}`,
+        });
+        await this.workspaceRepository.save(workspace);
+
+        // Create new user with Google OAuth
+        user = this.userRepository.create({
+          email,
+          firstName: given_name,
+          lastName: family_name,
+          password: await bcrypt.hash(Math.random().toString(36), 10), // Random password
+          role: UserRole.OWNER,
+          status: UserStatus.ACTIVE,
+          workspaceId: workspace.id,
+          // Store Google ID if you have a field for it
+        });
+        await this.userRepository.save(user);
+        this.logger.log(`New user created via Google OAuth: ${email}`);
+      } else {
+        // Update last login
+        user.updateLastLogin();
+        await this.userRepository.save(user);
+      }
+
+      // Generate JWT tokens
+      const tokens = await this.generateTokens(user);
+
+      return {
+        user: {
+          id: user.id,
+          email: user.email,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          role: user.role,
+          workspaceId: user.workspaceId,
+        },
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
+      };
+    } catch (error) {
+      this.logger.error('Google OAuth login failed:', error.message);
+      throw new UnauthorizedException('Google authentication failed');
+    }
+  }
+
+  /**
+   * Slack OAuth login - exchange code for tokens and user info
+   */
+  async slackLogin(code: string): Promise<AuthResponse> {
+    try {
+      // Exchange authorization code for access token
+      const tokenResponse = await firstValueFrom(
+        this.httpService.post('https://slack.com/api/oauth.v2.access', {
+          code,
+          client_id: this.configService.get('SLACK_CLIENT_ID'),
+          client_secret: this.configService.get('SLACK_CLIENT_SECRET'),
+          redirect_uri: this.configService.get('SLACK_CALLBACK_URL'),
+        })
+      );
+
+      const { authed_user } = tokenResponse.data;
+
+      // Get user info from Slack
+      const userInfoResponse = await firstValueFrom(
+        this.httpService.get('https://slack.com/api/users.identity', {
+          headers: { Authorization: `Bearer ${authed_user.access_token}` },
+        })
+      );
+
+      const { email, name } = userInfoResponse.data.user;
+      const [firstName, ...lastNameParts] = name.split(' ');
+      const lastName = lastNameParts.join(' ');
+
+      // Find or create user
+      let user = await this.userRepository.findOne({ where: { email } });
+
+      if (!user) {
+        // Create default workspace for new user
+        const workspace = this.workspaceRepository.create({
+          name: `${firstName}'s Workspace`,
+          slug: `${firstName.toLowerCase()}-workspace-${Date.now()}`,
+        });
+        await this.workspaceRepository.save(workspace);
+
+        // Create new user with Slack OAuth
+        user = this.userRepository.create({
+          email,
+          firstName,
+          lastName,
+          password: await bcrypt.hash(Math.random().toString(36), 10), // Random password
+          role: UserRole.OWNER,
+          status: UserStatus.ACTIVE,
+          workspaceId: workspace.id,
+        });
+        await this.userRepository.save(user);
+        this.logger.log(`New user created via Slack OAuth: ${email}`);
+      } else {
+        // Update last login
+        user.updateLastLogin();
+        await this.userRepository.save(user);
+      }
+
+      // Generate JWT tokens
+      const tokens = await this.generateTokens(user);
+
+      return {
+        user: {
+          id: user.id,
+          email: user.email,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          role: user.role,
+          workspaceId: user.workspaceId,
+        },
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
+      };
+    } catch (error) {
+      this.logger.error('Slack OAuth login failed:', error.message);
+      throw new UnauthorizedException('Slack authentication failed');
     }
   }
 }
