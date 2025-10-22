@@ -131,10 +131,20 @@ export default function LeadsPage() {
     setIsSubmitting(true);
 
     try {
-      await api.post('/contacts', formData);
+      const response = await api.post('/contacts', formData);
       setShowAddModal(false);
       resetForm();
-      fetchContacts();
+
+      // Optimistic update: add new contact to state immediately
+      if (response.data) {
+        setContacts(prev => [response.data, ...prev]);
+        setTotalContacts(prev => prev + 1);
+      }
+
+      // Force refresh after a short delay to ensure backend consistency
+      setTimeout(() => {
+        fetchContacts();
+      }, 500);
     } catch (err: any) {
       console.error('Failed to create contact:', err);
       setModalError(err.response?.data?.message || 'Failed to create lead');
@@ -145,6 +155,15 @@ export default function LeadsPage() {
 
   const moveToStage = async (contact: Contact, newStage: PipelineStage) => {
     try {
+      // Optimistic update
+      setContacts(prevContacts =>
+        prevContacts.map(c =>
+          c.id === contact.id
+            ? { ...c, tags: [newStage, ...(c.tags?.filter(t => !pipelineStages.map(s => s.id).includes(t as PipelineStage)) || [])] }
+            : c
+        )
+      );
+
       // Remove all stage tags
       const stageTags = pipelineStages.map(s => s.id);
       const currentStageTags = contact.tags?.filter(t => stageTags.includes(t as PipelineStage)) || [];
@@ -156,9 +175,12 @@ export default function LeadsPage() {
       // Add new stage tag
       await api.post(`/contacts/${contact.id}/tags`, { tags: [newStage] });
 
-      fetchContacts();
+      // Refresh to ensure consistency
+      setTimeout(() => fetchContacts(), 300);
     } catch (err) {
       console.error('Failed to move lead:', err);
+      // Revert on error
+      fetchContacts();
     }
   };
 
@@ -202,13 +224,29 @@ export default function LeadsPage() {
             Manage your leads through the sales pipeline ({totalContacts} total)
           </p>
         </div>
-        <button
-          onClick={() => setShowAddModal(true)}
-          className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-lg hover:shadow-xl transition-all"
-        >
-          <Plus className="h-4 w-4" />
-          Add Lead
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={fetchContacts}
+            disabled={isLoading}
+            className="flex items-center gap-2 rounded-xl bg-white border border-gray-300 px-4 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50 transition-all disabled:opacity-50"
+          >
+            {isLoading ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+            )}
+            Refresh
+          </button>
+          <button
+            onClick={() => setShowAddModal(true)}
+            className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-lg hover:shadow-xl transition-all"
+          >
+            <Plus className="h-4 w-4" />
+            Add Lead
+          </button>
+        </div>
       </div>
 
       {/* Search */}
@@ -435,10 +473,16 @@ export default function LeadsPage() {
                     <option value="manual">Manual</option>
                     <option value="website">Website</option>
                     <option value="referral">Referral</option>
+                    <option value="social_media">Social Media</option>
+                    <option value="email_campaign">Email Campaign</option>
+                    <option value="cold_outreach">Cold Outreach</option>
+                    <option value="event">Event</option>
                     <option value="facebook">Facebook</option>
                     <option value="instagram">Instagram</option>
                     <option value="linkedin">LinkedIn</option>
                     <option value="google-ads">Google Ads</option>
+                    <option value="slack">Slack</option>
+                    <option value="typeform">Typeform</option>
                     <option value="other">Other</option>
                   </select>
                 </div>
