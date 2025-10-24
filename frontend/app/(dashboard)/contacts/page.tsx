@@ -87,10 +87,12 @@ export default function ContactsPage() {
       }
 
       const response = await api.get<ContactsResponse>('/contacts', { params });
-      setContacts(response.data.data);
-      setTotalContacts(response.data.total);
+      console.log('Contacts response:', response.data);
+      setContacts(response.data.data || []);
+      setTotalContacts(response.data.total || 0);
     } catch (err) {
       console.error('Failed to fetch contacts:', err);
+      console.error('Error details:', err);
       setError('Failed to load contacts');
     } finally {
       setIsLoading(false);
@@ -107,13 +109,40 @@ export default function ContactsPage() {
     setIsSubmitting(true);
 
     try {
-      await api.post('/contacts', formData);
+      // Clean form data - only send defined fields
+      const cleanedData: any = {
+        firstName: formData.firstName,
+        lastName: formData.lastName,
+        email: formData.email,
+        status: formData.status || 'lead',
+        source: formData.source || 'manual',
+      };
+
+      // Only add optional fields if they have values
+      if (formData.phone?.trim()) cleanedData.phone = formData.phone.trim();
+      if (formData.jobTitle?.trim()) cleanedData.jobTitle = formData.jobTitle.trim();
+      if (formData.notes?.trim()) cleanedData.notes = formData.notes.trim();
+      if (formData.leadScore !== undefined) cleanedData.leadScore = formData.leadScore;
+      if (formData.tags && formData.tags.length > 0) cleanedData.tags = formData.tags;
+      if (formData.ownerId) cleanedData.ownerId = formData.ownerId;
+      if (formData.companyId) cleanedData.companyId = formData.companyId;
+
+      console.log('Sending contact data:', cleanedData);
+      await api.post('/contacts', cleanedData);
       setShowAddModal(false);
       resetForm();
       fetchContacts();
     } catch (err: any) {
       console.error('Failed to create contact:', err);
-      setModalError(err.response?.data?.message || 'Failed to create contact');
+      console.error('Error response:', err.response?.data);
+      const errorMsg = err.response?.data?.message || err.response?.data?.error || 'Failed to create contact';
+      const validationErrors = err.response?.data?.errors;
+      if (validationErrors) {
+        console.error('Validation errors:', validationErrors);
+        setModalError(`${errorMsg}: ${JSON.stringify(validationErrors)}`);
+      } else {
+        setModalError(errorMsg);
+      }
     } finally {
       setIsSubmitting(false);
     }
