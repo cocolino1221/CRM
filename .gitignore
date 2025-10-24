@@ -77,3 +77,5 @@ Thumbs.db
 # Database
 *.sqlite
 *.sqlite3
+# Local Netlify folder
+.netlify

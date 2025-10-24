@@ -478,4 +478,268 @@ export class AnalyticsService {
       totalParticipants: sorted.length,
     };
   }
+
+  /**
+   * Get Daily KPIs
+   */
+  async getDailyKPIs(workspaceId: string, date?: Date) {
+    const targetDate = date || new Date();
+    const startOfDay = new Date(targetDate);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(targetDate);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    const [
+      newContacts,
+      newDeals,
+      deals,
+      activities,
+      tasks,
+      pipelineValue,
+    ] = await Promise.all([
+      this.contactRepository.count({
+        where: { workspaceId, createdAt: Between(startOfDay, endOfDay), deletedAt: null as any },
+      }),
+      this.dealRepository.count({
+        where: { workspaceId, createdAt: Between(startOfDay, endOfDay), deletedAt: null as any },
+      }),
+      this.dealRepository.find({
+        where: { workspaceId, createdAt: Between(startOfDay, endOfDay), deletedAt: null as any },
+      }),
+      this.activityRepository.find({
+        where: { workspaceId, createdAt: Between(startOfDay, endOfDay) },
+      }),
+      this.taskRepository.find({
+        where: { workspaceId, completedAt: Between(startOfDay, endOfDay), deletedAt: null as any },
+      }),
+      this.dealRepository
+        .createQueryBuilder('deal')
+        .select('SUM(deal.value)', 'total')
+        .where('deal.workspaceId = :workspaceId', { workspaceId })
+        .andWhere('deal.deletedAt IS NULL')
+        .andWhere('deal.actualCloseDate IS NULL')
+        .getRawOne(),
+    ]);
+
+    const dealsWon = deals.filter(d => d.stage === DealStage.CLOSED_WON).length;
+    const dealsLost = deals.filter(d => d.stage === DealStage.CLOSED_LOST).length;
+    const revenue = deals
+      .filter(d => d.stage === DealStage.CLOSED_WON)
+      .reduce((sum, d) => sum + d.value, 0);
+
+    const callsMade = activities.filter(a => a.type === 'call').length;
+    const emailsSent = activities.filter(a => a.type === 'email').length;
+    const meetingsHeld = activities.filter(a => a.type === 'meeting').length;
+
+    return {
+      date: startOfDay.toISOString().split('T')[0],
+      newContacts,
+      newDeals,
+      dealsWon,
+      dealsLost,
+      revenue,
+      activitiesCompleted: activities.length,
+      tasksCompleted: tasks.length,
+      callsMade,
+      emailsSent,
+      meetingsHeld,
+      conversionRate: newDeals > 0 ? (dealsWon / newDeals) * 100 : 0,
+      pipelineValue: pipelineValue?.total ? parseFloat(pipelineValue.total) : 0,
+    };
+  }
+
+  /**
+   * Generate End of Day Report
+   */
+  async generateEODReport(workspaceId: string, date?: Date) {
+    this.logger.log(`Generating EOD report for workspace ${workspaceId}`);
+
+    const targetDate = date || new Date();
+    const startOfDay = new Date(targetDate);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(targetDate);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    const kpis = await this.getDailyKPIs(workspaceId, targetDate);
+
+    // Get team performance
+    const deals = await this.dealRepository
+      .createQueryBuilder('deal')
+      .leftJoinAndSelect('deal.owner', 'owner')
+      .where('deal.workspaceId = :workspaceId', { workspaceId })
+      .andWhere('deal.createdAt BETWEEN :startDate AND :endDate', {
+        startDate: startOfDay,
+        endDate: endOfDay,
+      })
+      .andWhere('deal.deletedAt IS NULL')
+      .getMany();
+
+    const activities = await this.activityRepository
+      .createQueryBuilder('activity')
+      .leftJoinAndSelect('activity.user', 'user')
+      .where('activity.workspaceId = :workspaceId', { workspaceId })
+      .andWhere('activity.createdAt BETWEEN :startDate AND :endDate', {
+        startDate: startOfDay,
+        endDate: endOfDay,
+      })
+      .getMany();
+
+    // Calculate team performance
+    const teamStats = new Map();
+
+    activities.forEach(activity => {
+      if (!activity.user) return;
+      const userId = activity.user.id;
+      if (!teamStats.has(userId)) {
+        teamStats.set(userId, {
+          userId,
+          userName: `${activity.user.firstName} ${activity.user.lastName}`,
+          activitiesCompleted: 0,
+          dealsCreated: 0,
+          dealsWon: 0,
+          revenueGenerated: 0,
+        });
+      }
+      teamStats.get(userId).activitiesCompleted++;
+    });
+
+    deals.forEach(deal => {
+      if (!deal.owner) return;
+      const userId = deal.owner.id;
+      if (!teamStats.has(userId)) {
+        teamStats.set(userId, {
+          userId,
+          userName: `${deal.owner.firstName} ${deal.owner.lastName}`,
+          activitiesCompleted: 0,
+          dealsCreated: 0,
+          dealsWon: 0,
+          revenueGenerated: 0,
+        });
+      }
+      const stats = teamStats.get(userId);
+      stats.dealsCreated++;
+      if (deal.stage === DealStage.CLOSED_WON) {
+        stats.dealsWon++;
+        stats.revenueGenerated += Number(deal.value);
+      }
+    });
+
+    // Get top wins
+    const topWins = deals
+      .filter(d => d.stage === DealStage.CLOSED_WON)
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 5)
+      .map(d => ({
+        dealName: d.title,
+        value: d.value,
+        closedBy: d.owner ? `${d.owner.firstName} ${d.owner.lastName}` : 'Unknown',
+      }));
+
+    // Get action items
+    const overdueTasks = await this.taskRepository.count({
+      where: {
+        workspaceId,
+        dueDate: LessThan(new Date()),
+        completedAt: null as any,
+        deletedAt: null as any,
+      },
+    });
+
+    const followUpsNeeded = await this.contactRepository.count({
+      where: {
+        workspaceId,
+        lastContactedAt: LessThan(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)), // 7 days ago
+        deletedAt: null as any,
+      },
+    });
+
+    const dealsRequiringAttention = await this.dealRepository.count({
+      where: {
+        workspaceId,
+        expectedCloseDate: LessThan(new Date(Date.now() + 3 * 24 * 60 * 60 * 1000)), // next 3 days
+        actualCloseDate: null as any,
+        deletedAt: null as any,
+      },
+    });
+
+    return {
+      date: startOfDay.toISOString().split('T')[0],
+      workspaceId,
+      summary: {
+        newContacts: kpis.newContacts,
+        newDeals: kpis.newDeals,
+        dealsWonToday: kpis.dealsWon,
+        dealsLostToday: kpis.dealsLost,
+        revenueToday: kpis.revenue,
+        activitiesCompleted: kpis.activitiesCompleted,
+        tasksCompleted: kpis.tasksCompleted,
+        callsMade: kpis.callsMade,
+        emailsSent: kpis.emailsSent,
+        meetingsHeld: kpis.meetingsHeld,
+      },
+      teamPerformance: Array.from(teamStats.values()).sort(
+        (a, b) => b.revenueGenerated - a.revenueGenerated,
+      ),
+      pipeline: {
+        totalValue: kpis.pipelineValue,
+        totalDeals: await this.dealRepository.count({
+          where: { workspaceId, actualCloseDate: null as any, deletedAt: null as any },
+        }),
+        hotDeals: await this.dealRepository.count({
+          where: {
+            workspaceId,
+            probability: MoreThan(75),
+            actualCloseDate: null as any,
+            deletedAt: null as any,
+          },
+        }),
+        atRiskDeals: await this.dealRepository.count({
+          where: {
+            workspaceId,
+            expectedCloseDate: LessThan(new Date()),
+            actualCloseDate: null as any,
+            deletedAt: null as any,
+          },
+        }),
+      },
+      topWins,
+      actionItems: {
+        overdueTasks,
+        followUpsNeeded,
+        dealsRequiringAttention,
+      },
+      generatedAt: new Date(),
+    };
+  }
+
+  /**
+   * Get KPI trend over multiple days
+   */
+  async getKPITrend(workspaceId: string, startDate: Date, endDate: Date) {
+    this.logger.log(`Getting KPI trend for workspace ${workspaceId}`);
+
+    const days = [];
+    const currentDate = new Date(startDate);
+
+    while (currentDate <= endDate) {
+      days.push(new Date(currentDate));
+      currentDate.setDate(currentDate.getDate() + 1);
+    }
+
+    const kpiPromises = days.map(day => this.getDailyKPIs(workspaceId, day));
+    const kpis = await Promise.all(kpiPromises);
+
+    return {
+      startDate: startDate.toISOString().split('T')[0],
+      endDate: endDate.toISOString().split('T')[0],
+      data: kpis,
+      summary: {
+        totalNewContacts: kpis.reduce((sum, k) => sum + k.newContacts, 0),
+        totalNewDeals: kpis.reduce((sum, k) => sum + k.newDeals, 0),
+        totalDealsWon: kpis.reduce((sum, k) => sum + k.dealsWon, 0),
+        totalRevenue: kpis.reduce((sum, k) => sum + k.revenue, 0),
+        averageConversionRate: kpis.reduce((sum, k) => sum + k.conversionRate, 0) / kpis.length,
+      },
+    };
+  }
 }

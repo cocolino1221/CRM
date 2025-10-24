@@ -63,9 +63,10 @@ async function bootstrap() {
     SwaggerModule.setup('api/docs', app, document);
   }
 
-  await app.listen(port);
-  console.log(`🚀 SlackCRM API running on: http://localhost:${port}`);
+  await app.listen(port, '0.0.0.0');
+  console.log(`🚀 SlackCRM API running on: http://0.0.0.0:${port}`);
   console.log(`📚 API Docs: http://localhost:${port}/api/docs`);
+  console.log(`🌍 Environment: ${nodeEnv}`);
 }
 
 bootstrap();

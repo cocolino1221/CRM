@@ -48,7 +48,7 @@ export class ContactsController {
   @Get()
   @ApiOperation({ summary: 'Get all contacts with filtering and pagination' })
   @ApiResponse({ status: 200, description: 'Contacts retrieved successfully' })
-  @Roles('admin', 'user', 'viewer')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'support_agent')
   async findAll(
     @CurrentWorkspace('id') workspaceId: string,
     @Query(ValidationPipe) query: QueryContactsDto,
@@ -59,7 +59,7 @@ export class ContactsController {
   @Get('stats')
   @ApiOperation({ summary: 'Get contact statistics for workspace' })
   @ApiResponse({ status: 200, description: 'Contact statistics retrieved successfully' })
-  @Roles('admin', 'user', 'viewer')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'support_agent')
   async getStats(@CurrentWorkspace('id') workspaceId: string) {
     return this.contactsService.getContactStats(workspaceId);
   }
@@ -70,7 +70,7 @@ export class ContactsController {
   @ApiQuery({ name: 'include', required: false, description: 'Relations to include (company,owner,deals,activities)' })
   @ApiResponse({ status: 200, description: 'Contact retrieved successfully' })
   @ApiResponse({ status: 404, description: 'Contact not found' })
-  @Roles('admin', 'user', 'viewer')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'support_agent')
   async findOne(
     @CurrentWorkspace('id') workspaceId: string,
     @Param('id', ParseUUIDPipe) id: string,
@@ -86,7 +86,7 @@ export class ContactsController {
   @ApiResponse({ status: 201, description: 'Contact created successfully' })
   @ApiResponse({ status: 400, description: 'Bad request - validation failed' })
   @ApiResponse({ status: 409, description: 'Contact with email already exists' })
-  @Roles('admin', 'user')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter')
   async create(
     @CurrentWorkspace('id') workspaceId: string,
     @Body(ValidationPipe) createContactDto: CreateContactDto,
@@ -102,7 +102,7 @@ export class ContactsController {
   @ApiResponse({ status: 400, description: 'Bad request - validation failed' })
   @ApiResponse({ status: 404, description: 'Contact not found' })
   @ApiResponse({ status: 409, description: 'Contact with email already exists' })
-  @Roles('admin', 'user')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter')
   async update(
     @CurrentWorkspace('id') workspaceId: string,
     @Param('id', ParseUUIDPipe) id: string,
@@ -117,7 +117,7 @@ export class ContactsController {
   @ApiResponse({ status: 204, description: 'Contact deleted successfully' })
   @ApiResponse({ status: 404, description: 'Contact not found' })
   @HttpCode(HttpStatus.NO_CONTENT)
-  @Roles('admin', 'user')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter')
   async remove(
     @CurrentWorkspace('id') workspaceId: string,
     @Param('id', ParseUUIDPipe) id: string,
@@ -132,7 +132,7 @@ export class ContactsController {
   @ApiResponse({ status: 200, description: 'Contact status updated successfully' })
   @ApiResponse({ status: 400, description: 'Invalid status value' })
   @ApiResponse({ status: 404, description: 'Contact not found' })
-  @Roles('admin', 'user')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter')
   async updateStatus(
     @CurrentWorkspace('id') workspaceId: string,
     @Param('id', ParseUUIDPipe) id: string,
@@ -149,7 +149,7 @@ export class ContactsController {
   @ApiBody({ schema: { type: 'object', properties: { ids: { type: 'array', items: { type: 'string', format: 'uuid' } } } } })
   @ApiResponse({ status: 200, description: 'Contacts deleted successfully' })
   @HttpCode(HttpStatus.OK)
-  @Roles('admin', 'user')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter')
   async bulkDelete(
     @CurrentWorkspace('id') workspaceId: string,
     @Body('ids') ids: string[],
@@ -173,7 +173,7 @@ export class ContactsController {
   })
   @ApiResponse({ status: 200, description: 'Contact statuses updated successfully' })
   @HttpCode(HttpStatus.OK)
-  @Roles('admin', 'user')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter')
   async bulkUpdateStatus(
     @CurrentWorkspace('id') workspaceId: string,
     @Body('ids') ids: string[],
@@ -193,7 +193,7 @@ export class ContactsController {
   @ApiBody({ type: ImportContactsDto })
   @ApiResponse({ status: 200, description: 'Contacts imported successfully' })
   @HttpCode(HttpStatus.OK)
-  @Roles('admin', 'user')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter')
   async bulkImport(
     @CurrentWorkspace('id') workspaceId: string,
     @Body(ValidationPipe) importDto: ImportContactsDto,
@@ -205,7 +205,7 @@ export class ContactsController {
   @ApiOperation({ summary: 'Export all contacts' })
   @ApiQuery({ name: 'format', required: false, enum: ['json', 'csv'], description: 'Export format' })
   @ApiResponse({ status: 200, description: 'Contacts exported successfully' })
-  @Roles('admin', 'user')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter')
   async exportContacts(
     @CurrentWorkspace('id') workspaceId: string,
     @Query('format') format?: 'json' | 'csv',
@@ -218,7 +218,7 @@ export class ContactsController {
   @ApiBody({ type: MergeContactsDto })
   @ApiResponse({ status: 200, description: 'Contacts merged successfully' })
   @ApiResponse({ status: 404, description: 'One or more contacts not found' })
-  @Roles('admin', 'user')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter')
   async mergeContacts(
     @CurrentWorkspace('id') workspaceId: string,
     @Body(ValidationPipe) mergeDto: MergeContactsDto,
@@ -235,7 +235,7 @@ export class ContactsController {
   @ApiParam({ name: 'id', description: 'Contact ID' })
   @ApiResponse({ status: 200, description: 'Activities retrieved successfully' })
   @ApiResponse({ status: 404, description: 'Contact not found' })
-  @Roles('admin', 'user', 'viewer')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'support_agent')
   async getActivities(
     @CurrentWorkspace('id') workspaceId: string,
     @Param('id', ParseUUIDPipe) id: string,
@@ -249,7 +249,7 @@ export class ContactsController {
   @ApiBody({ schema: { type: 'object', properties: { tags: { type: 'array', items: { type: 'string' } } } } })
   @ApiResponse({ status: 200, description: 'Tags added successfully' })
   @ApiResponse({ status: 404, description: 'Contact not found' })
-  @Roles('admin', 'user')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter')
   async addTags(
     @CurrentWorkspace('id') workspaceId: string,
     @Param('id', ParseUUIDPipe) id: string,
@@ -267,7 +267,7 @@ export class ContactsController {
   @ApiBody({ schema: { type: 'object', properties: { tags: { type: 'array', items: { type: 'string' } } } } })
   @ApiResponse({ status: 200, description: 'Tags removed successfully' })
   @ApiResponse({ status: 404, description: 'Contact not found' })
-  @Roles('admin', 'user')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter')
   async removeTags(
     @CurrentWorkspace('id') workspaceId: string,
     @Param('id', ParseUUIDPipe) id: string,
@@ -282,7 +282,7 @@ export class ContactsController {
   @Get('analytics/overview')
   @ApiOperation({ summary: 'Get leads analytics overview' })
   @ApiResponse({ status: 200, description: 'Analytics data retrieved successfully' })
-  @Roles('admin', 'user', 'viewer')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'support_agent')
   async getAnalyticsOverview(
     @CurrentWorkspace('id') workspaceId: string,
     @CurrentUser() user: User,
@@ -295,7 +295,7 @@ export class ContactsController {
   @Get('analytics/by-tags')
   @ApiOperation({ summary: 'Get analytics grouped by tags' })
   @ApiResponse({ status: 200, description: 'Tag analytics retrieved successfully' })
-  @Roles('admin', 'user', 'viewer')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'support_agent')
   async getAnalyticsByTags(
     @CurrentWorkspace('id') workspaceId: string,
     @CurrentUser() user: User,
@@ -308,7 +308,7 @@ export class ContactsController {
   @Get('analytics/conversion-funnel')
   @ApiOperation({ summary: 'Get conversion funnel analytics' })
   @ApiResponse({ status: 200, description: 'Funnel data retrieved successfully' })
-  @Roles('admin', 'user', 'viewer')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'support_agent')
   async getConversionFunnel(
     @CurrentWorkspace('id') workspaceId: string,
     @CurrentUser() user: User,

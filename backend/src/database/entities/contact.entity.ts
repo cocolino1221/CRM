@@ -14,6 +14,8 @@ import { Company } from './company.entity';
 import { Deal } from './deal.entity';
 import { Task } from './task.entity';
 import { Activity } from './activity.entity';
+import { Pipeline } from './pipeline.entity';
+import { PipelineStage } from './pipeline-stage.entity';
 
 export enum ContactStatus {
   LEAD = 'lead',
@@ -25,6 +27,7 @@ export enum ContactStatus {
 }
 
 export enum ContactSource {
+  MANUAL = 'manual',
   WEBSITE = 'website',
   REFERRAL = 'referral',
   SOCIAL_MEDIA = 'social_media',
@@ -33,6 +36,10 @@ export enum ContactSource {
   EVENT = 'event',
   SLACK = 'slack',
   TYPEFORM = 'typeform',
+  FACEBOOK = 'facebook',
+  INSTAGRAM = 'instagram',
+  LINKEDIN = 'linkedin',
+  GOOGLE_ADS = 'google-ads',
   OTHER = 'other',
 }
 
@@ -157,6 +164,49 @@ export class Contact extends WorkspaceEntity {
   })
   @JoinColumn({ name: 'companyId' })
   company?: Company;
+
+  // Pipeline relationships
+  @Column('uuid', { nullable: true })
+  pipelineId?: string;
+
+  @ManyToOne(() => Pipeline, (pipeline) => pipeline.contacts, {
+    nullable: true,
+    onDelete: 'SET NULL',
+  })
+  @JoinColumn({ name: 'pipelineId' })
+  pipeline?: Pipeline;
+
+  @Column('uuid', { nullable: true })
+  pipelineStageId?: string;
+
+  @ManyToOne(() => PipelineStage, (stage) => stage.contacts, {
+    nullable: true,
+    onDelete: 'SET NULL',
+  })
+  @JoinColumn({ name: 'pipelineStageId' })
+  pipelineStage?: PipelineStage;
+
+  // Team assignment relationships
+  @Column('uuid', { nullable: true })
+  setterId?: string;
+
+  @ManyToOne(() => User, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'setterId' })
+  setter?: User;
+
+  @Column('uuid', { nullable: true })
+  callerId?: string;
+
+  @ManyToOne(() => User, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'callerId' })
+  caller?: User;
+
+  @Column('uuid', { nullable: true })
+  closerId?: string;
+
+  @ManyToOne(() => User, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'closerId' })
+  closer?: User;
 
   @OneToMany(() => Deal, (deal) => deal.contact)
   deals: Deal[];

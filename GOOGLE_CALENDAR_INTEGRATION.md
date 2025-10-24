@@ -27,7 +27,7 @@
    - Application type: Web application
    - Authorized redirect URIs:
      - `http://localhost:3000/api/v1/integrations/google/callback` (development)
-     - `https://slackcrm-backend.fly.dev/api/v1/integrations/google/callback` (production)
+     - `883405672837-n4l3h3ngag9fs54vntt419tk7a9rh7sc.apps.googleusercontent.com (production)
    - Copy Client ID and Client Secret
 
 ### 2. Environment Variables

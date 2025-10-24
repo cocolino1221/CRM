@@ -31,7 +31,7 @@ export class AnalyticsController {
   @Get('dashboard')
   @ApiOperation({ summary: 'Get dashboard overview with key metrics' })
   @ApiResponse({ status: 200, description: 'Dashboard overview retrieved' })
-  @Roles('admin', 'user', 'viewer')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'support_agent')
   async getDashboard(@CurrentWorkspace('id') workspaceId: string) {
     return this.analyticsService.getDashboardOverview(workspaceId);
   }
@@ -42,7 +42,7 @@ export class AnalyticsController {
   @ApiQuery({ name: 'startDate', required: false, type: String })
   @ApiQuery({ name: 'endDate', required: false, type: String })
   @ApiResponse({ status: 200, description: 'Sales metrics retrieved' })
-  @Roles('admin', 'user', 'viewer')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'support_agent')
   async getSalesMetrics(
     @CurrentWorkspace('id') workspaceId: string,
     @Query(ValidationPipe) dateRange: DateRangeDto,
@@ -57,7 +57,7 @@ export class AnalyticsController {
   @ApiQuery({ name: 'startDate', required: false, type: String })
   @ApiQuery({ name: 'endDate', required: false, type: String })
   @ApiResponse({ status: 200, description: 'Contacts metrics retrieved' })
-  @Roles('admin', 'user', 'viewer')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'support_agent')
   async getContactsMetrics(
     @CurrentWorkspace('id') workspaceId: string,
     @Query(ValidationPipe) dateRange: DateRangeDto,
@@ -72,7 +72,7 @@ export class AnalyticsController {
   @ApiQuery({ name: 'startDate', required: false, type: String })
   @ApiQuery({ name: 'endDate', required: false, type: String })
   @ApiResponse({ status: 200, description: 'Tasks metrics retrieved' })
-  @Roles('admin', 'user', 'viewer')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'support_agent')
   async getTasksMetrics(
     @CurrentWorkspace('id') workspaceId: string,
     @Query(ValidationPipe) dateRange: DateRangeDto,
@@ -88,7 +88,7 @@ export class AnalyticsController {
   @ApiQuery({ name: 'endDate', required: false, type: String })
   @ApiQuery({ name: 'groupBy', required: false, enum: ['day', 'week', 'month'] })
   @ApiResponse({ status: 200, description: 'Activity trend retrieved' })
-  @Roles('admin', 'user', 'viewer')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'support_agent')
   async getActivityTrend(
     @CurrentWorkspace('id') workspaceId: string,
     @Query(ValidationPipe) dateRange: DateRangeDto,
@@ -102,7 +102,7 @@ export class AnalyticsController {
   @ApiOperation({ summary: 'Get revenue forecast for upcoming months' })
   @ApiQuery({ name: 'months', required: false, description: 'Number of months to forecast', type: Number })
   @ApiResponse({ status: 200, description: 'Revenue forecast retrieved' })
-  @Roles('admin', 'user')
+  @Roles('admin', 'manager')
   async getRevenueForecast(
     @CurrentWorkspace('id') workspaceId: string,
     @Query('months', new ParseIntPipe({ optional: true })) months?: number,
@@ -116,7 +116,7 @@ export class AnalyticsController {
   @ApiQuery({ name: 'startDate', required: false, type: String })
   @ApiQuery({ name: 'endDate', required: false, type: String })
   @ApiResponse({ status: 200, description: 'Team performance retrieved' })
-  @Roles('admin', 'user')
+  @Roles('admin', 'manager')
   async getTeamPerformance(
     @CurrentWorkspace('id') workspaceId: string,
     @Query(ValidationPipe) dateRange: DateRangeDto,
@@ -129,7 +129,7 @@ export class AnalyticsController {
   @ApiOperation({ summary: 'Get comprehensive dashboard with all analytics' })
   @ApiQuery({ name: 'range', required: false, enum: TimeRange })
   @ApiResponse({ status: 200, description: 'Comprehensive dashboard retrieved' })
-  @Roles('admin', 'user', 'viewer')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'support_agent')
   async getComprehensiveDashboard(
     @CurrentWorkspace('id') workspaceId: string,
     @Query('range') range?: TimeRange,
@@ -142,7 +142,7 @@ export class AnalyticsController {
   @ApiQuery({ name: 'metric', required: false, enum: ['revenue', 'deals', 'winRate'] })
   @ApiQuery({ name: 'limit', required: false, type: Number })
   @ApiResponse({ status: 200, description: 'Leaderboard retrieved' })
-  @Roles('admin', 'user', 'viewer')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'support_agent')
   async getLeaderboard(
     @CurrentWorkspace('id') workspaceId: string,
     @Query('metric') metric?: 'revenue' | 'deals' | 'winRate',
@@ -194,5 +194,49 @@ export class AnalyticsController {
     }
 
     return { startDate, endDate };
+  }
+
+  @Get('kpis/daily')
+  @ApiOperation({ summary: 'Get daily KPIs' })
+  @ApiQuery({ name: 'date', required: false, type: String, description: 'Date in YYYY-MM-DD format' })
+  @ApiResponse({ status: 200, description: 'Daily KPIs retrieved' })
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'support_agent')
+  async getDailyKPIs(
+    @CurrentWorkspace('id') workspaceId: string,
+    @Query('date') date?: string,
+  ) {
+    const targetDate = date ? new Date(date) : undefined;
+    return this.analyticsService.getDailyKPIs(workspaceId, targetDate);
+  }
+
+  @Get('kpis/trend')
+  @ApiOperation({ summary: 'Get KPI trend over time' })
+  @ApiQuery({ name: 'startDate', required: true, type: String })
+  @ApiQuery({ name: 'endDate', required: true, type: String })
+  @ApiResponse({ status: 200, description: 'KPI trend retrieved' })
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'support_agent')
+  async getKPITrend(
+    @CurrentWorkspace('id') workspaceId: string,
+    @Query('startDate') startDate: string,
+    @Query('endDate') endDate: string,
+  ) {
+    return this.analyticsService.getKPITrend(
+      workspaceId,
+      new Date(startDate),
+      new Date(endDate),
+    );
+  }
+
+  @Get('eod-report')
+  @ApiOperation({ summary: 'Generate End of Day report' })
+  @ApiQuery({ name: 'date', required: false, type: String, description: 'Date in YYYY-MM-DD format' })
+  @ApiResponse({ status: 200, description: 'EOD report generated' })
+  @Roles('admin', 'manager')
+  async getEODReport(
+    @CurrentWorkspace('id') workspaceId: string,
+    @Query('date') date?: string,
+  ) {
+    const targetDate = date ? new Date(date) : undefined;
+    return this.analyticsService.generateEODReport(workspaceId, targetDate);
   }
 }

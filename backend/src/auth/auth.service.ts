@@ -506,20 +506,28 @@ export class AuthService {
    */
   async googleLogin(code: string): Promise<AuthResponse> {
     try {
+      this.logger.log('Google OAuth login started');
       // Exchange authorization code for access token
+      const params = new URLSearchParams({
+        code,
+        client_id: this.configService.get('GOOGLE_CLIENT_ID'),
+        client_secret: this.configService.get('GOOGLE_CLIENT_SECRET'),
+        redirect_uri: this.configService.get('GOOGLE_CALLBACK_URL'),
+        grant_type: 'authorization_code',
+      });
+
+      this.logger.log('Exchanging code for token with Google...');
       const tokenResponse = await firstValueFrom(
-        this.httpService.post('https://oauth2.googleapis.com/token', {
-          code,
-          client_id: this.configService.get('GOOGLE_CLIENT_ID'),
-          client_secret: this.configService.get('GOOGLE_CLIENT_SECRET'),
-          redirect_uri: this.configService.get('GOOGLE_CALLBACK_URL'),
-          grant_type: 'authorization_code',
+        this.httpService.post('https://oauth2.googleapis.com/token', params.toString(), {
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         })
       );
 
+      this.logger.log('Token received from Google');
       const { access_token } = tokenResponse.data;
 
       // Get user info from Google
+      this.logger.log('Getting user info from Google...');
       const userInfoResponse = await firstValueFrom(
         this.httpService.get('https://www.googleapis.com/oauth2/v2/userinfo', {
           headers: { Authorization: `Bearer ${access_token}` },
@@ -527,8 +535,10 @@ export class AuthService {
       );
 
       const { email, given_name, family_name, id: googleId } = userInfoResponse.data;
+      this.logger.log(`User info received: ${email}`);
 
       // Find or create user
+      this.logger.log('Looking for existing user...');
       let user = await this.userRepository.findOne({ where: { email } });
 
       if (!user) {
@@ -575,6 +585,11 @@ export class AuthService {
       };
     } catch (error) {
       this.logger.error('Google OAuth login failed:', error.message);
+      if (error.response) {
+        this.logger.error('Google API error response:', JSON.stringify(error.response.data));
+        this.logger.error('Status code:', error.response.status);
+      }
+      this.logger.error('Full error:', error.stack);
       throw new UnauthorizedException('Google authentication failed');
     }
   }

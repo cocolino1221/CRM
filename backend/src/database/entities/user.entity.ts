@@ -8,7 +8,10 @@ import {
   ManyToOne,
   JoinColumn,
   Index,
+  BeforeInsert,
+  BeforeUpdate,
 } from 'typeorm';
+import * as bcrypt from 'bcrypt';
 import { WorkspaceEntity } from './base.entity';
 import { Workspace } from './workspace.entity';
 import { Contact } from './contact.entity';
@@ -20,6 +23,7 @@ export enum UserRole {
   MANAGER = 'manager',
   CLOSER = 'closer',
   SETTER = 'setter',
+  CALLER = 'caller',
   SALES_REP = 'sales_rep',
   SUPPORT_AGENT = 'support_agent',
 }
@@ -189,12 +193,24 @@ export class User extends WorkspaceEntity {
       case UserRole.SETTER:
         // Setters can create and qualify leads, schedule appointments
         return ['read', 'create', 'lead', 'contact', 'qualify', 'schedule'].some(perm => action.includes(perm));
+      case UserRole.CALLER:
+        // Callers can make calls to leads and update contact information
+        return ['read', 'update', 'lead', 'contact', 'call'].some(perm => action.includes(perm));
       case UserRole.SALES_REP:
         return ['read', 'create', 'update'].some(perm => action.includes(perm));
       case UserRole.SUPPORT_AGENT:
         return ['read', 'update'].some(perm => action.includes(perm));
       default:
         return false;
+    }
+  }
+
+  @BeforeInsert()
+  @BeforeUpdate()
+  async hashPassword() {
+    // Only hash if password has been modified (not already hashed)
+    if (this.password && !this.password.startsWith('$2')) {
+      this.password = await bcrypt.hash(this.password, 10);
     }
   }
 }

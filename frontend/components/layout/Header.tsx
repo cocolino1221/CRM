@@ -60,14 +60,20 @@ export default function Header() {
 
       {/* Actions */}
       <div className="flex items-center gap-3">
-        <button className="group relative overflow-hidden flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-indigo-500/30 hover:shadow-xl hover:shadow-indigo-500/40 transition-all duration-300 hover:scale-105">
+        <button
+          onClick={() => router.push('/leads')}
+          className="group relative overflow-hidden flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-indigo-500/30 hover:shadow-xl hover:shadow-indigo-500/40 transition-all duration-300 hover:scale-105"
+        >
           <div className="absolute inset-0 bg-gradient-to-r from-blue-600 via-purple-600 to-pink-600 opacity-0 group-hover:opacity-100 transition-opacity"></div>
           <Plus className="relative h-4 w-4" />
-          <span className="relative">New Contact</span>
+          <span className="relative">New Lead</span>
           <Sparkles className="relative h-3.5 w-3.5 opacity-70" />
         </button>
 
-        <button className="relative rounded-xl p-2.5 bg-white/50 hover:bg-white transition-all hover:shadow-lg group">
+        <button
+          onClick={() => {/* TODO: Implement notifications panel */}}
+          className="relative rounded-xl p-2.5 bg-white/50 hover:bg-white transition-all hover:shadow-lg group"
+        >
           <Bell className="h-5 w-5 text-gray-600 group-hover:text-indigo-600 transition-colors" />
           <span className="absolute right-1.5 top-1.5 flex h-2 w-2">
             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
