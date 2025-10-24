@@ -131,7 +131,16 @@ export default function LeadsPage() {
     setIsSubmitting(true);
 
     try {
-      const response = await api.post('/contacts', formData);
+      // Clean form data - remove empty strings
+      const cleanedData = {
+        ...formData,
+        phone: formData.phone?.trim() || undefined,
+        jobTitle: formData.jobTitle?.trim() || undefined,
+        notes: formData.notes?.trim() || undefined,
+      };
+
+      console.log('Sending contact data:', cleanedData);
+      const response = await api.post('/contacts', cleanedData);
       setShowAddModal(false);
       resetForm();
 
@@ -147,7 +156,16 @@ export default function LeadsPage() {
       }, 500);
     } catch (err: any) {
       console.error('Failed to create contact:', err);
-      setModalError(err.response?.data?.message || 'Failed to create lead');
+      console.error('Error response:', err.response?.data);
+      console.error('Form data sent:', formData);
+      const errorMsg = err.response?.data?.message || err.response?.data?.error || 'Failed to create lead';
+      const validationErrors = err.response?.data?.errors;
+      if (validationErrors) {
+        console.error('Validation errors:', validationErrors);
+        setModalError(`${errorMsg}: ${JSON.stringify(validationErrors)}`);
+      } else {
+        setModalError(errorMsg);
+      }
     } finally {
       setIsSubmitting(false);
     }
