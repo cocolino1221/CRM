@@ -1,20 +1,20 @@
 {
   "/_not-found/page": "/_not-found",
-  "/page": "/",
   "/auth/callback/page": "/auth/callback",
+  "/page": "/",
   "/(dashboard)/analytics/page": "/analytics",
+  "/(auth)/login/page": "/login",
   "/(auth)/register/page": "/register",
   "/(dashboard)/automation/page": "/automation",
-  "/(dashboard)/companies/[id]/page": "/companies/[id]",
   "/(dashboard)/companies/page": "/companies",
   "/(dashboard)/contacts/page": "/contacts",
-  "/(dashboard)/integrations/callback/page": "/integrations/callback",
-  "/(dashboard)/leads/page": "/leads",
   "/(dashboard)/dashboard/page": "/dashboard",
+  "/(dashboard)/integrations/callback/page": "/integrations/callback",
+  "/(dashboard)/companies/[id]/page": "/companies/[id]",
+  "/(dashboard)/integrations/[id]/page": "/integrations/[id]",
   "/(dashboard)/settings/page": "/settings",
+  "/(dashboard)/leads/page": "/leads",
   "/(dashboard)/tasks/page": "/tasks",
   "/(dashboard)/integrations/page": "/integrations",
-  "/(dashboard)/integrations/[id]/page": "/integrations/[id]",
-  "/(dashboard)/calendar/page": "/calendar",
-  "/(auth)/login/page": "/login"
+  "/(dashboard)/calendar/page": "/calendar"
 }

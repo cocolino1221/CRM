@@ -53,7 +53,8 @@
       "Bash(flyctl ssh console:*)",
       "Bash(flyctl config show:*)",
       "Bash(npx netlify deploy:*)",
-      "Bash(npx netlify:*)"
+      "Bash(npx netlify:*)",
+      "Bash(flyctl ssh issue:*)"
     ],
     "deny": [],
     "ask": []
