@@ -97,8 +97,10 @@ export default function LeadsPage() {
         params.search = searchQuery;
       }
 
-      const response = await api.get<ContactsResponse>('/contacts', { params });
-      setContacts(response.data.data || []);
+      const response = await api.get<any>('/contacts', { params });
+      console.log('Leads response:', response.data);
+      // Backend returns { contacts: [...], total: 3 } not { data: [...], total: 3 }
+      setContacts(response.data.contacts || response.data.data || []);
       setTotalContacts(response.data.total || 0);
     } catch (err) {
       console.error('Failed to fetch contacts:', err);
