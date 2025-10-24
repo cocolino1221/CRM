@@ -131,13 +131,26 @@ export default function LeadsPage() {
     setIsSubmitting(true);
 
     try {
-      // Clean form data - remove empty strings
-      const cleanedData = {
-        ...formData,
-        phone: formData.phone?.trim() || undefined,
-        jobTitle: formData.jobTitle?.trim() || undefined,
-        notes: formData.notes?.trim() || undefined,
+      // Clean form data - remove empty strings and undefined values
+      const cleanedData: any = {
+        firstName: formData.firstName,
+        lastName: formData.lastName,
+        email: formData.email,
+        status: formData.status,
+        source: formData.source,
+        tags: formData.tags,
       };
+
+      // Only add optional fields if they have values
+      if (formData.phone?.trim()) {
+        cleanedData.phone = formData.phone.trim();
+      }
+      if (formData.notes?.trim()) {
+        cleanedData.notes = formData.notes.trim();
+      }
+      if (formData.companyId) {
+        cleanedData.companyId = formData.companyId;
+      }
 
       console.log('Sending contact data:', cleanedData);
       const response = await api.post('/contacts', cleanedData);
