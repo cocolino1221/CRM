@@ -111,8 +111,11 @@ export default function LeadsPage() {
       // Select default pipeline or first pipeline
       const defaultPipeline = response.data.find(p => p.isDefault) || response.data[0];
       setSelectedPipeline(defaultPipeline);
+      return true;
     } catch (err) {
       console.error('Failed to fetch pipelines:', err);
+      setError('Failed to load pipelines. Please refresh the page or try logging in again.');
+      return false;
     }
   };
 
@@ -120,8 +123,10 @@ export default function LeadsPage() {
     try {
       const response = await api.get<User[]>('/users');
       setUsers(response.data);
+      return true;
     } catch (err) {
       console.error('Failed to fetch users:', err);
+      return false;
     }
   };
 
@@ -154,8 +159,16 @@ export default function LeadsPage() {
   };
 
   useEffect(() => {
-    fetchPipelines();
-    fetchUsers();
+    const initializeData = async () => {
+      setIsLoading(true);
+      const [pipelinesSuccess] = await Promise.all([fetchPipelines(), fetchUsers()]);
+      // If pipelines failed to load, stop loading
+      if (!pipelinesSuccess) {
+        setIsLoading(false);
+      }
+      // Otherwise, fetchContacts will be triggered by the second useEffect
+    };
+    initializeData();
   }, []);
 
   useEffect(() => {
