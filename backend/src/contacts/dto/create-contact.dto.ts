@@ -34,7 +34,11 @@ export class CreateContactDto {
 
   @IsOptional()
   @IsString()
-  @Length(1, 20)
+  @Transform(({ value }) => {
+    const trimmed = value?.trim();
+    return trimmed === '' ? undefined : trimmed;
+  })
+  @Length(1, 20, { message: 'Phone must be between 1 and 20 characters' })
   @Matches(/^[+]?[\d\s\-\(\)]+$/, { message: 'Phone must be a valid phone number format' })
   phone?: string;
 
