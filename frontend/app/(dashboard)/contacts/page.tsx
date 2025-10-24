@@ -36,7 +36,9 @@ interface ContactFormData {
   source?: string;
   leadScore?: number;
   notes?: string;
+  tags?: string[];
   companyId?: string;
+  ownerId?: string;
 }
 
 export default function ContactsPage() {
