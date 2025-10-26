@@ -16,6 +16,7 @@ interface Integration {
   connected: boolean;
   features: string[];
   configFields?: ConfigField[];
+  oauth?: boolean; // True for OAuth integrations (no API keys needed)
 }
 
 interface ConfigField {
@@ -80,11 +81,7 @@ export default function IntegrationsPage() {
       color: 'from-purple-500 to-pink-500',
       connected: false,
       features: ['Contact sync', 'Real-time notifications', 'Slash commands', 'AI chat assistant'],
-      configFields: [
-        { name: 'clientId', label: 'Client ID', type: 'text', required: true, placeholder: 'Your Slack App Client ID' },
-        { name: 'clientSecret', label: 'Client Secret', type: 'password', required: true, placeholder: 'Your Slack App Client Secret' },
-        { name: 'workspaceUrl', label: 'Workspace URL', type: 'url', required: true, placeholder: 'https://your-workspace.slack.com' },
-      ],
+      oauth: true,
     },
     {
       id: 'zoom',
@@ -123,17 +120,14 @@ export default function IntegrationsPage() {
     {
       id: 'gmail',
       name: 'Gmail',
-      description: 'Sync emails, track conversations, and manage communication from your CRM.',
+      description: 'Sync emails, track conversations, and manage communication from your CRM. Simply click Connect and authorize access - no API keys needed!',
       category: 'email',
       icon: '📧',
       logoUrl: 'https://cdn.cdnlogo.com/logos/g/24/gmail-icon.svg',
       color: 'from-red-500 to-pink-500',
       connected: false,
       features: ['Email sync', 'Two-way communication', 'Email tracking', 'Template management'],
-      configFields: [
-        { name: 'clientId', label: 'Google Client ID', type: 'text', required: true, placeholder: 'Your Google OAuth Client ID' },
-        { name: 'clientSecret', label: 'Google Client Secret', type: 'password', required: true, placeholder: 'Your Google OAuth Client Secret' },
-      ],
+      oauth: true,
     },
     {
       id: 'mailchimp',
@@ -599,6 +593,14 @@ export default function IntegrationsPage() {
   });
 
   const handleConnect = (integration: Integration) => {
+    // For OAuth integrations, redirect to auth flow
+    if (integration.oauth) {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000/api/v1';
+      window.location.href = `${apiUrl}/auth/${integration.id}`;
+      return;
+    }
+
+    // For manual config integrations, show modal
     setSelectedIntegration(integration);
     setConfigData({});
   };
