@@ -17,6 +17,7 @@ interface Integration {
   features: string[];
   configFields?: ConfigField[];
   oauth?: boolean; // True for OAuth integrations (no API keys needed)
+  oauthProvider?: string; // OAuth provider name for backend route (e.g., 'google', 'slack')
 }
 
 interface ConfigField {
@@ -82,6 +83,7 @@ export default function IntegrationsPage() {
       connected: false,
       features: ['Contact sync', 'Real-time notifications', 'Slash commands', 'AI chat assistant'],
       oauth: true,
+      oauthProvider: 'slack',
     },
     {
       id: 'zoom',
@@ -128,6 +130,7 @@ export default function IntegrationsPage() {
       connected: false,
       features: ['Email sync', 'Two-way communication', 'Email tracking', 'Template management'],
       oauth: true,
+      oauthProvider: 'google',
     },
     {
       id: 'mailchimp',
@@ -596,7 +599,8 @@ export default function IntegrationsPage() {
     // For OAuth integrations, redirect to auth flow
     if (integration.oauth) {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000/api/v1';
-      window.location.href = `${apiUrl}/auth/${integration.id}`;
+      const provider = integration.oauthProvider || integration.id;
+      window.location.href = `${apiUrl}/auth/${provider}`;
       return;
     }
 
