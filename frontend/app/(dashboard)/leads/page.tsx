@@ -107,9 +107,12 @@ export default function LeadsPage() {
   const fetchPipelines = async () => {
     try {
       const response = await api.get<Pipeline[]>('/pipelines');
+      console.log('Pipelines response:', response.data);
       setPipelines(response.data);
       // Select default pipeline or first pipeline
       const defaultPipeline = response.data.find(p => p.isDefault) || response.data[0];
+      console.log('Selected pipeline:', defaultPipeline);
+      console.log('Pipeline stages:', defaultPipeline?.stages);
       setSelectedPipeline(defaultPipeline);
       return true;
     } catch (err) {
@@ -442,7 +445,7 @@ export default function LeadsPage() {
       </div>
 
       {/* Pipeline Board */}
-      {selectedPipeline && (
+      {selectedPipeline && selectedPipeline.stages && selectedPipeline.stages.length > 0 ? (
         <div className="flex-1 overflow-x-auto pb-6">
           <div className="flex gap-4 min-w-max h-full">
             {selectedPipeline.stages.sort((a, b) => a.displayOrder - b.displayOrder).map((stage) => {
@@ -559,7 +562,14 @@ export default function LeadsPage() {
             })}
           </div>
         </div>
-      )}
+      ) : selectedPipeline && (!selectedPipeline.stages || selectedPipeline.stages.length === 0) ? (
+        <div className="flex items-center justify-center h-96">
+          <div className="text-center">
+            <p className="text-gray-600 font-semibold">No pipeline stages found</p>
+            <p className="text-gray-500 text-sm mt-2">Please create pipeline stages first.</p>
+          </div>
+        </div>
+      ) : null}
 
       {/* Add Contact Modal */}
       {showAddModal && (
