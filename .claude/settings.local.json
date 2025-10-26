@@ -54,7 +54,8 @@
       "Bash(flyctl config show:*)",
       "Bash(npx netlify deploy:*)",
       "Bash(npx netlify:*)",
-      "Bash(flyctl ssh issue:*)"
+      "Bash(flyctl ssh issue:*)",
+      "Bash(npx vercel:*)"
     ],
     "deny": [],
     "ask": []

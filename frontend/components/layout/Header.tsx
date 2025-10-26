@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { Search, Bell, Plus, Sparkles, User, LogOut, Settings, ChevronDown } from 'lucide-react';
 import { authService } from '@/lib/auth';
+import Notifications from '@/components/notifications';
 
 export default function Header() {
   const router = useRouter();
@@ -70,16 +71,7 @@ export default function Header() {
           <Sparkles className="relative h-3.5 w-3.5 opacity-70" />
         </button>
 
-        <button
-          onClick={() => {/* TODO: Implement notifications panel */}}
-          className="relative rounded-xl p-2.5 bg-white/50 hover:bg-white transition-all hover:shadow-lg group"
-        >
-          <Bell className="h-5 w-5 text-gray-600 group-hover:text-indigo-600 transition-colors" />
-          <span className="absolute right-1.5 top-1.5 flex h-2 w-2">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-            <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
-          </span>
-        </button>
+        <Notifications />
 
         {/* User Menu */}
         <div className="relative" ref={menuRef}>

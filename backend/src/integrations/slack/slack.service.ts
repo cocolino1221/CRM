@@ -40,7 +40,73 @@ export class SlackService {
     try {
       switch (command) {
         case '/crm-add':
+          // If no text provided, show interactive form option
+          if (!text || text.trim() === '') {
+            return {
+              response_type: 'ephemeral',
+              text: 'Add a new lead using one of these methods:',
+              blocks: [
+                {
+                  type: 'section',
+                  text: {
+                    type: 'mrkdwn',
+                    text: '*Add a new lead to your CRM:*',
+                  },
+                },
+                {
+                  type: 'section',
+                  text: {
+                    type: 'mrkdwn',
+                    text: '📝 *Quick Add* (command line):\n`/crm-add email|firstName|lastName|phone`\n\nExample: `/crm-add john@example.com|John|Doe|+1234567890`',
+                  },
+                },
+                {
+                  type: 'divider',
+                },
+                {
+                  type: 'section',
+                  text: {
+                    type: 'mrkdwn',
+                    text: '✨ *Use our easy form instead:*',
+                  },
+                  accessory: {
+                    type: 'button',
+                    text: {
+                      type: 'plain_text',
+                      text: 'Open Lead Form',
+                    },
+                    style: 'primary',
+                    action_id: 'open_create_lead_modal',
+                  },
+                },
+              ],
+            };
+          }
           return await this.handleAddContact(text, user_id, team_id);
+
+        case '/crm-new-lead':
+          // Shortcut to open the modal directly
+          return {
+            response_type: 'ephemeral',
+            blocks: [
+              {
+                type: 'section',
+                text: {
+                  type: 'mrkdwn',
+                  text: '✨ *Create a new lead with our easy form:*',
+                },
+                accessory: {
+                  type: 'button',
+                  text: {
+                    type: 'plain_text',
+                    text: 'Open Lead Form',
+                  },
+                  style: 'primary',
+                  action_id: 'open_create_lead_modal',
+                },
+              },
+            ],
+          };
 
         case '/crm-search':
           return await this.handleSearchContact(text, team_id);
@@ -498,8 +564,10 @@ export class SlackService {
           text: {
             type: 'mrkdwn',
             text: `
-*Adding Contacts:*
-• \`/crm-add email|firstName|lastName|phone\`
+*Adding Leads:*
+• \`/crm-new-lead\` - ✨ Open interactive form to add a lead
+• \`/crm-add\` - Show add options (command line or form)
+• \`/crm-add email|firstName|lastName|phone\` - Quick add from command line
   Example: \`/crm-add john@example.com|John|Doe|+1234567890\`
 
 *Searching:*
@@ -532,8 +600,202 @@ export class SlackService {
 
     this.logger.log(`Received interactive component: ${payload.type}`);
 
-    // TODO: Handle button clicks, modal submissions, etc.
-    return { message: 'Interactive component handled' };
+    try {
+      switch (payload.type) {
+        case 'view_submission':
+          return await this.handleModalSubmission(payload);
+        case 'block_actions':
+          return await this.handleBlockActions(payload);
+        default:
+          return { message: 'Interactive component handled' };
+      }
+    } catch (error) {
+      this.logger.error(`Error handling interactive component: ${error.message}`);
+      return { error: error.message };
+    }
+  }
+
+  private async handleModalSubmission(payload: any) {
+    const { view, user, team } = payload;
+
+    // Handle lead creation modal
+    if (view.callback_id === 'create_lead_modal') {
+      const values = view.state.values;
+
+      const email = values.email_block.email_input.value;
+      const firstName = values.first_name_block.first_name_input.value;
+      const lastName = values.last_name_block.last_name_input.value;
+      const phone = values.phone_block?.phone_input?.value || null;
+      const company = values.company_block?.company_input?.value || null;
+      const notes = values.notes_block?.notes_input?.value || null;
+
+      try {
+        const contact = this.contactRepository.create({
+          email,
+          firstName,
+          lastName,
+          phone,
+          workspaceId: team.id,
+          source: ContactSource.SLACK,
+          status: ContactStatus.LEAD,
+          leadScore: 0,
+          notes,
+        });
+
+        contact.updateLeadScore();
+        await this.contactRepository.save(contact);
+
+        // Send success message to the channel
+        return {
+          response_action: 'clear',
+        };
+      } catch (error) {
+        return {
+          response_action: 'errors',
+          errors: {
+            email_block: error.message.includes('duplicate') ? 'Email already exists' : error.message,
+          },
+        };
+      }
+    }
+
+    return { response_action: 'clear' };
+  }
+
+  private async handleBlockActions(payload: any) {
+    const { actions, trigger_id } = payload;
+
+    // Handle "Create Lead" button click
+    if (actions[0].action_id === 'open_create_lead_modal') {
+      // Return modal view to open
+      return {
+        trigger_id,
+        view: this.getCreateLeadModal(),
+      };
+    }
+
+    return { message: 'Action handled' };
+  }
+
+  private getCreateLeadModal() {
+    return {
+      type: 'modal',
+      callback_id: 'create_lead_modal',
+      title: {
+        type: 'plain_text',
+        text: 'Add New Lead',
+      },
+      submit: {
+        type: 'plain_text',
+        text: 'Create Lead',
+      },
+      close: {
+        type: 'plain_text',
+        text: 'Cancel',
+      },
+      blocks: [
+        {
+          type: 'input',
+          block_id: 'email_block',
+          label: {
+            type: 'plain_text',
+            text: 'Email Address',
+          },
+          element: {
+            type: 'email_text_input',
+            action_id: 'email_input',
+            placeholder: {
+              type: 'plain_text',
+              text: 'john.doe@company.com',
+            },
+          },
+        },
+        {
+          type: 'input',
+          block_id: 'first_name_block',
+          label: {
+            type: 'plain_text',
+            text: 'First Name',
+          },
+          element: {
+            type: 'plain_text_input',
+            action_id: 'first_name_input',
+            placeholder: {
+              type: 'plain_text',
+              text: 'John',
+            },
+          },
+        },
+        {
+          type: 'input',
+          block_id: 'last_name_block',
+          label: {
+            type: 'plain_text',
+            text: 'Last Name',
+          },
+          element: {
+            type: 'plain_text_input',
+            action_id: 'last_name_input',
+            placeholder: {
+              type: 'plain_text',
+              text: 'Doe',
+            },
+          },
+        },
+        {
+          type: 'input',
+          block_id: 'phone_block',
+          optional: true,
+          label: {
+            type: 'plain_text',
+            text: 'Phone Number',
+          },
+          element: {
+            type: 'plain_text_input',
+            action_id: 'phone_input',
+            placeholder: {
+              type: 'plain_text',
+              text: '+1 (555) 123-4567',
+            },
+          },
+        },
+        {
+          type: 'input',
+          block_id: 'company_block',
+          optional: true,
+          label: {
+            type: 'plain_text',
+            text: 'Company',
+          },
+          element: {
+            type: 'plain_text_input',
+            action_id: 'company_input',
+            placeholder: {
+              type: 'plain_text',
+              text: 'Acme Corporation',
+            },
+          },
+        },
+        {
+          type: 'input',
+          block_id: 'notes_block',
+          optional: true,
+          label: {
+            type: 'plain_text',
+            text: 'Notes',
+          },
+          element: {
+            type: 'plain_text_input',
+            action_id: 'notes_input',
+            multiline: true,
+            placeholder: {
+              type: 'plain_text',
+              text: 'Add any additional notes about this lead...',
+            },
+          },
+        },
+      ],
+    };
   }
 
   async handleOAuth(body: any) {
