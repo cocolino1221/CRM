@@ -62,6 +62,14 @@ export class QueryContactsDto {
   companyId?: string;
 
   @IsOptional()
+  @IsUUID()
+  pipelineId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  pipelineStageId?: string;
+
+  @IsOptional()
   @IsArray()
   @IsString({ each: true })
   @Transform(({ value }) => Array.isArray(value) ? value : [value])

@@ -322,6 +322,8 @@ export class ContactsService {
     source?: string;
     ownerId?: string;
     companyId?: string;
+    pipelineId?: string;
+    pipelineStageId?: string;
     tags?: string[];
     minLeadScore?: number;
     maxLeadScore?: number;
@@ -333,6 +335,8 @@ export class ContactsService {
       source,
       ownerId,
       companyId,
+      pipelineId,
+      pipelineStageId,
       tags,
       minLeadScore,
       maxLeadScore,
@@ -360,6 +364,14 @@ export class ContactsService {
 
     if (companyId) {
       queryBuilder.andWhere('contact.companyId = :companyId', { companyId });
+    }
+
+    if (pipelineId) {
+      queryBuilder.andWhere('contact.pipelineId = :pipelineId', { pipelineId });
+    }
+
+    if (pipelineStageId) {
+      queryBuilder.andWhere('contact.pipelineStageId = :pipelineStageId', { pipelineStageId });
     }
 
     if (tags && tags.length > 0) {
