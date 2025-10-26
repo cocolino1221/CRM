@@ -42,44 +42,24 @@ export default function Notifications() {
 
   const fetchNotifications = async () => {
     try {
-      // For now, use mock data. Replace with actual API call
-      const mockNotifications: Notification[] = [
-        {
-          id: '1',
-          type: 'lead',
-          title: 'New Lead Assigned',
-          message: 'You have been assigned a new lead: John Doe from Acme Corp',
-          isRead: false,
-          createdAt: new Date(Date.now() - 5 * 60000).toISOString(),
-        },
-        {
-          id: '2',
-          type: 'task',
-          title: 'Task Due Soon',
-          message: 'Follow up with Sarah Johnson is due in 1 hour',
-          isRead: false,
-          createdAt: new Date(Date.now() - 15 * 60000).toISOString(),
-        },
-        {
-          id: '3',
-          type: 'call',
-          title: 'Missed Call',
-          message: 'Missed call from +1 (555) 123-4567',
-          isRead: true,
-          createdAt: new Date(Date.now() - 60 * 60000).toISOString(),
-        },
-      ];
+      const [notificationsRes, countRes] = await Promise.all([
+        api.get<Notification[]>('/notifications'),
+        api.get<{ count: number }>('/notifications/unread-count'),
+      ]);
 
-      setNotifications(mockNotifications);
-      setUnreadCount(mockNotifications.filter(n => !n.isRead).length);
+      setNotifications(notificationsRes.data);
+      setUnreadCount(countRes.data.count);
     } catch (error) {
       console.error('Failed to fetch notifications:', error);
+      // Fall back to empty state on error
+      setNotifications([]);
+      setUnreadCount(0);
     }
   };
 
   const markAsRead = async (notificationId: string) => {
     try {
-      // Replace with actual API call
+      await api.patch(`/notifications/${notificationId}/read`);
       setNotifications(prev =>
         prev.map(n => (n.id === notificationId ? { ...n, isRead: true } : n))
       );
@@ -91,7 +71,7 @@ export default function Notifications() {
 
   const markAllAsRead = async () => {
     try {
-      // Replace with actual API call
+      await api.post('/notifications/mark-all-read');
       setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
       setUnreadCount(0);
     } catch (error) {
@@ -101,7 +81,7 @@ export default function Notifications() {
 
   const deleteNotification = async (notificationId: string) => {
     try {
-      // Replace with actual API call
+      await api.delete(`/notifications/${notificationId}`);
       const notification = notifications.find(n => n.id === notificationId);
       if (notification && !notification.isRead) {
         setUnreadCount(prev => Math.max(0, prev - 1));

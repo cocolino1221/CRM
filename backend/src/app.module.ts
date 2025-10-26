@@ -20,6 +20,7 @@ import { AnalyticsModule } from './analytics/analytics.module';
 import { HealthModule } from './health/health.module';
 import { EmailModule } from './email/email.module';
 import { PipelineModule } from './pipelines/pipeline.module';
+import { NotificationsModule } from './notifications/notifications.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import databaseConfig from './config/database.config';
@@ -144,6 +145,7 @@ import { validationSchema } from './config/env.validation';
     IntegrationsModule,
     WhatsAppModule,
     PipelineModule,
+    NotificationsModule,
     QueueModule,
     AnalyticsModule,
   ],

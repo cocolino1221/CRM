@@ -192,6 +192,17 @@ export default function LeadsPage() {
     setModalError('');
   };
 
+  // Listen for Quick Action events
+  useEffect(() => {
+    const handleOpenModal = () => {
+      resetForm();
+      setShowAddModal(true);
+    };
+
+    window.addEventListener('openAddLeadModal', handleOpenModal);
+    return () => window.removeEventListener('openAddLeadModal', handleOpenModal);
+  }, [selectedPipeline]);
+
   const handleAddContact = async (e: React.FormEvent) => {
     e.preventDefault();
     setModalError('');
