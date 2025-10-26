@@ -17,6 +17,7 @@ import {
   Sparkles,
   Bot,
   Calendar,
+  Shield,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { authService } from '@/lib/auth';
@@ -27,6 +28,7 @@ const navigation = [
   { name: 'Contacts', href: '/contacts', icon: Users, color: 'from-purple-500 to-pink-500' },
   { name: 'Companies', href: '/companies', icon: Building2, color: 'from-orange-500 to-red-500' },
   { name: 'Leads', href: '/leads', icon: Briefcase, color: 'from-green-500 to-emerald-500' },
+  { name: 'Team', href: '/users', icon: Shield, color: 'from-teal-500 to-cyan-500' },
   { name: 'Tasks', href: '/tasks', icon: CheckSquare, color: 'from-yellow-500 to-orange-500' },
   { name: 'Automation', href: '/automation', icon: Bot, color: 'from-violet-500 to-fuchsia-500' },
   { name: 'Analytics', href: '/analytics', icon: BarChart3, color: 'from-indigo-500 to-purple-500' },

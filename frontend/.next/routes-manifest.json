@@ -138,6 +138,12 @@
       "regex": "^/tasks(?:/)?$",
       "routeKeys": {},
       "namedRegex": "^/tasks(?:/)?$"
+    },
+    {
+      "page": "/users",
+      "regex": "^/users(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/users(?:/)?$"
     }
   ],
   "dataRoutes": [],
