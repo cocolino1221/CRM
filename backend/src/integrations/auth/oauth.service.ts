@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { Integration, IntegrationType } from '../../database/entities/integration.entity';
+import { IntegrationRegistry } from '../registry/integration.registry';
 
 export interface OAuthTokens {
   accessToken: string;
@@ -29,6 +30,7 @@ export class OAuthService {
   constructor(
     private configService: ConfigService,
     private httpService: HttpService,
+    private integrationRegistry: IntegrationRegistry,
   ) {}
 
   /**
@@ -81,18 +83,40 @@ export class OAuthService {
     };
 
     const baseConfig = configs[type];
-    if (!baseConfig) {
+    if (!baseConfig || !baseConfig.authUrl) {
       throw new BadRequestException(`OAuth not supported for integration type: ${type}`);
     }
 
     const envPrefix = type.toUpperCase();
 
+    // Get client credentials
+    const clientId = this.configService.get(`OAUTH_${envPrefix}_CLIENT_ID`);
+    const clientSecret = this.configService.get(`OAUTH_${envPrefix}_CLIENT_SECRET`);
+
+    if (!clientId || !clientSecret) {
+      throw new BadRequestException(
+        `OAuth credentials not configured for ${type}. Please contact your administrator.`
+      );
+    }
+
+    // Get redirect URI
+    const redirectUri = this.configService.get(`OAUTH_${envPrefix}_REDIRECT_URI`) ||
+                       `${this.configService.get('APP_URL')}/integrations/oauth/callback`;
+
+    // Get scopes (from env or default)
+    const scopesEnv = this.configService.get(`OAUTH_${envPrefix}_SCOPES`);
+    let scopes: string[] = [];
+
+    if (scopesEnv) {
+      scopes = scopesEnv.split(',').map((s: string) => s.trim());
+    }
+
+    // If no scopes in env, use empty array (will be handled by generateAuthUrl)
     return {
-      clientId: this.configService.get(`OAUTH_${envPrefix}_CLIENT_ID`),
-      clientSecret: this.configService.get(`OAUTH_${envPrefix}_CLIENT_SECRET`),
-      redirectUri: this.configService.get(`OAUTH_${envPrefix}_REDIRECT_URI`) ||
-                   `${this.configService.get('APP_URL')}/integrations/oauth/callback`,
-      scopes: this.configService.get(`OAUTH_${envPrefix}_SCOPES`)?.split(',') || [],
+      clientId,
+      clientSecret,
+      redirectUri,
+      scopes,
       ...baseConfig,
     } as OAuthConfig;
   }
@@ -102,12 +126,20 @@ export class OAuthService {
    */
   generateAuthUrl(integration: Integration, state?: string): string {
     const config = this.getOAuthConfig(integration.type);
-    const scopes = integration.config?.scopes || config.scopes;
+
+    // Get scopes from: integration config > OAuth config > registry defaults
+    let scopes = integration.config?.scopes || config.scopes;
+
+    // If still no scopes, try to get from registry
+    if (!scopes || scopes.length === 0) {
+      const metadata = this.integrationRegistry.getIntegrationMetadata(integration.type);
+      scopes = metadata?.defaultConfig?.scopes || [];
+    }
 
     const params = new URLSearchParams({
       client_id: config.clientId,
       redirect_uri: config.redirectUri,
-      scope: scopes.join(' '),
+      scope: Array.isArray(scopes) ? scopes.join(' ') : scopes,
       response_type: 'code',
       state: state || integration.id,
     });
@@ -121,6 +153,10 @@ export class OAuthService {
         params.append('response_mode', 'query');
         break;
       case IntegrationType.SALESFORCE:
+        params.append('prompt', 'consent');
+        break;
+      case IntegrationType.GOOGLE:
+        params.append('access_type', 'offline');
         params.append('prompt', 'consent');
         break;
     }

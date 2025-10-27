@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Search, Check, ExternalLink, Zap, Settings, Webhook, X, Copy, Key, Lock, Link as LinkIcon, AlertCircle, Loader2 } from 'lucide-react';
 import Image from 'next/image';
 import api from '@/lib/api';
@@ -34,9 +34,11 @@ export default function IntegrationsPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [filter, setFilter] = useState('all');
   const [selectedIntegration, setSelectedIntegration] = useState<Integration | null>(null);
+  const [managingIntegration, setManagingIntegration] = useState<Integration | null>(null);
   const [configData, setConfigData] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [modalError, setModalError] = useState('');
+  const [connectedIntegrations, setConnectedIntegrations] = useState<Record<string, any>>({});
 
   const [integrations, setIntegrations] = useState<Integration[]>([
     // Communication
@@ -588,6 +590,57 @@ export default function IntegrationsPage() {
     { id: 'productivity', name: 'Productivity' },
   ];
 
+  // Fetch available and connected integrations on mount
+  useEffect(() => {
+    const fetchIntegrations = async () => {
+      try {
+        // Fetch available integrations from backend (only those with handlers)
+        const availableResponse = await api.get('/integrations/available');
+        const available = availableResponse.data.integrations || [];
+
+        // Fetch connected integrations
+        const connectedResponse = await api.get('/integrations');
+        const connected = connectedResponse.data.integrations || [];
+
+        // Create a map of connected integrations by type
+        const connectedMap: Record<string, any> = {};
+        connected.forEach((int: any) => {
+          const typeKey = int.type.toLowerCase();
+          connectedMap[typeKey] = int;
+        });
+
+        setConnectedIntegrations(connectedMap);
+
+        // Map backend integrations to frontend format
+        const formattedIntegrations = available.map((int: any) => ({
+          id: int.type.toLowerCase(),
+          name: int.name,
+          description: int.description,
+          icon: int.icon,
+          category: int.category.toLowerCase(),
+          connected: !!connectedMap[int.type.toLowerCase()],
+          oauth: int.defaultAuthType === 'oauth2',
+          oauthProvider: int.type.toLowerCase(),
+          configFields: int.defaultAuthType === 'api_key' ? [
+            {
+              name: 'apiKey',
+              label: 'API Key',
+              type: 'text',
+              required: true,
+            }
+          ] : undefined,
+        }));
+
+        setIntegrations(formattedIntegrations);
+      } catch (error) {
+        console.error('Failed to fetch integrations:', error);
+        // Keep hardcoded integrations as fallback
+      }
+    };
+
+    fetchIntegrations();
+  }, []);
+
   const filteredIntegrations = integrations.filter((integration) => {
     const matchesSearch = integration.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       integration.description.toLowerCase().includes(searchQuery.toLowerCase());
@@ -596,17 +649,91 @@ export default function IntegrationsPage() {
   });
 
   const handleConnect = (integration: Integration) => {
-    // For OAuth integrations, redirect to auth flow
+    // If already connected, show manage modal
+    if (integration.connected) {
+      setManagingIntegration(integration);
+      return;
+    }
+
+    // For OAuth integrations, redirect to integration OAuth flow
     if (integration.oauth) {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000/api/v1';
       const provider = integration.oauthProvider || integration.id;
-      window.location.href = `${apiUrl}/auth/${provider}`;
+      window.location.href = `${apiUrl}/integrations/oauth/${provider}`;
       return;
     }
 
     // For manual config integrations, show modal
     setSelectedIntegration(integration);
     setConfigData({});
+  };
+
+  const handleDisconnect = async (integration: Integration) => {
+    if (!connectedIntegrations[integration.id]) return;
+
+    setIsSubmitting(true);
+    setModalError('');
+
+    try {
+      await api.delete(`/integrations/${connectedIntegrations[integration.id].id}`);
+
+      // Update local state
+      const newConnected = { ...connectedIntegrations };
+      delete newConnected[integration.id];
+      setConnectedIntegrations(newConnected);
+
+      setIntegrations(prevIntegrations =>
+        prevIntegrations.map(int =>
+          int.id === integration.id ? { ...int, connected: false } : int
+        )
+      );
+
+      setManagingIntegration(null);
+    } catch (err: any) {
+      console.error('Failed to disconnect integration:', err);
+      setModalError(err.response?.data?.message || 'Failed to disconnect integration');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleTestConnection = async (integration: Integration) => {
+    if (!connectedIntegrations[integration.id]) return;
+
+    setIsSubmitting(true);
+    setModalError('');
+
+    try {
+      const response = await api.post(`/integrations/${connectedIntegrations[integration.id].id}/test`);
+
+      if (response.data.success) {
+        alert('Connection test successful!');
+      } else {
+        setModalError(response.data.message || 'Connection test failed');
+      }
+    } catch (err: any) {
+      console.error('Failed to test connection:', err);
+      setModalError(err.response?.data?.message || 'Failed to test connection');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleSyncNow = async (integration: Integration) => {
+    if (!connectedIntegrations[integration.id]) return;
+
+    setIsSubmitting(true);
+    setModalError('');
+
+    try {
+      await api.post(`/integrations/${connectedIntegrations[integration.id].id}/sync`);
+      alert('Sync started successfully!');
+    } catch (err: any) {
+      console.error('Failed to sync:', err);
+      setModalError(err.response?.data?.message || 'Failed to start sync');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleCloseModal = () => {
@@ -959,6 +1086,147 @@ export default function IntegrationsPage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Manage Integration Modal */}
+      {managingIntegration && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm animate-fade-in">
+          <div className="relative w-full max-w-2xl mx-4 glass-effect rounded-2xl p-8 shadow-2xl animate-scale-in">
+            {/* Close Button */}
+            <button
+              onClick={() => {
+                setManagingIntegration(null);
+                setModalError('');
+              }}
+              className="absolute right-4 top-4 rounded-xl p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-all"
+            >
+              <X className="h-6 w-6" />
+            </button>
+
+            {/* Header */}
+            <div className="mb-6 flex items-center gap-4">
+              <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-white p-3 shadow-lg border border-gray-100">
+                <Image
+                  src={managingIntegration.logoUrl}
+                  alt={`${managingIntegration.name} logo`}
+                  width={48}
+                  height={48}
+                  className="object-contain"
+                />
+              </div>
+              <div>
+                <h2 className="text-2xl font-bold text-gray-900">
+                  Manage {managingIntegration.name}
+                </h2>
+                <p className="text-sm text-gray-600">
+                  {connectedIntegrations[managingIntegration.id]?.status || 'active'} • Connected
+                </p>
+              </div>
+            </div>
+
+            {/* Error Message */}
+            {modalError && (
+              <div className="mb-6 flex items-start gap-3 rounded-xl bg-red-50 border border-red-200 p-4">
+                <AlertCircle className="h-5 w-5 text-red-600 mt-0.5" />
+                <div className="flex-1">
+                  <p className="text-sm font-semibold text-red-900">Error</p>
+                  <p className="text-sm text-red-700 mt-1">{modalError}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setModalError('')}
+                  className="text-red-400 hover:text-red-600 transition-colors"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            )}
+
+            {/* Integration Details */}
+            <div className="space-y-4 mb-6">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="rounded-xl bg-gray-50 p-4">
+                  <p className="text-sm font-medium text-gray-600 mb-1">Status</p>
+                  <p className="text-lg font-semibold text-gray-900 capitalize">
+                    {connectedIntegrations[managingIntegration.id]?.status || 'Active'}
+                  </p>
+                </div>
+                <div className="rounded-xl bg-gray-50 p-4">
+                  <p className="text-sm font-medium text-gray-600 mb-1">Last Sync</p>
+                  <p className="text-lg font-semibold text-gray-900">
+                    {connectedIntegrations[managingIntegration.id]?.lastActivityAt
+                      ? new Date(connectedIntegrations[managingIntegration.id].lastActivityAt).toLocaleDateString()
+                      : 'Never'}
+                  </p>
+                </div>
+              </div>
+
+              {connectedIntegrations[managingIntegration.id]?.syncInfo && (
+                <div className="rounded-xl bg-blue-50 p-4">
+                  <p className="text-sm font-medium text-blue-900 mb-2">Last Sync Info</p>
+                  <div className="text-sm text-blue-800">
+                    <p>Records Processed: {connectedIntegrations[managingIntegration.id].syncInfo.recordsProcessed || 0}</p>
+                    <p>Records Created: {connectedIntegrations[managingIntegration.id].syncInfo.recordsCreated || 0}</p>
+                    <p>Records Updated: {connectedIntegrations[managingIntegration.id].syncInfo.recordsUpdated || 0}</p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex gap-3">
+              <button
+                onClick={() => handleTestConnection(managingIntegration)}
+                disabled={isSubmitting}
+                className="flex-1 rounded-xl border border-indigo-300 bg-white px-6 py-3 text-sm font-semibold text-indigo-700 hover:bg-indigo-50 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Testing...
+                  </>
+                ) : (
+                  <>
+                    <Zap className="h-4 w-4" />
+                    Test Connection
+                  </>
+                )}
+              </button>
+              <button
+                onClick={() => handleSyncNow(managingIntegration)}
+                disabled={isSubmitting}
+                className="flex-1 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-6 py-3 text-sm font-semibold text-white shadow-lg hover:shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Syncing...
+                  </>
+                ) : (
+                  <>
+                    <Check className="h-4 w-4" />
+                    Sync Now
+                  </>
+                )}
+              </button>
+            </div>
+
+            {/* Disconnect Button */}
+            <div className="mt-6 pt-6 border-t border-gray-200">
+              <button
+                onClick={() => {
+                  if (confirm(`Are you sure you want to disconnect ${managingIntegration.name}? This will remove all synced data and credentials.`)) {
+                    handleDisconnect(managingIntegration);
+                  }
+                }}
+                disabled={isSubmitting}
+                className="w-full rounded-xl border-2 border-red-300 bg-white px-6 py-3 text-sm font-semibold text-red-600 hover:bg-red-50 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isSubmitting ? 'Disconnecting...' : 'Disconnect Integration'}
+              </button>
+            </div>
           </div>
         </div>
       )}

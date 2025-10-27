@@ -15,6 +15,8 @@ import {
   Logger,
 } from '@nestjs/common';
 import { Response } from 'express';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import { AuthenticatedRequest } from '../auth/interfaces/authenticated-request.interface';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -23,6 +25,7 @@ import { IntegrationsService } from './integrations.service';
 import { IntegrationRegistry } from './registry/integration.registry';
 import { OAuthService } from './auth/oauth.service';
 import { WebhookService } from './webhook/webhook.service';
+import { ConfigService } from '@nestjs/config';
 import { CreateIntegrationDto, UpdateIntegrationDto, InstallIntegrationDto } from './dto/integration.dto';
 import { Integration, IntegrationType, IntegrationStatus, IntegrationAuthType } from '../database/entities/integration.entity';
 
@@ -38,16 +41,32 @@ export class IntegrationsController {
     private readonly integrationRegistry: IntegrationRegistry,
     private readonly oauthService: OAuthService,
     private readonly webhookService: WebhookService,
+    private readonly configService: ConfigService,
+    @InjectRepository(Integration)
+    private readonly integrationRepository: Repository<Integration>,
   ) {}
 
   @Get('available')
-  @ApiOperation({ summary: 'Get all available integration types' })
-  @ApiResponse({ status: 200, description: 'List of available integrations' })
+  @ApiOperation({ summary: 'Get all available integration types with handler status' })
+  @ApiResponse({ status: 200, description: 'List of available integrations with working handlers only' })
   async getAvailableIntegrations() {
+    const integrations = await this.integrationsService.getAvailableIntegrations();
+
+    // Filter to only return integrations with handlers (actually working)
+    const availableIntegrations = integrations
+      .map((integration) => {
+        const handler = this.integrationRegistry.getIntegrationHandler(integration.type);
+        return {
+          ...integration,
+          isAvailable: !!handler,
+          hasHandler: !!handler,
+        };
+      })
+      .filter(i => i.hasHandler); // Only return working integrations
+
     return {
-      integrations: await this.integrationsService.getAvailableIntegrations(),
-      categories: this.integrationRegistry.getIntegrationsByCategory(),
-      featured: this.integrationRegistry.getFeaturedIntegrations(),
+      integrations: availableIntegrations,
+      total: availableIntegrations.length,
     };
   }
 
@@ -224,16 +243,34 @@ export class IntegrationsController {
   }
 
   // OAuth Endpoints
-  @Get('oauth/:type/authorize')
+  @Get('oauth/:provider')
   @ApiOperation({ summary: 'Start OAuth authorization flow' })
   @ApiResponse({ status: 302, description: 'Redirect to OAuth provider' })
   async startOAuth(
     @Req() req: AuthenticatedRequest,
     @Res() res: Response,
-    @Param('type') type: IntegrationType,
+    @Param('provider') provider: string,
     @Query('integration_id') integrationId?: string,
   ): Promise<void> {
+    const frontendUrl = this.configService.get('FRONTEND_URL') || 'http://localhost:3001';
+
     try {
+      // Map provider name to IntegrationType
+      const typeMap: Record<string, IntegrationType> = {
+        'google': IntegrationType.GOOGLE,
+        'slack': IntegrationType.SLACK,
+        'microsoft': IntegrationType.MICROSOFT,
+        'salesforce': IntegrationType.SALESFORCE,
+        'hubspot': IntegrationType.HUBSPOT,
+        'zoom': IntegrationType.ZOOM,
+      };
+
+      const type = typeMap[provider.toLowerCase()];
+      if (!type) {
+        res.redirect(`${frontendUrl}/integrations/callback?error=${encodeURIComponent('Unsupported OAuth provider')}`);
+        return;
+      }
+
       let integration: Integration;
 
       if (integrationId) {
@@ -250,13 +287,13 @@ export class IntegrationsController {
       res.redirect(authUrl);
     } catch (error) {
       this.logger.error(`OAuth start failed:`, error);
-      res.status(400).json({ error: error.message });
+      res.redirect(`${frontendUrl}/integrations/callback?error=${encodeURIComponent(error.message)}`);
     }
   }
 
   @Get('oauth/callback')
   @ApiOperation({ summary: 'Handle OAuth callback' })
-  @ApiResponse({ status: 200, description: 'OAuth callback handled' })
+  @ApiResponse({ status: 302, description: 'OAuth callback handled' })
   async handleOAuthCallback(
     @Req() req: AuthenticatedRequest,
     @Res() res: Response,
@@ -264,21 +301,30 @@ export class IntegrationsController {
     @Query('state') state: string,
     @Query('error') error?: string,
   ): Promise<void> {
+    const frontendUrl = this.configService.get('FRONTEND_URL') || 'http://localhost:3001';
+
     if (error) {
       this.logger.error(`OAuth error: ${error}`);
-      res.redirect(`/integrations?error=${encodeURIComponent(error)}`);
+      res.redirect(`${frontendUrl}/integrations/callback?error=${encodeURIComponent(error)}`);
       return;
     }
 
     try {
-      const integration = await this.integrationsService.findOne(state, req.user.workspaceId);
+      // State contains integration ID
+      const integration = await this.integrationRepository.findOne({
+        where: { id: state },
+      });
 
-      await this.integrationsService.authenticate(integration.id, req.user.workspaceId, { code });
+      if (!integration) {
+        throw new Error('Integration not found');
+      }
 
-      res.redirect(`/integrations?success=1&integration=${integration.id}`);
+      await this.integrationsService.authenticate(integration.id, integration.workspaceId, { code });
+
+      res.redirect(`${frontendUrl}/integrations/callback?success=1&integration=${integration.id}&name=${encodeURIComponent(integration.name)}`);
     } catch (err) {
       this.logger.error(`OAuth callback failed:`, err);
-      res.redirect(`/integrations?error=${encodeURIComponent(err.message)}`);
+      res.redirect(`${frontendUrl}/integrations/callback?error=${encodeURIComponent(err.message)}`);
     }
   }
 

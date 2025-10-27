@@ -1,19 +1,48 @@
 'use client';
 
-import { useState } from 'react';
-import { ChevronLeft, ChevronRight, Plus, Clock, MapPin, Users, Video, Phone, Mail, Calendar as CalendarIcon, Filter, Search, X, Edit, Trash2, CheckCircle } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { ChevronLeft, ChevronRight, Plus, Clock, MapPin, Users, Video, Phone, Mail, Calendar as CalendarIcon, Filter, Search, X, Edit, Trash2, CheckCircle, Loader2, AlertCircle } from 'lucide-react';
+import api from '@/lib/api';
 
 interface Event {
   id: string;
   title: string;
-  type: 'meeting' | 'call' | 'task' | 'deadline';
-  date: Date;
+  description?: string;
+  type: 'meeting' | 'call' | 'task' | 'deadline' | 'appointment';
+  status: 'scheduled' | 'in_progress' | 'completed' | 'cancelled';
+  startDate: string;
+  endDate: string;
+  isAllDay: boolean;
+  location?: string;
+  meetingPlatform?: 'zoom' | 'google_meet' | 'microsoft_teams' | 'phone' | 'in_person';
+  meetingLink?: string;
+  color?: string;
+  organizer?: {
+    id: string;
+    firstName: string;
+    lastName: string;
+  };
+  attendees?: Array<{
+    id: string;
+    firstName: string;
+    lastName: string;
+  }>;
+  contact?: {
+    id: string;
+    firstName: string;
+    lastName: string;
+  };
+}
+
+interface EventFormData {
+  title: string;
+  description: string;
+  type: 'meeting' | 'call' | 'task' | 'deadline' | 'appointment';
+  date: string;
   startTime: string;
   endTime: string;
-  attendees?: string[];
-  location?: string;
-  description?: string;
-  color: string;
+  location: string;
+  meetingPlatform?: 'zoom' | 'google_meet' | 'microsoft_teams' | 'phone' | 'in_person';
 }
 
 export default function CalendarPage() {
@@ -21,13 +50,134 @@ export default function CalendarPage() {
   const [view, setView] = useState<'month' | 'week' | 'day'>('month');
   const [showEventModal, setShowEventModal] = useState(false);
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
+  const [events, setEvents] = useState<Event[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [modalError, setModalError] = useState('');
 
-  const [events] = useState<Event[]>([]);
+  const [formData, setFormData] = useState<EventFormData>({
+    title: '',
+    description: '',
+    type: 'meeting',
+    date: new Date().toISOString().split('T')[0],
+    startTime: '09:00',
+    endTime: '10:00',
+    location: '',
+  });
 
   const monthNames = [
     'January', 'February', 'March', 'April', 'May', 'June',
     'July', 'August', 'September', 'October', 'November', 'December'
   ];
+
+  useEffect(() => {
+    fetchEvents();
+  }, [currentDate]);
+
+  const fetchEvents = async () => {
+    try {
+      setIsLoading(true);
+      const startOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
+      const endOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0);
+
+      const response = await api.get<Event[]>('/events', {
+        params: {
+          startDate: startOfMonth.toISOString(),
+          endDate: endOfMonth.toISOString(),
+        },
+      });
+
+      setEvents(response.data);
+      setError(null);
+    } catch (err: any) {
+      console.error('Failed to fetch events:', err);
+      setError('Failed to load events');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleCreateEvent = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setModalError('');
+    setIsSubmitting(true);
+
+    try {
+      // Combine date and time to create ISO timestamps
+      const startDateTime = new Date(`${formData.date}T${formData.startTime}:00`);
+      const endDateTime = new Date(`${formData.date}T${formData.endTime}:00`);
+
+      const eventData = {
+        title: formData.title,
+        description: formData.description || undefined,
+        type: formData.type,
+        startDate: startDateTime.toISOString(),
+        endDate: endDateTime.toISOString(),
+        location: formData.location || undefined,
+        meetingPlatform: formData.meetingPlatform || undefined,
+        color: getColorForType(formData.type),
+      };
+
+      const response = await api.post<Event>('/events', eventData);
+
+      setEvents([...events, response.data]);
+      setShowEventModal(false);
+      resetForm();
+    } catch (err: any) {
+      console.error('Failed to create event:', err);
+      setModalError(err.response?.data?.message || 'Failed to create event');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleDeleteEvent = async (eventId: string) => {
+    if (!confirm('Are you sure you want to delete this event?')) return;
+
+    try {
+      await api.delete(`/events/${eventId}`);
+      setEvents(events.filter(e => e.id !== eventId));
+    } catch (err: any) {
+      alert(err.response?.data?.message || 'Failed to delete event');
+    }
+  };
+
+  const resetForm = () => {
+    setFormData({
+      title: '',
+      description: '',
+      type: 'meeting',
+      date: selectedDate?.toISOString().split('T')[0] || new Date().toISOString().split('T')[0],
+      startTime: '09:00',
+      endTime: '10:00',
+      location: '',
+    });
+    setModalError('');
+    setSelectedDate(null);
+  };
+
+  const getColorForType = (type: string): string => {
+    switch (type) {
+      case 'meeting': return '#3B82F6';
+      case 'call': return '#10B981';
+      case 'task': return '#F59E0B';
+      case 'deadline': return '#EF4444';
+      case 'appointment': return '#8B5CF6';
+      default: return '#6B7280';
+    }
+  };
+
+  const getColorClasses = (type: string): string => {
+    switch (type) {
+      case 'meeting': return 'bg-blue-500';
+      case 'call': return 'bg-green-500';
+      case 'task': return 'bg-orange-500';
+      case 'deadline': return 'bg-red-500';
+      case 'appointment': return 'bg-purple-500';
+      default: return 'bg-gray-500';
+    }
+  };
 
   const daysInMonth = (date: Date) => {
     return new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
@@ -50,11 +200,12 @@ export default function CalendarPage() {
   };
 
   const getEventsForDate = (date: Date) => {
-    return events.filter(event =>
-      event.date.getDate() === date.getDate() &&
-      event.date.getMonth() === date.getMonth() &&
-      event.date.getFullYear() === date.getFullYear()
-    );
+    return events.filter(event => {
+      const eventDate = new Date(event.startDate);
+      return eventDate.getDate() === date.getDate() &&
+             eventDate.getMonth() === date.getMonth() &&
+             eventDate.getFullYear() === date.getFullYear();
+    });
   };
 
   const isToday = (date: Date) => {
@@ -72,6 +223,11 @@ export default function CalendarPage() {
       case 'deadline': return Clock;
       default: return CalendarIcon;
     }
+  };
+
+  const formatTime = (dateString: string) => {
+    const date = new Date(dateString);
+    return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
   };
 
   const renderCalendar = () => {
@@ -100,6 +256,7 @@ export default function CalendarPage() {
           }`}
           onClick={() => {
             setSelectedDate(date);
+            setFormData({ ...formData, date: date.toISOString().split('T')[0] });
             setShowEventModal(true);
           }}
         >
@@ -115,10 +272,10 @@ export default function CalendarPage() {
             {dayEvents.slice(0, 3).map((event) => (
               <div
                 key={event.id}
-                className={`text-xs px-2 py-1 rounded ${event.color} text-white truncate`}
+                className={`text-xs px-2 py-1 rounded ${getColorClasses(event.type)} text-white truncate`}
                 onClick={(e) => e.stopPropagation()}
               >
-                {event.startTime} - {event.title}
+                {formatTime(event.startDate)} - {event.title}
               </div>
             ))}
             {dayEvents.length > 3 && (
@@ -131,6 +288,19 @@ export default function CalendarPage() {
 
     return cells;
   };
+
+  const upcomingEvents = events
+    .filter(e => new Date(e.startDate) >= new Date())
+    .sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime())
+    .slice(0, 5);
+
+  if (isLoading && events.length === 0) {
+    return (
+      <div className="flex items-center justify-center h-96">
+        <Loader2 className="h-8 w-8 animate-spin text-indigo-600" />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -145,7 +315,11 @@ export default function CalendarPage() {
           </p>
         </div>
         <button
-          onClick={() => setShowEventModal(true)}
+          onClick={() => {
+            setSelectedDate(new Date());
+            setFormData({ ...formData, date: new Date().toISOString().split('T')[0] });
+            setShowEventModal(true);
+          }}
           className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-cyan-600 to-teal-600 px-5 py-2.5 text-sm font-semibold text-white shadow-lg hover:shadow-xl transition-all"
         >
           <Plus className="h-4 w-4" />
@@ -203,6 +377,16 @@ export default function CalendarPage() {
           </div>
         </div>
       </div>
+
+      {error && (
+        <div className="flex items-center gap-2 p-4 rounded-xl bg-red-50 border border-red-200">
+          <AlertCircle className="h-5 w-5 text-red-600" />
+          <p className="text-sm text-red-700">{error}</p>
+          <button onClick={fetchEvents} className="ml-auto text-sm text-red-600 hover:text-red-700 font-semibold">
+            Retry
+          </button>
+        </div>
+      )}
 
       {/* Calendar Controls */}
       <div className="glass-effect rounded-xl p-4 border border-gray-200">
@@ -280,64 +464,62 @@ export default function CalendarPage() {
       {/* Upcoming Events */}
       <div className="glass-effect rounded-xl p-6 border border-gray-200">
         <h3 className="text-lg font-semibold text-gray-900 mb-4">Upcoming Events</h3>
-        <div className="space-y-3">
-          {events.slice(0, 5).map((event) => {
-            const Icon = getEventIcon(event.type);
-            return (
-              <div
-                key={event.id}
-                className="flex items-start gap-4 p-4 rounded-xl border border-gray-200 hover:border-cyan-300 hover:shadow-lg transition-all group"
-              >
-                <div className={`p-2.5 rounded-lg ${event.color}`}>
-                  <Icon className="h-5 w-5 text-white" />
-                </div>
-                <div className="flex-1">
-                  <h4 className="font-semibold text-gray-900">{event.title}</h4>
-                  <div className="flex items-center gap-4 mt-2 text-sm text-gray-600">
-                    <div className="flex items-center gap-1.5">
-                      <Clock className="h-4 w-4" />
-                      <span>{event.date.toLocaleDateString()} • {event.startTime} - {event.endTime}</span>
+        {upcomingEvents.length === 0 ? (
+          <p className="text-gray-500 text-center py-4">No upcoming events</p>
+        ) : (
+          <div className="space-y-3">
+            {upcomingEvents.map((event) => {
+              const Icon = getEventIcon(event.type);
+              return (
+                <div
+                  key={event.id}
+                  className="flex items-start gap-4 p-4 rounded-xl border border-gray-200 hover:border-cyan-300 hover:shadow-lg transition-all group"
+                >
+                  <div className={`p-2.5 rounded-lg ${getColorClasses(event.type)}`}>
+                    <Icon className="h-5 w-5 text-white" />
+                  </div>
+                  <div className="flex-1">
+                    <h4 className="font-semibold text-gray-900">{event.title}</h4>
+                    <div className="flex items-center gap-4 mt-2 text-sm text-gray-600">
+                      <div className="flex items-center gap-1.5">
+                        <Clock className="h-4 w-4" />
+                        <span>{new Date(event.startDate).toLocaleDateString()} • {formatTime(event.startDate)} - {formatTime(event.endDate)}</span>
+                      </div>
+                      {event.location && (
+                        <div className="flex items-center gap-1.5">
+                          <MapPin className="h-4 w-4" />
+                          <span>{event.location}</span>
+                        </div>
+                      )}
                     </div>
-                    {event.location && (
-                      <div className="flex items-center gap-1.5">
-                        <MapPin className="h-4 w-4" />
-                        <span>{event.location}</span>
-                      </div>
-                    )}
-                    {event.attendees && (
-                      <div className="flex items-center gap-1.5">
-                        <Users className="h-4 w-4" />
-                        <span>{event.attendees.length} attendees</span>
-                      </div>
-                    )}
+                  </div>
+                  <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-all">
+                    <button
+                      onClick={() => handleDeleteEvent(event.id)}
+                      className="p-2 rounded-lg hover:bg-red-50 transition-all"
+                    >
+                      <Trash2 className="h-4 w-4 text-red-600" />
+                    </button>
                   </div>
                 </div>
-                <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-all">
-                  <button className="p-2 rounded-lg hover:bg-blue-50 transition-all">
-                    <Edit className="h-4 w-4 text-blue-600" />
-                  </button>
-                  <button className="p-2 rounded-lg hover:bg-red-50 transition-all">
-                    <Trash2 className="h-4 w-4 text-red-600" />
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Event Modal */}
       {showEventModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm animate-fade-in">
-          <div className="relative w-full max-w-2xl mx-4 glass-effect rounded-2xl shadow-2xl animate-scale-in">
-            <div className="flex items-center justify-between p-6 border-b border-gray-200">
+          <div className="relative w-full max-w-2xl mx-4 glass-effect rounded-2xl shadow-2xl animate-scale-in max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between p-6 border-b border-gray-200 sticky top-0 bg-white rounded-t-2xl">
               <h2 className="text-2xl font-bold text-gray-900">
                 {selectedDate ? `New Event - ${selectedDate.toLocaleDateString()}` : 'New Event'}
               </h2>
               <button
                 onClick={() => {
                   setShowEventModal(false);
-                  setSelectedDate(null);
+                  resetForm();
                 }}
                 className="rounded-xl p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-all"
               >
@@ -345,11 +527,21 @@ export default function CalendarPage() {
               </button>
             </div>
 
-            <div className="p-6 space-y-4">
+            <form onSubmit={handleCreateEvent} className="p-6 space-y-4">
+              {modalError && (
+                <div className="flex items-center gap-2 p-4 rounded-xl bg-red-50 border border-red-200">
+                  <AlertCircle className="h-5 w-5 text-red-600" />
+                  <p className="text-sm text-red-700">{modalError}</p>
+                </div>
+              )}
+
               <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">Event Title</label>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">Event Title *</label>
                 <input
                   type="text"
+                  required
+                  value={formData.title}
+                  onChange={(e) => setFormData({ ...formData, title: e.target.value })}
                   placeholder="Enter event title..."
                   className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500"
                 />
@@ -357,19 +549,27 @@ export default function CalendarPage() {
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">Event Type</label>
-                  <select className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500">
-                    <option>Meeting</option>
-                    <option>Call</option>
-                    <option>Task</option>
-                    <option>Deadline</option>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">Event Type *</label>
+                  <select
+                    required
+                    value={formData.type}
+                    onChange={(e) => setFormData({ ...formData, type: e.target.value as any })}
+                    className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                  >
+                    <option value="meeting">Meeting</option>
+                    <option value="call">Call</option>
+                    <option value="task">Task</option>
+                    <option value="deadline">Deadline</option>
+                    <option value="appointment">Appointment</option>
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">Date</label>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">Date *</label>
                   <input
                     type="date"
-                    defaultValue={selectedDate?.toISOString().split('T')[0]}
+                    required
+                    value={formData.date}
+                    onChange={(e) => setFormData({ ...formData, date: e.target.value })}
                     className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500"
                   />
                 </div>
@@ -377,25 +577,49 @@ export default function CalendarPage() {
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">Start Time</label>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">Start Time *</label>
                   <input
                     type="time"
+                    required
+                    value={formData.startTime}
+                    onChange={(e) => setFormData({ ...formData, startTime: e.target.value })}
                     className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500"
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">End Time</label>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">End Time *</label>
                   <input
                     type="time"
+                    required
+                    value={formData.endTime}
+                    onChange={(e) => setFormData({ ...formData, endTime: e.target.value })}
                     className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500"
                   />
                 </div>
               </div>
 
               <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">Meeting Platform</label>
+                <select
+                  value={formData.meetingPlatform || ''}
+                  onChange={(e) => setFormData({ ...formData, meetingPlatform: e.target.value as any || undefined })}
+                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                >
+                  <option value="">None</option>
+                  <option value="zoom">Zoom</option>
+                  <option value="google_meet">Google Meet</option>
+                  <option value="microsoft_teams">Microsoft Teams</option>
+                  <option value="phone">Phone</option>
+                  <option value="in_person">In Person</option>
+                </select>
+              </div>
+
+              <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-2">Location</label>
                 <input
                   type="text"
+                  value={formData.location}
+                  onChange={(e) => setFormData({ ...formData, location: e.target.value })}
                   placeholder="Add location or meeting link..."
                   className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500"
                 />
@@ -405,6 +629,8 @@ export default function CalendarPage() {
                 <label className="block text-sm font-semibold text-gray-700 mb-2">Description</label>
                 <textarea
                   rows={3}
+                  value={formData.description}
+                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                   placeholder="Add event description..."
                   className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500"
                 />
@@ -412,21 +638,25 @@ export default function CalendarPage() {
 
               <div className="flex justify-end gap-3 pt-4 border-t border-gray-200">
                 <button
+                  type="button"
                   onClick={() => {
                     setShowEventModal(false);
-                    setSelectedDate(null);
+                    resetForm();
                   }}
                   className="px-6 py-3 text-sm font-semibold text-gray-700 bg-white border border-gray-300 rounded-xl hover:bg-gray-50 transition-all"
                 >
                   Cancel
                 </button>
                 <button
-                  className="px-6 py-3 text-sm font-semibold text-white bg-gradient-to-r from-cyan-600 to-teal-600 rounded-xl shadow-lg hover:shadow-xl transition-all"
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="px-6 py-3 text-sm font-semibold text-white bg-gradient-to-r from-cyan-600 to-teal-600 rounded-xl shadow-lg hover:shadow-xl transition-all disabled:opacity-50 flex items-center gap-2"
                 >
-                  Create Event
+                  {isSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
+                  {isSubmitting ? 'Creating...' : 'Create Event'}
                 </button>
               </div>
-            </div>
+            </form>
           </div>
         </div>
       )}

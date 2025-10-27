@@ -11,47 +11,30 @@ function CallbackContent() {
   const [message, setMessage] = useState('Processing integration...');
 
   useEffect(() => {
-    const handleCallback = async () => {
-      const code = searchParams.get('code');
-      const state = searchParams.get('state');
+    const handleCallback = () => {
+      const success = searchParams.get('success');
       const error = searchParams.get('error');
       const integrationId = searchParams.get('integration');
+      const integrationName = searchParams.get('name');
 
       if (error) {
         setStatus('error');
-        setMessage(`Integration failed: ${error}`);
+        setMessage(`Integration failed: ${decodeURIComponent(error)}`);
         setTimeout(() => router.push('/integrations'), 3000);
         return;
       }
 
-      if (!code || !integrationId) {
-        setStatus('error');
-        setMessage('Missing required parameters');
-        setTimeout(() => router.push('/integrations'), 3000);
-        return;
-      }
-
-      try {
-        // TODO: Send code to backend API to complete OAuth flow
-        const response = await fetch('/api/integrations/oauth/callback', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ code, state, integrationId }),
-        });
-
-        if (!response.ok) {
-          throw new Error('Failed to complete integration');
-        }
-
+      if (success === '1' && integrationId) {
         setStatus('success');
-        setMessage(`${integrationId} connected successfully!`);
+        setMessage(`${integrationName || 'Integration'} connected successfully!`);
         setTimeout(() => router.push('/integrations'), 2000);
-      } catch (err) {
-        console.error('Integration callback error:', err);
-        setStatus('error');
-        setMessage('Failed to complete integration. Please try again.');
-        setTimeout(() => router.push('/integrations'), 3000);
+        return;
       }
+
+      // No valid callback parameters
+      setStatus('error');
+      setMessage('Invalid callback parameters');
+      setTimeout(() => router.push('/integrations'), 3000);
     };
 
     handleCallback();

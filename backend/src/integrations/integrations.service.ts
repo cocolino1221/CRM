@@ -105,13 +105,29 @@ export class IntegrationsService {
     });
 
     if (existing) {
-      throw new BadRequestException(`Integration of type ${dto.type} already exists`);
+      throw new BadRequestException(
+        `You've already connected this ${dto.type} integration. ` +
+        `Go to the integrations page to manage or disconnect it.`
+      );
     }
 
     // Get integration metadata
     const metadata = await this.getIntegrationMetadata(dto.type);
     if (!metadata) {
-      throw new BadRequestException(`Integration type ${dto.type} is not supported`);
+      const supportedTypes = ['Slack', 'Gmail', 'Microsoft 365', 'Salesforce', 'HubSpot', 'Zoom', 'Typeform'];
+      throw new BadRequestException(
+        `Sorry, ${dto.type} integration is not yet available. ` +
+        `Available integrations: ${supportedTypes.join(', ')}`
+      );
+    }
+
+    // Check if handler exists
+    const handler = this.integrationRegistry.getIntegrationHandler(dto.type);
+    if (!handler) {
+      throw new BadRequestException(
+        `${metadata.name} integration is coming soon! ` +
+        `We're still building the connection. Please check back later or contact support.`
+      );
     }
 
     // Create integration

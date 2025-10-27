@@ -16,10 +16,13 @@ async function bootstrap() {
   app.setGlobalPrefix('api/v1');
 
   // Enable CORS with proper configuration
+  const frontendUrl = configService.get('FRONTEND_URL');
+  const allowedOrigins = nodeEnv === 'production'
+    ? [frontendUrl, 'http://localhost:3001', 'http://localhost:3000'].filter(Boolean)
+    : ['http://localhost:3000', 'http://localhost:3001'];
+
   app.enableCors({
-    origin: nodeEnv === 'production'
-      ? configService.get('FRONTEND_URL')
-      : ['http://localhost:3000', 'http://localhost:3001'],
+    origin: allowedOrigins,
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Correlation-ID'],
@@ -29,9 +32,12 @@ async function bootstrap() {
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
-      forbidNonWhitelisted: true,
+      forbidNonWhitelisted: false, // Allow extra properties but strip them
       transform: true,
-      disableErrorMessages: nodeEnv === 'production',
+      disableErrorMessages: false, // Always show error messages for debugging
+      transformOptions: {
+        enableImplicitConversion: true, // Auto-convert types
+      },
     }),
   );
 

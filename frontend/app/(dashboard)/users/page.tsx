@@ -561,10 +561,13 @@ export default function UsersPage() {
                   <input
                     type={showPassword ? 'text' : 'password'}
                     required
+                    minLength={8}
+                    pattern="^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)[a-zA-Z\d@$!%*?&]{8,}$"
+                    title="Password must be at least 8 characters and contain at least one uppercase letter, one lowercase letter, and one number"
                     value={formData.password}
                     onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                     className="w-full px-4 py-3 pr-12 rounded-xl border border-gray-300 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 transition-all outline-none"
-                    placeholder="••••••••"
+                    placeholder="Min 8 chars, 1 uppercase, 1 lowercase, 1 number"
                   />
                   <button
                     type="button"
@@ -574,6 +577,9 @@ export default function UsersPage() {
                     {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
                   </button>
                 </div>
+                <p className="mt-1 text-xs text-gray-500">
+                  Must contain at least 8 characters with 1 uppercase, 1 lowercase, and 1 number
+                </p>
               </div>
 
               <div>
@@ -720,6 +726,9 @@ export default function UsersPage() {
                 <div className="relative">
                   <input
                     type={showPassword ? 'text' : 'password'}
+                    minLength={8}
+                    pattern="^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)[a-zA-Z\d@$!%*?&]{8,}$"
+                    title="Password must be at least 8 characters and contain at least one uppercase letter, one lowercase letter, and one number"
                     value={formData.password}
                     onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                     className="w-full px-4 py-3 pr-12 rounded-xl border border-gray-300 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 transition-all outline-none"
@@ -733,6 +742,9 @@ export default function UsersPage() {
                     {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
                   </button>
                 </div>
+                <p className="mt-1 text-xs text-gray-500">
+                  If changing, must contain at least 8 characters with 1 uppercase, 1 lowercase, and 1 number
+                </p>
               </div>
 
               <div>

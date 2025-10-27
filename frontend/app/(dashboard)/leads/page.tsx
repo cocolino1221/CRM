@@ -89,6 +89,7 @@ export default function LeadsPage() {
   // Modal states
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
+  const [showPipelineModal, setShowPipelineModal] = useState(false);
   const [editingContact, setEditingContact] = useState<Contact | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [modalError, setModalError] = useState('');
@@ -104,16 +105,45 @@ export default function LeadsPage() {
     tags: [],
   });
 
+  // Pipeline form data
+  const [pipelineFormData, setPipelineFormData] = useState({
+    name: '',
+    description: '',
+    isDefault: false,
+  });
+
+  const [pipelineStages, setPipelineStages] = useState([
+    { name: 'New Lead', color: '#3B82F6', displayOrder: 0, isClosedWon: false, isClosedLost: false },
+    { name: 'Contacted', color: '#8B5CF6', displayOrder: 1, isClosedWon: false, isClosedLost: false },
+    { name: 'Qualified', color: '#10B981', displayOrder: 2, isClosedWon: false, isClosedLost: false },
+    { name: 'Proposal', color: '#F59E0B', displayOrder: 3, isClosedWon: false, isClosedLost: false },
+    { name: 'Negotiation', color: '#EF4444', displayOrder: 4, isClosedWon: false, isClosedLost: false },
+    { name: 'Closed Won', color: '#059669', displayOrder: 5, isClosedWon: true, isClosedLost: false },
+    { name: 'Closed Lost', color: '#DC2626', displayOrder: 6, isClosedWon: false, isClosedLost: true },
+  ]);
+
   const fetchPipelines = async () => {
     try {
       const response = await api.get<Pipeline[]>('/pipelines');
       console.log('Pipelines response:', response.data);
+
+      // Backend auto-creates pipeline on first GET, so empty array shouldn't happen
+      // But if it does, the backend needs to be deployed with the fix
+      if (!response.data || response.data.length === 0) {
+        console.warn('No pipelines returned from API');
+        setPipelines([]);
+        setSelectedPipeline(null);
+        setError('No pipelines found. The backend may need to be deployed. Please refresh or contact support.');
+        return false;
+      }
+
       setPipelines(response.data);
       // Select default pipeline or first pipeline
       const defaultPipeline = response.data.find(p => p.isDefault) || response.data[0];
       console.log('Selected pipeline:', defaultPipeline);
       console.log('Pipeline stages:', defaultPipeline?.stages);
       setSelectedPipeline(defaultPipeline);
+      setError(null); // Clear any previous errors
       return true;
     } catch (err) {
       console.error('Failed to fetch pipelines:', err);
@@ -136,6 +166,7 @@ export default function LeadsPage() {
   const fetchContacts = async () => {
     try {
       setIsLoading(true);
+      setError(null);
       const params: any = {
         page: 1,
         limit: 200,
@@ -149,13 +180,27 @@ export default function LeadsPage() {
         params.pipelineId = selectedPipeline.id;
       }
 
+      console.log('Fetching contacts with params:', params);
       const response = await api.get<any>('/contacts', { params });
-      console.log('Leads response:', response.data);
-      setContacts(response.data.contacts || response.data.data || []);
-      setTotalContacts(response.data.total || 0);
-    } catch (err) {
+      console.log('Contacts API response:', response.data);
+
+      // Handle different response formats
+      let contactsData = [];
+      if (Array.isArray(response.data)) {
+        contactsData = response.data;
+      } else if (response.data.contacts) {
+        contactsData = response.data.contacts;
+      } else if (response.data.data) {
+        contactsData = response.data.data;
+      }
+
+      console.log(`Loaded ${contactsData.length} contacts`);
+      setContacts(contactsData);
+      setTotalContacts(response.data.total || contactsData.length);
+    } catch (err: any) {
       console.error('Failed to fetch contacts:', err);
-      setError('Failed to load leads');
+      console.error('Error details:', err.response?.data);
+      setError(err.response?.data?.message || 'Failed to load leads. Please try refreshing.');
     } finally {
       setIsLoading(false);
     }
@@ -181,6 +226,7 @@ export default function LeadsPage() {
   }, [searchQuery, selectedPipeline]);
 
   const resetForm = () => {
+    const firstStage = selectedPipeline?.stages?.find(s => s && s.id);
     setFormData({
       email: '',
       firstName: '',
@@ -189,8 +235,8 @@ export default function LeadsPage() {
       status: 'lead',
       source: 'manual',
       tags: [],
-      pipelineId: selectedPipeline?.id,
-      pipelineStageId: selectedPipeline?.stages[0]?.id,
+      pipelineId: selectedPipeline?.id || '',
+      pipelineStageId: firstStage?.id || '',
     });
     setModalError('');
   };
@@ -339,6 +385,66 @@ export default function LeadsPage() {
     setShowEditModal(true);
   };
 
+  const handleCreatePipeline = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setModalError('');
+    setIsSubmitting(true);
+
+    try {
+      const response = await api.post('/pipelines', {
+        name: pipelineFormData.name,
+        description: pipelineFormData.description || undefined,
+        isDefault: pipelineFormData.isDefault,
+        stages: pipelineStages,
+      });
+
+      setPipelines([...pipelines, response.data]);
+      setSelectedPipeline(response.data);
+      setShowPipelineModal(false);
+      setPipelineFormData({ name: '', description: '', isDefault: false });
+      setPipelineStages([
+        { name: 'New Lead', color: '#3B82F6', displayOrder: 0, isClosedWon: false, isClosedLost: false },
+        { name: 'Contacted', color: '#8B5CF6', displayOrder: 1, isClosedWon: false, isClosedLost: false },
+        { name: 'Qualified', color: '#10B981', displayOrder: 2, isClosedWon: false, isClosedLost: false },
+        { name: 'Proposal', color: '#F59E0B', displayOrder: 3, isClosedWon: false, isClosedLost: false },
+        { name: 'Negotiation', color: '#EF4444', displayOrder: 4, isClosedWon: false, isClosedLost: false },
+        { name: 'Closed Won', color: '#059669', displayOrder: 5, isClosedWon: true, isClosedLost: false },
+        { name: 'Closed Lost', color: '#DC2626', displayOrder: 6, isClosedWon: false, isClosedLost: true },
+      ]);
+      fetchPipelines();
+    } catch (err: any) {
+      console.error('Failed to create pipeline:', err);
+      const errorMsg = err.response?.data?.message || 'Failed to create pipeline';
+      setModalError(errorMsg);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const addStage = () => {
+    setPipelineStages([
+      ...pipelineStages,
+      {
+        name: '',
+        color: '#6366F1',
+        displayOrder: pipelineStages.length,
+        isClosedWon: false,
+        isClosedLost: false,
+      },
+    ]);
+  };
+
+  const removeStage = (index: number) => {
+    if (pipelineStages.length <= 1) return;
+    setPipelineStages(pipelineStages.filter((_, i) => i !== index));
+  };
+
+  const updateStage = (index: number, field: string, value: any) => {
+    const updated = [...pipelineStages];
+    updated[index] = { ...updated[index], [field]: value };
+    setPipelineStages(updated);
+  };
+
   const getLeadsForStage = (stageId: string): Contact[] => {
     return contacts.filter(contact => contact.pipelineStageId === stageId);
   };
@@ -357,9 +463,9 @@ export default function LeadsPage() {
     };
   };
 
-  const setters = users.filter(u => u.role === 'setter');
-  const callers = users.filter(u => u.role === 'caller');
-  const closers = users.filter(u => u.role === 'closer');
+  const setters = users.filter(u => u.role?.toLowerCase() === 'setter');
+  const callers = users.filter(u => u.role?.toLowerCase() === 'caller');
+  const closers = users.filter(u => u.role?.toLowerCase() === 'closer');
 
   if (isLoading && pipelines.length === 0) {
     return (
@@ -424,14 +530,30 @@ export default function LeadsPage() {
               setSelectedPipeline(pipeline || null);
             }}
             className="w-full rounded-xl border border-gray-300 bg-white py-3 px-4 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+            disabled={pipelines.length === 0}
           >
-            {pipelines.map(pipeline => (
-              <option key={pipeline.id} value={pipeline.id}>
-                {pipeline.name} {pipeline.isDefault && '(Default)'}
-              </option>
-            ))}
+            {pipelines.length === 0 ? (
+              <option value="">Loading pipelines...</option>
+            ) : (
+              pipelines.map(pipeline => (
+                <option key={pipeline.id} value={pipeline.id}>
+                  {pipeline.name} {pipeline.isDefault && '(Default)'}
+                </option>
+              ))
+            )}
           </select>
         </div>
+        <button
+          onClick={() => {
+            setShowPipelineModal(true);
+            setModalError('');
+          }}
+          className="flex items-center gap-2 rounded-xl bg-white border border-indigo-300 px-4 py-2.5 text-sm font-semibold text-indigo-700 hover:bg-indigo-50 transition-all"
+          title="Create new pipeline"
+        >
+          <Plus className="h-4 w-4" />
+          New Pipeline
+        </button>
         <div className="relative flex-1">
           <Search className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-indigo-400" />
           <input
@@ -448,9 +570,12 @@ export default function LeadsPage() {
       {selectedPipeline && selectedPipeline.stages && selectedPipeline.stages.length > 0 ? (
         <div className="flex-1 overflow-x-auto pb-6">
           <div className="flex gap-4 min-w-max h-full">
-            {selectedPipeline.stages.sort((a, b) => a.displayOrder - b.displayOrder).map((stage) => {
+            {selectedPipeline.stages
+              .filter(stage => stage && stage.id) // Filter out any null/undefined stages
+              .sort((a, b) => a.displayOrder - b.displayOrder)
+              .map((stage) => {
               const stageLeads = getLeadsForStage(stage.id);
-              const colorStyles = getColorClasses(stage.color);
+              const colorStyles = getColorClasses(stage.color || '#3B82F6');
 
               return (
                 <div
@@ -569,7 +694,21 @@ export default function LeadsPage() {
             <p className="text-gray-500 text-sm mt-2">Please create pipeline stages first.</p>
           </div>
         </div>
-      ) : null}
+      ) : (
+        <div className="flex items-center justify-center h-96">
+          <div className="text-center">
+            <Loader2 className="h-12 w-12 animate-spin text-indigo-600 mx-auto mb-4" />
+            <p className="text-gray-600 font-semibold">Setting up your pipeline...</p>
+            <p className="text-gray-500 text-sm mt-2">This will only take a moment.</p>
+            <button
+              onClick={fetchPipelines}
+              className="mt-4 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors"
+            >
+              Refresh
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Add Contact Modal */}
       {showAddModal && (
@@ -668,10 +807,11 @@ export default function LeadsPage() {
                     value={formData.pipelineId || selectedPipeline?.id}
                     onChange={(e) => {
                       const pipeline = pipelines.find(p => p.id === e.target.value);
+                      const firstStage = pipeline?.stages?.find(s => s && s.id);
                       setFormData({
                         ...formData,
                         pipelineId: e.target.value,
-                        pipelineStageId: pipeline?.stages[0]?.id,
+                        pipelineStageId: firstStage?.id || '',
                       });
                     }}
                     className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 disabled:bg-gray-50 disabled:cursor-not-allowed transition-all"
@@ -694,9 +834,11 @@ export default function LeadsPage() {
                     onChange={(e) => setFormData({ ...formData, pipelineStageId: e.target.value })}
                     className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 disabled:bg-gray-50 disabled:cursor-not-allowed transition-all"
                   >
-                    {pipelines
+                    {(pipelines
                       .find(p => p.id === (formData.pipelineId || selectedPipeline?.id))
-                      ?.stages.sort((a, b) => a.displayOrder - b.displayOrder)
+                      ?.stages || [])
+                      .filter(stage => stage && stage.id)
+                      .sort((a, b) => a.displayOrder - b.displayOrder)
                       .map(stage => (
                         <option key={stage.id} value={stage.id}>
                           {stage.name}
@@ -933,10 +1075,11 @@ export default function LeadsPage() {
                     value={formData.pipelineId || ''}
                     onChange={(e) => {
                       const pipeline = pipelines.find(p => p.id === e.target.value);
+                      const firstStage = pipeline?.stages?.find(s => s && s.id);
                       setFormData({
                         ...formData,
                         pipelineId: e.target.value,
-                        pipelineStageId: pipeline?.stages[0]?.id,
+                        pipelineStageId: firstStage?.id || '',
                       });
                     }}
                     className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 disabled:bg-gray-50 disabled:cursor-not-allowed transition-all"
@@ -959,9 +1102,11 @@ export default function LeadsPage() {
                     onChange={(e) => setFormData({ ...formData, pipelineStageId: e.target.value })}
                     className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 disabled:bg-gray-50 disabled:cursor-not-allowed transition-all"
                   >
-                    {pipelines
+                    {(pipelines
                       .find(p => p.id === formData.pipelineId)
-                      ?.stages.sort((a, b) => a.displayOrder - b.displayOrder)
+                      ?.stages || [])
+                      .filter(stage => stage && stage.id)
+                      .sort((a, b) => a.displayOrder - b.displayOrder)
                       .map(stage => (
                         <option key={stage.id} value={stage.id}>
                           {stage.name}
@@ -1096,6 +1241,221 @@ export default function LeadsPage() {
                     <>
                       <Edit className="h-4 w-4" />
                       Update Lead
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Create Pipeline Modal */}
+      {showPipelineModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm animate-fade-in">
+          <div className="relative w-full max-w-4xl mx-4 glass-effect rounded-2xl shadow-2xl animate-scale-in max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between p-6 border-b border-gray-200 sticky top-0 bg-white rounded-t-2xl">
+              <h2 className="text-2xl font-bold text-gray-900">Create New Pipeline</h2>
+              <button
+                onClick={() => {
+                  setShowPipelineModal(false);
+                  setModalError('');
+                }}
+                className="rounded-xl p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-all"
+              >
+                <X className="h-6 w-6" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreatePipeline} className="p-6 space-y-6">
+              {modalError && (
+                <div className="flex items-start gap-3 rounded-xl bg-red-50 border border-red-200 p-4">
+                  <AlertCircle className="h-5 w-5 text-red-600 mt-0.5" />
+                  <div className="flex-1">
+                    <p className="text-sm font-semibold text-red-900">Error</p>
+                    <p className="text-sm text-red-700 mt-1">{modalError}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Pipeline Info */}
+              <div className="space-y-4">
+                <h3 className="text-lg font-semibold text-gray-900">Pipeline Information</h3>
+
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">
+                    Pipeline Name *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    disabled={isSubmitting}
+                    value={pipelineFormData.name}
+                    onChange={(e) => setPipelineFormData({ ...pipelineFormData, name: e.target.value })}
+                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 disabled:bg-gray-50 disabled:cursor-not-allowed transition-all"
+                    placeholder="e.g., Sales Pipeline, Partner Pipeline"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">
+                    Description
+                  </label>
+                  <textarea
+                    disabled={isSubmitting}
+                    value={pipelineFormData.description}
+                    onChange={(e) => setPipelineFormData({ ...pipelineFormData, description: e.target.value })}
+                    rows={2}
+                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 resize-none disabled:bg-gray-50 disabled:cursor-not-allowed transition-all"
+                    placeholder="Brief description of this pipeline's purpose"
+                  />
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="isDefault"
+                    disabled={isSubmitting}
+                    checked={pipelineFormData.isDefault}
+                    onChange={(e) => setPipelineFormData({ ...pipelineFormData, isDefault: e.target.checked })}
+                    className="w-4 h-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
+                  />
+                  <label htmlFor="isDefault" className="text-sm font-medium text-gray-700">
+                    Set as default pipeline
+                  </label>
+                </div>
+              </div>
+
+              {/* Pipeline Stages */}
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-semibold text-gray-900">Pipeline Stages</h3>
+                  <button
+                    type="button"
+                    onClick={addStage}
+                    disabled={isSubmitting}
+                    className="flex items-center gap-2 text-sm font-semibold text-indigo-600 hover:text-indigo-700 disabled:opacity-50"
+                  >
+                    <Plus className="h-4 w-4" />
+                    Add Stage
+                  </button>
+                </div>
+
+                <div className="space-y-3">
+                  {pipelineStages.map((stage, index) => (
+                    <div key={index} className="flex items-start gap-3 p-4 bg-gray-50 rounded-xl border border-gray-200">
+                      <div className="flex-1 grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 mb-1">
+                            Stage Name *
+                          </label>
+                          <input
+                            type="text"
+                            required
+                            disabled={isSubmitting}
+                            value={stage.name}
+                            onChange={(e) => updateStage(index, 'name', e.target.value)}
+                            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-100"
+                            placeholder="e.g., Qualified"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 mb-1">
+                            Color
+                          </label>
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="color"
+                              disabled={isSubmitting}
+                              value={stage.color}
+                              onChange={(e) => updateStage(index, 'color', e.target.value)}
+                              className="h-9 w-16 rounded-lg border border-gray-300 cursor-pointer disabled:opacity-50"
+                            />
+                            <input
+                              type="text"
+                              disabled={isSubmitting}
+                              value={stage.color}
+                              onChange={(e) => updateStage(index, 'color', e.target.value)}
+                              className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-100"
+                              placeholder="#3B82F6"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="col-span-2 flex items-center gap-4">
+                          <label className="flex items-center gap-2">
+                            <input
+                              type="checkbox"
+                              disabled={isSubmitting}
+                              checked={stage.isClosedWon}
+                              onChange={(e) => {
+                                updateStage(index, 'isClosedWon', e.target.checked);
+                                if (e.target.checked) updateStage(index, 'isClosedLost', false);
+                              }}
+                              className="w-4 h-4 text-green-600 border-gray-300 rounded focus:ring-green-500"
+                            />
+                            <span className="text-xs font-medium text-gray-700">Closed Won</span>
+                          </label>
+
+                          <label className="flex items-center gap-2">
+                            <input
+                              type="checkbox"
+                              disabled={isSubmitting}
+                              checked={stage.isClosedLost}
+                              onChange={(e) => {
+                                updateStage(index, 'isClosedLost', e.target.checked);
+                                if (e.target.checked) updateStage(index, 'isClosedWon', false);
+                              }}
+                              className="w-4 h-4 text-red-600 border-gray-300 rounded focus:ring-red-500"
+                            />
+                            <span className="text-xs font-medium text-gray-700">Closed Lost</span>
+                          </label>
+                        </div>
+                      </div>
+
+                      {pipelineStages.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => removeStage(index)}
+                          disabled={isSubmitting}
+                          className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
+                          title="Remove stage"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-3 pt-4 border-t border-gray-200">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowPipelineModal(false);
+                    setModalError('');
+                  }}
+                  disabled={isSubmitting}
+                  className="px-6 py-3 text-sm font-semibold text-gray-700 bg-white border border-gray-300 rounded-xl hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="px-6 py-3 text-sm font-semibold text-white bg-gradient-to-r from-blue-600 to-indigo-600 rounded-xl shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 transition-all"
+                >
+                  {isSubmitting ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Creating...
+                    </>
+                  ) : (
+                    <>
+                      <Plus className="h-4 w-4" />
+                      Create Pipeline
                     </>
                   )}
                 </button>

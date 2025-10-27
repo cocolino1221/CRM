@@ -50,7 +50,28 @@ export class PipelineController {
   @ApiOperation({ summary: 'Get all pipelines' })
   @Roles('admin', 'manager', 'closer', 'setter', 'caller', 'sales_rep')
   async getPipelines(@CurrentWorkspace('id') workspaceId: string) {
-    return this.pipelineService.getPipelines(workspaceId);
+    const pipelines = await this.pipelineService.getPipelines(workspaceId);
+
+    // Auto-initialize default pipeline if none exist
+    if (pipelines.length === 0) {
+      const defaultPipeline = await this.pipelineService.createPipeline(workspaceId, {
+        name: 'Sales Pipeline',
+        description: 'Default sales pipeline for managing leads',
+        isDefault: true,
+        stages: [
+          { name: 'New Lead', color: '#3B82F6', displayOrder: 0, isClosedWon: false, isClosedLost: false },
+          { name: 'Contacted', color: '#8B5CF6', displayOrder: 1, isClosedWon: false, isClosedLost: false },
+          { name: 'Qualified', color: '#10B981', displayOrder: 2, isClosedWon: false, isClosedLost: false },
+          { name: 'Proposal', color: '#F59E0B', displayOrder: 3, isClosedWon: false, isClosedLost: false },
+          { name: 'Negotiation', color: '#EF4444', displayOrder: 4, isClosedWon: false, isClosedLost: false },
+          { name: 'Closed Won', color: '#059669', displayOrder: 5, isClosedWon: true, isClosedLost: false },
+          { name: 'Closed Lost', color: '#DC2626', displayOrder: 6, isClosedWon: false, isClosedLost: true },
+        ],
+      });
+      return [defaultPipeline];
+    }
+
+    return pipelines;
   }
 
   @Get(':id')
