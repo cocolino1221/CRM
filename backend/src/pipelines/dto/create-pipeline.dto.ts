@@ -7,6 +7,7 @@ import {
   Length,
   IsInt,
   Min,
+  Matches,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -17,25 +18,29 @@ export class CreatePipelineStageDto {
 
   @IsOptional()
   @IsString()
-  @Length(0, 500)
   description?: string;
 
   @IsOptional()
   @IsString()
-  @Length(7, 7)
+  @Matches(/^#[0-9A-Fa-f]{6}$/, {
+    message: 'color must be a valid hex color code (e.g., #3B82F6)',
+  })
   color?: string;
 
   @IsOptional()
   @IsInt()
+  @Type(() => Number)
   @Min(0)
   displayOrder?: number;
 
   @IsOptional()
   @IsBoolean()
+  @Type(() => Boolean)
   isClosedWon?: boolean;
 
   @IsOptional()
   @IsBoolean()
+  @Type(() => Boolean)
   isClosedLost?: boolean;
 }
 
@@ -46,11 +51,11 @@ export class CreatePipelineDto {
 
   @IsOptional()
   @IsString()
-  @Length(0, 500)
   description?: string;
 
   @IsOptional()
   @IsBoolean()
+  @Type(() => Boolean)
   isDefault?: boolean;
 
   @IsOptional()

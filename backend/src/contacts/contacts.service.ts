@@ -76,6 +76,15 @@ export class ContactsService {
         .addOrderBy('activities.createdAt', 'DESC');
     }
 
+    // Always include pipeline-related relations for leads page
+    queryBuilder.leftJoinAndSelect('contact.pipeline', 'pipeline');
+    queryBuilder.leftJoinAndSelect('contact.pipelineStage', 'pipelineStage');
+
+    // Always include team member relations for leads page
+    queryBuilder.leftJoinAndSelect('contact.setter', 'setter');
+    queryBuilder.leftJoinAndSelect('contact.caller', 'caller');
+    queryBuilder.leftJoinAndSelect('contact.closer', 'closer');
+
     // Apply filters
     this.applyFilters(queryBuilder, {
       search,
@@ -156,10 +165,23 @@ export class ContactsService {
       }
     }
 
+    // If pipelineStageId is provided but pipelineId is not, automatically infer pipelineId from the stage
+    let pipelineId = dto.pipelineId;
+    if (dto.pipelineStageId && !pipelineId) {
+      const stage = await this.contactRepository.manager
+        .getRepository('PipelineStage')
+        .findOne({ where: { id: dto.pipelineStageId, workspaceId } });
+
+      if (stage) {
+        pipelineId = (stage as any).pipelineId;
+      }
+    }
+
     // Create contact
     const contact = this.contactRepository.create({
       ...dto,
       workspaceId,
+      pipelineId: pipelineId || dto.pipelineId,
       status: dto.status || ContactStatus.LEAD,
       leadScore: dto.leadScore || 0,
       emailOptIn: dto.emailOptIn || false,

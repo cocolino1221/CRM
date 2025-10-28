@@ -276,12 +276,12 @@ export default function LeadsPage() {
       if (formData.companyId) {
         cleanedData.companyId = formData.companyId;
       }
-      if (formData.pipelineId) {
-        cleanedData.pipelineId = formData.pipelineId;
-      }
-      if (formData.pipelineStageId) {
-        cleanedData.pipelineStageId = formData.pipelineStageId;
-      }
+
+      // Always include pipeline and stage info
+      cleanedData.pipelineId = formData.pipelineId;
+      cleanedData.pipelineStageId = formData.pipelineStageId;
+
+      // Include team member assignments if selected
       if (formData.setterId) {
         cleanedData.setterId = formData.setterId;
       }
@@ -511,7 +511,10 @@ export default function LeadsPage() {
             Refresh
           </button>
           <button
-            onClick={() => setShowAddModal(true)}
+            onClick={() => {
+              resetForm();
+              setShowAddModal(true);
+            }}
             className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-lg hover:shadow-xl transition-all"
           >
             <Plus className="h-4 w-4" />
@@ -804,7 +807,7 @@ export default function LeadsPage() {
                   </label>
                   <select
                     disabled={isSubmitting}
-                    value={formData.pipelineId || selectedPipeline?.id}
+                    value={formData.pipelineId}
                     onChange={(e) => {
                       const pipeline = pipelines.find(p => p.id === e.target.value);
                       const firstStage = pipeline?.stages?.find(s => s && s.id);
@@ -830,12 +833,12 @@ export default function LeadsPage() {
                   </label>
                   <select
                     disabled={isSubmitting}
-                    value={formData.pipelineStageId || ''}
+                    value={formData.pipelineStageId}
                     onChange={(e) => setFormData({ ...formData, pipelineStageId: e.target.value })}
                     className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 disabled:bg-gray-50 disabled:cursor-not-allowed transition-all"
                   >
                     {(pipelines
-                      .find(p => p.id === (formData.pipelineId || selectedPipeline?.id))
+                      .find(p => p.id === formData.pipelineId)
                       ?.stages || [])
                       .filter(stage => stage && stage.id)
                       .sort((a, b) => a.displayOrder - b.displayOrder)

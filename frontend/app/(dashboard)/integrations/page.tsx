@@ -621,6 +621,7 @@ export default function IntegrationsPage() {
           connected: !!connectedMap[int.type.toLowerCase()],
           oauth: int.defaultAuthType === 'oauth2',
           oauthProvider: int.type.toLowerCase(),
+          features: int.features || [], // Add features with fallback to empty array
           configFields: int.defaultAuthType === 'api_key' ? [
             {
               name: 'apiKey',
@@ -891,14 +892,16 @@ export default function IntegrationsPage() {
               <p className="mb-4 text-sm text-gray-600">{integration.description}</p>
 
               {/* Features */}
-              <div className="mb-4 space-y-2">
-                {integration.features.slice(0, 3).map((feature) => (
-                  <div key={feature} className="flex items-center gap-2 text-sm text-gray-600">
-                    <Zap className="h-3.5 w-3.5 text-indigo-600" />
-                    <span>{feature}</span>
-                  </div>
-                ))}
-              </div>
+              {integration.features && integration.features.length > 0 && (
+                <div className="mb-4 space-y-2">
+                  {integration.features.slice(0, 3).map((feature) => (
+                    <div key={feature} className="flex items-center gap-2 text-sm text-gray-600">
+                      <Zap className="h-3.5 w-3.5 text-indigo-600" />
+                      <span>{feature}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
 
               {/* Actions */}
               <div className="flex gap-2">
