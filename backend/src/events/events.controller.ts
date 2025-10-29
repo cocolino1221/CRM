@@ -54,6 +54,7 @@ export class EventsController {
   @ApiQuery({ name: 'type', enum: EventType, required: false })
   @ApiQuery({ name: 'status', enum: EventStatus, required: false })
   @ApiQuery({ name: 'viewTeam', type: Boolean, required: false })
+  @ApiQuery({ name: 'userId', required: false, description: 'Filter by specific team member' })
   async findAll(
     @Req() req: any,
     @Query('startDate') startDate?: string,
@@ -61,11 +62,15 @@ export class EventsController {
     @Query('type') type?: string,
     @Query('status') status?: string,
     @Query('viewTeam') viewTeam?: string,
+    @Query('userId') userId?: string,
   ): Promise<Event[]> {
     // Default to team view (shared calendar) unless explicitly set to false
     const shouldViewTeam = viewTeam === 'false' ? false : true;
 
-    return this.eventsService.findAll(req.user.workspaceId, req.user.id, {
+    // If userId is provided, use it instead of current user for filtering
+    const targetUserId = userId || req.user.id;
+
+    return this.eventsService.findAll(req.user.workspaceId, targetUserId, {
       startDate: startDate ? new Date(startDate) : undefined,
       endDate: endDate ? new Date(endDate) : undefined,
       type,
