@@ -60,14 +60,17 @@ export class EventsController {
     @Query('endDate') endDate?: string,
     @Query('type') type?: string,
     @Query('status') status?: string,
-    @Query('viewTeam') viewTeam?: boolean,
+    @Query('viewTeam') viewTeam?: string,
   ): Promise<Event[]> {
+    // Default to team view (shared calendar) unless explicitly set to false
+    const shouldViewTeam = viewTeam === 'false' ? false : true;
+
     return this.eventsService.findAll(req.user.workspaceId, req.user.id, {
       startDate: startDate ? new Date(startDate) : undefined,
       endDate: endDate ? new Date(endDate) : undefined,
       type,
       status,
-      viewTeam,
+      viewTeam: shouldViewTeam,
     });
   }
 

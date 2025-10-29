@@ -22,11 +22,11 @@ import {
 import { cn } from '@/lib/utils';
 import { authService } from '@/lib/auth';
 
-const navigation = [
+const allNavigation = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, color: 'from-blue-500 to-cyan-500' },
   { name: 'Calendar', href: '/calendar', icon: Calendar, color: 'from-cyan-500 to-teal-500' },
   { name: 'Contacts', href: '/contacts', icon: Users, color: 'from-purple-500 to-pink-500' },
-  { name: 'Companies', href: '/companies', icon: Building2, color: 'from-orange-500 to-red-500' },
+  { name: 'Companies', href: '/companies', icon: Building2, color: 'from-orange-500 to-red-500', adminOnly: true },
   { name: 'Leads', href: '/leads', icon: Briefcase, color: 'from-green-500 to-emerald-500' },
   { name: 'Team', href: '/users', icon: Shield, color: 'from-teal-500 to-cyan-500' },
   { name: 'Tasks', href: '/tasks', icon: CheckSquare, color: 'from-yellow-500 to-orange-500' },
@@ -38,6 +38,20 @@ const navigation = [
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const [userRole, setUserRole] = useState<string>('');
+
+  useEffect(() => {
+    const user = authService.getUser();
+    setUserRole(user?.role || '');
+  }, []);
+
+  // Filter navigation based on user role
+  const navigation = allNavigation.filter(item => {
+    if (item.adminOnly) {
+      return userRole === 'admin';
+    }
+    return true;
+  });
 
   return (
     <div className="flex h-full w-64 flex-col gradient-sidebar shadow-2xl">

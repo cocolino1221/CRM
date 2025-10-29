@@ -43,7 +43,7 @@ export class CompaniesController {
   @Get()
   @ApiOperation({ summary: 'Get all companies with filtering and pagination' })
   @ApiResponse({ status: 200, description: 'Companies retrieved successfully' })
-  @Roles('admin', 'user', 'viewer')
+  @Roles('admin')
   async findAll(
     @CurrentWorkspace('id') workspaceId: string,
     @Query(ValidationPipe) query: QueryCompaniesDto,
@@ -54,7 +54,7 @@ export class CompaniesController {
   @Get('stats')
   @ApiOperation({ summary: 'Get company statistics for workspace' })
   @ApiResponse({ status: 200, description: 'Company statistics retrieved successfully' })
-  @Roles('admin', 'user', 'viewer')
+  @Roles('admin')
   async getStats(@CurrentWorkspace('id') workspaceId: string) {
     return this.companiesService.getStats(workspaceId);
   }
@@ -65,7 +65,7 @@ export class CompaniesController {
   @ApiQuery({ name: 'include', required: false, description: 'Relations to include (contacts,deals)' })
   @ApiResponse({ status: 200, description: 'Company retrieved successfully' })
   @ApiResponse({ status: 404, description: 'Company not found' })
-  @Roles('admin', 'user', 'viewer')
+  @Roles('admin')
   async findOne(
     @CurrentWorkspace('id') workspaceId: string,
     @Param('id', ParseUUIDPipe) id: string,
@@ -80,7 +80,7 @@ export class CompaniesController {
   @ApiParam({ name: 'id', description: 'Company ID' })
   @ApiResponse({ status: 200, description: 'Contacts retrieved successfully' })
   @ApiResponse({ status: 404, description: 'Company not found' })
-  @Roles('admin', 'user', 'viewer')
+  @Roles('admin')
   async getContacts(
     @CurrentWorkspace('id') workspaceId: string,
     @Param('id', ParseUUIDPipe) id: string,
@@ -93,7 +93,7 @@ export class CompaniesController {
   @ApiParam({ name: 'id', description: 'Company ID' })
   @ApiResponse({ status: 200, description: 'Deals retrieved successfully' })
   @ApiResponse({ status: 404, description: 'Company not found' })
-  @Roles('admin', 'user', 'viewer')
+  @Roles('admin')
   async getDeals(
     @CurrentWorkspace('id') workspaceId: string,
     @Param('id', ParseUUIDPipe) id: string,
@@ -106,7 +106,7 @@ export class CompaniesController {
   @ApiBody({ type: CreateCompanyDto })
   @ApiResponse({ status: 201, description: 'Company created successfully' })
   @ApiResponse({ status: 400, description: 'Bad request - validation failed' })
-  @Roles('admin', 'user')
+  @Roles('admin')
   async create(
     @CurrentWorkspace('id') workspaceId: string,
     @Body(ValidationPipe) createCompanyDto: CreateCompanyDto,
@@ -121,7 +121,7 @@ export class CompaniesController {
   @ApiResponse({ status: 200, description: 'Company updated successfully' })
   @ApiResponse({ status: 400, description: 'Bad request - validation failed' })
   @ApiResponse({ status: 404, description: 'Company not found' })
-  @Roles('admin', 'user')
+  @Roles('admin')
   async update(
     @CurrentWorkspace('id') workspaceId: string,
     @Param('id', ParseUUIDPipe) id: string,
@@ -136,7 +136,7 @@ export class CompaniesController {
   @ApiResponse({ status: 204, description: 'Company deleted successfully' })
   @ApiResponse({ status: 404, description: 'Company not found' })
   @HttpCode(HttpStatus.NO_CONTENT)
-  @Roles('admin', 'user')
+  @Roles('admin')
   async remove(
     @CurrentWorkspace('id') workspaceId: string,
     @Param('id', ParseUUIDPipe) id: string,
@@ -149,7 +149,7 @@ export class CompaniesController {
   @ApiBody({ schema: { type: 'object', properties: { ids: { type: 'array', items: { type: 'string', format: 'uuid' } } } } })
   @ApiResponse({ status: 200, description: 'Companies deleted successfully' })
   @HttpCode(HttpStatus.OK)
-  @Roles('admin', 'user')
+  @Roles('admin')
   async bulkDelete(
     @CurrentWorkspace('id') workspaceId: string,
     @Body('ids') ids: string[],
