@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { Search, Check, ExternalLink, Zap, Settings, Webhook, X, Copy, Key, Lock, Link as LinkIcon, AlertCircle, Loader2 } from 'lucide-react';
 import Image from 'next/image';
 import api from '@/lib/api';
@@ -31,6 +32,7 @@ interface ConfigField {
 }
 
 export default function IntegrationsPage() {
+  const router = useRouter();
   const [searchQuery, setSearchQuery] = useState('');
   const [filter, setFilter] = useState('all');
   const [selectedIntegration, setSelectedIntegration] = useState<Integration | null>(null);
@@ -649,7 +651,7 @@ export default function IntegrationsPage() {
     return matchesSearch && matchesFilter;
   });
 
-  const handleConnect = (integration: Integration) => {
+  const handleConnect = async (integration: Integration) => {
     // If already connected, show manage modal
     if (integration.connected) {
       setManagingIntegration(integration);
@@ -660,8 +662,42 @@ export default function IntegrationsPage() {
     if (integration.oauth) {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000/api/v1';
       const provider = integration.oauthProvider || integration.id;
-      window.location.href = `${apiUrl}/integrations/oauth/${provider}`;
-      return;
+
+      try {
+        // Fetch current user data from API to ensure we have the correct IDs
+        const accessToken = localStorage.getItem('accessToken');
+        if (!accessToken) {
+          setModalError('Please log in first');
+          router.push('/login');
+          return;
+        }
+
+        const response = await fetch(`${apiUrl}/auth/me`, {
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+          },
+        });
+
+        if (!response.ok) {
+          throw new Error('Failed to fetch user data');
+        }
+
+        const userData = await response.json();
+        const { id: userId, workspaceId } = userData;
+
+        if (!userId || !workspaceId) {
+          setModalError('Unable to determine user or workspace. Please log in again.');
+          return;
+        }
+
+        // Redirect to OAuth endpoint with workspace and user context
+        window.location.href = `${apiUrl}/integrations/oauth/${provider}?workspace_id=${workspaceId}&user_id=${userId}`;
+        return;
+      } catch (error) {
+        console.error('Error connecting integration:', error);
+        setModalError('Failed to connect integration. Please try logging in again.');
+        return;
+      }
     }
 
     // For manual config integrations, show modal

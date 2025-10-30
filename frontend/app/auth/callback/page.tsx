@@ -31,6 +31,15 @@ export default function AuthCallbackPage() {
         localStorage.setItem('refreshToken', refreshToken);
         localStorage.setItem('user', decodeURIComponent(userStr));
 
+        // Parse user object and store user ID and workspace ID
+        const user = JSON.parse(decodeURIComponent(userStr));
+        if (user.id) {
+          localStorage.setItem('userId', user.id);
+        }
+        if (user.workspaceId) {
+          localStorage.setItem('workspaceId', user.workspaceId);
+        }
+
         // Redirect to dashboard
         router.push('/dashboard');
       } catch (err) {
