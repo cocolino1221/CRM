@@ -1233,23 +1233,25 @@ export default function IntegrationsPage() {
                   </>
                 )}
               </button>
-              <button
-                onClick={() => handleSyncNow(managingIntegration)}
-                disabled={isSubmitting}
-                className="flex-1 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-6 py-3 text-sm font-semibold text-white shadow-lg hover:shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-              >
-                {isSubmitting ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Syncing...
-                  </>
-                ) : (
-                  <>
-                    <Check className="h-4 w-4" />
-                    Sync Now
-                  </>
-                )}
-              </button>
+              {connectedIntegrations[managingIntegration.id]?.capabilities?.supportsSync !== false && (
+                <button
+                  onClick={() => handleSyncNow(managingIntegration)}
+                  disabled={isSubmitting}
+                  className="flex-1 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-6 py-3 text-sm font-semibold text-white shadow-lg hover:shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                >
+                  {isSubmitting ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Syncing...
+                    </>
+                  ) : (
+                    <>
+                      <Check className="h-4 w-4" />
+                      Sync Now
+                    </>
+                  )}
+                </button>
+              )}
             </div>
 
             {/* Disconnect Button */}

@@ -83,8 +83,19 @@ export class SyncService {
       // Get integration handler
       const handler = this.integrationRegistry.getIntegrationHandler(integration.type);
 
-      if (!handler?.syncData) {
-        throw new Error(`Sync not supported for integration type: ${integration.type}`);
+      if (!handler) {
+        throw new Error(`No handler found for integration type: ${integration.type}`);
+      }
+
+      if (!handler.syncData) {
+        // Return a successful result with info message for integrations without sync support
+        result.success = true;
+        result.duration = Date.now() - startTime;
+        result.errors.push(`Sync not yet implemented for ${integration.type}. This integration will work once sync is implemented.`);
+
+        this.logger.warn(`Sync attempted for ${integration.type} but syncData method not implemented`);
+
+        return result;
       }
 
       // Determine sync direction

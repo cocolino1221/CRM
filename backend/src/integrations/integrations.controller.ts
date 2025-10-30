@@ -21,6 +21,7 @@ import { AuthenticatedRequest } from '../auth/interfaces/authenticated-request.i
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { WorkspaceGuard } from '../auth/guards/workspace.guard';
+import { Public } from '../common/decorators/public.decorator';
 import { IntegrationsService } from './integrations.service';
 import { IntegrationRegistry } from './registry/integration.registry';
 import { OAuthService } from './auth/oauth.service';
@@ -95,7 +96,7 @@ export class IntegrationsController {
     @Query('type') type?: IntegrationType,
     @Query('status') status?: IntegrationStatus,
     @Query('enabled') enabled?: boolean,
-  ): Promise<{ integrations: Integration[]; analytics: any }> {
+  ): Promise<{ integrations: any[]; analytics: any }> {
     const workspaceId = req.user.workspaceId;
 
     const integrations = await this.integrationsService.findAll(workspaceId, {
@@ -104,17 +105,39 @@ export class IntegrationsController {
       isEnabled: enabled,
     });
 
+    // Add capabilities to each integration
+    const integrationsWithCapabilities = integrations.map(integration => {
+      const handler = this.integrationRegistry.getIntegrationHandler(integration.type);
+      return {
+        ...integration,
+        capabilities: {
+          supportsSync: !!handler?.syncData,
+          supportsWebhooks: !!handler?.handleWebhook,
+          supportsTestConnection: !!handler?.testConnection,
+        },
+      };
+    });
+
     const analytics = await this.integrationsService.getAnalytics(workspaceId);
 
-    return { integrations, analytics };
+    return { integrations: integrationsWithCapabilities, analytics };
   }
 
   @Get(':id')
   @ApiOperation({ summary: 'Get integration by ID' })
   @ApiResponse({ status: 200, description: 'Integration details' })
-  async findOne(@Req() req: AuthenticatedRequest, @Param('id') id: string): Promise<{ integration: Integration }> {
+  async findOne(@Req() req: AuthenticatedRequest, @Param('id') id: string): Promise<{ integration: Integration; capabilities?: any }> {
     const integration = await this.integrationsService.findOne(id, req.user.workspaceId);
-    return { integration };
+
+    // Check handler capabilities
+    const handler = this.integrationRegistry.getIntegrationHandler(integration.type);
+    const capabilities = {
+      supportsSync: !!handler?.syncData,
+      supportsWebhooks: !!handler?.handleWebhook,
+      supportsTestConnection: !!handler?.testConnection,
+    };
+
+    return { integration, capabilities };
   }
 
   @Post('install')
@@ -242,15 +265,18 @@ export class IntegrationsController {
     return { analytics };
   }
 
-  // OAuth Endpoints
+  // OAuth Endpoints - Public (no authentication required)
+  @Public()
   @Get('oauth/:provider')
   @ApiOperation({ summary: 'Start OAuth authorization flow' })
   @ApiResponse({ status: 302, description: 'Redirect to OAuth provider' })
   async startOAuth(
-    @Req() req: AuthenticatedRequest,
+    @Req() req: any,
     @Res() res: Response,
     @Param('provider') provider: string,
     @Query('integration_id') integrationId?: string,
+    @Query('workspace_id') workspaceId?: string,
+    @Query('user_id') userId?: string,
   ): Promise<void> {
     const frontendUrl = this.configService.get('FRONTEND_URL') || 'http://localhost:3001';
 
@@ -263,6 +289,7 @@ export class IntegrationsController {
         'salesforce': IntegrationType.SALESFORCE,
         'hubspot': IntegrationType.HUBSPOT,
         'zoom': IntegrationType.ZOOM,
+        'docusign': IntegrationType.DOCUSIGN,
       };
 
       const type = typeMap[provider.toLowerCase()];
@@ -271,13 +298,19 @@ export class IntegrationsController {
         return;
       }
 
+      // Require workspace_id and user_id for public OAuth flow
+      if (!workspaceId || !userId) {
+        res.redirect(`${frontendUrl}/integrations/callback?error=${encodeURIComponent('Missing workspace_id or user_id')}`);
+        return;
+      }
+
       let integration: Integration;
 
       if (integrationId) {
-        integration = await this.integrationsService.findOne(integrationId, req.user.workspaceId);
+        integration = await this.integrationsService.findOne(integrationId, workspaceId);
       } else {
         // Create temporary integration for OAuth flow
-        integration = await this.integrationsService.install(req.user.workspaceId, req.user.id, {
+        integration = await this.integrationsService.install(workspaceId, userId, {
           type,
           authType: IntegrationAuthType.OAUTH2,
         });
@@ -291,11 +324,12 @@ export class IntegrationsController {
     }
   }
 
+  @Public()
   @Get('oauth/callback')
   @ApiOperation({ summary: 'Handle OAuth callback' })
   @ApiResponse({ status: 302, description: 'OAuth callback handled' })
   async handleOAuthCallback(
-    @Req() req: AuthenticatedRequest,
+    @Req() req: any,
     @Res() res: Response,
     @Query('code') code: string,
     @Query('state') state: string,
@@ -365,13 +399,14 @@ export class IntegrationsController {
   }
 
   // Public webhook endpoint (no auth required)
+  @Public()
   @Post('webhooks/:integrationId')
   @ApiOperation({ summary: 'Receive webhook payload' })
   @ApiResponse({ status: 200, description: 'Webhook processed successfully' })
   async receiveWebhook(
     @Param('integrationId') integrationId: string,
     @Body() payload: any,
-    @Req() req: AuthenticatedRequest,
+    @Req() req: any,
   ): Promise<{ success: boolean; message?: string }> {
     try {
       const result = await this.webhookService.processWebhook(integrationId, payload, {
