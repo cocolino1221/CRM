@@ -39,7 +39,7 @@ export default function AuthGuard({ children }: AuthGuardProps) {
     };
 
     checkAuth();
-  }, [pathname, router, isPublicRoute]);
+  }, [pathname, router]); // Remove isPublicRoute from deps as it's derived from pathname
 
   // Show loading state while checking authentication
   if (isAuthenticated === null) {
