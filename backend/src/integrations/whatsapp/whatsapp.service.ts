@@ -117,8 +117,7 @@ export class WhatsAppService {
         phone,
         status: ContactStatus.LEAD,
         source: ContactSource.WHATSAPP,
-        metadata: { whatsappId: waId },
-      });
+      } as any);
       contact = await this.contactRepository.save(contact);
       this.logger.log(`Created new contact from WhatsApp: ${phone}`);
     }
