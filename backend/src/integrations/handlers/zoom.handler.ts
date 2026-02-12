@@ -12,9 +12,37 @@ export class ZoomIntegrationHandler implements IntegrationHandler {
 
   async testConnection(integration: Integration): Promise<{ success: boolean; message?: string; data?: any }> {
     try {
+      // Get access token (either stored or generate new one)
+      let accessToken = integration.credentials?.accessToken;
+
+      // If no access token, try to get one using Server-to-Server OAuth
+      if (!accessToken && integration.credentials?.accountId && integration.credentials?.clientId && integration.credentials?.clientSecret) {
+        try {
+          accessToken = await this.getServerToServerToken(
+            integration.credentials.accountId,
+            integration.credentials.clientId,
+            integration.credentials.clientSecret
+          );
+        } catch (tokenError) {
+          this.logger.error(`Failed to get Zoom access token: ${tokenError.message}`);
+          return {
+            success: false,
+            message: `Failed to authenticate with Zoom: ${tokenError.message}. Please check your Account ID, Client ID, and Client Secret.`
+          };
+        }
+      }
+
+      if (!accessToken) {
+        return {
+          success: false,
+          message: 'No access token available. Please provide valid Zoom credentials.'
+        };
+      }
+
       const response = await this.httpService.axiosRef.get(`${this.apiUrl}/users/me`, {
-        headers: { Authorization: `Bearer ${integration.credentials?.accessToken}` },
+        headers: { Authorization: `Bearer ${accessToken}` },
       });
+
       return {
         success: true,
         message: 'Connected to Zoom successfully',
@@ -27,10 +55,39 @@ export class ZoomIntegrationHandler implements IntegrationHandler {
         }
       };
     } catch (error) {
+      this.logger.error(`Zoom test connection failed: ${error.response?.data || error.message}`);
       return {
         success: false,
-        message: `Zoom connection failed: ${error.message}`
+        message: `Zoom connection failed: ${error.response?.data?.message || error.message}`
       };
+    }
+  }
+
+  /**
+   * Get Server-to-Server OAuth token
+   */
+  private async getServerToServerToken(accountId: string, clientId: string, clientSecret: string): Promise<string> {
+    try {
+      const credentials = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
+
+      const response = await this.httpService.axiosRef.post(
+        'https://zoom.us/oauth/token',
+        new URLSearchParams({
+          grant_type: 'account_credentials',
+          account_id: accountId,
+        }),
+        {
+          headers: {
+            'Authorization': `Basic ${credentials}`,
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+        }
+      );
+
+      return response.data.access_token;
+    } catch (error) {
+      this.logger.error(`Failed to get Zoom S2S token: ${error.response?.data || error.message}`);
+      throw new Error(error.response?.data?.reason || 'Failed to authenticate with Zoom');
     }
   }
 

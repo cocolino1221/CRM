@@ -1,10 +1,11 @@
-import { Module } from '@nestjs/common';
+import { Module, MiddlewareConsumer, NestModule } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { ScheduleModule } from '@nestjs/schedule';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { BullModule } from '@nestjs/bull';
+import { CorrelationIdMiddleware } from './common/middleware/correlation-id.middleware';
 import AppDataSource from './database/data-source';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
@@ -24,6 +25,11 @@ import { NotificationsModule } from './notifications/notifications.module';
 import { EventsModule } from './events/events.module';
 import { AvailabilityModule } from './availability/availability.module';
 import { BookingsModule } from './bookings/bookings.module';
+import { DocumentsModule } from './documents/documents.module';
+import { FormsModule } from './forms/forms.module';
+import { AIModule } from './ai/ai.module';
+import { WorkflowsModule } from './workflows/workflows.module';
+import { UploadModule } from './upload/upload.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import databaseConfig from './config/database.config';
@@ -97,8 +103,8 @@ import { validationSchema } from './config/env.validation';
     ThrottlerModule.forRootAsync({
       imports: [ConfigModule],
       useFactory: (configService: ConfigService) => ([{
-        ttl: configService.get<number>('THROTTLE_TTL', 60) * 1000,
-        limit: configService.get<number>('THROTTLE_LIMIT', 10),
+        ttl: configService.get<number>('THROTTLE_TTL', 60) * 1000, // Time window in milliseconds
+        limit: configService.get<number>('THROTTLE_LIMIT', 100), // Max requests per time window (increased from 10 to 100)
       }]),
       inject: [ConfigService],
     }),
@@ -117,7 +123,7 @@ import { validationSchema } from './config/env.validation';
       ignoreErrors: false,
     }),
 
-    // Queue management
+    // Queue management (requires Redis)
     BullModule.forRootAsync({
       imports: [ConfigModule],
       useFactory: (configService: ConfigService) => ({
@@ -152,10 +158,19 @@ import { validationSchema } from './config/env.validation';
     EventsModule,
     AvailabilityModule,
     BookingsModule,
+    DocumentsModule,
+    FormsModule,
+    AIModule,
+    WorkflowsModule,
+    UploadModule,
     QueueModule,
     AnalyticsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    consumer.apply(CorrelationIdMiddleware).forRoutes('*');
+  }
+}

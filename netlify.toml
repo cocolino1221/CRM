@@ -2,10 +2,10 @@
   base = "frontend"
   command = "npm run build"
   publish = ".next"
-  ignore = "git diff --quiet HEAD^ HEAD ./"
 
 [[plugins]]
   package = "@netlify/plugin-nextjs"
 
 [build.environment]
   NEXT_PUBLIC_API_URL = "https://slackcrm-backend.fly.dev/api/v1"
+  NODE_VERSION = "20"

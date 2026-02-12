@@ -10,6 +10,16 @@ export class WorkspaceGuard implements CanActivate {
   constructor(private reflector: Reflector) {}
 
   canActivate(context: ExecutionContext): boolean {
+    // Check if route is marked as public
+    const isPublic = this.reflector.getAllAndOverride<boolean>('isPublic', [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+
+    if (isPublic) {
+      return true;
+    }
+
     const skipWorkspaceCheck = this.reflector.getAllAndOverride<boolean>('skipWorkspaceCheck', [
       context.getHandler(),
       context.getClass(),
@@ -26,21 +36,27 @@ export class WorkspaceGuard implements CanActivate {
       throw new ForbiddenException('User not authenticated');
     }
 
+    // Ensure user has a workspaceId (required for workspace isolation)
+    if (!user.workspaceId) {
+      throw new ForbiddenException('User has no workspace assigned');
+    }
+
     // Extract workspace ID from request params, query, or body
-    const workspaceId =
+    const requestWorkspaceId =
       request.params?.workspaceId ||
       request.query?.workspaceId ||
       request.body?.workspaceId;
 
-    // If no workspace ID in request, allow (will be handled by service layer)
-    if (!workspaceId) {
-      return true;
+    // If workspace ID is provided in request, verify it matches user's workspace
+    if (requestWorkspaceId) {
+      if (user.workspaceId !== requestWorkspaceId) {
+        throw new ForbiddenException('Access denied to this workspace');
+      }
     }
 
-    // Check if user belongs to the requested workspace
-    if (user.workspaceId !== workspaceId) {
-      throw new ForbiddenException('Access denied to this workspace');
-    }
+    // Enforce workspace isolation: Attach user's workspace ID to request for service layer
+    // This ensures all operations are scoped to the authenticated user's workspace
+    request.workspaceId = user.workspaceId;
 
     return true;
   }

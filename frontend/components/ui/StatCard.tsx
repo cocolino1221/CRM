@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { LucideIcon, TrendingUp, TrendingDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -9,6 +10,7 @@ interface StatCardProps {
   icon: LucideIcon;
   gradientFrom?: string;
   gradientTo?: string;
+  href?: string;
 }
 
 export default function StatCard({
@@ -19,9 +21,10 @@ export default function StatCard({
   icon: Icon,
   gradientFrom = 'from-blue-500',
   gradientTo = 'to-cyan-500',
+  href,
 }: StatCardProps) {
-  return (
-    <div className="group relative overflow-hidden rounded-2xl glass-effect p-6 transition-all duration-300 hover:scale-105 hover:shadow-2xl animate-scale-in">
+  const CardContent = (
+    <div className="group relative overflow-hidden rounded-2xl glass-effect p-6 transition-all duration-300 hover:scale-105 hover:shadow-2xl animate-scale-in cursor-pointer">
       {/* Gradient Background */}
       <div className={cn(
         'absolute -right-8 -top-8 h-32 w-32 rounded-full bg-gradient-to-br opacity-10 blur-2xl transition-all duration-500 group-hover:opacity-20 group-hover:scale-125',
@@ -64,4 +67,10 @@ export default function StatCard({
       </div>
     </div>
   );
+
+  if (href) {
+    return <Link href={href}>{CardContent}</Link>;
+  }
+
+  return CardContent;
 }

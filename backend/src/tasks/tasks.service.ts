@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Between, LessThan, In } from 'typeorm';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Task, TaskStatus } from '../database/entities/task.entity';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
@@ -18,6 +19,7 @@ export class TasksService {
   constructor(
     @InjectRepository(Task)
     private readonly taskRepository: Repository<Task>,
+    private eventEmitter: EventEmitter2,
   ) {}
 
   async findAll(workspaceId: string, query: QueryTasksDto) {
@@ -131,6 +133,13 @@ export class TasksService {
       const savedTask = await this.taskRepository.save(task);
       this.logger.log(`Task created: ${savedTask.id} in workspace ${workspaceId}`);
 
+      // Emit task.created event for workflow triggers
+      this.eventEmitter.emit('task.created', {
+        task: savedTask,
+        workspaceId,
+      });
+      this.logger.log(`Task created event emitted for task ${savedTask.id}`);
+
       return this.findOne(workspaceId, savedTask.id, ['assignee', 'contact', 'deal']);
     } catch (error) {
       this.logger.error(`Error creating task: ${error.message}`, error.stack);
@@ -140,12 +149,22 @@ export class TasksService {
 
   async update(workspaceId: string, id: string, updateTaskDto: UpdateTaskDto) {
     const task = await this.findOne(workspaceId, id);
+    const oldStatus = task.status;
 
     try {
       Object.assign(task, updateTaskDto);
-      await this.taskRepository.save(task);
+      const updatedTask = await this.taskRepository.save(task);
 
       this.logger.log(`Task updated: ${id} in workspace ${workspaceId}`);
+
+      // Emit task.completed event when status changes to completed
+      if (updateTaskDto.status && updateTaskDto.status === TaskStatus.COMPLETED && oldStatus !== TaskStatus.COMPLETED) {
+        this.eventEmitter.emit('task.completed', {
+          task: updatedTask,
+          workspaceId,
+        });
+        this.logger.log(`Task completed event emitted for task ${updatedTask.id}`);
+      }
 
       return this.findOne(workspaceId, id, ['assignee', 'contact', 'deal']);
     } catch (error) {

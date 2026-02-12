@@ -1,5 +1,6 @@
-import { IsString, IsNotEmpty, MinLength, Matches } from 'class-validator';
+import { IsString, IsNotEmpty } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
+import { IsStrongPassword } from '../validators/password.validator';
 
 export class ResetPasswordDto {
   @ApiProperty({
@@ -11,15 +12,12 @@ export class ResetPasswordDto {
   token: string;
 
   @ApiProperty({
-    description: 'New password (min 8 characters, at least 1 uppercase, 1 lowercase, 1 number)',
-    example: 'NewSecureP@ss123',
-    minLength: 8,
+    description: 'New strong password (min 12 characters, uppercase, lowercase, number, special character)',
+    example: 'NewSecureP@ss123!',
+    minLength: 12,
   })
   @IsString()
   @IsNotEmpty()
-  @MinLength(8, { message: 'Password must be at least 8 characters long' })
-  @Matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/, {
-    message: 'Password must contain at least 1 uppercase letter, 1 lowercase letter, and 1 number',
-  })
+  @IsStrongPassword()
   newPassword: string;
 }

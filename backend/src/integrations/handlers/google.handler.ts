@@ -1,43 +1,184 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
-import { Integration } from '../../database/entities/integration.entity';
+import { Integration, IntegrationStatus } from '../../database/entities/integration.entity';
 import { IntegrationHandler } from '../registry/integration.registry';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 
 @Injectable()
 export class GoogleIntegrationHandler implements IntegrationHandler {
   private readonly logger = new Logger(GoogleIntegrationHandler.name);
 
-  constructor(private httpService: HttpService) {}
+  constructor(
+    private httpService: HttpService,
+    @InjectRepository(Integration)
+    private integrationRepository: Repository<Integration>,
+  ) {}
+
+  /**
+   * Helper method to make authenticated Google API requests with automatic token refresh
+   */
+  private async makeAuthenticatedRequest<T = any>(
+    integration: Integration,
+    url: string,
+    params?: any,
+    method: 'get' | 'post' = 'get'
+  ): Promise<T> {
+    let accessToken = integration.credentials?.accessToken;
+
+    try {
+      const config = {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+        params,
+      };
+
+      const response = method === 'get'
+        ? await this.httpService.axiosRef.get(url, config)
+        : await this.httpService.axiosRef.post(url, params, { headers: config.headers });
+
+      return response.data;
+    } catch (error) {
+      // If 401, try refreshing the token and retry
+      if (error.response?.status === 401) {
+        this.logger.log('Access token expired, refreshing...');
+        accessToken = await this.refreshAccessToken(integration);
+
+        // Retry with new token
+        const config = {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+          },
+          params,
+        };
+
+        const response = method === 'get'
+          ? await this.httpService.axiosRef.get(url, config)
+          : await this.httpService.axiosRef.post(url, params, { headers: config.headers });
+
+        return response.data;
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Helper method to refresh access token when it expires
+   */
+  private async refreshAccessToken(integration: Integration): Promise<string> {
+    try {
+      if (!integration.credentials?.refreshToken) {
+        this.logger.error(`No refresh token available for Google integration ${integration.id}. User needs to reconnect.`);
+        
+        // Mark integration as needing reconnection
+        integration.status = IntegrationStatus.PENDING;
+        integration.recordError('Token refresh failed: No refresh token available. Please reconnect this integration.');
+        await this.integrationRepository.save(integration);
+        
+        throw new Error('No refresh token available. Please reconnect this integration in the integrations page.');
+      }
+
+      this.logger.log(`Refreshing Google access token for integration ${integration.id}`);
+
+      const response = await this.httpService.axiosRef.post(
+        'https://oauth2.googleapis.com/token',
+        new URLSearchParams({
+          grant_type: 'refresh_token',
+          client_id: process.env.OAUTH_GOOGLE_CLIENT_ID,
+          client_secret: process.env.OAUTH_GOOGLE_CLIENT_SECRET,
+          refresh_token: integration.credentials.refreshToken,
+        }),
+        {
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+        }
+      );
+
+      const newAccessToken = response.data.access_token;
+      const expiresIn = response.data.expires_in;
+
+      // Update integration credentials
+      integration.credentials = {
+        ...integration.credentials,
+        accessToken: newAccessToken,
+        expiresAt: new Date(Date.now() + expiresIn * 1000),
+      };
+
+      // Clear any previous errors
+      integration.clearErrors();
+      await this.integrationRepository.save(integration);
+
+      this.logger.log(`Successfully refreshed Google access token for integration ${integration.id}`);
+
+      return newAccessToken;
+    } catch (error) {
+      this.logger.error(`Failed to refresh Google access token: ${error.message}`);
+      
+      // Mark integration as needing reconnection if refresh token is missing
+      if (error.message.includes('No refresh token available')) {
+        integration.status = IntegrationStatus.PENDING;
+        integration.recordError(`Token refresh failed: ${error.message}`);
+        await this.integrationRepository.save(integration);
+      }
+      
+      throw new Error(`Token refresh failed: ${error.message}`);
+    }
+  }
 
   async testConnection(integration: Integration): Promise<{ success: boolean; message?: string; data?: any }> {
     try {
-      // Test Google API connection
-      const response = await this.httpService.axiosRef.get(
-        'https://www.googleapis.com/oauth2/v2/userinfo',
-        {
-          headers: {
-            Authorization: `Bearer ${integration.credentials?.accessToken}`,
-          },
-        }
+      // Check if we have access token
+      if (!integration.credentials?.accessToken) {
+        return {
+          success: false,
+          message: 'Google connection failed: No access token available. Please reconnect this integration.',
+        };
+      }
+
+      // Check if token is expired and we don't have refresh token
+      const expiresAt = integration.credentials.expiresAt 
+        ? new Date(integration.credentials.expiresAt) 
+        : null;
+      
+      if (expiresAt && expiresAt <= new Date() && !integration.credentials.refreshToken) {
+        return {
+          success: false,
+          message: 'Google connection failed: Access token expired and no refresh token available. Please reconnect this integration.',
+        };
+      }
+
+      const data = await this.makeAuthenticatedRequest(
+        integration,
+        'https://www.googleapis.com/oauth2/v2/userinfo'
       );
 
       return {
         success: true,
         message: 'Connected to Google successfully',
-        data: response.data,
+        data,
       };
     } catch (error) {
+      // Provide more specific error messages
+      let errorMessage = error.message;
+      
+      if (error.message.includes('No refresh token available')) {
+        errorMessage = 'Token refresh failed: No refresh token available. Please reconnect this integration.';
+      } else if (error.message.includes('401') || error.message.includes('Unauthorized')) {
+        errorMessage = 'Google connection failed: Access token expired or invalid. Please reconnect this integration.';
+      }
+      
       return {
         success: false,
-        message: `Google connection failed: ${error.message}`,
+        message: `Google connection failed: ${errorMessage}`,
       };
     }
   }
 
   async syncData(integration: Integration, options?: any): Promise<any> {
     try {
-      const accessToken = integration.credentials?.accessToken;
-      if (!accessToken) {
+      if (!integration.credentials?.accessToken) {
         throw new Error('Access token not found');
       }
 
@@ -46,10 +187,13 @@ export class GoogleIntegrationHandler implements IntegrationHandler {
 
       switch (syncType) {
         case 'calendar':
-          records = await this.syncCalendar(accessToken);
+          records = await this.syncCalendar(integration);
           break;
         case 'contacts':
-          records = await this.syncContacts(accessToken);
+          records = await this.syncContacts(integration);
+          break;
+        case 'drive':
+          records = await this.syncDrive(integration, options);
           break;
         default:
           throw new Error(`Unsupported sync type: ${syncType}`);
@@ -81,49 +225,222 @@ export class GoogleIntegrationHandler implements IntegrationHandler {
     return { event: 'google.webhook', data: payload };
   }
 
-  private async syncCalendar(accessToken: string): Promise<any[]> {
+  private async syncCalendar(integration: Integration): Promise<any[]> {
     try {
-      const response = await this.httpService.axiosRef.get(
+      const data = await this.makeAuthenticatedRequest(
+        integration,
         'https://www.googleapis.com/calendar/v3/calendars/primary/events',
         {
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-          },
-          params: {
-            maxResults: 100,
-            timeMin: new Date().toISOString(),
-            singleEvents: true,
-            orderBy: 'startTime',
-          },
+          maxResults: 100,
+          timeMin: new Date().toISOString(),
+          singleEvents: true,
+          orderBy: 'startTime',
         }
       );
 
-      return response.data.items || [];
+      return data.items || [];
     } catch (error) {
       this.logger.error(`Calendar sync failed: ${error.message}`);
       return [];
     }
   }
 
-  private async syncContacts(accessToken: string): Promise<any[]> {
+  private async syncContacts(integration: Integration): Promise<any[]> {
+    try {
+      const data = await this.makeAuthenticatedRequest(
+        integration,
+        'https://people.googleapis.com/v1/people/me/connections',
+        {
+          personFields: 'names,emailAddresses,phoneNumbers,organizations',
+          pageSize: 100,
+        }
+      );
+
+      return data.connections || [];
+    } catch (error) {
+      this.logger.error(`Contacts sync failed: ${error.message}`);
+      return [];
+    }
+  }
+
+  private async syncDrive(integration: Integration, options?: any): Promise<any[]> {
+    try {
+      const pageSize = options?.pageSize || 100;
+      const query = options?.query || '';
+      const folderId = options?.folderId;
+
+      // Build query parameters
+      const params: any = {
+        pageSize,
+        fields: 'files(id,name,mimeType,size,createdTime,modifiedTime,webViewLink,thumbnailLink,owners,shared,parents)',
+        orderBy: 'modifiedTime desc',
+      };
+
+      // If specific folder is requested
+      if (folderId) {
+        params.q = `'${folderId}' in parents`;
+      } else if (query) {
+        params.q = query;
+      } else {
+        // Get recently modified files
+        params.q = "trashed=false";
+      }
+
+      const data = await this.makeAuthenticatedRequest(
+        integration,
+        'https://www.googleapis.com/drive/v3/files',
+        params
+      );
+
+      return data.files || [];
+    } catch (error) {
+      this.logger.error(`Drive sync failed: ${error.message}`);
+      return [];
+    }
+  }
+
+  /**
+   * Get file metadata from Google Drive
+   */
+  async getFile(accessToken: string, fileId: string): Promise<any> {
     try {
       const response = await this.httpService.axiosRef.get(
-        'https://people.googleapis.com/v1/people/me/connections',
+        `https://www.googleapis.com/drive/v3/files/${fileId}`,
         {
           headers: {
             Authorization: `Bearer ${accessToken}`,
           },
           params: {
-            personFields: 'names,emailAddresses,phoneNumbers,organizations',
-            pageSize: 100,
+            fields: 'id,name,mimeType,size,createdTime,modifiedTime,webViewLink,thumbnailLink,owners,shared,parents',
           },
         }
       );
 
-      return response.data.connections || [];
+      return response.data;
     } catch (error) {
-      this.logger.error(`Contacts sync failed: ${error.message}`);
+      this.logger.error(`Get file failed: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Download file from Google Drive
+   */
+  async downloadFile(accessToken: string, fileId: string): Promise<any> {
+    try {
+      const response = await this.httpService.axiosRef.get(
+        `https://www.googleapis.com/drive/v3/files/${fileId}`,
+        {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+          },
+          params: {
+            alt: 'media',
+          },
+          responseType: 'arraybuffer',
+        }
+      );
+
+      return response.data;
+    } catch (error) {
+      this.logger.error(`Download file failed: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * List folders in Google Drive
+   */
+  async listFolders(accessToken: string, parentId?: string): Promise<any[]> {
+    try {
+      const params: any = {
+        q: "mimeType='application/vnd.google-apps.folder' and trashed=false",
+        fields: 'files(id,name,createdTime,modifiedTime,parents)',
+        orderBy: 'name',
+      };
+
+      if (parentId) {
+        params.q += ` and '${parentId}' in parents`;
+      }
+
+      const response = await this.httpService.axiosRef.get(
+        'https://www.googleapis.com/drive/v3/files',
+        {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+          },
+          params,
+        }
+      );
+
+      return response.data.files || [];
+    } catch (error) {
+      this.logger.error(`List folders failed: ${error.message}`);
       return [];
+    }
+  }
+
+  /**
+   * List Google Sheets from Drive
+   */
+  async listSheets(integration: any): Promise<any[]> {
+    try {
+      const params: any = {
+        q: "mimeType='application/vnd.google-apps.spreadsheet' and trashed=false",
+        fields: 'files(id,name,createdTime,modifiedTime,webViewLink,iconLink,owners)',
+        orderBy: 'modifiedTime desc',
+        pageSize: 100,
+      };
+
+      const data = await this.makeAuthenticatedRequest(
+        integration,
+        'https://www.googleapis.com/drive/v3/files',
+        params
+      );
+
+      return data.files || [];
+    } catch (error) {
+      this.logger.error(`List sheets failed: ${error.message}`);
+      return [];
+    }
+  }
+
+  /**
+   * Get spreadsheet data from Google Sheets
+   */
+  async getSheetData(integration: any, spreadsheetId: string, range?: string): Promise<any> {
+    try {
+      const sheetRange = range || 'A1:Z1000'; // Default range
+      const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${sheetRange}`;
+
+      const data = await this.makeAuthenticatedRequest(integration, url);
+
+      return {
+        spreadsheetId,
+        range: data.range,
+        values: data.values || [],
+      };
+    } catch (error) {
+      this.logger.error(`Get sheet data failed: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Get spreadsheet metadata (sheets list, properties)
+   */
+  async getSpreadsheetMetadata(integration: any, spreadsheetId: string): Promise<any> {
+    try {
+      const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}`;
+
+      const data = await this.makeAuthenticatedRequest(integration, url, {
+        fields: 'spreadsheetId,properties,sheets(properties)',
+      });
+
+      return data;
+    } catch (error) {
+      this.logger.error(`Get spreadsheet metadata failed: ${error.message}`);
+      throw error;
     }
   }
 }

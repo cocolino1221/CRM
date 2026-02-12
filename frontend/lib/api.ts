@@ -1,12 +1,13 @@
 import axios, { AxiosError, InternalAxiosRequestConfig } from 'axios';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000/api/v1';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api/v1';
 
 export const api = axios.create({
   baseURL: API_BASE_URL,
   headers: {
     'Content-Type': 'application/json',
   },
+  withCredentials: true, // Enable sending httpOnly cookies with requests
 });
 
 let isRefreshing = false;
@@ -26,15 +27,12 @@ const processQueue = (error: AxiosError | null, token: string | null = null) => 
   failedQueue = [];
 };
 
-// Request interceptor for adding auth token
+// Request interceptor - tokens are now in httpOnly cookies (sent automatically)
+// No need to manually add Authorization header
 api.interceptors.request.use(
-  (config: InternalAxiosRequestConfig) => {
-    if (typeof window !== 'undefined') {
-      const token = localStorage.getItem('accessToken');
-      if (token && config.headers) {
-        config.headers.Authorization = `Bearer ${token}`;
-      }
-    }
+  (config: InternalAxionsRequestConfig) => {
+    // Cookies are automatically included with withCredentials: true
+    // No manual token management needed
     return config;
   },
   (error) => {
@@ -68,44 +66,38 @@ api.interceptors.response.use(
       isRefreshing = true;
 
       if (typeof window !== 'undefined') {
-        const refreshToken = localStorage.getItem('refreshToken');
-
-        if (!refreshToken) {
-          // No refresh token, redirect to login
-          localStorage.clear();
-          window.location.href = '/login';
-          return Promise.reject(error);
-        }
-
         try {
-          // Attempt to refresh the token
-          const response = await axios.post(`${API_BASE_URL}/auth/refresh`, {
-            refreshToken,
-          });
+          // Attempt to refresh the token (cookies sent automatically)
+          const response = await axios.post(
+            `${API_BASE_URL}/auth/refresh`,
+            {}, // Empty body - refresh token is in httpOnly cookie
+            { withCredentials: true } // Ensure cookies are sent
+          );
 
-          const { accessToken, refreshToken: newRefreshToken } = response.data;
+          // New tokens are set as httpOnly cookies by the backend
+          // No need to manually store them
 
-          // Store new tokens
-          localStorage.setItem('accessToken', accessToken);
-          localStorage.setItem('refreshToken', newRefreshToken);
-
-          // Update authorization header
-          if (originalRequest.headers) {
-            originalRequest.headers.Authorization = `Bearer ${accessToken}`;
-          }
-
-          processQueue(null, accessToken);
+          processQueue(null, 'refreshed');
           isRefreshing = false;
 
-          // Retry the original request
+          // Retry the original request (cookies will be sent automatically)
           return api(originalRequest);
         } catch (refreshError) {
           processQueue(refreshError as AxiosError, null);
           isRefreshing = false;
 
-          // Refresh failed, clear storage and redirect
-          localStorage.clear();
-          window.location.href = '/login';
+          // Clear stored user data so AuthGuard doesn't redirect back to dashboard
+          localStorage.removeItem('user');
+
+          // Refresh failed, redirect to login (only if not already on auth pages)
+          const currentPath = window.location.pathname;
+          const isAuthPage = currentPath.startsWith('/login') ||
+                            currentPath.startsWith('/register') ||
+                            currentPath.startsWith('/forgot-password');
+
+          if (!isAuthPage) {
+            window.location.href = '/login';
+          }
           return Promise.reject(refreshError);
         }
       }

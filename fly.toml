@@ -2,7 +2,8 @@ app = "slackcrm-backend"
 primary_region = "iad"
 
 [build]
-  dockerfile = "backend/Dockerfile"
+  dockerfile = "Dockerfile"
+  build-target = ""
 
 [env]
   NODE_ENV = "production"

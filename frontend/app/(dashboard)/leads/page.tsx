@@ -86,10 +86,16 @@ export default function LeadsPage() {
   const [error, setError] = useState<string | null>(null);
   const [totalContacts, setTotalContacts] = useState(0);
 
+  // Date filter states
+  const [selectedMonth, setSelectedMonth] = useState<number | null>(null); // 0-11
+  const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
+  const [showDateFilter, setShowDateFilter] = useState(false);
+
   // Modal states
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showPipelineModal, setShowPipelineModal] = useState(false);
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [editingContact, setEditingContact] = useState<Contact | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [modalError, setModalError] = useState('');
@@ -104,6 +110,18 @@ export default function LeadsPage() {
     source: 'manual',
     tags: [],
   });
+
+  // Payment form data
+  const [paymentFormData, setPaymentFormData] = useState({
+    paymentMethod: '',
+    firm: '',
+  });
+
+  const [pendingStageChange, setPendingStageChange] = useState<{
+    contact: Contact;
+    newStageId: string;
+    stage: PipelineStage;
+  } | null>(null);
 
   // Pipeline form data
   const [pipelineFormData, setPipelineFormData] = useState({
@@ -365,6 +383,53 @@ export default function LeadsPage() {
     }
   };
 
+  const handlePaymentSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!pendingStageChange) return;
+
+    setModalError('');
+    setIsSubmitting(true);
+
+    try {
+      const { contact, newStageId } = pendingStageChange;
+
+      // Update pipeline stage with payment info
+      const pipelineData: any = {
+        pipelineStageId: newStageId,
+        paymentMethod: paymentFormData.paymentMethod,
+      };
+
+      // Only include firm if payment method is rate or bill
+      if (paymentFormData.paymentMethod === 'rate' || paymentFormData.paymentMethod === 'bill') {
+        if (!paymentFormData.firm) {
+          setModalError('Please select a firm for rate/bill payment method');
+          setIsSubmitting(false);
+          return;
+        }
+        pipelineData.firm = paymentFormData.firm;
+      }
+
+      await api.put(`/pipelines/contacts/${contact.id}`, pipelineData);
+
+      // Update contact status to customer
+      await api.put(`/contacts/${contact.id}`, { status: 'customer' });
+
+      setShowPaymentModal(false);
+      setShowEditModal(false);
+      setPendingStageChange(null);
+      setEditingContact(null);
+      setPaymentFormData({ paymentMethod: '', firm: '' });
+      resetForm();
+      fetchContacts();
+    } catch (err: any) {
+      console.error('Failed to update payment details:', err);
+      const errorMsg = err.response?.data?.message || 'Failed to update payment details';
+      setModalError(errorMsg);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   const openEditModal = (contact: Contact) => {
     setEditingContact(contact);
     setFormData({
@@ -446,8 +511,40 @@ export default function LeadsPage() {
   };
 
   const getLeadsForStage = (stageId: string): Contact[] => {
-    return contacts.filter(contact => contact.pipelineStageId === stageId);
+    let filteredContacts = contacts.filter(contact => contact.pipelineStageId === stageId);
+
+    // Apply month/year filter if selected
+    if (selectedMonth !== null) {
+      filteredContacts = filteredContacts.filter(contact => {
+        const contactDate = new Date(contact.createdAt);
+        return contactDate.getMonth() === selectedMonth && contactDate.getFullYear() === selectedYear;
+      });
+    }
+
+    return filteredContacts;
   };
+
+  // Get filtered summary stats
+  const getFilteredStats = () => {
+    let filteredContacts = contacts;
+
+    if (selectedMonth !== null) {
+      filteredContacts = filteredContacts.filter(contact => {
+        const contactDate = new Date(contact.createdAt);
+        return contactDate.getMonth() === selectedMonth && contactDate.getFullYear() === selectedYear;
+      });
+    }
+
+    return {
+      total: filteredContacts.length,
+      byStage: selectedPipeline?.stages.reduce((acc, stage) => {
+        acc[stage.id] = filteredContacts.filter(c => c.pipelineStageId === stage.id).length;
+        return acc;
+      }, {} as Record<string, number>) || {},
+    };
+  };
+
+  const filteredStats = getFilteredStats();
 
   const getLeadScoreColor = (score: number) => {
     if (score >= 75) return 'bg-green-500';
@@ -492,7 +589,14 @@ export default function LeadsPage() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Pipeline</h1>
           <p className="mt-1 text-sm text-gray-500">
-            Manage your leads through the sales pipeline ({totalContacts} total)
+            Manage your leads through the sales pipeline
+            {selectedMonth !== null ? (
+              <span className="font-semibold text-indigo-600">
+                {' '}({filteredStats.total} in {new Date(selectedYear, selectedMonth).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })})
+              </span>
+            ) : (
+              <span> ({totalContacts} total)</span>
+            )}
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -523,8 +627,8 @@ export default function LeadsPage() {
         </div>
       </div>
 
-      {/* Pipeline Selector and Search */}
-      <div className="flex items-center gap-4">
+      {/* Pipeline Selector, Date Filter and Search */}
+      <div className="flex items-center gap-4 flex-wrap">
         <div className="relative w-64">
           <select
             value={selectedPipeline?.id || ''}
@@ -546,6 +650,76 @@ export default function LeadsPage() {
             )}
           </select>
         </div>
+
+        {/* Month Filter */}
+        <div className="relative">
+          <button
+            onClick={() => setShowDateFilter(!showDateFilter)}
+            className="flex items-center gap-2 rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-all"
+          >
+            <Calendar className="h-4 w-4" />
+            {selectedMonth !== null ? (
+              <span>
+                {new Date(selectedYear, selectedMonth).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+              </span>
+            ) : (
+              <span>All Time</span>
+            )}
+          </button>
+
+          {showDateFilter && (
+            <div className="absolute top-full mt-2 left-0 z-50 bg-white rounded-xl shadow-xl border border-gray-200 p-4 w-72">
+              <div className="mb-3">
+                <label className="block text-xs font-semibold text-gray-700 mb-2">Year</label>
+                <select
+                  value={selectedYear}
+                  onChange={(e) => setSelectedYear(Number(e.target.value))}
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                >
+                  {Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i).map(year => (
+                    <option key={year} value={year}>{year}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="mb-3">
+                <label className="block text-xs font-semibold text-gray-700 mb-2">Month</label>
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    onClick={() => {
+                      setSelectedMonth(null);
+                      setShowDateFilter(false);
+                    }}
+                    className={`px-3 py-2 text-xs font-medium rounded-lg transition-all ${
+                      selectedMonth === null
+                        ? 'bg-indigo-600 text-white'
+                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                    }`}
+                  >
+                    All
+                  </button>
+                  {['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'].map((month, index) => (
+                    <button
+                      key={month}
+                      onClick={() => {
+                        setSelectedMonth(index);
+                        setShowDateFilter(false);
+                      }}
+                      className={`px-3 py-2 text-xs font-medium rounded-lg transition-all ${
+                        selectedMonth === index
+                          ? 'bg-indigo-600 text-white'
+                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                      }`}
+                    >
+                      {month}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
         <button
           onClick={() => {
             setShowPipelineModal(true);
@@ -677,9 +851,9 @@ export default function LeadsPage() {
                             </div>
                           </div>
 
-                          {/* Date */}
+                          {/* Date and Time */}
                           <div className="text-xs text-gray-400">
-                            Added {new Date(contact.createdAt).toLocaleDateString()}
+                            Added {new Date(contact.createdAt).toLocaleDateString()} at {new Date(contact.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                           </div>
                         </div>
                       ))
@@ -1102,7 +1276,25 @@ export default function LeadsPage() {
                   <select
                     disabled={isSubmitting}
                     value={formData.pipelineStageId || ''}
-                    onChange={(e) => setFormData({ ...formData, pipelineStageId: e.target.value })}
+                    onChange={(e) => {
+                      const newStageId = e.target.value;
+                      const newStage = pipelines
+                        .find(p => p.id === formData.pipelineId)
+                        ?.stages?.find(s => s.id === newStageId);
+
+                      // If moving to Closed Won stage, show payment modal
+                      if (newStage?.isClosedWon && editingContact) {
+                        setPendingStageChange({
+                          contact: editingContact,
+                          newStageId,
+                          stage: newStage,
+                        });
+                        setPaymentFormData({ paymentMethod: '', firm: '' });
+                        setShowPaymentModal(true);
+                      } else {
+                        setFormData({ ...formData, pipelineStageId: newStageId });
+                      }
+                    }}
                     className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 disabled:bg-gray-50 disabled:cursor-not-allowed transition-all"
                   >
                     {(pipelines
@@ -1460,6 +1652,105 @@ export default function LeadsPage() {
                       <Plus className="h-4 w-4" />
                       Create Pipeline
                     </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Payment Method Modal */}
+      {showPaymentModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+            <div className="p-6 border-b border-gray-200">
+              <h2 className="text-2xl font-bold text-gray-900">Payment Details</h2>
+              <p className="text-sm text-gray-600 mt-1">
+                Select payment method for this client
+              </p>
+            </div>
+
+            <form onSubmit={handlePaymentSubmit} className="p-6 space-y-6">
+              {modalError && (
+                <div className="p-4 bg-red-50 border-l-4 border-red-500 rounded-lg">
+                  <div className="flex items-center gap-3">
+                    <AlertCircle className="h-5 w-5 text-red-500 flex-shrink-0" />
+                    <p className="text-sm text-red-800">{modalError}</p>
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  Payment Method <span className="text-red-500">*</span>
+                </label>
+                <select
+                  value={paymentFormData.paymentMethod}
+                  onChange={(e) => setPaymentFormData({
+                    ...paymentFormData,
+                    paymentMethod: e.target.value,
+                    firm: '' // Reset firm when payment method changes
+                  })}
+                  required
+                  className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                >
+                  <option value="">Select payment method</option>
+                  <option value="integral">Integral</option>
+                  <option value="rate">Rate</option>
+                  <option value="bill">Bill/Factura</option>
+                </select>
+              </div>
+
+              {/* Conditionally show Firm selection only for rate or bill */}
+              {(paymentFormData.paymentMethod === 'rate' || paymentFormData.paymentMethod === 'bill') && (
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">
+                    Firm <span className="text-red-500">*</span>
+                  </label>
+                  <select
+                    value={paymentFormData.firm}
+                    onChange={(e) => setPaymentFormData({
+                      ...paymentFormData,
+                      firm: e.target.value
+                    })}
+                    required
+                    className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                  >
+                    <option value="">Select firm</option>
+                    <option value="old">Old</option>
+                    <option value="new">New</option>
+                    <option value="dubai">Dubai</option>
+                  </select>
+                </div>
+              )}
+
+              <div className="flex gap-3 pt-4">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowPaymentModal(false);
+                    setPendingStageChange(null);
+                    setPaymentFormData({ paymentMethod: '', firm: '' });
+                    setModalError('');
+                  }}
+                  disabled={isSubmitting}
+                  className="flex-1 px-6 py-3 text-sm font-semibold text-gray-700 bg-gray-100 rounded-xl hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="flex-1 px-6 py-3 text-sm font-semibold text-white bg-gradient-to-r from-blue-600 to-indigo-600 rounded-xl shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 transition-all"
+                >
+                  {isSubmitting ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Saving...
+                    </>
+                  ) : (
+                    'Save & Close Deal'
                   )}
                 </button>
               </div>

@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
 import { User, UserRole, UserStatus } from '../database/entities/user.entity';
 import { CreateUserDto } from './dto/create-user.dto';
@@ -22,6 +23,7 @@ export class UsersService {
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
     private readonly emailService: EmailService,
+    private readonly configService: ConfigService,
   ) {}
 
   /**
@@ -49,8 +51,9 @@ export class UsersService {
       throw new ConflictException('User with this email already exists in workspace');
     }
 
-    // Hash password
-    const hashedPassword = await bcrypt.hash(createUserDto.password, 10);
+    // Hash password with configured bcrypt rounds
+    const bcryptRounds = this.configService.get<number>('auth.bcryptRounds') || 12;
+    const hashedPassword = await bcrypt.hash(createUserDto.password, bcryptRounds);
 
     // Create user
     const user = this.userRepository.create({

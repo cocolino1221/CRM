@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, OnModuleInit } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { HttpModule } from '@nestjs/axios';
 import { ScheduleModule } from '@nestjs/schedule';
@@ -16,6 +16,9 @@ import { Company } from '../database/entities/company.entity';
 import { Deal } from '../database/entities/deal.entity';
 import { Task } from '../database/entities/task.entity';
 import { Activity } from '../database/entities/activity.entity';
+import { Pipeline } from '../database/entities/pipeline.entity';
+import { PipelineStage } from '../database/entities/pipeline-stage.entity';
+import { User } from '../database/entities/user.entity';
 
 // Services
 import { IntegrationsService } from './integrations.service';
@@ -35,8 +38,17 @@ import { SalesforceIntegrationHandler } from './handlers/salesforce.handler';
 import { HubSpotIntegrationHandler } from './handlers/hubspot.handler';
 import { ZoomIntegrationHandler } from './handlers/zoom.handler';
 import { TypeformIntegrationHandler } from './handlers/typeform.handler';
+import { PandaDocIntegrationHandler } from './handlers/pandadoc.handler';
+import { DocuSignIntegrationHandler } from './handlers/docusign.handler';
+import { CalendlyIntegrationHandler } from './handlers/calendly.handler';
+import { KajabiIntegrationHandler } from './handlers/kajabi.handler';
 import { WebhookIntegrationHandler } from './handlers/webhook.handler';
 import { ApiIntegrationHandler } from './handlers/api.handler';
+import { WhatsAppIntegrationHandler } from './handlers/whatsapp.handler';
+
+// Modules
+import { ContactsModule } from '../contacts/contacts.module';
+import { QueueModule } from '../queues/queue.module';
 
 @Module({
   imports: [
@@ -49,6 +61,9 @@ import { ApiIntegrationHandler } from './handlers/api.handler';
       Deal,
       Task,
       Activity,
+      Pipeline,
+      PipelineStage,
+      User,
     ]),
     HttpModule.register({
       timeout: 30000,
@@ -56,6 +71,8 @@ import { ApiIntegrationHandler } from './handlers/api.handler';
     }),
     ScheduleModule,
     EventEmitterModule,
+    ContactsModule, // Import ContactsModule to access ContactsService
+    QueueModule, // Import QueueModule to enable async import jobs
   ],
   controllers: [IntegrationsController],
   providers: [
@@ -74,60 +91,17 @@ import { ApiIntegrationHandler } from './handlers/api.handler';
     HubSpotIntegrationHandler,
     ZoomIntegrationHandler,
     TypeformIntegrationHandler,
+    PandaDocIntegrationHandler,
+    DocuSignIntegrationHandler,
+    CalendlyIntegrationHandler,
+    KajabiIntegrationHandler,
     WebhookIntegrationHandler,
     ApiIntegrationHandler,
+    WhatsAppIntegrationHandler,
 
     // Registry initialization
-    {
-      provide: 'INTEGRATION_HANDLERS',
-      useFactory: (
-        slack: SlackIntegrationHandler,
-        google: GoogleIntegrationHandler,
-        microsoft: MicrosoftIntegrationHandler,
-        salesforce: SalesforceIntegrationHandler,
-        hubspot: HubSpotIntegrationHandler,
-        zoom: ZoomIntegrationHandler,
-        typeform: TypeformIntegrationHandler,
-        webhook: WebhookIntegrationHandler,
-        api: ApiIntegrationHandler,
-        registry: IntegrationRegistry,
-      ) => {
-        // Register handlers with the registry
-        registry.register(registry.getIntegrationMetadata(IntegrationType.SLACK), slack);
-        registry.register(registry.getIntegrationMetadata(IntegrationType.GOOGLE), google);
-        registry.register(registry.getIntegrationMetadata(IntegrationType.MICROSOFT), microsoft);
-        registry.register(registry.getIntegrationMetadata(IntegrationType.SALESFORCE), salesforce);
-        registry.register(registry.getIntegrationMetadata(IntegrationType.HUBSPOT), hubspot);
-        registry.register(registry.getIntegrationMetadata(IntegrationType.ZOOM), zoom);
-        registry.register(registry.getIntegrationMetadata(IntegrationType.TYPEFORM), typeform);
-        registry.register(registry.getIntegrationMetadata(IntegrationType.WEBHOOK), webhook);
-        registry.register(registry.getIntegrationMetadata(IntegrationType.API), api);
-
-        return {
-          slack,
-          google,
-          microsoft,
-          salesforce,
-          hubspot,
-          zoom,
-          typeform,
-          webhook,
-          api,
-        };
-      },
-      inject: [
-        SlackIntegrationHandler,
-        GoogleIntegrationHandler,
-        MicrosoftIntegrationHandler,
-        SalesforceIntegrationHandler,
-        HubSpotIntegrationHandler,
-        ZoomIntegrationHandler,
-        TypeformIntegrationHandler,
-        WebhookIntegrationHandler,
-        ApiIntegrationHandler,
-        IntegrationRegistry,
-      ],
-    },
+    // Registry initialization
+    // Handlers are registered in onModuleInit
   ],
   exports: [
     IntegrationsService,
@@ -137,4 +111,40 @@ import { ApiIntegrationHandler } from './handlers/api.handler';
     SyncService,
   ],
 })
-export class IntegrationsModule {}
+export class IntegrationsModule implements OnModuleInit {
+  constructor(
+    private registry: IntegrationRegistry,
+    private slack: SlackIntegrationHandler,
+    private google: GoogleIntegrationHandler,
+    private microsoft: MicrosoftIntegrationHandler,
+    private salesforce: SalesforceIntegrationHandler,
+    private hubspot: HubSpotIntegrationHandler,
+    private zoom: ZoomIntegrationHandler,
+    private typeform: TypeformIntegrationHandler,
+    private pandadoc: PandaDocIntegrationHandler,
+    private docusign: DocuSignIntegrationHandler,
+    private calendly: CalendlyIntegrationHandler,
+    private kajabi: KajabiIntegrationHandler,
+    private webhook: WebhookIntegrationHandler,
+    private api: ApiIntegrationHandler,
+    private whatsapp: WhatsAppIntegrationHandler,
+  ) { }
+
+  onModuleInit() {
+    // Register handlers with the registry
+    this.registry.register(this.registry.getIntegrationMetadata(IntegrationType.SLACK), this.slack);
+    this.registry.register(this.registry.getIntegrationMetadata(IntegrationType.GOOGLE), this.google);
+    this.registry.register(this.registry.getIntegrationMetadata(IntegrationType.MICROSOFT), this.microsoft);
+    this.registry.register(this.registry.getIntegrationMetadata(IntegrationType.SALESFORCE), this.salesforce);
+    this.registry.register(this.registry.getIntegrationMetadata(IntegrationType.HUBSPOT), this.hubspot);
+    this.registry.register(this.registry.getIntegrationMetadata(IntegrationType.ZOOM), this.zoom);
+    this.registry.register(this.registry.getIntegrationMetadata(IntegrationType.TYPEFORM), this.typeform);
+    this.registry.register(this.registry.getIntegrationMetadata(IntegrationType.PANDADOC), this.pandadoc);
+    this.registry.register(this.registry.getIntegrationMetadata(IntegrationType.DOCUSIGN), this.docusign);
+    this.registry.register(this.registry.getIntegrationMetadata(IntegrationType.CALENDLY), this.calendly);
+    this.registry.register(this.registry.getIntegrationMetadata(IntegrationType.KAJABI), this.kajabi);
+    this.registry.register(this.registry.getIntegrationMetadata(IntegrationType.WEBHOOK), this.webhook);
+    this.registry.register(this.registry.getIntegrationMetadata(IntegrationType.API), this.api);
+    this.registry.register(this.registry.getIntegrationMetadata(IntegrationType.WHATSAPP), this.whatsapp);
+  }
+}

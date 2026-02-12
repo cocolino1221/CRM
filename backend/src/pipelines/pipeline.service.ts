@@ -24,6 +24,10 @@ export class PipelineService {
   // ========== Pipeline Management ==========
 
   async createPipeline(workspaceId: string, dto: CreatePipelineDto) {
+    if (!workspaceId) {
+      throw new BadRequestException('Workspace ID is required');
+    }
+
     // If this is set as default, unset other defaults
     if (dto.isDefault) {
       await this.pipelineRepository.update(
@@ -32,8 +36,9 @@ export class PipelineService {
       );
     }
 
+    const { stages: _stages, ...pipelineData } = dto;
     const pipeline = this.pipelineRepository.create({
-      ...dto,
+      ...pipelineData,
       workspaceId,
       displayOrder: await this.getNextDisplayOrder(workspaceId),
     });
@@ -42,15 +47,17 @@ export class PipelineService {
 
     // Create stages if provided
     if (dto.stages && dto.stages.length > 0) {
-      const stages = dto.stages.map((stageDto, index) =>
-        this.pipelineStageRepository.create({
-          ...stageDto,
-          workspaceId,
-          pipelineId: savedPipeline.id,
-          displayOrder: stageDto.displayOrder ?? index,
-        }),
-      );
-      await this.pipelineStageRepository.save(stages);
+      const stages = dto.stages.map((stageDto, index) => ({
+        name: stageDto.name,
+        description: stageDto.description,
+        color: stageDto.color ?? '#3B82F6',
+        displayOrder: stageDto.displayOrder ?? index,
+        isClosedWon: stageDto.isClosedWon ?? false,
+        isClosedLost: stageDto.isClosedLost ?? false,
+        workspaceId,
+        pipelineId: savedPipeline.id,
+      }));
+      await this.pipelineStageRepository.insert(stages);
     } else {
       // Create default stages
       await this.createDefaultStages(workspaceId, savedPipeline.id);
@@ -129,14 +136,22 @@ export class PipelineService {
   async createStage(workspaceId: string, pipelineId: string, dto: any) {
     const pipeline = await this.getPipelineById(workspaceId, pipelineId);
 
-    const stage = this.pipelineStageRepository.create({
-      ...dto,
+    const stage = {
+      name: dto.name,
+      description: dto.description,
+      color: dto.color ?? '#3B82F6',
+      displayOrder: dto.displayOrder ?? (await this.getNextStageOrder(pipelineId)),
+      isClosedWon: dto.isClosedWon ?? false,
+      isClosedLost: dto.isClosedLost ?? false,
+      config: dto.config,
       workspaceId,
       pipelineId: pipeline.id,
-      displayOrder: dto.displayOrder ?? (await this.getNextStageOrder(pipelineId)),
-    });
+    };
 
-    return this.pipelineStageRepository.save(stage);
+    const result = await this.pipelineStageRepository.insert(stage);
+    return this.pipelineStageRepository.findOne({
+      where: { id: result.identifiers[0].id },
+    });
   }
 
   async updateStage(workspaceId: string, id: string, dto: any) {
@@ -244,15 +259,17 @@ export class PipelineService {
       { name: 'Closed Lost', color: '#DC2626', displayOrder: 6, isClosedLost: true },
     ];
 
-    const stages = defaultStages.map((stage) =>
-      this.pipelineStageRepository.create({
-        ...stage,
-        workspaceId,
-        pipelineId,
-      }),
-    );
+    const stages = defaultStages.map((stage) => ({
+      name: stage.name,
+      color: stage.color,
+      displayOrder: stage.displayOrder,
+      workspaceId,
+      pipelineId,
+      isClosedWon: stage.isClosedWon ?? false,
+      isClosedLost: stage.isClosedLost ?? false,
+    }));
 
-    await this.pipelineStageRepository.save(stages);
+    await this.pipelineStageRepository.insert(stages);
   }
 
   private async getNextDisplayOrder(workspaceId: string): Promise<number> {

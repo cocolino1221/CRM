@@ -27,6 +27,9 @@ import { IntegrationRegistry } from './registry/integration.registry';
 import { OAuthService } from './auth/oauth.service';
 import { WebhookService } from './webhook/webhook.service';
 import { ConfigService } from '@nestjs/config';
+import { ContactsService } from '../contacts/contacts.service';
+import { QueueService } from '../queues/queue.service';
+import { QUEUE_NAMES } from '../queues/queue.constants';
 import { CreateIntegrationDto, UpdateIntegrationDto, InstallIntegrationDto } from './dto/integration.dto';
 import { Integration, IntegrationType, IntegrationStatus, IntegrationAuthType } from '../database/entities/integration.entity';
 
@@ -43,6 +46,8 @@ export class IntegrationsController {
     private readonly oauthService: OAuthService,
     private readonly webhookService: WebhookService,
     private readonly configService: ConfigService,
+    private readonly contactsService: ContactsService,
+    private readonly queueService: QueueService,
     @InjectRepository(Integration)
     private readonly integrationRepository: Repository<Integration>,
   ) {}
@@ -146,7 +151,7 @@ export class IntegrationsController {
   async install(
     @Req() req: AuthenticatedRequest,
     @Body() dto: InstallIntegrationDto,
-  ): Promise<{ integration: Integration; authUrl?: string }> {
+  ): Promise<{ integration: Integration; authUrl?: string; webhookUrl?: string }> {
     const integration = await this.integrationsService.install(
       req.user.workspaceId,
       req.user.id,
@@ -154,13 +159,44 @@ export class IntegrationsController {
     );
 
     let authUrl: string | undefined;
+    let webhookUrl: string | undefined;
 
     // Generate OAuth URL if needed
     if (integration.authType === 'oauth2') {
       authUrl = this.oauthService.generateAuthUrl(integration);
     }
 
-    return { integration, authUrl };
+    // Generate webhook URL for integrations that support webhooks
+    const appUrl = this.configService.get('APP_URL') || 'http://localhost:3000';
+    webhookUrl = `${appUrl}/api/v1/integrations/webhooks/${integration.id}`;
+
+    // For API key integrations, auto-test connection and activate if valid
+    if (dto.authType === IntegrationAuthType.API_KEY && (dto.credentials && Object.keys(dto.credentials).length > 0)) {
+      try {
+        const testResult = await this.integrationsService.testConnection(integration.id, req.user.workspaceId);
+        if (testResult.success) {
+          this.logger.log(`API key integration ${integration.id} activated after successful test`);
+
+          // For Typeform, auto-register webhook if formId is provided
+          if (integration.type === IntegrationType.TYPEFORM && integration.config?.formId) {
+            try {
+              const handler = this.integrationRegistry.getIntegrationHandler(IntegrationType.TYPEFORM) as any;
+              const apiKey = integration.credentials?.apiToken || integration.credentials?.apiKey || integration.config?.apiToken;
+              if (handler?.createWebhook && apiKey) {
+                await handler.createWebhook(integration.config.formId, webhookUrl, 'slackcrm', apiKey);
+                this.logger.log(`Typeform webhook registered for form ${integration.config.formId}`);
+              }
+            } catch (webhookError) {
+              this.logger.warn(`Failed to auto-register Typeform webhook: ${webhookError.message}`);
+            }
+          }
+        }
+      } catch (error) {
+        this.logger.warn(`API key integration ${integration.id} test failed: ${error.message}`);
+      }
+    }
+
+    return { integration, authUrl, webhookUrl };
   }
 
   @Patch(':id')
@@ -266,6 +302,50 @@ export class IntegrationsController {
   }
 
   // OAuth Endpoints - Public (no authentication required)
+  // IMPORTANT: Specific routes must come BEFORE parameterized routes
+  @Public()
+  @Get('oauth/callback')
+  @ApiOperation({ summary: 'Handle OAuth callback' })
+  @ApiResponse({ status: 302, description: 'OAuth callback handled' })
+  async handleOAuthCallback(
+    @Req() req: any,
+    @Res() res: Response,
+    @Query('code') code: string,
+    @Query('state') state: string,
+    @Query('error') error?: string,
+  ): Promise<void> {
+    const frontendUrl = this.configService.get('FRONTEND_URL') || 'http://localhost:3001';
+
+    if (error) {
+      this.logger.error(`OAuth error: ${error}`);
+      res.redirect(`${frontendUrl}/integrations/callback?error=${encodeURIComponent(error)}`);
+      return;
+    }
+
+    try {
+      const stateData = this.oauthService.validateState(state);
+
+      const integration = await this.integrationRepository.findOne({
+        where: { id: stateData.integrationId },
+      });
+
+      if (!integration) {
+        throw new Error('Integration not found');
+      }
+
+      if (integration.workspaceId !== stateData.workspaceId) {
+        throw new Error('Integration workspace mismatch');
+      }
+
+      await this.integrationsService.authenticate(integration.id, integration.workspaceId, { code });
+
+      res.redirect(`${frontendUrl}/integrations/callback?success=1&integration=${integration.id}&name=${encodeURIComponent(integration.name)}`);
+    } catch (err) {
+      this.logger.error(`OAuth callback failed:`, err);
+      res.redirect(`${frontendUrl}/integrations/callback?error=${encodeURIComponent(err.message)}`);
+    }
+  }
+
   @Public()
   @Get('oauth/:provider')
   @ApiOperation({ summary: 'Start OAuth authorization flow' })
@@ -281,19 +361,26 @@ export class IntegrationsController {
     const frontendUrl = this.configService.get('FRONTEND_URL') || 'http://localhost:3001';
 
     try {
+      this.logger.log(`OAuth request received - Provider: ${provider}, WorkspaceId: ${workspaceId}, UserId: ${userId}`);
+
       // Map provider name to IntegrationType
       const typeMap: Record<string, IntegrationType> = {
         'google': IntegrationType.GOOGLE,
+        'gmail': IntegrationType.GOOGLE, // Alias for Google
+        'google-workspace': IntegrationType.GOOGLE, // Alias for Google
         'slack': IntegrationType.SLACK,
         'microsoft': IntegrationType.MICROSOFT,
+        'microsoft-365': IntegrationType.MICROSOFT, // Alias for Microsoft
         'salesforce': IntegrationType.SALESFORCE,
         'hubspot': IntegrationType.HUBSPOT,
         'zoom': IntegrationType.ZOOM,
         'docusign': IntegrationType.DOCUSIGN,
+        'calendly': IntegrationType.CALENDLY,
       };
 
       const type = typeMap[provider.toLowerCase()];
       if (!type) {
+        this.logger.error(`Unsupported OAuth provider: ${provider} (lowercase: ${provider.toLowerCase()})`);
         res.redirect(`${frontendUrl}/integrations/callback?error=${encodeURIComponent('Unsupported OAuth provider')}`);
         return;
       }
@@ -316,49 +403,11 @@ export class IntegrationsController {
         });
       }
 
-      const authUrl = this.oauthService.generateAuthUrl(integration, integration.id);
+      const authUrl = this.oauthService.generateAuthUrl(integration);
       res.redirect(authUrl);
     } catch (error) {
       this.logger.error(`OAuth start failed:`, error);
       res.redirect(`${frontendUrl}/integrations/callback?error=${encodeURIComponent(error.message)}`);
-    }
-  }
-
-  @Public()
-  @Get('oauth/callback')
-  @ApiOperation({ summary: 'Handle OAuth callback' })
-  @ApiResponse({ status: 302, description: 'OAuth callback handled' })
-  async handleOAuthCallback(
-    @Req() req: any,
-    @Res() res: Response,
-    @Query('code') code: string,
-    @Query('state') state: string,
-    @Query('error') error?: string,
-  ): Promise<void> {
-    const frontendUrl = this.configService.get('FRONTEND_URL') || 'http://localhost:3001';
-
-    if (error) {
-      this.logger.error(`OAuth error: ${error}`);
-      res.redirect(`${frontendUrl}/integrations/callback?error=${encodeURIComponent(error)}`);
-      return;
-    }
-
-    try {
-      // State contains integration ID
-      const integration = await this.integrationRepository.findOne({
-        where: { id: state },
-      });
-
-      if (!integration) {
-        throw new Error('Integration not found');
-      }
-
-      await this.integrationsService.authenticate(integration.id, integration.workspaceId, { code });
-
-      res.redirect(`${frontendUrl}/integrations/callback?success=1&integration=${integration.id}&name=${encodeURIComponent(integration.name)}`);
-    } catch (err) {
-      this.logger.error(`OAuth callback failed:`, err);
-      res.redirect(`${frontendUrl}/integrations/callback?error=${encodeURIComponent(err.message)}`);
     }
   }
 
@@ -512,5 +561,346 @@ export class IntegrationsController {
     );
 
     return { health };
+  }
+
+  // WhatsApp-specific endpoints
+  @Post(':id/whatsapp/import-groups')
+  @ApiOperation({ summary: 'Import contacts from WhatsApp groups' })
+  @ApiResponse({ status: 200, description: 'Contacts imported successfully from WhatsApp groups' })
+  async importWhatsAppGroupContacts(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() body: { groupIds: string[] },
+  ): Promise<{ totalImported: number; groups: any[] }> {
+    const integration = await this.integrationsService.findOne(id, req.user.workspaceId);
+
+    if (integration.type !== IntegrationType.WHATSAPP) {
+      throw new Error('This endpoint is only for WhatsApp integrations');
+    }
+
+    const handler = this.integrationRegistry.getIntegrationHandler(IntegrationType.WHATSAPP);
+    if (!handler || !('importFromGroups' in handler)) {
+      throw new Error('WhatsApp handler not found or does not support group imports');
+    }
+
+    return await (handler as any).importFromGroups(integration, body.groupIds);
+  }
+
+  @Get(':id/whatsapp/groups')
+  @ApiOperation({ summary: 'List available WhatsApp groups' })
+  @ApiResponse({ status: 200, description: 'List of WhatsApp groups' })
+  async getWhatsAppGroups(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+  ): Promise<{ groups: any[] }> {
+    const integration = await this.integrationsService.findOne(id, req.user.workspaceId);
+
+    if (integration.type !== IntegrationType.WHATSAPP) {
+      throw new Error('This endpoint is only for WhatsApp integrations');
+    }
+
+    // Sync groups using the WhatsApp handler
+    const handler = this.integrationRegistry.getIntegrationHandler(IntegrationType.WHATSAPP);
+    if (!handler || !('syncGroupContacts' in handler)) {
+      throw new Error('WhatsApp handler not found or does not support group sync');
+    }
+
+    const accessToken = integration.credentials?.accessToken;
+    if (!accessToken) {
+      throw new Error('WhatsApp access token not found');
+    }
+
+    const result = await (handler as any).syncGroupContacts(integration, accessToken);
+
+    return { groups: result.records || [] };
+  }
+
+  // Google Sheets-specific endpoints
+  @Get(':id/google/sheets')
+  @ApiOperation({ summary: 'List available Google Sheets' })
+  @ApiResponse({ status: 200, description: 'List of Google Sheets' })
+  async listGoogleSheets(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+  ): Promise<{ sheets: any[] }> {
+    const integration = await this.integrationsService.findOne(id, req.user.workspaceId);
+
+    if (integration.type !== IntegrationType.GOOGLE) {
+      throw new Error('This endpoint is only for Google integrations');
+    }
+
+    const handler = this.integrationRegistry.getIntegrationHandler(IntegrationType.GOOGLE);
+    if (!handler || !('listSheets' in handler)) {
+      throw new Error('Google handler not found or does not support sheets listing');
+    }
+
+    const sheets = await (handler as any).listSheets(integration);
+
+    return { sheets };
+  }
+
+  @Get(':id/google/sheets/:sheetId')
+  @ApiOperation({ summary: 'Get Google Sheet data with preview' })
+  @ApiResponse({ status: 200, description: 'Sheet data retrieved' })
+  async getGoogleSheetData(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Param('sheetId') sheetId: string,
+    @Query('range') range?: string,
+  ): Promise<{ data: any; metadata: any }> {
+    const integration = await this.integrationsService.findOne(id, req.user.workspaceId);
+
+    if (integration.type !== IntegrationType.GOOGLE) {
+      throw new Error('This endpoint is only for Google integrations');
+    }
+
+    const handler = this.integrationRegistry.getIntegrationHandler(IntegrationType.GOOGLE);
+    if (!handler || !('getSheetData' in handler) || !('getSpreadsheetMetadata' in handler)) {
+      throw new Error('Google handler not found or does not support sheet operations');
+    }
+
+    const [data, metadata] = await Promise.all([
+      (handler as any).getSheetData(integration, sheetId, range),
+      (handler as any).getSpreadsheetMetadata(integration, sheetId),
+    ]);
+
+    return { data, metadata };
+  }
+
+  @Post(':id/google/sheets/:sheetId/check-duplicates')
+  @ApiOperation({ summary: 'Check for duplicate contacts before importing from Google Sheet' })
+  @ApiResponse({ status: 200, description: 'Duplicate check results' })
+  async checkGoogleSheetDuplicates(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Param('sheetId') sheetId: string,
+    @Body() body: {
+      range?: string;
+      mapping: Record<string, string>;
+      skipFirstRow?: boolean;
+    },
+  ): Promise<{
+    contacts: Array<{
+      email: string;
+      firstName?: string;
+      lastName?: string;
+      phone?: string;
+      isDuplicate: boolean;
+      existingContact?: {
+        id: string;
+        email: string;
+        firstName: string;
+        lastName: string;
+        phone?: string;
+        status: string;
+        createdAt: Date;
+      };
+    }>;
+    totalContacts: number;
+    duplicateCount: number;
+    newCount: number;
+  }> {
+    const integration = await this.integrationsService.findOne(id, req.user.workspaceId);
+
+    if (integration.type !== IntegrationType.GOOGLE) {
+      throw new Error('This endpoint is only for Google integrations');
+    }
+
+    const handler = this.integrationRegistry.getIntegrationHandler(IntegrationType.GOOGLE);
+    if (!handler || !('getSheetData' in handler)) {
+      throw new Error('Google handler not found or does not support sheet operations');
+    }
+
+    // Get sheet data
+    const sheetData = await (handler as any).getSheetData(integration, sheetId, body.range);
+    const rows = sheetData.values || [];
+    const startIndex = body.skipFirstRow ? 1 : 0;
+
+    // Parse all contacts from sheet
+    const parsedContacts: any[] = [];
+    for (let i = startIndex; i < rows.length; i++) {
+      const row = rows[i];
+      const contactData: any = { _rowIndex: i + 1 };
+
+      Object.entries(body.mapping).forEach(([column, field]) => {
+        const columnIndex = this.getColumnIndex(column);
+        if (columnIndex < row.length) {
+          contactData[field] = row[columnIndex];
+        }
+      });
+
+      if (contactData.email) {
+        parsedContacts.push(contactData);
+      }
+    }
+
+    // Bulk check for duplicates in a single DB query
+    const emails = parsedContacts.map(c => c.email);
+    const existingMap = await this.contactsService.findByEmails(req.user.workspaceId, emails);
+
+    // Build results
+    const contacts = parsedContacts.map(contact => {
+      const existing = existingMap.get(contact.email.toLowerCase());
+      return {
+        email: contact.email,
+        firstName: contact.firstName,
+        lastName: contact.lastName,
+        phone: contact.phone,
+        isDuplicate: !!existing,
+        existingContact: existing
+          ? {
+              id: existing.id,
+              email: existing.email,
+              firstName: existing.firstName,
+              lastName: existing.lastName,
+              phone: existing.phone,
+              status: existing.status,
+              createdAt: existing.createdAt,
+            }
+          : undefined,
+      };
+    });
+
+    const duplicateCount = contacts.filter(c => c.isDuplicate).length;
+    const newCount = contacts.length - duplicateCount;
+
+    this.logger.log(
+      `Duplicate check: ${contacts.length} contacts, ${duplicateCount} duplicates, ${newCount} new`,
+    );
+
+    return {
+      contacts,
+      totalContacts: contacts.length,
+      duplicateCount,
+      newCount,
+    };
+  }
+
+  @Post(':id/google/sheets/:sheetId/import')
+  @ApiOperation({ summary: 'Import contacts from Google Sheet (async via queue)' })
+  @ApiResponse({ status: 200, description: 'Import job queued successfully' })
+  async importFromGoogleSheet(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Param('sheetId') sheetId: string,
+    @Body() body: {
+      range?: string;
+      mapping: Record<string, string>;
+      skipFirstRow?: boolean;
+      pipelineId?: string;
+      pipelineStageId?: string;
+      duplicateActions?: Record<string, 'skip' | 'update' | 'create'>;
+    },
+  ): Promise<{ jobId: string; totalQueued: number; message: string }> {
+    const integration = await this.integrationsService.findOne(id, req.user.workspaceId);
+
+    if (integration.type !== IntegrationType.GOOGLE) {
+      throw new Error('This endpoint is only for Google integrations');
+    }
+
+    const handler = this.integrationRegistry.getIntegrationHandler(IntegrationType.GOOGLE);
+    if (!handler || !('getSheetData' in handler)) {
+      throw new Error('Google handler not found or does not support sheet operations');
+    }
+
+    // Get sheet data
+    const sheetData = await (handler as any).getSheetData(integration, sheetId, body.range);
+    const rows = sheetData.values || [];
+    const startIndex = body.skipFirstRow ? 1 : 0;
+
+    // Parse all contacts from sheet
+    const contacts: any[] = [];
+    for (let i = startIndex; i < rows.length; i++) {
+      const row = rows[i];
+      const contactData: any = {
+        source: 'google_sheets',
+        status: 'lead',
+      };
+
+      Object.entries(body.mapping).forEach(([column, field]) => {
+        const columnIndex = this.getColumnIndex(column);
+        if (columnIndex < row.length) {
+          contactData[field] = row[columnIndex];
+        }
+      });
+
+      if (!contactData.email) continue;
+
+      if (body.pipelineId) contactData.pipelineId = body.pipelineId;
+      if (body.pipelineStageId) contactData.pipelineStageId = body.pipelineStageId;
+
+      contacts.push(contactData);
+    }
+
+    if (contacts.length === 0) {
+      return { jobId: '', totalQueued: 0, message: 'No contacts with valid emails found in the sheet' };
+    }
+
+    // Queue the import job
+    const job = await this.queueService.importGoogleSheets(
+      req.user.workspaceId,
+      req.user.id,
+      contacts,
+      body.duplicateActions || {},
+    );
+
+    this.logger.log(`Google Sheets import job ${job.id} queued: ${contacts.length} contacts`);
+
+    return {
+      jobId: String(job.id),
+      totalQueued: contacts.length,
+      message: `Import started. ${contacts.length} contacts queued for processing.`,
+    };
+  }
+
+  @Get('jobs/:jobId/status')
+  @ApiOperation({ summary: 'Get status of an import job' })
+  @ApiResponse({ status: 200, description: 'Job status' })
+  async getImportJobStatus(
+    @Param('jobId') jobId: string,
+  ): Promise<{
+    id: string;
+    state: string;
+    progress: number;
+    result?: any;
+    failedReason?: string;
+    createdAt: Date;
+    finishedAt?: Date;
+  } | null> {
+    const status = await this.queueService.getJobStatus(QUEUE_NAMES.DATA_SYNC, jobId);
+    if (!status) {
+      return null;
+    }
+    return status as any;
+  }
+
+  private getColumnIndex(column: string): number {
+    // Convert column letter to index (A=0, B=1, etc.)
+    let index = 0;
+    for (let i = 0; i < column.length; i++) {
+      index = index * 26 + (column.charCodeAt(i) - 'A'.charCodeAt(0) + 1);
+    }
+    return index - 1;
+  }
+
+  // Workflow templates endpoint
+  @Get('workflows/templates')
+  @ApiOperation({ summary: 'Get n8n workflow templates' })
+  @ApiResponse({ status: 200, description: 'List of workflow templates' })
+  async getWorkflowTemplates(@Query('category') category?: string): Promise<any> {
+    const fs = await import('fs/promises');
+    const path = await import('path');
+
+    const templatesPath = path.join(__dirname, 'templates', 'n8n-workflows.json');
+    const templatesData = await fs.readFile(templatesPath, 'utf-8');
+    const templates = JSON.parse(templatesData);
+
+    if (category) {
+      return {
+        workflows: templates.workflows.filter((w: any) => w.category === category),
+      };
+    }
+
+    return templates;
   }
 }

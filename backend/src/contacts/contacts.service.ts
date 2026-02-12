@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException, BadRequestException, ConflictException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, SelectQueryBuilder, FindOptionsWhere, ILike, In } from 'typeorm';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Contact, ContactStatus } from '../database/entities/contact.entity';
 import { User } from '../database/entities/user.entity';
 import { Company } from '../database/entities/company.entity';
@@ -33,6 +34,7 @@ export class ContactsService {
     private activityRepository: Repository<Activity>,
     @InjectRepository(Deal)
     private dealRepository: Repository<Deal>,
+    private eventEmitter: EventEmitter2,
   ) {}
 
   async findAll(workspaceId: string, query: QueryContactsDto): Promise<ContactsListResult> {
@@ -194,6 +196,13 @@ export class ContactsService {
 
     const savedContact = await this.contactRepository.save(contact);
 
+    // Emit contact.created event for workflow triggers
+    this.eventEmitter.emit('contact.created', {
+      contact: savedContact,
+      workspaceId,
+    });
+    this.logger.log(`Contact created event emitted for contact ${savedContact.id}`);
+
     // Return contact with relations
     return this.findOne(workspaceId, savedContact.id, ['owner', 'company']);
   }
@@ -239,7 +248,15 @@ export class ContactsService {
       contact.updateLeadScore();
     }
 
-    await this.contactRepository.save(contact);
+    const updatedContact = await this.contactRepository.save(contact);
+
+    // Emit contact.updated event for workflow triggers
+    this.eventEmitter.emit('contact.updated', {
+      contact: updatedContact,
+      workspaceId,
+      changes: dto,
+    });
+    this.logger.log(`Contact updated event emitted for contact ${updatedContact.id}`);
 
     return this.findOne(workspaceId, id, ['owner', 'company']);
   }
@@ -841,5 +858,174 @@ export class ContactsService {
       totalConverted,
       overallConversionRate,
     };
+  }
+
+  /**
+   * Find contacts by multiple email addresses
+   * @param workspaceId The workspace ID
+   * @param emails Array of email addresses to search for
+   * @returns Map of email to Contact (only includes found contacts)
+   */
+  async findByEmails(workspaceId: string, emails: string[]): Promise<Map<string, Contact>> {
+    if (!emails || emails.length === 0) {
+      return new Map();
+    }
+
+    // Normalize emails to lowercase for case-insensitive matching
+    const normalizedEmails = emails.map(e => e.toLowerCase());
+
+    const contacts = await this.contactRepository.find({
+      where: {
+        workspaceId,
+        email: In(normalizedEmails),
+      },
+      relations: ['owner', 'company'],
+    });
+
+    // Create a map for O(1) lookup
+    const contactMap = new Map<string, Contact>();
+    contacts.forEach(contact => {
+      contactMap.set(contact.email.toLowerCase(), contact);
+    });
+
+    this.logger.log(`Found ${contacts.length} existing contacts out of ${emails.length} emails`);
+    return contactMap;
+  }
+
+  /**
+   * Bulk create contacts with efficient batch processing
+   * @param workspaceId The workspace ID
+   * @param contacts Array of contact data to create
+   * @param options Options for handling duplicates
+   * @returns Result with created, updated, and skipped counts
+   */
+  async bulkCreate(
+    workspaceId: string,
+    contacts: CreateContactDto[],
+    options?: {
+      skipDuplicates?: boolean;
+      updateExisting?: boolean;
+      batchSize?: number;
+    },
+  ): Promise<{
+    created: number;
+    updated: number;
+    skipped: number;
+    errors: Array<{ email: string; error: string }>;
+  }> {
+    const batchSize = options?.batchSize || 100;
+    let created = 0;
+    let updated = 0;
+    let skipped = 0;
+    const errors: Array<{ email: string; error: string }> = [];
+
+    this.logger.log(`Starting bulk create of ${contacts.length} contacts in batches of ${batchSize}`);
+
+    // Process in batches
+    for (let i = 0; i < contacts.length; i += batchSize) {
+      const batch = contacts.slice(i, i + batchSize);
+
+      try {
+        // Get all emails in this batch
+        const emails = batch.map(c => c.email).filter(Boolean);
+
+        // Find existing contacts in a single query
+        const existingMap = await this.findByEmails(workspaceId, emails);
+
+        const toCreate: Contact[] = [];
+        const toUpdate: Contact[] = [];
+
+        for (const dto of batch) {
+          try {
+            if (!dto.email) {
+              errors.push({ email: dto.email || 'unknown', error: 'Email is required' });
+              skipped++;
+              continue;
+            }
+
+            const existing = existingMap.get(dto.email.toLowerCase());
+
+            if (existing) {
+              if (options?.updateExisting) {
+                // Update existing contact
+                Object.assign(existing, {
+                  ...dto,
+                  workspaceId, // Ensure workspace doesn't change
+                  id: existing.id, // Preserve ID
+                  status: dto.status || existing.status,
+                  leadScore: dto.leadScore !== undefined ? dto.leadScore : existing.leadScore,
+                });
+                existing.updateLeadScore();
+                toUpdate.push(existing);
+              } else if (options?.skipDuplicates) {
+                skipped++;
+              } else {
+                errors.push({ email: dto.email, error: 'Contact already exists' });
+                skipped++;
+              }
+            } else {
+              // Create new contact
+              const contact = this.contactRepository.create({
+                ...dto,
+                workspaceId,
+                status: dto.status || ContactStatus.LEAD,
+                leadScore: dto.leadScore || 0,
+                emailOptIn: dto.emailOptIn || false,
+              });
+              contact.updateLeadScore();
+              toCreate.push(contact);
+            }
+          } catch (error) {
+            errors.push({ email: dto.email, error: error.message });
+            skipped++;
+          }
+        }
+
+        // Batch save new contacts
+        if (toCreate.length > 0) {
+          await this.contactRepository.save(toCreate, { chunk: 100 });
+          created += toCreate.length;
+
+          // Emit events for created contacts
+          toCreate.forEach(contact => {
+            this.eventEmitter.emit('contact.created', {
+              contact,
+              workspaceId,
+            });
+          });
+        }
+
+        // Batch save updated contacts
+        if (toUpdate.length > 0) {
+          await this.contactRepository.save(toUpdate, { chunk: 100 });
+          updated += toUpdate.length;
+
+          // Emit events for updated contacts
+          toUpdate.forEach(contact => {
+            this.eventEmitter.emit('contact.updated', {
+              contact,
+              workspaceId,
+            });
+          });
+        }
+
+        this.logger.log(
+          `Processed batch ${i / batchSize + 1}: created=${toCreate.length}, updated=${toUpdate.length}, skipped=${batch.length - toCreate.length - toUpdate.length}`,
+        );
+      } catch (error) {
+        this.logger.error(`Error processing batch ${i / batchSize + 1}:`, error);
+        // Mark entire batch as errors
+        batch.forEach(dto => {
+          errors.push({ email: dto.email || 'unknown', error: error.message });
+          skipped++;
+        });
+      }
+    }
+
+    this.logger.log(
+      `Bulk create completed: created=${created}, updated=${updated}, skipped=${skipped}, errors=${errors.length}`,
+    );
+
+    return { created, updated, skipped, errors };
   }
 }

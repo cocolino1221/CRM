@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Loader2 } from 'lucide-react';
+import api from '@/lib/api';
 
 export default function AuthCallbackPage() {
   const router = useRouter();
@@ -10,7 +11,8 @@ export default function AuthCallbackPage() {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    // Get tokens and user info from URL params
+    // Prefer exchanging short-lived auth code to avoid tokens in URL
+    const code = searchParams.get('code');
     const token = searchParams.get('token');
     const refreshToken = searchParams.get('refreshToken');
     const userStr = searchParams.get('user');
@@ -24,11 +26,40 @@ export default function AuthCallbackPage() {
       return;
     }
 
+    if (code) {
+      const completeWithCode = async () => {
+        try {
+          const response = await api.post('/auth/oauth/exchange', { code });
+          // Tokens are now set as httpOnly cookies by the backend
+          const { user } = response.data;
+
+          // Only store user metadata (tokens are in httpOnly cookies)
+          localStorage.setItem('user', JSON.stringify(user));
+
+          if (user?.id) {
+            localStorage.setItem('userId', user.id);
+          }
+          if (user?.workspaceId) {
+            localStorage.setItem('workspaceId', user.workspaceId);
+          }
+
+          router.push('/dashboard');
+        } catch (err) {
+          console.error('Error exchanging auth code:', err);
+          setError('Failed to complete authentication');
+          setTimeout(() => {
+            router.push('/login');
+          }, 3000);
+        }
+      };
+
+      completeWithCode();
+      return;
+    }
+
     if (token && refreshToken && userStr) {
       try {
-        // Store tokens in localStorage
-        localStorage.setItem('accessToken', token);
-        localStorage.setItem('refreshToken', refreshToken);
+        // Legacy fallback: tokens were passed in URL params (now only user metadata stored)
         localStorage.setItem('user', decodeURIComponent(userStr));
 
         // Parse user object and store user ID and workspace ID

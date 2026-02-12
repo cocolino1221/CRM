@@ -134,12 +134,19 @@ export class IntegrationRegistry {
       supportedAuthTypes: [IntegrationAuthType.OAUTH2],
 
       defaultConfig: {
-        scopes: ['https://www.googleapis.com/auth/gmail.readonly', 'https://www.googleapis.com/auth/calendar'],
+        scopes: [
+          'https://www.googleapis.com/auth/gmail.readonly',
+          'https://www.googleapis.com/auth/calendar',
+          'https://www.googleapis.com/auth/contacts.readonly',
+          'https://www.googleapis.com/auth/drive.readonly',
+          'https://www.googleapis.com/auth/drive.file',
+        ],
         features: {
           email: true,
           calendar: true,
           contacts: true,
           files: true,
+          drive: true,
         },
         syncFrequency: 'hourly',
         autoSync: true,
@@ -153,10 +160,10 @@ export class IntegrationRegistry {
         },
       },
 
-      defaultPermissions: ['read:email', 'read:calendar', 'read:contacts'],
-      supportedFeatures: ['email', 'calendar', 'contacts', 'files'],
+      defaultPermissions: ['read:email', 'read:calendar', 'read:contacts', 'read:drive', 'write:drive'],
+      supportedFeatures: ['email', 'calendar', 'contacts', 'files', 'drive'],
 
-      apiVersion: 'v1',
+      apiVersion: 'v3',
       baseUrl: 'https://www.googleapis.com',
     });
 
@@ -360,6 +367,196 @@ export class IntegrationRegistry {
       },
     });
 
+    // WhatsApp Business Integration
+    this.register({
+      type: IntegrationType.WHATSAPP,
+      name: 'WhatsApp Business',
+      description: 'Send messages and import contacts from WhatsApp Business',
+      category: 'Communication',
+      icon: 'https://upload.wikimedia.org/wikipedia/commons/6/6b/WhatsApp.svg',
+      color: '#25D366',
+      provider: 'Meta',
+      homepage: 'https://business.whatsapp.com',
+      documentation: 'https://developers.facebook.com/docs/whatsapp',
+      supportEmail: 'support@whatsapp.com',
+
+      defaultAuthType: IntegrationAuthType.API_KEY,
+      supportedAuthTypes: [IntegrationAuthType.API_KEY, IntegrationAuthType.WEBHOOK],
+
+      defaultConfig: {
+        features: {
+          messaging: true,
+          groups: true,
+          contacts: true,
+          templates: true,
+          webhooks: true,
+        },
+        syncFrequency: 'realtime',
+        syncDirection: 'bidirectional',
+        autoSync: true,
+      },
+
+      configSchema: {
+        type: 'object',
+        properties: {
+          phoneNumberId: { type: 'string' },
+          businessAccountId: { type: 'string' },
+          webhookVerifyToken: { type: 'string' },
+          enableGroupImport: { type: 'boolean' },
+        },
+        required: ['phoneNumberId'],
+      },
+
+      defaultPermissions: [
+        'read:messages',
+        'write:messages',
+        'read:contacts',
+        'write:contacts',
+        'read:groups',
+        'manage:webhooks',
+      ],
+      supportedFeatures: [
+        'messaging',
+        'groups',
+        'contacts',
+        'templates',
+        'webhooks',
+        'media',
+        'bulk-messaging',
+      ],
+
+      apiVersion: 'v18.0',
+      baseUrl: 'https://graph.facebook.com/v18.0',
+
+      rateLimit: {
+        requests: 80,
+        period: 'second',
+      },
+    });
+
+    // Kajabi Integration
+    this.register({
+      type: IntegrationType.KAJABI,
+      name: 'Kajabi',
+      description: 'Sync members, courses, and purchases from Kajabi',
+      category: 'E-Learning',
+      icon: 'https://kajabi-storefronts-production.kajabi-cdn.com/kajabi-storefronts-production/themes/284832/settings_images/rLlCifhXRJiT0RKD0F3k_logo.png',
+      color: '#FF6B6B',
+      provider: 'Kajabi',
+      homepage: 'https://kajabi.com',
+      documentation: 'https://developers.kajabi.com',
+      supportEmail: 'support@kajabi.com',
+
+      defaultAuthType: IntegrationAuthType.API_KEY,
+      supportedAuthTypes: [IntegrationAuthType.API_KEY],
+
+      defaultConfig: {
+        features: {
+          members: true,
+          courses: true,
+          offers: true,
+          assessments: true,
+          webhooks: true,
+        },
+        syncFrequency: 'hourly',
+        syncDirection: 'inbound',
+        autoSync: true,
+      },
+
+      configSchema: {
+        type: 'object',
+        properties: {
+          apiKey: { type: 'string' },
+          siteId: { type: 'string' },
+          webhookSecret: { type: 'string' },
+        },
+        required: ['apiKey'],
+      },
+
+      defaultPermissions: [
+        'read:members',
+        'read:offers',
+        'read:courses',
+        'read:assessments',
+        'manage:webhooks',
+      ],
+      supportedFeatures: [
+        'members',
+        'courses',
+        'offers',
+        'assessments',
+        'webhooks',
+        'tags',
+        'custom-fields',
+      ],
+
+      apiVersion: 'v1',
+      baseUrl: 'https://api.kajabi.com',
+
+      rateLimit: {
+        requests: 60,
+        period: 'minute',
+      },
+    });
+
+    // Calendly Integration
+    this.register({
+      type: IntegrationType.CALENDLY,
+      name: 'Calendly',
+      description: 'Schedule and manage meetings with Calendly integration',
+      category: 'Scheduling',
+      icon: 'https://assets.calendly.com/assets/frontend/media/logo-square-cd364a3c26e9670d31bb.png',
+      color: '#006BFF',
+      provider: 'Calendly',
+      homepage: 'https://calendly.com',
+      documentation: 'https://developer.calendly.com',
+      supportEmail: 'support@calendly.com',
+
+      defaultAuthType: IntegrationAuthType.OAUTH2,
+      supportedAuthTypes: [IntegrationAuthType.OAUTH2],
+
+      defaultConfig: {
+        scopes: ['default'],
+        features: {
+          scheduling: true,
+          eventTypes: true,
+          webhooks: true,
+          invitees: true,
+        },
+        syncFrequency: 'realtime',
+        syncDirection: 'bidirectional',
+        autoSync: true,
+      },
+
+      configSchema: {
+        type: 'object',
+        properties: {
+          organizationUri: { type: 'string' },
+          webhookEvents: {
+            type: 'array',
+            items: { type: 'string' },
+          },
+        },
+      },
+
+      defaultPermissions: [
+        'read:events',
+        'write:events',
+        'read:event_types',
+        'read:invitees',
+        'manage:webhooks',
+      ],
+      supportedFeatures: ['scheduling', 'event_types', 'invitees', 'webhooks', 'cancellation'],
+
+      apiVersion: 'v2',
+      baseUrl: 'https://api.calendly.com',
+
+      rateLimit: {
+        requests: 100,
+        period: 'minute',
+      },
+    });
+
     // Generic Webhook Integration
     this.register({
       type: IntegrationType.WEBHOOK,
@@ -429,6 +626,110 @@ export class IntegrationRegistry {
           timeout: { type: 'number', minimum: 1000 },
         },
         required: ['baseUrl'],
+      },
+    });
+
+    // PandaDoc Integration
+    this.register({
+      type: IntegrationType.PANDADOC,
+      name: 'PandaDoc',
+      description: 'Create, send, and track document signing with PandaDoc',
+      category: 'Document Signing',
+      icon: 'https://cdn.pandadoc.com/favicon.ico',
+      color: '#00D664',
+      provider: 'PandaDoc',
+      homepage: 'https://www.pandadoc.com',
+      documentation: 'https://developers.pandadoc.com',
+      supportEmail: 'support@pandadoc.com',
+
+      defaultAuthType: IntegrationAuthType.API_KEY,
+      supportedAuthTypes: [IntegrationAuthType.API_KEY],
+
+      defaultConfig: {
+        features: {
+          documents: true,
+          templates: true,
+          webhooks: true,
+          analytics: true,
+        },
+        syncFrequency: 'realtime',
+        syncDirection: 'bidirectional',
+        autoSync: true,
+      },
+
+      configSchema: {
+        type: 'object',
+        properties: {
+          apiKey: { type: 'string' },
+          workspaceId: { type: 'string' },
+          webhookUrl: { type: 'string', format: 'uri' },
+        },
+        required: ['apiKey'],
+      },
+
+      defaultPermissions: ['read:documents', 'write:documents', 'read:templates', 'manage:webhooks'],
+      supportedFeatures: ['documents', 'templates', 'webhooks', 'analytics', 'esignature'],
+
+      apiVersion: '1',
+      baseUrl: 'https://api.pandadoc.com/public/v1',
+
+      rateLimit: {
+        requests: 30,
+        period: 'minute',
+      },
+    });
+
+    // DocuSign Integration
+    this.register({
+      type: IntegrationType.DOCUSIGN,
+      name: 'DocuSign',
+      description: 'Enterprise-grade eSignature and agreement management with DocuSign',
+      category: 'Document Signing',
+      icon: 'https://www.docusign.com/themes/custom/dcu/assets/favicons/favicon.ico',
+      color: '#FFB71B',
+      provider: 'DocuSign',
+      homepage: 'https://www.docusign.com',
+      documentation: 'https://developers.docusign.com',
+      supportEmail: 'support@docusign.com',
+
+      defaultAuthType: IntegrationAuthType.OAUTH2,
+      supportedAuthTypes: [IntegrationAuthType.OAUTH2, IntegrationAuthType.JWT],
+
+      defaultConfig: {
+        scopes: ['signature', 'impersonation'],
+        features: {
+          envelopes: true,
+          templates: true,
+          webhooks: true,
+          bulkSend: true,
+          powerForms: true,
+        },
+        syncFrequency: 'realtime',
+        syncDirection: 'bidirectional',
+        autoSync: true,
+      },
+
+      configSchema: {
+        type: 'object',
+        properties: {
+          accountId: { type: 'string' },
+          baseUri: { type: 'string', format: 'uri' },
+          clientId: { type: 'string' },
+          clientSecret: { type: 'string' },
+          scopes: { type: 'array', items: { type: 'string' } },
+        },
+        required: ['accountId', 'baseUri'],
+      },
+
+      defaultPermissions: ['read:envelopes', 'write:envelopes', 'read:templates', 'manage:webhooks'],
+      supportedFeatures: ['envelopes', 'templates', 'webhooks', 'analytics', 'esignature', 'bulksend'],
+
+      apiVersion: '2.1',
+      baseUrl: 'https://demo.docusign.net/restapi',
+
+      rateLimit: {
+        requests: 1000,
+        period: 'hour',
       },
     });
 
@@ -543,7 +844,16 @@ export class IntegrationRegistry {
 
     // Basic validation using schema if available
     if (metadata.configSchema) {
-      // TODO: Implement JSON schema validation
+      const Ajv = require('ajv');
+      const ajv = new Ajv({ allErrors: true });
+      const validate = ajv.compile(metadata.configSchema);
+      const valid = validate(config);
+
+      if (!valid) {
+        const errors = validate.errors?.map(err => `${err.instancePath} ${err.message}`) || ['Invalid configuration'];
+        return { valid: false, errors };
+      }
+
       return { valid: true };
     }
 

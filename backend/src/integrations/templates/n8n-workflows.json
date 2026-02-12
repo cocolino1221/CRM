@@ -1,0 +1,430 @@
+{
+  "workflows": [
+    {
+      "name": "Google Sheets to CRM Auto-Import",
+      "description": "Automatically import new contacts from Google Sheets when a row is added",
+      "category": "import",
+      "platform": "n8n",
+      "template": {
+        "nodes": [
+          {
+            "parameters": {
+              "pollTimes": {
+                "item": [
+                  {
+                    "mode": "everyMinute"
+                  }
+                ]
+              },
+              "sheetId": "YOUR_SHEET_ID",
+              "range": "Sheet1!A:Z"
+            },
+            "name": "Google Sheets Trigger",
+            "type": "n8n-nodes-base.googleSheetsTrigger",
+            "typeVersion": 2,
+            "position": [250, 300]
+          },
+          {
+            "parameters": {
+              "jsCode": "// Map Google Sheets columns to CRM fields\nconst contacts = [];\n\nfor (const item of $input.all()) {\n  const contact = {\n    firstName: item.json['First Name'] || item.json['A'],\n    lastName: item.json['Last Name'] || item.json['B'],\n    email: item.json['Email'] || item.json['C'],\n    phone: item.json['Phone'] || item.json['D'],\n    company: item.json['Company'] || item.json['E'],\n    jobTitle: item.json['Job Title'] || item.json['F'],\n    source: 'google_sheets',\n    status: 'lead'\n  };\n  \n  // Only add if email exists\n  if (contact.email) {\n    contacts.push({ json: contact });\n  }\n}\n\nreturn contacts;"
+            },
+            "name": "Transform Data",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [450, 300]
+          },
+          {
+            "parameters": {
+              "method": "POST",
+              "url": "https://your-crm.com/api/v1/contacts",
+              "authentication": "genericCredentialType",
+              "genericAuthType": "httpHeaderAuth",
+              "sendHeaders": true,
+              "headerParameters": {
+                "parameters": [
+                  {
+                    "name": "Authorization",
+                    "value": "Bearer YOUR_API_TOKEN"
+                  }
+                ]
+              },
+              "sendBody": true,
+              "bodyParameters": {
+                "parameters": []
+              },
+              "options": {}
+            },
+            "name": "Create Contact in CRM",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4,
+            "position": [650, 300]
+          }
+        ],
+        "connections": {
+          "Google Sheets Trigger": {
+            "main": [[{"node": "Transform Data", "type": "main", "index": 0}]]
+          },
+          "Transform Data": {
+            "main": [[{"node": "Create Contact in CRM", "type": "main", "index": 0}]]
+          }
+        }
+      }
+    },
+    {
+      "name": "Typeform to CRM with Lead Scoring",
+      "description": "Import Typeform submissions and calculate lead score based on answers",
+      "category": "forms",
+      "platform": "n8n",
+      "template": {
+        "nodes": [
+          {
+            "parameters": {
+              "path": "typeform-webhook",
+              "responseMode": "responseNode"
+            },
+            "name": "Webhook",
+            "type": "n8n-nodes-base.webhook",
+            "typeVersion": 1,
+            "position": [250, 300],
+            "webhookId": "YOUR_WEBHOOK_ID"
+          },
+          {
+            "parameters": {
+              "jsCode": "// Extract Typeform data and calculate lead score\nconst response = $input.first().json.form_response;\nconst answers = response.answers;\n\nlet score = 0;\nconst contactData = {\n  source: 'typeform',\n  status: 'lead',\n  customFields: {}\n};\n\n// Extract contact info\nfor (const answer of answers) {\n  const field = answer.field.ref.toLowerCase();\n  \n  if (field.includes('email')) {\n    contactData.email = answer.email;\n    score += 10; // Has email\n  } else if (field.includes('name') || field.includes('first')) {\n    contactData.firstName = answer.text;\n  } else if (field.includes('last')) {\n    contactData.lastName = answer.text;\n  } else if (field.includes('phone')) {\n    contactData.phone = answer.phone_number;\n    score += 5; // Has phone\n  } else if (field.includes('company')) {\n    contactData.company = answer.text;\n    score += 15; // Has company\n  } else if (field.includes('budget')) {\n    const budget = parseInt(answer.text) || 0;\n    if (budget > 10000) score += 30; // High budget\n    else if (budget > 5000) score += 20;\n    else if (budget > 1000) score += 10;\n  } else {\n    contactData.customFields[field] = answer.text || answer.choice?.label;\n  }\n}\n\n// Calculate status based on score\nif (score >= 50) contactData.status = 'qualified';\nelse if (score >= 30) contactData.status = 'warm_lead';\nelse contactData.status = 'cold_lead';\n\ncontactData.leadScore = score;\n\nreturn { json: contactData };"
+            },
+            "name": "Calculate Lead Score",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [450, 300]
+          },
+          {
+            "parameters": {
+              "method": "POST",
+              "url": "https://your-crm.com/api/v1/contacts",
+              "authentication": "genericCredentialType",
+              "genericAuthType": "httpHeaderAuth",
+              "sendHeaders": true,
+              "headerParameters": {
+                "parameters": [
+                  {
+                    "name": "Authorization",
+                    "value": "Bearer YOUR_API_TOKEN"
+                  }
+                ]
+              },
+              "sendBody": true,
+              "bodyParameters": {
+                "parameters": []
+              }
+            },
+            "name": "Create Contact",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4,
+            "position": [650, 300]
+          },
+          {
+            "parameters": {
+              "conditions": {
+                "number": [
+                  {
+                    "value1": "={{$json.leadScore}}",
+                    "operation": "largerEqual",
+                    "value2": 50
+                  }
+                ]
+              }
+            },
+            "name": "High Score?",
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 1,
+            "position": [850, 300]
+          },
+          {
+            "parameters": {
+              "to": "sales@yourcompany.com",
+              "subject": "🔥 Hot Lead Alert!",
+              "text": "=New high-quality lead from Typeform!\n\nName: {{$json.firstName}} {{$json.lastName}}\nEmail: {{$json.email}}\nScore: {{$json.leadScore}}/100\n\nAction required: Contact within 24 hours."
+            },
+            "name": "Send Alert Email",
+            "type": "n8n-nodes-base.emailSend",
+            "typeVersion": 2,
+            "position": [1050, 200]
+          }
+        ],
+        "connections": {
+          "Webhook": {
+            "main": [[{"node": "Calculate Lead Score", "type": "main", "index": 0}]]
+          },
+          "Calculate Lead Score": {
+            "main": [[{"node": "Create Contact", "type": "main", "index": 0}]]
+          },
+          "Create Contact": {
+            "main": [[{"node": "High Score?", "type": "main", "index": 0}]]
+          },
+          "High Score?": {
+            "main": [[{"node": "Send Alert Email", "type": "main", "index": 0}], []]
+          }
+        }
+      }
+    },
+    {
+      "name": "Stripe Payment to Contact & Invoice",
+      "description": "Create contact from Stripe payment and generate invoice",
+      "category": "payments",
+      "platform": "n8n",
+      "template": {
+        "nodes": [
+          {
+            "parameters": {
+              "path": "stripe-webhook",
+              "responseMode": "responseNode"
+            },
+            "name": "Stripe Webhook",
+            "type": "n8n-nodes-base.webhook",
+            "typeVersion": 1,
+            "position": [250, 300]
+          },
+          {
+            "parameters": {
+              "conditions": {
+                "string": [
+                  {
+                    "value1": "={{$json.type}}",
+                    "value2": "payment_intent.succeeded"
+                  }
+                ]
+              }
+            },
+            "name": "Payment Succeeded?",
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 1,
+            "position": [450, 300]
+          },
+          {
+            "parameters": {
+              "jsCode": "// Extract customer data from Stripe webhook\nconst event = $input.first().json;\nconst paymentIntent = event.data.object;\nconst customer = paymentIntent.customer;\n\nconst contactData = {\n  firstName: customer.name?.split(' ')[0] || 'Customer',\n  lastName: customer.name?.split(' ').slice(1).join(' ') || '',\n  email: customer.email,\n  phone: customer.phone,\n  source: 'stripe',\n  status: 'customer',\n  customFields: {\n    stripeCustomerId: customer.id,\n    stripePaymentIntentId: paymentIntent.id,\n    amount: paymentIntent.amount / 100,\n    currency: paymentIntent.currency\n  }\n};\n\nreturn { json: contactData };"
+            },
+            "name": "Extract Customer Data",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [650, 200]
+          },
+          {
+            "parameters": {
+              "method": "POST",
+              "url": "https://your-crm.com/api/v1/contacts",
+              "authentication": "genericCredentialType",
+              "genericAuthType": "httpHeaderAuth",
+              "sendHeaders": true,
+              "headerParameters": {
+                "parameters": [
+                  {
+                    "name": "Authorization",
+                    "value": "Bearer YOUR_API_TOKEN"
+                  }
+                ]
+              },
+              "sendBody": true
+            },
+            "name": "Create/Update Contact",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4,
+            "position": [850, 200]
+          },
+          {
+            "parameters": {
+              "method": "POST",
+              "url": "https://cloud.smartbill.ro/SBORO/api/invoice",
+              "authentication": "genericCredentialType",
+              "sendHeaders": true,
+              "headerParameters": {
+                "parameters": [
+                  {
+                    "name": "Authorization",
+                    "value": "Basic YOUR_SMARTBILL_KEY"
+                  }
+                ]
+              },
+              "sendBody": true,
+              "bodyParameters": {
+                "parameters": []
+              }
+            },
+            "name": "Generate Invoice (SmartBill)",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4,
+            "position": [1050, 200]
+          }
+        ],
+        "connections": {
+          "Stripe Webhook": {
+            "main": [[{"node": "Payment Succeeded?", "type": "main", "index": 0}]]
+          },
+          "Payment Succeeded?": {
+            "main": [[{"node": "Extract Customer Data", "type": "main", "index": 0}], []]
+          },
+          "Extract Customer Data": {
+            "main": [[{"node": "Create/Update Contact", "type": "main", "index": 0}]]
+          },
+          "Create/Update Contact": {
+            "main": [[{"node": "Generate Invoice (SmartBill)", "type": "main", "index": 0}]]
+          }
+        }
+      }
+    },
+    {
+      "name": "WhatsApp Message to CRM Contact",
+      "description": "Create or update contacts from WhatsApp messages",
+      "category": "communication",
+      "platform": "n8n",
+      "template": {
+        "nodes": [
+          {
+            "parameters": {
+              "path": "whatsapp-webhook",
+              "responseMode": "responseNode"
+            },
+            "name": "WhatsApp Webhook",
+            "type": "n8n-nodes-base.webhook",
+            "typeVersion": 1,
+            "position": [250, 300]
+          },
+          {
+            "parameters": {
+              "jsCode": "// Extract WhatsApp contact data\nconst message = $input.first().json;\nconst from = message.entry[0].changes[0].value.messages[0].from;\nconst contact = message.entry[0].changes[0].value.contacts[0];\n\nconst contactData = {\n  firstName: contact.profile?.name || 'WhatsApp User',\n  lastName: '',\n  phone: from,\n  source: 'whatsapp',\n  status: 'lead',\n  customFields: {\n    whatsappId: from,\n    lastMessage: message.entry[0].changes[0].value.messages[0].text?.body\n  }\n};\n\nreturn { json: contactData };"
+            },
+            "name": "Extract Contact",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [450, 300]
+          },
+          {
+            "parameters": {
+              "method": "POST",
+              "url": "https://your-crm.com/api/v1/contacts",
+              "authentication": "genericCredentialType",
+              "genericAuthType": "httpHeaderAuth",
+              "sendHeaders": true,
+              "headerParameters": {
+                "parameters": [
+                  {
+                    "name": "Authorization",
+                    "value": "Bearer YOUR_API_TOKEN"
+                  }
+                ]
+              },
+              "sendBody": true
+            },
+            "name": "Create Contact",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4,
+            "position": [650, 300]
+          },
+          {
+            "parameters": {
+              "method": "POST",
+              "url": "https://graph.facebook.com/v18.0/YOUR_PHONE_ID/messages",
+              "sendHeaders": true,
+              "headerParameters": {
+                "parameters": [
+                  {
+                    "name": "Authorization",
+                    "value": "Bearer YOUR_WHATSAPP_TOKEN"
+                  }
+                ]
+              },
+              "sendBody": true,
+              "specifyBody": "json",
+              "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"{{$json.phone}}\",\n  \"text\": {\n    \"body\": \"Thanks for contacting us! We've received your message and will get back to you soon.\"\n  }\n}"
+            },
+            "name": "Send Auto-Reply",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4,
+            "position": [850, 300]
+          }
+        ],
+        "connections": {
+          "WhatsApp Webhook": {
+            "main": [[{"node": "Extract Contact", "type": "main", "index": 0}]]
+          },
+          "Extract Contact": {
+            "main": [[{"node": "Create Contact", "type": "main", "index": 0}]]
+          },
+          "Create Contact": {
+            "main": [[{"node": "Send Auto-Reply", "type": "main", "index": 0}]]
+          }
+        }
+      }
+    },
+    {
+      "name": "Lead Enrichment with Clearbit",
+      "description": "Enrich new contacts with company data from Clearbit",
+      "category": "enrichment",
+      "platform": "n8n",
+      "template": {
+        "nodes": [
+          {
+            "parameters": {
+              "path": "contact-created",
+              "responseMode": "responseNode"
+            },
+            "name": "Contact Created Webhook",
+            "type": "n8n-nodes-base.webhook",
+            "typeVersion": 1,
+            "position": [250, 300]
+          },
+          {
+            "parameters": {
+              "method": "GET",
+              "url": "=https://person.clearbit.com/v2/people/find?email={{$json.email}}",
+              "sendHeaders": true,
+              "headerParameters": {
+                "parameters": [
+                  {
+                    "name": "Authorization",
+                    "value": "Bearer YOUR_CLEARBIT_KEY"
+                  }
+                ]
+              }
+            },
+            "name": "Enrich with Clearbit",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4,
+            "position": [450, 300]
+          },
+          {
+            "parameters": {
+              "method": "PUT",
+              "url": "=https://your-crm.com/api/v1/contacts/{{$json.id}}",
+              "authentication": "genericCredentialType",
+              "sendHeaders": true,
+              "headerParameters": {
+                "parameters": [
+                  {
+                    "name": "Authorization",
+                    "value": "Bearer YOUR_API_TOKEN"
+                  }
+                ]
+              },
+              "sendBody": true,
+              "specifyBody": "json",
+              "jsonBody": "={\n  \"jobTitle\": \"{{$json.employment.title}}\",\n  \"company\": \"{{$json.company.name}}\",\n  \"customFields\": {\n    \"linkedin\": \"{{$json.linkedin.handle}}\",\n    \"twitter\": \"{{$json.twitter.handle}}\",\n    \"companyDomain\": \"{{$json.company.domain}}\",\n    \"companyIndustry\": \"{{$json.company.industry}}\",\n    \"companySize\": \"{{$json.company.metrics.employees}}\"\n  }\n}"
+            },
+            "name": "Update Contact",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4,
+            "position": [650, 300]
+          }
+        ],
+        "connections": {
+          "Contact Created Webhook": {
+            "main": [[{"node": "Enrich with Clearbit", "type": "main", "index": 0}]]
+          },
+          "Enrich with Clearbit": {
+            "main": [[{"node": "Update Contact", "type": "main", "index": 0}]]
+          }
+        }
+      }
+    }
+  ]
+}

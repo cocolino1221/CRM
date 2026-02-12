@@ -3,7 +3,6 @@ import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import {
   HealthCheckService,
   HttpHealthIndicator,
-  TypeOrmHealthIndicator,
   HealthCheck,
   MemoryHealthIndicator,
   DiskHealthIndicator,
@@ -19,7 +18,6 @@ export class HealthController {
   constructor(
     private health: HealthCheckService,
     private http: HttpHealthIndicator,
-    private db: TypeOrmHealthIndicator,
     private memory: MemoryHealthIndicator,
     private disk: DiskHealthIndicator,
   ) {}
@@ -38,7 +36,6 @@ export class HealthController {
   })
   check() {
     return this.health.check([
-      () => this.db.pingCheck('database'),
       () => this.memory.checkHeap('memory_heap', 300 * 1024 * 1024), // 300MB
       () => this.memory.checkRSS('memory_rss', 300 * 1024 * 1024),
       () => this.disk.checkStorage('disk', { path: '/', thresholdPercent: 0.9 }),

@@ -205,12 +205,6 @@ export class User extends WorkspaceEntity {
     }
   }
 
-  @BeforeInsert()
-  @BeforeUpdate()
-  async hashPassword() {
-    // Only hash if password has been modified (not already hashed)
-    if (this.password && !this.password.startsWith('$2')) {
-      this.password = await bcrypt.hash(this.password, 10);
-    }
-  }
+  // Password hashing removed from entity hooks to prevent double-hashing
+  // Passwords are now explicitly hashed in service layer before saving
 }

@@ -1,8 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Plus, Bot, Zap, MessageSquare, Sparkles, Settings, Play, Pause, Trash2, Copy, ExternalLink, Search, Filter, Clock, TrendingUp, Users, Mail, Phone, Video, Calendar, CheckCircle, XCircle, Edit, Save, X, Code, Workflow, Brain, MessageCircle, ArrowRight, ChevronRight, Loader2, FileText, Eye, BarChart3, Link2, Palette } from 'lucide-react';
 import Image from 'next/image';
+import api from '@/lib/api';
 
 interface Chatbot {
   id: string;
@@ -58,16 +59,164 @@ interface Page {
 type TabType = 'chatbots' | 'ai-agents' | 'workflows' | 'pages' | 'templates';
 
 export default function AutomationPage() {
-  const [activeTab, setActiveTab] = useState<TabType>('chatbots');
+  const [activeTab, setActiveTab] = useState<TabType>('workflows');
   const [searchQuery, setSearchQuery] = useState('');
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [createType, setCreateType] = useState<'chatbot' | 'agent' | 'workflow'>('chatbot');
+  const [createType, setCreateType] = useState<'chatbot' | 'agent' | 'workflow'>('workflow');
+  const [loading, setLoading] = useState(false);
+
+  // Workflow form state
+  const [workflowName, setWorkflowName] = useState('');
+  const [workflowDescription, setWorkflowDescription] = useState('');
+  const [triggerType, setTriggerType] = useState('contact.created');
+  const [actions, setActions] = useState<any[]>([{ id: '1', type: 'send_email', config: {} }]);
+  const [editingWorkflowId, setEditingWorkflowId] = useState<string | null>(null);
 
   const [chatbots] = useState<Chatbot[]>([]);
-
   const [aiAgents] = useState<AIAgent[]>([]);
+  const [workflows, setWorkflows] = useState<Workflow[]>([]);
 
-  const [workflows] = useState<Workflow[]>([]);
+  // Load workflows on mount
+  useEffect(() => {
+    loadWorkflows();
+  }, []);
+
+  const loadWorkflows = async () => {
+    try {
+      const response = await api.get('/workflows');
+      // Map backend workflows to frontend format
+      const mappedWorkflows = response.data.map((w: any) => ({
+        id: w.id,
+        name: w.name,
+        platform: 'custom',
+        status: w.status,
+        trigger: w.triggerType,
+        actions: w.actions?.length || 0,
+        executions: w.executionCount || 0,
+        lastRun: w.updatedAt,
+        createdAt: w.createdAt,
+      }));
+      setWorkflows(mappedWorkflows);
+    } catch (error) {
+      console.error('Failed to load workflows:', error);
+    }
+  };
+
+  const handleCreateWorkflow = async () => {
+    if (!workflowName.trim()) {
+      alert('Please enter a workflow name');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      if (editingWorkflowId) {
+        // Update existing workflow
+        await api.patch(`/workflows/${editingWorkflowId}`, {
+          name: workflowName,
+          description: workflowDescription,
+          triggerType,
+          actions: actions.map(action => ({
+            id: action.id,
+            type: action.type,
+            config: action.config || {},
+          })),
+        });
+        alert('Workflow updated successfully!');
+      } else {
+        // Create new workflow
+        await api.post('/workflows', {
+          name: workflowName,
+          description: workflowDescription,
+          triggerType,
+          status: 'draft',
+          actions: actions.map(action => ({
+            id: action.id,
+            type: action.type,
+            config: action.config || {},
+          })),
+        });
+        alert('Workflow created successfully!');
+      }
+
+      // Reset form
+      setWorkflowName('');
+      setWorkflowDescription('');
+      setTriggerType('contact.created');
+      setActions([{ id: '1', type: 'send_email', config: {} }]);
+      setEditingWorkflowId(null);
+      setShowCreateModal(false);
+
+      // Reload workflows
+      await loadWorkflows();
+    } catch (error: any) {
+      console.error('Failed to save workflow:', error);
+      alert(error.response?.data?.message || 'Failed to save workflow');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleEditWorkflow = async (workflowId: string) => {
+    try {
+      // Fetch workflow details from backend
+      const response = await api.get(`/workflows/${workflowId}`);
+      const workflow = response.data;
+
+      // Populate form with workflow data
+      setWorkflowName(workflow.name);
+      setWorkflowDescription(workflow.description || '');
+      setTriggerType(workflow.triggerType);
+      setActions(workflow.actions || [{ id: '1', type: 'send_email', config: {} }]);
+      setEditingWorkflowId(workflowId);
+      setShowCreateModal(true);
+    } catch (error) {
+      console.error('Failed to load workflow for editing:', error);
+      alert('Failed to load workflow details');
+    }
+  };
+
+  const handleDeleteWorkflow = async (workflowId: string) => {
+    if (!confirm('Are you sure you want to delete this workflow?')) {
+      return;
+    }
+
+    try {
+      await api.delete(`/workflows/${workflowId}`);
+      await loadWorkflows();
+      alert('Workflow deleted successfully!');
+    } catch (error) {
+      console.error('Failed to delete workflow:', error);
+      alert('Failed to delete workflow');
+    }
+  };
+
+  const handleToggleWorkflowStatus = async (workflowId: string, currentStatus: string) => {
+    const newStatus = currentStatus === 'active' ? 'paused' : 'active';
+
+    try {
+      await api.patch(`/workflows/${workflowId}`, {
+        status: newStatus,
+      });
+      await loadWorkflows();
+    } catch (error) {
+      console.error('Failed to toggle workflow status:', error);
+      alert('Failed to update workflow status');
+    }
+  };
+
+  const addAction = () => {
+    const newId = (actions.length + 1).toString();
+    setActions([...actions, { id: newId, type: 'send_email', config: {} }]);
+  };
+
+  const removeAction = (id: string) => {
+    setActions(actions.filter(a => a.id !== id));
+  };
+
+  const updateActionType = (id: string, type: string) => {
+    setActions(actions.map(a => a.id === id ? { ...a, type } : a));
+  };
 
   const [pages] = useState<Page[]>([]);
 
@@ -656,12 +805,26 @@ export default function AutomationPage() {
                     )}
 
                     <div className="flex items-center gap-2 pt-4 border-t border-gray-200">
-                      <button className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-lg hover:shadow-lg transition-all text-sm font-semibold">
+                      <button
+                        onClick={() => handleEditWorkflow(workflow.id)}
+                        className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-lg hover:shadow-lg transition-all text-sm font-semibold"
+                      >
                         <Edit className="h-4 w-4" />
                         Edit
                       </button>
-                      <button className="p-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-all">
+                      <button
+                        onClick={() => handleToggleWorkflowStatus(workflow.id, workflow.status)}
+                        className="p-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-all"
+                        title={workflow.status === 'active' ? 'Pause workflow' : 'Activate workflow'}
+                      >
                         {workflow.status === 'active' ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+                      </button>
+                      <button
+                        onClick={() => handleDeleteWorkflow(workflow.id)}
+                        className="p-2 border border-red-300 text-red-600 rounded-lg hover:bg-red-50 transition-all"
+                        title="Delete workflow"
+                      >
+                        <Trash2 className="h-4 w-4" />
                       </button>
                     </div>
                   </div>
@@ -810,14 +973,23 @@ export default function AutomationPage() {
         )}
       </div>
 
-      {/* Create Modal */}
+      {/* Create Workflow Modal */}
       {showCreateModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm animate-fade-in">
-          <div className="relative w-full max-w-4xl mx-4 glass-effect rounded-2xl shadow-2xl animate-scale-in max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="relative w-full max-w-3xl glass-effect rounded-2xl shadow-2xl max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between p-6 border-b border-gray-200 sticky top-0 bg-white/95 backdrop-blur-sm z-10 rounded-t-2xl">
-              <h2 className="text-2xl font-bold text-gray-900">Create New Automation</h2>
+              <h2 className="text-2xl font-bold text-gray-900">
+                {editingWorkflowId ? 'Edit Workflow' : 'Create New Workflow'}
+              </h2>
               <button
-                onClick={() => setShowCreateModal(false)}
+                onClick={() => {
+                  setShowCreateModal(false);
+                  setEditingWorkflowId(null);
+                  setWorkflowName('');
+                  setWorkflowDescription('');
+                  setTriggerType('contact.created');
+                  setActions([{ id: '1', type: 'send_email', config: {} }]);
+                }}
                 className="rounded-xl p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-all"
               >
                 <X className="h-6 w-6" />
@@ -825,110 +997,131 @@ export default function AutomationPage() {
             </div>
 
             <div className="p-6 space-y-6">
-              {/* Type Selection */}
+              {/* Workflow Name */}
               <div>
-                <h3 className="text-lg font-semibold text-gray-900 mb-4">Choose Type</h3>
-                <div className="grid grid-cols-3 gap-4">
-                  <button
-                    onClick={() => setCreateType('chatbot')}
-                    className={`p-6 rounded-xl border-2 transition-all ${
-                      createType === 'chatbot'
-                        ? 'border-blue-500 bg-blue-50'
-                        : 'border-gray-200 hover:border-gray-300'
-                    }`}
-                  >
-                    <MessageSquare className={`h-8 w-8 mx-auto mb-3 ${createType === 'chatbot' ? 'text-blue-600' : 'text-gray-400'}`} />
-                    <p className="font-semibold text-gray-900">Chatbot</p>
-                    <p className="text-xs text-gray-500 mt-1">Automated conversations</p>
-                  </button>
-
-                  <button
-                    onClick={() => setCreateType('agent')}
-                    className={`p-6 rounded-xl border-2 transition-all ${
-                      createType === 'agent'
-                        ? 'border-purple-500 bg-purple-50'
-                        : 'border-gray-200 hover:border-gray-300'
-                    }`}
-                  >
-                    <Brain className={`h-8 w-8 mx-auto mb-3 ${createType === 'agent' ? 'text-purple-600' : 'text-gray-400'}`} />
-                    <p className="font-semibold text-gray-900">AI Agent</p>
-                    <p className="text-xs text-gray-500 mt-1">Intelligent assistant</p>
-                  </button>
-
-                  <button
-                    onClick={() => setCreateType('workflow')}
-                    className={`p-6 rounded-xl border-2 transition-all ${
-                      createType === 'workflow'
-                        ? 'border-emerald-500 bg-emerald-50'
-                        : 'border-gray-200 hover:border-gray-300'
-                    }`}
-                  >
-                    <Workflow className={`h-8 w-8 mx-auto mb-3 ${createType === 'workflow' ? 'text-emerald-600' : 'text-gray-400'}`} />
-                    <p className="font-semibold text-gray-900">Workflow</p>
-                    <p className="text-xs text-gray-500 mt-1">Multi-step automation</p>
-                  </button>
-                </div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  Workflow Name *
+                </label>
+                <input
+                  type="text"
+                  value={workflowName}
+                  onChange={(e) => setWorkflowName(e.target.value)}
+                  placeholder="e.g., New Lead Welcome Sequence"
+                  className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all"
+                />
               </div>
 
-              {/* Platform/Model Selection */}
+              {/* Description */}
               <div>
-                <h3 className="text-lg font-semibold text-gray-900 mb-4">
-                  {createType === 'chatbot' && 'Select Platform'}
-                  {createType === 'agent' && 'Select AI Model'}
-                  {createType === 'workflow' && 'Select Platform'}
-                </h3>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                  {createType === 'chatbot' && (
-                    <>
-                      {['WhatsApp', 'Facebook', 'Instagram', 'Website'].map((platform) => (
-                        <button
-                          key={platform}
-                          className="p-4 rounded-xl border border-gray-200 hover:border-indigo-300 hover:bg-indigo-50 transition-all"
-                        >
-                          <p className="font-semibold text-sm">{platform}</p>
-                        </button>
-                      ))}
-                    </>
-                  )}
-                  {createType === 'agent' && (
-                    <>
-                      {['GPT-4', 'GPT-3.5', 'Claude', 'Custom'].map((model) => (
-                        <button
-                          key={model}
-                          className="p-4 rounded-xl border border-gray-200 hover:border-purple-300 hover:bg-purple-50 transition-all"
-                        >
-                          <p className="font-semibold text-sm">{model}</p>
-                        </button>
-                      ))}
-                    </>
-                  )}
-                  {createType === 'workflow' && (
-                    <>
-                      {['n8n', 'Zapier', 'Make', 'Custom'].map((platform) => (
-                        <button
-                          key={platform}
-                          className="p-4 rounded-xl border border-gray-200 hover:border-emerald-300 hover:bg-emerald-50 transition-all"
-                        >
-                          <p className="font-semibold text-sm">{platform}</p>
-                        </button>
-                      ))}
-                    </>
-                  )}
-                </div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  Description
+                </label>
+                <textarea
+                  value={workflowDescription}
+                  onChange={(e) => setWorkflowDescription(e.target.value)}
+                  placeholder="Describe what this workflow does..."
+                  rows={3}
+                  className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all"
+                />
               </div>
 
+              {/* Trigger */}
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  Trigger *
+                </label>
+                <select
+                  value={triggerType}
+                  onChange={(e) => setTriggerType(e.target.value)}
+                  className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all"
+                >
+                  <option value="contact.created">New Contact Created</option>
+                  <option value="contact.updated">Contact Updated</option>
+                  <option value="deal.created">New Deal Created</option>
+                  <option value="deal.updated">Deal Updated</option>
+                  <option value="deal.won">Deal Won</option>
+                  <option value="deal.lost">Deal Lost</option>
+                  <option value="task.created">Task Created</option>
+                  <option value="task.completed">Task Completed</option>
+                  <option value="form.submitted">Form Submitted</option>
+                  <option value="email.received">Email Received</option>
+                  <option value="webhook">Webhook</option>
+                  <option value="schedule">Scheduled (Cron)</option>
+                </select>
+              </div>
+
+              {/* Actions */}
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-3">
+                  Actions
+                </label>
+                <div className="space-y-3">
+                  {actions.map((action, index) => (
+                    <div key={action.id} className="flex items-center gap-3">
+                      <div className="flex-1 flex items-center gap-3 p-4 border border-gray-300 rounded-xl bg-gray-50">
+                        <span className="text-sm font-semibold text-gray-600">#{index + 1}</span>
+                        <select
+                          value={action.type}
+                          onChange={(e) => updateActionType(action.id, e.target.value)}
+                          className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+                        >
+                          <option value="send_email">Send Email</option>
+                          <option value="send_sms">Send SMS</option>
+                          <option value="create_task">Create Task</option>
+                          <option value="create_deal">Create Deal</option>
+                          <option value="update_contact">Update Contact</option>
+                          <option value="add_tag">Add Tag</option>
+                          <option value="send_webhook">Send Webhook</option>
+                          <option value="wait">Wait/Delay</option>
+                          <option value="ai_agent">AI Agent</option>
+                          <option value="create_invoice">Create Invoice</option>
+                        </select>
+                      </div>
+                      {actions.length > 1 && (
+                        <button
+                          onClick={() => removeAction(action.id)}
+                          className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-all"
+                        >
+                          <X className="h-5 w-5" />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                <button
+                  onClick={addAction}
+                  className="mt-3 flex items-center gap-2 px-4 py-2 border-2 border-dashed border-gray-300 rounded-xl hover:border-emerald-400 hover:bg-emerald-50 transition-all text-sm font-semibold text-gray-600 hover:text-emerald-600 w-full justify-center"
+                >
+                  <Plus className="h-4 w-4" />
+                  Add Action
+                </button>
+              </div>
+
+              {/* Actions */}
               <div className="flex justify-end gap-3 pt-4 border-t border-gray-200">
                 <button
                   onClick={() => setShowCreateModal(false)}
                   className="px-6 py-3 text-sm font-semibold text-gray-700 bg-white border border-gray-300 rounded-xl hover:bg-gray-50 transition-all"
+                  disabled={loading}
                 >
                   Cancel
                 </button>
                 <button
-                  className="px-6 py-3 text-sm font-semibold text-white bg-gradient-to-r from-blue-600 to-indigo-600 rounded-xl shadow-lg hover:shadow-xl transition-all flex items-center gap-2"
+                  onClick={handleCreateWorkflow}
+                  disabled={loading || !workflowName.trim()}
+                  className="px-6 py-3 text-sm font-semibold text-white bg-gradient-to-r from-emerald-600 to-teal-600 rounded-xl shadow-lg hover:shadow-xl transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  Continue
-                  <ChevronRight className="h-4 w-4" />
+                  {loading ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      {editingWorkflowId ? 'Updating...' : 'Creating...'}
+                    </>
+                  ) : (
+                    <>
+                      <Save className="h-4 w-4" />
+                      {editingWorkflowId ? 'Update Workflow' : 'Create Workflow'}
+                    </>
+                  )}
                 </button>
               </div>
             </div>

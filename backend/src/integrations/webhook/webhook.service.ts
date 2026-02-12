@@ -161,9 +161,23 @@ export class WebhookService {
     }
 
     try {
-      // Verify webhook signature if configured
-      if (integration.config?.webhookSecret) {
-        this.verifyWebhookSignature(payload, context.headers, integration.config.webhookSecret);
+      // Verify webhook signature if configured on integration or individual webhooks
+      const webhookSecrets = (integration.webhooks || [])
+        .map((w) => w.secret)
+        .filter(Boolean) as string[];
+      const secrets = [
+        integration.config?.webhookSecret,
+        ...webhookSecrets,
+      ].filter(Boolean) as string[];
+
+      if (secrets.length > 0) {
+        const isValid = secrets.some((secret) =>
+          this.isWebhookSignatureValid(payload, context.headers, secret),
+        );
+
+        if (!isValid) {
+          throw new BadRequestException('Invalid webhook signature');
+        }
       }
 
       // Get integration handler
@@ -357,21 +371,55 @@ export class WebhookService {
     headers: Record<string, string>,
     secret: string,
   ): void {
-    const signature = headers['x-webhook-signature'] || headers['x-hub-signature-256'];
+    const signature = this.extractWebhookSignature(headers);
 
     if (!signature) {
       throw new BadRequestException('Missing webhook signature');
     }
 
+    if (!this.isWebhookSignatureValid(payload, headers, secret)) {
+      throw new BadRequestException('Invalid webhook signature');
+    }
+  }
+
+  /**
+   * Check webhook signature without throwing
+   */
+  private isWebhookSignatureValid(
+    payload: any,
+    headers: Record<string, string>,
+    secret: string,
+  ): boolean {
+    const signature = this.extractWebhookSignature(headers);
+    if (!signature) {
+      return false;
+    }
+
     const expectedSignature = this.generateWebhookSignature(payload, secret);
     const receivedSignature = signature.replace('sha256=', '');
 
-    if (!crypto.timingSafeEqual(
-      Buffer.from(expectedSignature, 'hex'),
-      Buffer.from(receivedSignature, 'hex'),
-    )) {
-      throw new BadRequestException('Invalid webhook signature');
+    try {
+      return crypto.timingSafeEqual(
+        Buffer.from(expectedSignature, 'hex'),
+        Buffer.from(receivedSignature, 'hex'),
+      );
+    } catch {
+      return false;
     }
+  }
+
+  /**
+   * Extract webhook signature header (case-insensitive)
+   */
+  private extractWebhookSignature(headers: Record<string, string>): string | undefined {
+    const lowerCaseHeaders = Object.keys(headers || {}).reduce((acc, key) => {
+      acc[key.toLowerCase()] = headers[key];
+      return acc;
+    }, {} as Record<string, string>);
+
+    return lowerCaseHeaders['x-webhook-signature'] ||
+      lowerCaseHeaders['x-hub-signature-256'] ||
+      lowerCaseHeaders['x-webhook-signature-256'];
   }
 
   /**

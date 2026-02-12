@@ -55,6 +55,7 @@ export default function CalendarPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [modalError, setModalError] = useState('');
+  const [editingEvent, setEditingEvent] = useState<Event | null>(null);
 
   const [formData, setFormData] = useState<EventFormData>({
     title: '',
@@ -104,9 +105,21 @@ export default function CalendarPage() {
     setIsSubmitting(true);
 
     try {
-      // Combine date and time to create ISO timestamps
-      const startDateTime = new Date(`${formData.date}T${formData.startTime}:00`);
-      const endDateTime = new Date(`${formData.date}T${formData.endTime}:00`);
+      // Check for time conflicts
+      if (checkTimeConflict(formData.date, formData.startTime, formData.endTime)) {
+        setModalError('There is already an event scheduled at this time. Please choose a different time.');
+        setIsSubmitting(false);
+        return;
+      }
+
+      // Parse date components to avoid timezone issues
+      const [year, month, day] = formData.date.split('-').map(Number);
+      const [startHour, startMinute] = formData.startTime.split(':').map(Number);
+      const [endHour, endMinute] = formData.endTime.split(':').map(Number);
+
+      // Create dates in local timezone, then convert to ISO string
+      const startDateTime = new Date(year, month - 1, day, startHour, startMinute);
+      const endDateTime = new Date(year, month - 1, day, endHour, endMinute);
 
       const eventData = {
         title: formData.title,
@@ -143,18 +156,124 @@ export default function CalendarPage() {
     }
   };
 
+  const handleEditEvent = (event: Event) => {
+    setEditingEvent(event);
+
+    // Parse the event dates to populate the form
+    const startDate = new Date(event.startDate);
+    const endDate = new Date(event.endDate);
+
+    setFormData({
+      title: event.title,
+      description: event.description || '',
+      type: event.type,
+      date: startDate.toISOString().split('T')[0],
+      startTime: `${String(startDate.getHours()).padStart(2, '0')}:${String(startDate.getMinutes()).padStart(2, '0')}`,
+      endTime: `${String(endDate.getHours()).padStart(2, '0')}:${String(endDate.getMinutes()).padStart(2, '0')}`,
+      location: event.location || '',
+      meetingPlatform: event.meetingPlatform,
+    });
+
+    setShowEventModal(true);
+  };
+
+  const handleUpdateEvent = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingEvent) return;
+
+    setModalError('');
+    setIsSubmitting(true);
+
+    try {
+      // Check for time conflicts (excluding the current event being edited)
+      if (checkTimeConflict(formData.date, formData.startTime, formData.endTime, editingEvent.id)) {
+        setModalError('There is already an event scheduled at this time. Please choose a different time.');
+        setIsSubmitting(false);
+        return;
+      }
+
+      // Parse date components to avoid timezone issues
+      const [year, month, day] = formData.date.split('-').map(Number);
+      const [startHour, startMinute] = formData.startTime.split(':').map(Number);
+      const [endHour, endMinute] = formData.endTime.split(':').map(Number);
+
+      // Create dates in local timezone, then convert to ISO string
+      const startDateTime = new Date(year, month - 1, day, startHour, startMinute);
+      const endDateTime = new Date(year, month - 1, day, endHour, endMinute);
+
+      const eventData = {
+        title: formData.title,
+        description: formData.description || undefined,
+        type: formData.type,
+        startDate: startDateTime.toISOString(),
+        endDate: endDateTime.toISOString(),
+        location: formData.location || undefined,
+        meetingPlatform: formData.meetingPlatform || undefined,
+        color: getColorForType(formData.type),
+      };
+
+      const response = await api.patch<Event>(`/events/${editingEvent.id}`, eventData);
+
+      setEvents(events.map(e => e.id === editingEvent.id ? response.data : e));
+      setShowEventModal(false);
+      setEditingEvent(null);
+      resetForm();
+    } catch (err: any) {
+      console.error('Failed to update event:', err);
+      setModalError(err.response?.data?.message || 'Failed to update event');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // Helper function to format date without timezone issues
+  const formatDateForInput = (date: Date): string => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
+  // Helper function to check for time conflicts
+  const checkTimeConflict = (date: string, startTime: string, endTime: string, excludeEventId?: string): boolean => {
+    const [year, month, day] = date.split('-').map(Number);
+    const [startHour, startMinute] = startTime.split(':').map(Number);
+    const [endHour, endMinute] = endTime.split(':').map(Number);
+
+    const newStart = new Date(year, month - 1, day, startHour, startMinute);
+    const newEnd = new Date(year, month - 1, day, endHour, endMinute);
+
+    // Get events for the same day
+    const sameDay = new Date(year, month - 1, day);
+    const dayEvents = getEventsForDate(sameDay).filter(e => excludeEventId ? e.id !== excludeEventId : true);
+
+    // Check if any event overlaps
+    for (const event of dayEvents) {
+      const existingStart = new Date(event.startDate);
+      const existingEnd = new Date(event.endDate);
+
+      // Check for overlap: new event starts before existing ends AND new event ends after existing starts
+      if (newStart < existingEnd && newEnd > existingStart) {
+        return true; // Conflict found
+      }
+    }
+
+    return false; // No conflict
+  };
+
   const resetForm = () => {
     setFormData({
       title: '',
       description: '',
       type: 'meeting',
-      date: selectedDate?.toISOString().split('T')[0] || new Date().toISOString().split('T')[0],
+      date: selectedDate ? formatDateForInput(selectedDate) : formatDateForInput(new Date()),
       startTime: '09:00',
       endTime: '10:00',
       location: '',
     });
     setModalError('');
     setSelectedDate(null);
+    setEditingEvent(null);
   };
 
   const getColorForType = (type: string): string => {
@@ -256,7 +375,7 @@ export default function CalendarPage() {
           }`}
           onClick={() => {
             setSelectedDate(date);
-            setFormData({ ...formData, date: date.toISOString().split('T')[0] });
+            setFormData({ ...formData, date: formatDateForInput(date) });
             setShowEventModal(true);
           }}
         >
@@ -495,7 +614,19 @@ export default function CalendarPage() {
                   </div>
                   <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-all">
                     <button
-                      onClick={() => handleDeleteEvent(event.id)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleEditEvent(event);
+                      }}
+                      className="p-2 rounded-lg hover:bg-blue-50 transition-all"
+                    >
+                      <Edit className="h-4 w-4 text-blue-600" />
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteEvent(event.id);
+                      }}
                       className="p-2 rounded-lg hover:bg-red-50 transition-all"
                     >
                       <Trash2 className="h-4 w-4 text-red-600" />
@@ -514,7 +645,7 @@ export default function CalendarPage() {
           <div className="relative w-full max-w-2xl mx-4 glass-effect rounded-2xl shadow-2xl animate-scale-in max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between p-6 border-b border-gray-200 sticky top-0 bg-white rounded-t-2xl">
               <h2 className="text-2xl font-bold text-gray-900">
-                {selectedDate ? `New Event - ${selectedDate.toLocaleDateString()}` : 'New Event'}
+                {editingEvent ? 'Edit Event' : (selectedDate ? `New Event - ${selectedDate.toLocaleDateString()}` : 'New Event')}
               </h2>
               <button
                 onClick={() => {
@@ -527,7 +658,7 @@ export default function CalendarPage() {
               </button>
             </div>
 
-            <form onSubmit={handleCreateEvent} className="p-6 space-y-4">
+            <form onSubmit={editingEvent ? handleUpdateEvent : handleCreateEvent} className="p-6 space-y-4">
               {modalError && (
                 <div className="flex items-center gap-2 p-4 rounded-xl bg-red-50 border border-red-200">
                   <AlertCircle className="h-5 w-5 text-red-600" />
@@ -653,7 +784,7 @@ export default function CalendarPage() {
                   className="px-6 py-3 text-sm font-semibold text-white bg-gradient-to-r from-cyan-600 to-teal-600 rounded-xl shadow-lg hover:shadow-xl transition-all disabled:opacity-50 flex items-center gap-2"
                 >
                   {isSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
-                  {isSubmitting ? 'Creating...' : 'Create Event'}
+                  {isSubmitting ? (editingEvent ? 'Updating...' : 'Creating...') : (editingEvent ? 'Update Event' : 'Create Event')}
                 </button>
               </div>
             </form>

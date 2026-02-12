@@ -12,13 +12,17 @@ import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
+import { randomBytes } from 'crypto';
 import * as bcrypt from 'bcrypt';
+import { v4 as uuidv4 } from 'uuid';
 import { User, UserRole, UserStatus } from '../database/entities/user.entity';
 import { Workspace } from '../database/entities/workspace.entity';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
+import { ChangePasswordDto } from './dto/change-password.dto';
 import { JwtPayload } from './interfaces/jwt-payload.interface';
 import { AuthResponse } from './interfaces/auth-response.interface';
+import { TokenBlacklistService } from './token-blacklist/token-blacklist.service';
 
 /**
  * Authentication service with comprehensive security features
@@ -27,6 +31,9 @@ import { AuthResponse } from './interfaces/auth-response.interface';
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
+  private readonly oauthStateTtlMs = 10 * 60 * 1000;
+  private readonly oauthAuthCodeTtlMs = 5 * 60 * 1000;
+  private readonly oauthStateSecret: string;
 
   constructor(
     @InjectRepository(User)
@@ -36,7 +43,10 @@ export class AuthService {
     private jwtService: JwtService,
     private configService: ConfigService,
     private httpService: HttpService,
-  ) {}
+    private tokenBlacklistService: TokenBlacklistService,
+  ) {
+    this.oauthStateSecret = this.configService.get<string>('auth.jwtSecret') ?? '';
+  }
 
   /**
    * Validate user credentials for login
@@ -68,7 +78,7 @@ export class AuthService {
 
       return user;
     } catch (error) {
-      this.logger.error(`User validation failed for email ${email}:`, error.stack);
+      this.logger.error(`User validation failed (hashed identifier: ${Buffer.from(email).toString('base64').substring(0, 12)}):`, error.message);
       return null;
     }
   }
@@ -91,7 +101,7 @@ export class AuthService {
       // Generate tokens
       const tokens = await this.generateTokens(user);
 
-      this.logger.log(`User ${user.email} logged in successfully`);
+      this.logger.log(`User ${user.id} logged in successfully`);
 
       return {
         user: {
@@ -105,7 +115,7 @@ export class AuthService {
         ...tokens,
       };
     } catch (error) {
-      this.logger.error(`Login failed for ${loginDto.email}:`, error.stack);
+      this.logger.error(`Login failed (correlation: ${Buffer.from(loginDto.email).toString('base64').substring(0, 12)}):`, error.message);
       throw error;
     }
   }
@@ -160,12 +170,16 @@ export class AuthService {
         userRole = UserRole.ADMIN; // First user is admin
       }
 
+      // Hash password before creating user (no longer using entity hooks)
+      const bcryptRounds = this.configService.get<number>('auth.bcryptRounds') || 12;
+      const hashedPassword = await bcrypt.hash(registerDto.password, bcryptRounds);
+
       // Create user
       const user = this.userRepository.create({
         email: registerDto.email,
         firstName: registerDto.firstName,
         lastName: registerDto.lastName,
-        password: registerDto.password, // Will be hashed by entity hook
+        password: hashedPassword,
         role: userRole,
         status: UserStatus.ACTIVE,
         workspaceId: workspace.id,
@@ -176,7 +190,7 @@ export class AuthService {
       // Generate tokens
       const tokens = await this.generateTokens(savedUser);
 
-      this.logger.log(`User ${savedUser.email} registered successfully`);
+      this.logger.log(`User ${savedUser.id} registered successfully`);
 
       return {
         user: {
@@ -190,34 +204,112 @@ export class AuthService {
         ...tokens,
       };
     } catch (error) {
-      this.logger.error(`Registration failed for ${registerDto.email}:`, error.stack);
+      this.logger.error(`Registration failed (correlation: ${Buffer.from(registerDto.email).toString('base64').substring(0, 12)}):`, error.message);
       throw error;
     }
   }
 
   /**
-   * Generate JWT access and refresh tokens
+   * Generate JWT access and refresh tokens with unique JTI for revocation
    */
   async generateTokens(user: User): Promise<{ accessToken: string; refreshToken: string }> {
-    const payload: JwtPayload = {
+    // Generate unique JTIs for both tokens (required for blacklisting)
+    const accessJti = uuidv4();
+    const refreshJti = uuidv4();
+
+    const accessPayload: JwtPayload = {
       sub: user.id,
       email: user.email,
       role: user.role,
       workspaceId: user.workspaceId,
+      jti: accessJti,
+    };
+
+    const refreshPayload: JwtPayload = {
+      sub: user.id,
+      email: user.email,
+      role: user.role,
+      workspaceId: user.workspaceId,
+      jti: refreshJti,
     };
 
     const [accessToken, refreshToken] = await Promise.all([
-      this.jwtService.signAsync(payload, {
+      this.jwtService.signAsync(accessPayload, {
         secret: this.configService.get('auth.jwtSecret'),
         expiresIn: this.configService.get('auth.jwtExpiresIn'),
       }),
-      this.jwtService.signAsync(payload, {
+      this.jwtService.signAsync(refreshPayload, {
         secret: this.configService.get('auth.jwtRefreshSecret'),
         expiresIn: this.configService.get('auth.jwtRefreshExpiresIn'),
       }),
     ]);
 
     return { accessToken, refreshToken };
+  }
+
+  /**
+   * Generate signed OAuth state token to prevent CSRF
+   */
+  generateOAuthState(): string {
+    return this.jwtService.sign(
+      { nonce: randomBytes(16).toString('hex') },
+      {
+        secret: this.oauthStateSecret,
+        expiresIn: Math.floor(this.oauthStateTtlMs / 1000),
+      },
+    );
+  }
+
+  /**
+   * Validate OAuth state token
+   */
+  validateOAuthState(state?: string): boolean {
+    if (!state) {
+      return false;
+    }
+    try {
+      this.jwtService.verify(state, { secret: this.oauthStateSecret });
+      return true;
+    } catch (error) {
+      this.logger.warn(`Invalid OAuth state received: ${error.message}`);
+      return false;
+    }
+  }
+
+  /**
+   * Create short-lived auth code for OAuth callback exchange
+   */
+  createOAuthAuthCode(authResponse: AuthResponse): string {
+    const payload = {
+      type: 'oauth-auth-code',
+      data: authResponse,
+    };
+
+    return this.jwtService.sign(payload, {
+      secret: this.oauthStateSecret,
+      expiresIn: Math.floor(this.oauthAuthCodeTtlMs / 1000),
+    });
+  }
+
+  /**
+   * Consume and invalidate auth code
+   */
+  consumeOAuthAuthCode(code: string): AuthResponse {
+    try {
+      const payload = this.jwtService.verify(code, { secret: this.oauthStateSecret }) as {
+        type: string;
+        data: AuthResponse;
+      };
+
+      if (payload.type !== 'oauth-auth-code' || !payload.data) {
+        throw new UnauthorizedException('Invalid auth code');
+      }
+
+      return payload.data;
+    } catch (error) {
+      this.logger.warn(`OAuth code exchange failed: ${error.message}`);
+      throw new UnauthorizedException('Invalid or expired auth code');
+    }
   }
 
   /**
@@ -245,12 +337,97 @@ export class AuthService {
   }
 
   /**
-   * Logout user (invalidate tokens on client side)
+   * Logout user and blacklist their current token
+   *
+   * @param userId - User ID
+   * @param accessToken - The access token to blacklist
+   * @param refreshToken - Optional refresh token to blacklist
    */
-  async logout(userId: string): Promise<{ message: string }> {
-    // In a production environment, you might want to blacklist tokens
-    this.logger.log(`User ${userId} logged out`);
-    return { message: 'Logged out successfully' };
+  async logout(
+    userId: string,
+    accessToken?: string,
+    refreshToken?: string
+  ): Promise<{ message: string }> {
+    try {
+      // Decode tokens to get JTIs without verification (tokens might be expired)
+      const accessJtiPromises = [];
+      const refreshJtiPromises = [];
+
+      // Get token expiration times for TTL
+      const accessExpiresIn = this.parseExpiration(this.configService.get('auth.jwtExpiresIn'));
+      const refreshExpiresIn = this.parseExpiration(this.configService.get('auth.jwtRefreshExpiresIn'));
+
+      // Blacklist access token if provided
+      if (accessToken) {
+        const accessPayload = this.jwtService.decode(accessToken) as JwtPayload;
+        if (accessPayload?.jti) {
+          accessJtiPromises.push(
+            this.tokenBlacklistService.blacklistToken(accessPayload.jti, accessExpiresIn, 'logout')
+          );
+        }
+      }
+
+      // Blacklist refresh token if provided
+      if (refreshToken) {
+        const refreshPayload = this.jwtService.decode(refreshToken) as JwtPayload;
+        if (refreshPayload?.jti) {
+          refreshJtiPromises.push(
+            this.tokenBlacklistService.blacklistToken(refreshPayload.jti, refreshExpiresIn, 'logout')
+          );
+        }
+      }
+
+      // Blacklist both tokens in parallel
+      await Promise.all([...accessJtiPromises, ...refreshJtiPromises]);
+
+      this.logger.log(`User ${userId} logged out successfully`);
+      return { message: 'Logged out successfully' };
+    } catch (error) {
+      this.logger.error(`Logout failed for user ${userId}:`, error);
+      // Even if blacklisting fails, return success (fail open for logout)
+      return { message: 'Logged out successfully' };
+    }
+  }
+
+  /**
+   * Logout from all devices - blacklist all user tokens
+   */
+  async logoutAllDevices(userId: string): Promise<{ message: string }> {
+    try {
+      // Use the longer of access/refresh token expiration
+      const refreshExpiresIn = this.parseExpiration(this.configService.get('auth.jwtRefreshExpiresIn'));
+
+      await this.tokenBlacklistService.blacklistUserTokens(userId, refreshExpiresIn);
+
+      this.logger.log(`User ${userId} logged out from all devices`);
+      return { message: 'Logged out from all devices successfully' };
+    } catch (error) {
+      this.logger.error(`Logout all devices failed for user ${userId}:`, error);
+      throw new BadRequestException('Failed to logout from all devices');
+    }
+  }
+
+  /**
+   * Parse expiration string to seconds
+   * Supports formats like '15m', '7d', '24h'
+   */
+  private parseExpiration(expiration: string): number {
+    const match = expiration.match(/^(\d+)([smhd])$/);
+    if (!match) {
+      return 86400; // Default to 24 hours
+    }
+
+    const value = parseInt(match[1]);
+    const unit = match[2];
+
+    const multipliers = {
+      s: 1,
+      m: 60,
+      h: 3600,
+      d: 86400,
+    };
+
+    return value * multipliers[unit];
   }
 
   /**
@@ -286,7 +463,7 @@ export class AuthService {
     await this.userRepository.save(user);
 
     if (user.isLocked) {
-      this.logger.warn(`Account locked for user ${user.email} due to failed login attempts`);
+      this.logger.warn(`Account locked for user ${user.id} due to failed login attempts`);
     }
   }
 
@@ -316,7 +493,7 @@ export class AuthService {
    */
   async updateProfile(
     userId: string,
-    updateData: { firstName?: string; lastName?: string; email?: string },
+    updateData: { firstName?: string; lastName?: string; email?: string; preferences?: any },
   ): Promise<User> {
     const user = await this.userRepository.findOne({ where: { id: userId } });
     if (!user) {
@@ -342,6 +519,10 @@ export class AuthService {
       user.lastName = updateData.lastName;
     }
 
+    if (updateData.preferences) {
+      user.preferences = { ...user.preferences, ...updateData.preferences };
+    }
+
     return this.userRepository.save(user);
   }
 
@@ -350,7 +531,7 @@ export class AuthService {
    */
   async changePassword(
     userId: string,
-    passwordData: { currentPassword: string; newPassword: string },
+    changePasswordDto: ChangePasswordDto,
   ): Promise<{ message: string }> {
     const user = await this.userRepository.findOne({ where: { id: userId } });
     if (!user) {
@@ -358,17 +539,18 @@ export class AuthService {
     }
 
     // Verify current password
-    const isPasswordValid = await bcrypt.compare(passwordData.currentPassword, user.password);
+    const isPasswordValid = await bcrypt.compare(changePasswordDto.currentPassword, user.password);
     if (!isPasswordValid) {
       throw new UnauthorizedException('Current password is incorrect');
     }
 
-    // Hash and save new password
-    const hashedPassword = await bcrypt.hash(passwordData.newPassword, 10);
+    // Hash and save new password with configured bcrypt rounds
+    const bcryptRounds = this.configService.get<number>('auth.bcryptRounds') || 12;
+    const hashedPassword = await bcrypt.hash(changePasswordDto.newPassword, bcryptRounds);
     user.password = hashedPassword;
     await this.userRepository.save(user);
 
-    this.logger.log(`Password changed for user ${user.email}`);
+    this.logger.log(`Password changed for user ${user.id}`);
     return { message: 'Password changed successfully' };
   }
 
@@ -380,7 +562,7 @@ export class AuthService {
 
     // Don't reveal if user exists (security best practice)
     if (!user) {
-      this.logger.warn(`Password reset requested for non-existent email: ${email}`);
+      this.logger.warn(`Password reset requested for non-existent user (correlation: ${Buffer.from(email).toString('base64').substring(0, 12)})`);
       return { message: 'If that email exists, a password reset link has been sent' };
     }
 
@@ -390,13 +572,11 @@ export class AuthService {
       { expiresIn: '1h' }
     );
 
-    // TODO: Send email with reset link
-    // For now, return token in response (in production, only send via email)
-    this.logger.log(`Password reset token generated for ${email}`);
+    // TODO: Send email with reset link. Token is not returned in response.
+    this.logger.log(`Password reset token generated for user ${user.id}`);
 
     return {
       message: 'If that email exists, a password reset link has been sent',
-      resetToken, // Remove this in production - only for development
     };
   }
 
@@ -418,8 +598,9 @@ export class AuthService {
         throw new NotFoundException('User not found');
       }
 
-      // Hash and update password
-      const hashedPassword = await bcrypt.hash(newPassword, 10);
+      // Hash and update password with configured bcrypt rounds
+      const bcryptRounds = this.configService.get<number>('auth.bcryptRounds') || 12;
+      const hashedPassword = await bcrypt.hash(newPassword, bcryptRounds);
       user.password = hashedPassword;
 
       // Reset failed login attempts
@@ -427,7 +608,7 @@ export class AuthService {
 
       await this.userRepository.save(user);
 
-      this.logger.log(`Password reset successfully for user ${user.email}`);
+      this.logger.log(`Password reset successfully for user ${user.id}`);
       return { message: 'Password reset successfully' };
     } catch (error) {
       if (error.name === 'TokenExpiredError') {
@@ -455,12 +636,11 @@ export class AuthService {
       { expiresIn: '24h' }
     );
 
-    // TODO: Send verification email
-    this.logger.log(`Email verification token generated for ${user.email}`);
+    // TODO: Send verification email. Token is not returned in response.
+    this.logger.log(`Email verification token generated for user ${user.id}`);
 
     return {
       message: 'Verification email sent',
-      verificationToken, // Remove this in production - only for development
     };
   }
 
@@ -488,7 +668,7 @@ export class AuthService {
 
       await this.userRepository.save(user);
 
-      this.logger.log(`Email verified for user ${user.email}`);
+      this.logger.log(`Email verified for user ${user.id}`);
       return { message: 'Email verified successfully' };
     } catch (error) {
       if (error.name === 'TokenExpiredError') {
@@ -535,7 +715,10 @@ export class AuthService {
       );
 
       const { email, given_name, family_name, id: googleId } = userInfoResponse.data;
-      this.logger.log(`User info received: ${email}`);
+      // Some Google accounts may not have a family_name; ensure we never insert NULL into NOT NULL columns
+      const firstName = given_name || email?.split('@')[0] || 'User';
+      const lastName = family_name || 'OAuth';
+      this.logger.log('User info received from OAuth provider');
 
       // Find or create user
       this.logger.log('Looking for existing user...');
@@ -543,17 +726,19 @@ export class AuthService {
 
       if (!user) {
         // Create default workspace for new user
+        const workspaceName = `${firstName}'s Workspace`;
+        const workspaceDomain = `${firstName.toLowerCase()}-${Date.now()}`;
         const workspace = this.workspaceRepository.create({
-          name: `${given_name}'s Workspace`,
-          domain: `${given_name.toLowerCase()}-${Date.now()}`,
+          name: workspaceName,
+          domain: workspaceDomain,
         });
         await this.workspaceRepository.save(workspace);
 
         // Create new user with Google OAuth
         user = this.userRepository.create({
           email,
-          firstName: given_name,
-          lastName: family_name,
+          firstName,
+          lastName,
           password: await bcrypt.hash(Math.random().toString(36), 10), // Random password
           role: UserRole.ADMIN,
           status: UserStatus.ACTIVE,
@@ -561,7 +746,7 @@ export class AuthService {
           // Store Google ID if you have a field for it
         });
         await this.userRepository.save(user);
-        this.logger.log(`New user created via Google OAuth: ${email}`);
+        this.logger.log(`New user ${user.id} created via Google OAuth`);
       } else {
         // Update last login
         user.updateLastLogin();
@@ -644,7 +829,7 @@ export class AuthService {
           workspaceId: workspace.id,
         });
         await this.userRepository.save(user);
-        this.logger.log(`New user created via Slack OAuth: ${email}`);
+        this.logger.log(`New user ${user.id} created via Slack OAuth`);
       } else {
         // Update last login
         user.updateLastLogin();

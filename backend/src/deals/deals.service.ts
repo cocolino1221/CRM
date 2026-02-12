@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Between, LessThan, MoreThan, In, Not } from 'typeorm';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Deal, DealStage } from '../database/entities/deal.entity';
 import { CreateDealDto } from './dto/create-deal.dto';
 import { UpdateDealDto } from './dto/update-deal.dto';
@@ -19,6 +20,7 @@ export class DealsService {
   constructor(
     @InjectRepository(Deal)
     private readonly dealRepository: Repository<Deal>,
+    private eventEmitter: EventEmitter2,
   ) {}
 
   /**
@@ -188,6 +190,13 @@ export class DealsService {
 
       this.logger.log(`Deal created: ${savedDeal.id} in workspace ${workspaceId}`);
 
+      // Emit deal.created event for workflow triggers
+      this.eventEmitter.emit('deal.created', {
+        deal: savedDeal,
+        workspaceId,
+      });
+      this.logger.log(`Deal created event emitted for deal ${savedDeal.id}`);
+
       return this.findOne(workspaceId, savedDeal.id, ['owner', 'contact', 'company']);
     } catch (error) {
       this.logger.error(`Error creating deal: ${error.message}`, error.stack);
@@ -200,12 +209,38 @@ export class DealsService {
    */
   async update(workspaceId: string, id: string, updateDealDto: UpdateDealDto) {
     const deal = await this.findOne(workspaceId, id);
+    const oldStage = deal.stage;
 
     try {
       Object.assign(deal, updateDealDto);
-      await this.dealRepository.save(deal);
+      const updatedDeal = await this.dealRepository.save(deal);
 
       this.logger.log(`Deal updated: ${id} in workspace ${workspaceId}`);
+
+      // Emit deal.updated event for workflow triggers
+      this.eventEmitter.emit('deal.updated', {
+        deal: updatedDeal,
+        workspaceId,
+        changes: updateDealDto,
+        oldStage,
+      });
+
+      // Emit specific events for deal won/lost
+      if (updateDealDto.stage && updateDealDto.stage !== oldStage) {
+        if (updateDealDto.stage === DealStage.CLOSED_WON) {
+          this.eventEmitter.emit('deal.won', {
+            deal: updatedDeal,
+            workspaceId,
+          });
+          this.logger.log(`Deal won event emitted for deal ${updatedDeal.id}`);
+        } else if (updateDealDto.stage === DealStage.CLOSED_LOST) {
+          this.eventEmitter.emit('deal.lost', {
+            deal: updatedDeal,
+            workspaceId,
+          });
+          this.logger.log(`Deal lost event emitted for deal ${updatedDeal.id}`);
+        }
+      }
 
       return this.findOne(workspaceId, id, ['owner', 'contact', 'company']);
     } catch (error) {

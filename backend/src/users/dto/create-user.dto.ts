@@ -6,9 +6,9 @@ import {
   IsOptional,
   MinLength,
   MaxLength,
-  Matches,
 } from 'class-validator';
 import { UserRole } from '../../database/entities/user.entity';
+import { IsStrongPassword } from '../../auth/validators/password.validator';
 
 export class CreateUserDto {
   @ApiProperty({
@@ -37,18 +37,11 @@ export class CreateUserDto {
   lastName: string;
 
   @ApiProperty({
-    description: 'User password (min 8 characters, must include uppercase, lowercase, number)',
+    description: 'User password (min 12 characters, uppercase, lowercase, number, special character)',
     example: 'SecurePass123!',
   })
   @IsString()
-  @MinLength(8)
-  @MaxLength(255)
-  @Matches(
-    /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)[a-zA-Z\d@$!%*?&]{8,}$/,
-    {
-      message: 'Password must contain at least one uppercase letter, one lowercase letter, and one number',
-    },
-  )
+  @IsStrongPassword()
   password: string;
 
   @ApiProperty({

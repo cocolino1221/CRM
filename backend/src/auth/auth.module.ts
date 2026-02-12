@@ -10,12 +10,14 @@ import { User } from '../database/entities/user.entity';
 import { Workspace } from '../database/entities/workspace.entity';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { LocalStrategy } from './strategies/local.strategy';
+import { TokenBlacklistModule } from './token-blacklist/token-blacklist.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([User, Workspace]),
     PassportModule.register({ defaultStrategy: 'jwt' }),
     HttpModule,
+    TokenBlacklistModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
       useFactory: (configService: ConfigService) => ({

@@ -18,6 +18,7 @@ import { Pipeline } from './pipeline.entity';
 import { PipelineStage } from './pipeline-stage.entity';
 
 export enum ContactStatus {
+  ACTIVE = 'active',
   LEAD = 'lead',
   PROSPECT = 'prospect',
   QUALIFIED = 'qualified',
@@ -36,10 +37,12 @@ export enum ContactSource {
   EVENT = 'event',
   SLACK = 'slack',
   TYPEFORM = 'typeform',
+  WHATSAPP = 'whatsapp',
   FACEBOOK = 'facebook',
   INSTAGRAM = 'instagram',
   LINKEDIN = 'linkedin',
   GOOGLE_ADS = 'google-ads',
+  KAJABI = 'kajabi',
   OTHER = 'other',
 }
 

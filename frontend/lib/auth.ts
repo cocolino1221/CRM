@@ -14,8 +14,7 @@ export interface RegisterData {
 }
 
 export interface AuthResponse {
-  accessToken: string;
-  refreshToken: string;
+  // Tokens are now in httpOnly cookies (not returned in response body)
   user: {
     id: string;
     email: string;
@@ -37,12 +36,12 @@ export interface User {
 }
 
 class AuthService {
-  private readonly TOKEN_KEY = 'accessToken';
-  private readonly REFRESH_TOKEN_KEY = 'refreshToken';
+  // Tokens are now in httpOnly cookies (not managed by frontend)
   private readonly USER_KEY = 'user';
 
   /**
    * Login user with credentials
+   * Tokens are automatically set as httpOnly cookies by the backend
    */
   async login(credentials: LoginCredentials): Promise<AuthResponse> {
     const response = await api.post<AuthResponse>('/auth/login', credentials);
@@ -52,6 +51,7 @@ class AuthService {
 
   /**
    * Register new user
+   * Tokens are automatically set as httpOnly cookies by the backend
    */
   async register(data: RegisterData): Promise<AuthResponse> {
     const response = await api.post<AuthResponse>('/auth/register', data);
@@ -61,6 +61,7 @@ class AuthService {
 
   /**
    * Logout user
+   * Backend clears httpOnly cookies
    */
   async logout(): Promise<void> {
     try {
@@ -74,20 +75,11 @@ class AuthService {
 
   /**
    * Refresh access token
+   * Tokens are automatically refreshed via httpOnly cookies
    */
-  async refreshToken(): Promise<string> {
-    const refreshToken = this.getRefreshToken();
-    if (!refreshToken) {
-      throw new Error('No refresh token available');
-    }
-
-    const response = await api.post<{ accessToken: string; refreshToken: string }>(
-      '/auth/refresh',
-      { refreshToken }
-    );
-
-    this.setTokens(response.data.accessToken, response.data.refreshToken);
-    return response.data.accessToken;
+  async refreshToken(): Promise<void> {
+    await api.post('/auth/refresh');
+    // New tokens are set as httpOnly cookies by the backend
   }
 
   /**
@@ -109,23 +101,11 @@ class AuthService {
   }
 
   /**
-   * Store auth session
+   * Store auth session (only user data, tokens are in httpOnly cookies)
    */
   private setSession(data: AuthResponse): void {
     if (typeof window !== 'undefined') {
-      localStorage.setItem(this.TOKEN_KEY, data.accessToken);
-      localStorage.setItem(this.REFRESH_TOKEN_KEY, data.refreshToken);
       localStorage.setItem(this.USER_KEY, JSON.stringify(data.user));
-    }
-  }
-
-  /**
-   * Set tokens only
-   */
-  private setTokens(accessToken: string, refreshToken: string): void {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem(this.TOKEN_KEY, accessToken);
-      localStorage.setItem(this.REFRESH_TOKEN_KEY, refreshToken);
     }
   }
 
@@ -139,34 +119,12 @@ class AuthService {
   }
 
   /**
-   * Clear auth session
+   * Clear auth session (only user data, cookies cleared by backend)
    */
   clearSession(): void {
     if (typeof window !== 'undefined') {
-      localStorage.removeItem(this.TOKEN_KEY);
-      localStorage.removeItem(this.REFRESH_TOKEN_KEY);
       localStorage.removeItem(this.USER_KEY);
     }
-  }
-
-  /**
-   * Get access token
-   */
-  getToken(): string | null {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem(this.TOKEN_KEY);
-    }
-    return null;
-  }
-
-  /**
-   * Get refresh token
-   */
-  getRefreshToken(): string | null {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem(this.REFRESH_TOKEN_KEY);
-    }
-    return null;
   }
 
   /**
@@ -187,10 +145,11 @@ class AuthService {
   }
 
   /**
-   * Check if user is authenticated
+   * Check if user is authenticated (based on stored user data)
+   * Note: Actual authentication is verified by backend via httpOnly cookies
    */
   isAuthenticated(): boolean {
-    return !!this.getToken();
+    return !!this.getUser();
   }
 }
 

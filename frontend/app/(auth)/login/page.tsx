@@ -3,8 +3,24 @@
 import { useState, useEffect, Suspense } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Mail, Lock, Eye, EyeOff, ArrowRight, AlertCircle, Loader2 } from 'lucide-react';
+import { Mail, Lock, Eye, EyeOff, ArrowRight, AlertCircle, Loader2, Sparkles, CheckCircle } from 'lucide-react';
 import { authService } from '@/lib/auth';
+
+function LoginSkeleton() {
+  return (
+    <div className="animate-pulse space-y-6">
+      <div>
+        <div className="h-8 bg-gray-200 rounded w-48 mb-2"></div>
+        <div className="h-4 bg-gray-200 rounded w-64"></div>
+      </div>
+      <div className="space-y-4">
+        <div className="h-12 bg-gray-200 rounded-xl"></div>
+        <div className="h-12 bg-gray-200 rounded-xl"></div>
+      </div>
+      <div className="h-12 bg-gray-200 rounded-xl"></div>
+    </div>
+  );
+}
 
 function LoginForm() {
   const router = useRouter();
@@ -12,27 +28,37 @@ function LoginForm() {
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
   const [formData, setFormData] = useState({
     email: '',
     password: '',
+    rememberMe: false,
   });
 
-  // Check for OAuth error in URL
+  // Check for OAuth error or success in URL
   useEffect(() => {
     const errorParam = searchParams.get('error');
+    const successParam = searchParams.get('success');
     if (errorParam) {
       setError(decodeURIComponent(errorParam));
+    }
+    if (successParam) {
+      setSuccess(decodeURIComponent(successParam));
     }
   }, [searchParams]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setSuccess('');
     setIsLoading(true);
 
     try {
       await authService.login(formData);
-      router.push('/dashboard');
+      setSuccess('Login successful! Redirecting...');
+      setTimeout(() => {
+        router.push('/dashboard');
+      }, 500);
     } catch (err: any) {
       console.error('Login error:', err);
       const errorMessage = err.response?.data?.message || 'Invalid email or password. Please try again.';
@@ -43,28 +69,40 @@ function LoginForm() {
   };
 
   return (
-    <div className="animate-fade-in">
+    <div className="animate-fade-in-up">
+      {/* Header */}
       <div className="mb-8">
-        <h2 className="text-3xl font-bold text-gray-900 mb-2">Welcome back</h2>
+        <h2 className="text-3xl font-bold text-gray-900 mb-2 flex items-center gap-2">
+          Welcome back
+          <Sparkles className="h-6 w-6 text-indigo-500" />
+        </h2>
         <p className="text-gray-600">Sign in to your account to continue</p>
       </div>
 
-      <form onSubmit={handleSubmit} className="space-y-6">
+      <form onSubmit={handleSubmit} className="space-y-5">
+        {/* Success Alert */}
+        {success && (
+          <div className="flex items-center gap-3 p-4 rounded-xl bg-green-50 border border-green-200 animate-fade-in">
+            <CheckCircle className="h-5 w-5 text-green-600 flex-shrink-0" />
+            <p className="text-sm text-green-700 font-medium">{success}</p>
+          </div>
+        )}
+
         {/* Error Alert */}
         {error && (
-          <div className="flex items-center gap-2 p-4 rounded-xl bg-red-50 border border-red-200">
+          <div className="flex items-center gap-3 p-4 rounded-xl bg-red-50 border border-red-200 animate-fade-in">
             <AlertCircle className="h-5 w-5 text-red-600 flex-shrink-0" />
             <p className="text-sm text-red-700">{error}</p>
           </div>
         )}
 
         {/* Email */}
-        <div>
-          <label htmlFor="email" className="block text-sm font-semibold text-gray-700 mb-2">
+        <div className="space-y-2">
+          <label htmlFor="email" className="block text-sm font-semibold text-gray-700">
             Email Address
           </label>
-          <div className="relative">
-            <Mail className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
+          <div className="relative group">
+            <Mail className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400 group-focus-within:text-indigo-500 transition-colors" />
             <input
               id="email"
               type="email"
@@ -72,19 +110,19 @@ function LoginForm() {
               disabled={isLoading}
               value={formData.email}
               onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-              className="w-full pl-12 pr-4 py-3 rounded-xl border border-gray-300 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 transition-all outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full pl-12 pr-4 py-3.5 rounded-xl border border-gray-200 bg-white focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100/50 transition-all outline-none disabled:opacity-50 disabled:cursor-not-allowed text-gray-900 placeholder:text-gray-400"
               placeholder="you@company.com"
             />
           </div>
         </div>
 
         {/* Password */}
-        <div>
-          <label htmlFor="password" className="block text-sm font-semibold text-gray-700 mb-2">
+        <div className="space-y-2">
+          <label htmlFor="password" className="block text-sm font-semibold text-gray-700">
             Password
           </label>
-          <div className="relative">
-            <Lock className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
+          <div className="relative group">
+            <Lock className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400 group-focus-within:text-indigo-500 transition-colors" />
             <input
               id="password"
               type={showPassword ? 'text' : 'password'}
@@ -92,13 +130,14 @@ function LoginForm() {
               disabled={isLoading}
               value={formData.password}
               onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-              className="w-full pl-12 pr-12 py-3 rounded-xl border border-gray-300 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 transition-all outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full pl-12 pr-12 py-3.5 rounded-xl border border-gray-200 bg-white focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100/50 transition-all outline-none disabled:opacity-50 disabled:cursor-not-allowed text-gray-900 placeholder:text-gray-400"
               placeholder="••••••••"
             />
             <button
               type="button"
               onClick={() => setShowPassword(!showPassword)}
-              className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+              className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors p-1 rounded-lg hover:bg-gray-100"
+              tabIndex={-1}
             >
               {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
             </button>
@@ -107,11 +146,19 @@ function LoginForm() {
 
         {/* Remember & Forgot */}
         <div className="flex items-center justify-between">
-          <label className="flex items-center gap-2">
-            <input type="checkbox" className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" />
-            <span className="text-sm text-gray-600">Remember me</span>
+          <label className="flex items-center gap-2.5 cursor-pointer group">
+            <input
+              type="checkbox"
+              checked={formData.rememberMe}
+              onChange={(e) => setFormData({ ...formData, rememberMe: e.target.checked })}
+              className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+            />
+            <span className="text-sm text-gray-600 group-hover:text-gray-900 transition-colors">Remember me</span>
           </label>
-          <Link href="/forgot-password" className="text-sm font-semibold text-indigo-600 hover:text-indigo-700">
+          <Link
+            href="/forgot-password"
+            className="text-sm font-semibold text-indigo-600 hover:text-indigo-700 transition-colors"
+          >
             Forgot password?
           </Link>
         </div>
@@ -120,16 +167,16 @@ function LoginForm() {
         <button
           type="submit"
           disabled={isLoading}
-          className="w-full bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 text-white py-3 rounded-xl font-semibold shadow-lg shadow-indigo-500/30 hover:shadow-xl hover:shadow-indigo-500/40 transition-all duration-300 hover:scale-105 flex items-center justify-center gap-2 group disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
+          className="w-full bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 text-white py-3.5 rounded-xl font-semibold shadow-lg shadow-indigo-500/25 hover:shadow-xl hover:shadow-indigo-500/30 transition-all duration-300 hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center gap-2.5 group disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:scale-100 disabled:hover:shadow-lg"
         >
           {isLoading ? (
             <>
               <Loader2 className="h-5 w-5 animate-spin" />
-              Signing In...
+              <span>Signing in...</span>
             </>
           ) : (
             <>
-              Sign In
+              <span>Sign In</span>
               <ArrowRight className="h-5 w-5 group-hover:translate-x-1 transition-transform" />
             </>
           )}
@@ -139,7 +186,7 @@ function LoginForm() {
       {/* Divider */}
       <div className="relative my-8">
         <div className="absolute inset-0 flex items-center">
-          <div className="w-full border-t border-gray-300"></div>
+          <div className="w-full border-t border-gray-200"></div>
         </div>
         <div className="relative flex justify-center text-sm">
           <span className="px-4 bg-white text-gray-500">or continue with</span>
@@ -155,7 +202,7 @@ function LoginForm() {
             const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000/api/v1';
             window.location.href = `${apiUrl}/auth/google`;
           }}
-          className="flex items-center justify-center gap-2 py-3 px-4 border border-gray-300 rounded-xl hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          className="flex items-center justify-center gap-2.5 py-3 px-4 border border-gray-200 rounded-xl hover:bg-gray-50 hover:border-gray-300 transition-all disabled:opacity-50 disabled:cursor-not-allowed group"
         >
           <svg className="h-5 w-5" viewBox="0 0 24 24">
             <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
@@ -163,7 +210,7 @@ function LoginForm() {
             <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
             <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
           </svg>
-          Google
+          <span className="text-sm font-medium text-gray-700 group-hover:text-gray-900">Google</span>
         </button>
         <button
           type="button"
@@ -172,19 +219,22 @@ function LoginForm() {
             const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000/api/v1';
             window.location.href = `${apiUrl}/auth/slack`;
           }}
-          className="flex items-center justify-center gap-2 py-3 px-4 border border-gray-300 rounded-xl hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          className="flex items-center justify-center gap-2.5 py-3 px-4 border border-gray-200 rounded-xl hover:bg-gray-50 hover:border-gray-300 transition-all disabled:opacity-50 disabled:cursor-not-allowed group"
         >
           <svg className="h-5 w-5" viewBox="0 0 24 24" fill="#611f69">
             <path d="M5.042 15.165a2.528 2.528 0 0 1-2.52 2.523A2.528 2.528 0 0 1 0 15.165a2.527 2.527 0 0 1 2.522-2.52h2.52v2.52zM6.313 15.165a2.527 2.527 0 0 1 2.521-2.52 2.527 2.527 0 0 1 2.521 2.52v6.313A2.528 2.528 0 0 1 8.834 24a2.528 2.528 0 0 1-2.521-2.522v-6.313zM8.834 5.042a2.528 2.528 0 0 1-2.521-2.52A2.528 2.528 0 0 1 8.834 0a2.528 2.528 0 0 1 2.521 2.522v2.52H8.834zM8.834 6.313a2.528 2.528 0 0 1 2.521 2.521 2.528 2.528 0 0 1-2.521 2.521H2.522A2.528 2.528 0 0 1 0 8.834a2.528 2.528 0 0 1 2.522-2.521h6.312zM18.956 8.834a2.528 2.528 0 0 1 2.522-2.521A2.528 2.528 0 0 1 24 8.834a2.528 2.528 0 0 1-2.522 2.521h-2.522V8.834zM17.688 8.834a2.528 2.528 0 0 1-2.523 2.521 2.527 2.527 0 0 1-2.52-2.521V2.522A2.527 2.527 0 0 1 15.165 0a2.528 2.528 0 0 1 2.523 2.522v6.312zM15.165 18.956a2.528 2.528 0 0 1 2.523 2.522A2.528 2.528 0 0 1 15.165 24a2.527 2.527 0 0 1-2.52-2.522v-2.522h2.52zM15.165 17.688a2.527 2.527 0 0 1-2.52-2.523 2.526 2.526 0 0 1 2.52-2.52h6.313A2.527 2.527 0 0 1 24 15.165a2.528 2.528 0 0 1-2.522 2.523h-6.313z"/>
           </svg>
-          Slack
+          <span className="text-sm font-medium text-gray-700 group-hover:text-gray-900">Slack</span>
         </button>
       </div>
 
       {/* Sign Up Link */}
       <p className="mt-8 text-center text-sm text-gray-600">
         Don't have an account?{' '}
-        <Link href="/register" className="font-semibold text-indigo-600 hover:text-indigo-700">
+        <Link
+          href="/register"
+          className="font-semibold text-indigo-600 hover:text-indigo-700 transition-colors"
+        >
           Create your company account
         </Link>
       </p>
@@ -194,7 +244,7 @@ function LoginForm() {
 
 export default function LoginPage() {
   return (
-    <Suspense fallback={<div className="animate-fade-in text-center">Loading...</div>}>
+    <Suspense fallback={<LoginSkeleton />}>
       <LoginForm />
     </Suspense>
   );

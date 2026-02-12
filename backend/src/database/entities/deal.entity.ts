@@ -42,6 +42,18 @@ export enum DealSource {
   OTHER = 'other',
 }
 
+export enum PaymentMethod {
+  INTEGRAL = 'integral',
+  RATE = 'rate',
+  BILL = 'bill',
+}
+
+export enum Firm {
+  OLD = 'old',
+  NEW = 'new',
+  DUBAI = 'dubai',
+}
+
 @Entity('deals')
 @Index('IDX_deals_workspace_stage', ['workspaceId', 'stage'])
 @Index('IDX_deals_workspace_owner', ['workspaceId', 'ownerId'])
@@ -135,6 +147,22 @@ export class Deal extends WorkspaceEntity {
     comment: 'Reason for loss (if closed lost)',
   })
   lossReason?: string;
+
+  @Column({
+    type: 'enum',
+    enum: PaymentMethod,
+    nullable: true,
+    comment: 'Payment method when deal is closed won',
+  })
+  paymentMethod?: PaymentMethod;
+
+  @Column({
+    type: 'enum',
+    enum: Firm,
+    nullable: true,
+    comment: 'Firm selected for rate or bill payment methods',
+  })
+  firm?: Firm;
 
   @Column({
     type: 'jsonb',

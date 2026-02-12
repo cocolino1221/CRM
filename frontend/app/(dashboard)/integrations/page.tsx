@@ -3,8 +3,8 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Search, Check, ExternalLink, Zap, Settings, Webhook, X, Copy, Key, Lock, Link as LinkIcon, AlertCircle, Loader2 } from 'lucide-react';
-import Image from 'next/image';
 import api from '@/lib/api';
+import { integrationIcons } from '@/lib/integration-icons';
 
 interface Integration {
   id: string;
@@ -15,6 +15,7 @@ interface Integration {
   logoUrl: string;
   color: string;
   connected: boolean;
+  status?: string;
   features: string[];
   configFields?: ConfigField[];
   oauth?: boolean; // True for OAuth integrations (no API keys needed)
@@ -30,6 +31,26 @@ interface ConfigField {
   options?: { label: string; value: string }[];
   helpText?: string;
 }
+
+// Helper function to get emoji for integration type
+const getEmojiForIntegration = (type: string): string => {
+  const emojiMap: Record<string, string> = {
+    'slack': '🔮',
+    'google': '📧',
+    'microsoft': '👥',
+    'salesforce': '☁️',
+    'hubspot': '🧡',
+    'zoom': '🎥',
+    'typeform': '📝',
+    'pandadoc': '📄',
+    'docusign': '✍️',
+    'calendly': '📅',
+    'whatsapp': '💬',
+    'webhook': '🔗',
+    'api': '⚡',
+  };
+  return emojiMap[type.toLowerCase()] || '🔌';
+};
 
 export default function IntegrationsPage() {
   const router = useRouter();
@@ -50,14 +71,14 @@ export default function IntegrationsPage() {
       description: 'Send messages, automate conversations, and manage customer interactions via WhatsApp Business API.',
       category: 'communication',
       icon: '💬',
-      logoUrl: 'https://cdn.cdnlogo.com/logos/w/20/whatsapp-icon.svg',
+      logoUrl: integrationIcons.whatsapp,
       color: 'from-green-500 to-emerald-500',
       connected: false,
       features: ['Bulk messaging', 'Template messages', 'Two-way chat', 'Media sharing'],
       configFields: [
-        { name: 'phoneNumberId', label: 'Phone Number ID', type: 'text', required: true, placeholder: '1234567890123456' },
-        { name: 'accessToken', label: 'Access Token', type: 'password', required: true, placeholder: 'Your WhatsApp Business API token' },
-        { name: 'verifyToken', label: 'Verify Token', type: 'password', required: true, placeholder: 'Webhook verification token' },
+        { name: 'phoneNumberId', label: 'Phone Number ID', type: 'text', required: true, placeholder: '1234567890123456', helpText: 'Found in Meta for Developers → Your App → WhatsApp → API Setup' },
+        { name: 'accessToken', label: 'Access Token', type: 'password', required: true, placeholder: 'EAAxxxxxxxx...', helpText: 'Permanent access token from Meta App Settings → System Users' },
+        { name: 'verifyToken', label: 'Verify Token', type: 'text', required: true, placeholder: 'my-secret-verify-token', helpText: 'A string you choose — enter the same value in Meta webhook settings' },
       ],
     },
     {
@@ -66,7 +87,7 @@ export default function IntegrationsPage() {
       description: 'Send SMS, make calls, and automate customer communications with Twilio.',
       category: 'communication',
       icon: '📱',
-      logoUrl: 'https://cdn.worldvectorlogo.com/logos/twilio.svg',
+      logoUrl: integrationIcons.twilio,
       color: 'from-red-600 to-pink-600',
       connected: false,
       features: ['SMS campaigns', 'Voice calls', 'Call tracking', 'Number management'],
@@ -82,7 +103,7 @@ export default function IntegrationsPage() {
       description: 'Connect your Slack workspace to sync contacts, send notifications, and enable AI-powered chat commands.',
       category: 'communication',
       icon: '🔮',
-      logoUrl: 'https://cdn.cdnlogo.com/logos/s/47/slack.svg',
+      logoUrl: integrationIcons.slack,
       color: 'from-purple-500 to-pink-500',
       connected: false,
       features: ['Contact sync', 'Real-time notifications', 'Slash commands', 'AI chat assistant'],
@@ -95,7 +116,7 @@ export default function IntegrationsPage() {
       description: 'Schedule meetings, track calls, and sync recordings directly to contact records.',
       category: 'communication',
       icon: '🎥',
-      logoUrl: 'https://cdn.cdnlogo.com/logos/z/53/zoom.svg',
+      logoUrl: integrationIcons.zoom,
       color: 'from-blue-600 to-indigo-600',
       connected: false,
       features: ['Meeting scheduling', 'Call tracking', 'Recording sync', 'Calendar integration'],
@@ -111,7 +132,7 @@ export default function IntegrationsPage() {
       description: 'Integrate with Microsoft Teams for notifications, meetings, and collaboration.',
       category: 'communication',
       icon: '👥',
-      logoUrl: 'https://cdn.worldvectorlogo.com/logos/microsoft-teams-1.svg',
+      logoUrl: integrationIcons.microsoftteams,
       color: 'from-indigo-600 to-purple-600',
       connected: false,
       features: ['Team notifications', 'Meeting scheduler', 'File sharing', 'Chat integration'],
@@ -129,7 +150,7 @@ export default function IntegrationsPage() {
       description: 'Sync emails, track conversations, and manage communication from your CRM. Simply click Connect and authorize access - no API keys needed!',
       category: 'email',
       icon: '📧',
-      logoUrl: 'https://cdn.cdnlogo.com/logos/g/24/gmail-icon.svg',
+      logoUrl: integrationIcons.gmail,
       color: 'from-red-500 to-pink-500',
       connected: false,
       features: ['Email sync', 'Two-way communication', 'Email tracking', 'Template management'],
@@ -142,7 +163,7 @@ export default function IntegrationsPage() {
       description: 'Sync contacts with Mailchimp lists, track campaigns, and automate email marketing.',
       category: 'email',
       icon: '🐵',
-      logoUrl: 'https://cdn.worldvectorlogo.com/logos/mailchimp-freddie-icon.svg',
+      logoUrl: integrationIcons.mailchimp,
       color: 'from-yellow-400 to-yellow-600',
       connected: false,
       features: ['Contact sync', 'Campaign tracking', 'Audience segmentation', 'Analytics'],
@@ -157,7 +178,7 @@ export default function IntegrationsPage() {
       description: 'Send transactional and marketing emails with SendGrid integration.',
       category: 'email',
       icon: '✉️',
-      logoUrl: 'https://cdn.worldvectorlogo.com/logos/sendgrid-1.svg',
+      logoUrl: integrationIcons.sendgrid,
       color: 'from-blue-500 to-cyan-500',
       connected: false,
       features: ['Email delivery', 'Template management', 'Analytics', 'Contact lists'],
@@ -173,7 +194,7 @@ export default function IntegrationsPage() {
       description: 'Connect your CRM with 5,000+ apps through Zapier automations.',
       category: 'automation',
       icon: '⚙️',
-      logoUrl: 'https://cdn.cdnlogo.com/logos/z/4/zapier-icon.svg',
+      logoUrl: integrationIcons.zapier,
       color: 'from-orange-400 to-yellow-500',
       connected: false,
       features: ['Multi-app zaps', 'Trigger actions', 'Data sync', 'Custom workflows'],
@@ -187,7 +208,7 @@ export default function IntegrationsPage() {
       description: 'Automate workflows and connect your CRM with 300+ apps through n8n webhooks and workflows.',
       category: 'automation',
       icon: '⚡',
-      logoUrl: 'https://cdn.worldvectorlogo.com/logos/n8n.svg',
+      logoUrl: integrationIcons.n8n,
       color: 'from-orange-500 to-red-500',
       connected: false,
       features: ['Webhook triggers', 'Custom workflows', 'Data transformation', 'Multi-app connections'],
@@ -202,7 +223,7 @@ export default function IntegrationsPage() {
       description: 'Build visual automation scenarios with Make and connect hundreds of apps.',
       category: 'automation',
       icon: '🔄',
-      logoUrl: 'https://cdn.worldvectorlogo.com/logos/make-4.svg',
+      logoUrl: integrationIcons.make,
       color: 'from-purple-600 to-pink-600',
       connected: false,
       features: ['Visual workflows', 'Scenario builder', 'Data routing', 'Error handling'],
@@ -216,7 +237,7 @@ export default function IntegrationsPage() {
       description: 'Sync contacts from Manychat campaigns, track user interactions, and automate follow-ups.',
       category: 'automation',
       icon: '💬',
-      logoUrl: 'https://cdn.worldvectorlogo.com/logos/manychat-1.svg',
+      logoUrl: integrationIcons.manychat,
       color: 'from-green-500 to-emerald-500',
       connected: false,
       features: ['Contact sync', 'Campaign tracking', 'Message automation', 'Tag management'],
@@ -233,7 +254,7 @@ export default function IntegrationsPage() {
       description: 'Automatically create contacts and leads from Typeform submissions with field mapping.',
       category: 'forms',
       icon: '📝',
-      logoUrl: 'https://cdn.worldvectorlogo.com/logos/typeform-1.svg',
+      logoUrl: integrationIcons.typeform,
       color: 'from-blue-500 to-cyan-500',
       connected: false,
       features: ['Auto-create contacts', 'Custom field mapping', 'Real-time sync', 'Form analytics'],
@@ -248,7 +269,7 @@ export default function IntegrationsPage() {
       description: 'Capture leads and create contacts from Google Forms submissions.',
       category: 'forms',
       icon: '📋',
-      logoUrl: 'https://cdn.worldvectorlogo.com/logos/google-forms.svg',
+      logoUrl: integrationIcons.googleforms,
       color: 'from-purple-600 to-indigo-600',
       connected: false,
       features: ['Lead capture', 'Auto-sync', 'Field mapping', 'Response tracking'],
@@ -263,7 +284,7 @@ export default function IntegrationsPage() {
       description: 'Sync form submissions and automatically create leads in your CRM.',
       category: 'forms',
       icon: '📄',
-      logoUrl: 'https://cdn.worldvectorlogo.com/logos/jotform-icon.svg',
+      logoUrl: integrationIcons.jotform,
       color: 'from-orange-500 to-amber-500',
       connected: false,
       features: ['Form sync', 'Lead creation', 'Custom fields', 'Webhooks'],
@@ -273,21 +294,19 @@ export default function IntegrationsPage() {
       ],
     },
 
-    // Scheduling
+    // Scheduling (Note: This will be overridden by backend data which uses OAuth)
     {
       id: 'calendly',
       name: 'Calendly',
-      description: 'Sync appointments, create contacts from bookings, and track meeting outcomes.',
+      description: 'Sync appointments, create contacts from bookings, and track meeting outcomes. Simply click Connect and authorize - no API keys needed!',
       category: 'scheduling',
       icon: '📅',
-      logoUrl: 'https://cdn.worldvectorlogo.com/logos/calendly-1.svg',
+      logoUrl: integrationIcons.calendly,
       color: 'from-blue-500 to-cyan-600',
       connected: false,
       features: ['Appointment sync', 'Auto-create contacts', 'Meeting tracking', 'Calendar integration'],
-      configFields: [
-        { name: 'apiKey', label: 'API Key', type: 'password', required: true, placeholder: 'Your Calendly API token' },
-        { name: 'webhookUrl', label: 'Webhook URL', type: 'url', required: false },
-      ],
+      oauth: true,
+      oauthProvider: 'calendly',
     },
     {
       id: 'cal-com',
@@ -295,7 +314,7 @@ export default function IntegrationsPage() {
       description: 'Open-source scheduling with automatic contact creation and meeting sync.',
       category: 'scheduling',
       icon: '🗓️',
-      logoUrl: 'https://cdn.worldvectorlogo.com/logos/cal.svg',
+      logoUrl: integrationIcons.cal,
       color: 'from-gray-800 to-gray-900',
       connected: false,
       features: ['Booking sync', 'Contact automation', 'Team scheduling', 'Integrations'],
@@ -311,7 +330,7 @@ export default function IntegrationsPage() {
       description: 'Track payments, manage subscriptions, and sync customer data with Stripe.',
       category: 'payments',
       icon: '💳',
-      logoUrl: 'https://cdn.worldvectorlogo.com/logos/stripe-4.svg',
+      logoUrl: integrationIcons.stripe,
       color: 'from-indigo-600 to-purple-600',
       connected: false,
       features: ['Payment tracking', 'Subscription management', 'Customer sync', 'Invoice automation'],
@@ -326,7 +345,7 @@ export default function IntegrationsPage() {
       description: 'Accept payments, track transactions, and manage customer billing.',
       category: 'payments',
       icon: '💰',
-      logoUrl: 'https://cdn.worldvectorlogo.com/logos/paypal-2.svg',
+      logoUrl: integrationIcons.paypal,
       color: 'from-blue-600 to-blue-700',
       connected: false,
       features: ['Payment processing', 'Transaction tracking', 'Refund management', 'Customer sync'],
@@ -341,7 +360,7 @@ export default function IntegrationsPage() {
       description: 'Automated invoicing and billing for Romanian businesses. Issue invoices, manage fiscal data, and sync payments.',
       category: 'payments',
       icon: '🧾',
-      logoUrl: 'https://cdn.cdnlogo.com/logos/s/72/smartbill.svg',
+      logoUrl: integrationIcons.smartbill,
       color: 'from-blue-500 to-cyan-600',
       connected: false,
       features: ['Auto invoice generation', 'Fiscal compliance', 'ANAF integration', 'Payment tracking'],
@@ -357,7 +376,7 @@ export default function IntegrationsPage() {
       description: 'Cloud invoicing platform for Romanian businesses with ANAF e-Factura integration.',
       category: 'payments',
       icon: '📄',
-      logoUrl: 'https://cdn.cdnlogo.com/logos/o/31/oblio.svg',
+      logoUrl: integrationIcons.oblio,
       color: 'from-emerald-500 to-green-600',
       connected: false,
       features: ['E-Factura ANAF', 'Automatic invoicing', 'VAT compliance', 'Cloud storage'],
@@ -373,7 +392,7 @@ export default function IntegrationsPage() {
       description: 'Romanian invoicing and inventory management system with fiscal compliance.',
       category: 'payments',
       icon: '📋',
-      logoUrl: 'https://cdn.cdnlogo.com/logos/f/23/fgo.svg',
+      logoUrl: integrationIcons.fgo,
       color: 'from-orange-500 to-red-600',
       connected: false,
       features: ['Invoice generation', 'Inventory sync', 'Fiscal reports', 'ANAF compliance'],
@@ -389,7 +408,7 @@ export default function IntegrationsPage() {
       description: 'Payment and funnel management platform for online businesses and sales funnels.',
       category: 'payments',
       icon: '💸',
-      logoUrl: 'https://cdn.cdnlogo.com/logos/p/84/payfunnels.svg',
+      logoUrl: integrationIcons.payfunnels,
       color: 'from-purple-500 to-pink-600',
       connected: false,
       features: ['Funnel tracking', 'Payment processing', 'Conversion optimization', 'A/B testing'],
@@ -407,7 +426,7 @@ export default function IntegrationsPage() {
       description: 'Sync leads from Facebook Lead Ads and track social interactions.',
       category: 'social',
       icon: '👥',
-      logoUrl: 'https://cdn.worldvectorlogo.com/logos/facebook-3.svg',
+      logoUrl: integrationIcons.facebook,
       color: 'from-blue-600 to-indigo-700',
       connected: false,
       features: ['Lead ads sync', 'Page management', 'Message automation', 'Ad tracking'],
@@ -422,7 +441,7 @@ export default function IntegrationsPage() {
       description: 'Manage Instagram messages, comments, and track engagement with leads.',
       category: 'social',
       icon: '📸',
-      logoUrl: 'https://cdn.worldvectorlogo.com/logos/instagram-2016.svg',
+      logoUrl: integrationIcons.instagram,
       color: 'from-pink-500 to-purple-600',
       connected: false,
       features: ['DM automation', 'Comment tracking', 'Engagement sync', 'Story interactions'],
@@ -437,7 +456,7 @@ export default function IntegrationsPage() {
       description: 'Connect with professionals, track leads, and automate outreach campaigns.',
       category: 'social',
       icon: '💼',
-      logoUrl: 'https://cdn.worldvectorlogo.com/logos/linkedin-icon-2.svg',
+      logoUrl: integrationIcons.linkedin,
       color: 'from-blue-700 to-blue-800',
       connected: false,
       features: ['Lead generation', 'Connection tracking', 'Message automation', 'Profile sync'],
@@ -454,7 +473,7 @@ export default function IntegrationsPage() {
       description: 'Sync customers, orders, and products from your Shopify store.',
       category: 'ecommerce',
       icon: '🛍️',
-      logoUrl: 'https://cdn.worldvectorlogo.com/logos/shopify.svg',
+      logoUrl: integrationIcons.shopify,
       color: 'from-green-600 to-emerald-600',
       connected: false,
       features: ['Customer sync', 'Order tracking', 'Product management', 'Abandoned cart recovery'],
@@ -469,7 +488,7 @@ export default function IntegrationsPage() {
       description: 'Integrate your WooCommerce store to manage customers and track orders.',
       category: 'ecommerce',
       icon: '🛒',
-      logoUrl: 'https://cdn.worldvectorlogo.com/logos/woocommerce.svg',
+      logoUrl: integrationIcons.woocommerce,
       color: 'from-purple-600 to-pink-600',
       connected: false,
       features: ['Order sync', 'Customer data', 'Product catalog', 'Sales tracking'],
@@ -487,7 +506,7 @@ export default function IntegrationsPage() {
       description: 'Track website visitors, analyze behavior, and sync data with CRM contacts.',
       category: 'analytics',
       icon: '📊',
-      logoUrl: 'https://cdn.worldvectorlogo.com/logos/google-analytics-4.svg',
+      logoUrl: integrationIcons['google-analytics'],
       color: 'from-orange-500 to-yellow-500',
       connected: false,
       features: ['Traffic tracking', 'Event monitoring', 'Conversion tracking', 'User behavior'],
@@ -502,7 +521,7 @@ export default function IntegrationsPage() {
       description: 'Advanced product analytics and user behavior tracking for better insights.',
       category: 'analytics',
       icon: '📈',
-      logoUrl: 'https://cdn.worldvectorlogo.com/logos/mixpanel.svg',
+      logoUrl: integrationIcons.mixpanel,
       color: 'from-indigo-600 to-purple-700',
       connected: false,
       features: ['Event tracking', 'Funnel analysis', 'User segmentation', 'Retention reports'],
@@ -519,7 +538,7 @@ export default function IntegrationsPage() {
       description: 'Sync customer conversations, track support tickets, and automate messaging.',
       category: 'support',
       icon: '💬',
-      logoUrl: 'https://cdn.worldvectorlogo.com/logos/intercom-1.svg',
+      logoUrl: integrationIcons.intercom,
       color: 'from-blue-500 to-indigo-600',
       connected: false,
       features: ['Chat sync', 'Ticket tracking', 'User data', 'Automation'],
@@ -533,7 +552,7 @@ export default function IntegrationsPage() {
       description: 'Integrate support tickets, customer data, and service interactions.',
       category: 'support',
       icon: '🎫',
-      logoUrl: 'https://cdn.worldvectorlogo.com/logos/zendesk-1.svg',
+      logoUrl: integrationIcons.zendesk,
       color: 'from-green-600 to-teal-600',
       connected: false,
       features: ['Ticket sync', 'Customer profiles', 'SLA tracking', 'Knowledge base'],
@@ -551,7 +570,7 @@ export default function IntegrationsPage() {
       description: 'Sync contacts, deals, and tasks with your Notion workspace.',
       category: 'productivity',
       icon: '📝',
-      logoUrl: 'https://cdn.worldvectorlogo.com/logos/notion-2.svg',
+      logoUrl: integrationIcons.notion,
       color: 'from-gray-800 to-gray-900',
       connected: false,
       features: ['Database sync', 'Page creation', 'Task management', 'Team collaboration'],
@@ -566,7 +585,7 @@ export default function IntegrationsPage() {
       description: 'Sync data between your CRM and Airtable bases for advanced workflows.',
       category: 'productivity',
       icon: '🗃️',
-      logoUrl: 'https://cdn.worldvectorlogo.com/logos/airtable-1.svg',
+      logoUrl: integrationIcons.airtable,
       color: 'from-yellow-500 to-orange-500',
       connected: false,
       features: ['Base sync', 'Record creation', 'View filtering', 'Field mapping'],
@@ -613,28 +632,17 @@ export default function IntegrationsPage() {
 
         setConnectedIntegrations(connectedMap);
 
-        // Map backend integrations to frontend format
-        const formattedIntegrations = available.map((int: any) => ({
-          id: int.type.toLowerCase(),
-          name: int.name,
-          description: int.description,
-          icon: int.icon,
-          category: int.category.toLowerCase(),
-          connected: !!connectedMap[int.type.toLowerCase()],
-          oauth: int.defaultAuthType === 'oauth2',
-          oauthProvider: int.type.toLowerCase(),
-          features: int.features || [], // Add features with fallback to empty array
-          configFields: int.defaultAuthType === 'api_key' ? [
-            {
-              name: 'apiKey',
-              label: 'API Key',
-              type: 'text',
-              required: true,
-            }
-          ] : undefined,
+        // Merge backend connection status into the static integrations list
+        // (preserves static configFields which are more detailed than the generic fallback)
+        setIntegrations(prev => prev.map(staticInt => {
+          const backendInt = available.find((b: any) => b.type.toLowerCase() === staticInt.id);
+          if (!backendInt) return staticInt;
+          return {
+            ...staticInt,
+            connected: connectedMap[staticInt.id]?.status === 'active',
+            status: connectedMap[staticInt.id]?.status,
+          };
         }));
-
-        setIntegrations(formattedIntegrations);
       } catch (error) {
         console.error('Failed to fetch integrations:', error);
         // Keep hardcoded integrations as fallback
@@ -653,15 +661,31 @@ export default function IntegrationsPage() {
 
   const handleConnect = async (integration: Integration) => {
     // If already connected, show manage modal
-    if (integration.connected) {
+    const existing = connectedIntegrations[integration.id];
+
+    if (integration.connected && existing) {
       setManagingIntegration(integration);
       return;
     }
 
+    // Normalize provider names (e.g. Gmail uses Google OAuth)
+    const mapProvider = (id?: string, provider?: string) => {
+      const p = (provider || id || '').toLowerCase().trim();
+      console.log('[mapProvider] Input - id:', id, 'provider:', provider, 'result p:', p);
+
+      // Map Gmail and Google Workspace to google
+      if (p === 'gmail' || p.includes('google')) return 'google';
+
+      // Return the provider as-is
+      const result = p;
+      console.log('[mapProvider] Output:', result);
+      return result;
+    };
+
     // For OAuth integrations, redirect to integration OAuth flow
     if (integration.oauth) {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000/api/v1';
-      const provider = integration.oauthProvider || integration.id;
+      const provider = mapProvider(integration.id, integration.oauthProvider);
 
       try {
         // Fetch current user data from API to ensure we have the correct IDs
@@ -690,8 +714,13 @@ export default function IntegrationsPage() {
           return;
         }
 
-        // Redirect to OAuth endpoint with workspace and user context
-        window.location.href = `${apiUrl}/integrations/oauth/${provider}?workspace_id=${workspaceId}&user_id=${userId}`;
+        // Redirect to OAuth endpoint with workspace and user context.
+        // If an integration record already exists (even if pending), reuse it to avoid "already connected" errors.
+        const integrationIdParam = existing?.id ? `&integration_id=${existing.id}` : '';
+        const oauthUrl = `${apiUrl}/integrations/oauth/${provider}?workspace_id=${workspaceId}&user_id=${userId}${integrationIdParam}`;
+        console.log('[OAuth] Redirecting to:', oauthUrl);
+        console.log('[OAuth] Integration details:', { id: integration.id, name: integration.name, provider, oauthProvider: integration.oauthProvider });
+        window.location.href = oauthUrl;
         return;
       } catch (error) {
         console.error('Error connecting integration:', error);
@@ -735,7 +764,10 @@ export default function IntegrationsPage() {
   };
 
   const handleTestConnection = async (integration: Integration) => {
-    if (!connectedIntegrations[integration.id]) return;
+    if (!connectedIntegrations[integration.id]) {
+      setModalError('Integration not found. Please reconnect this integration.');
+      return;
+    }
 
     setIsSubmitting(true);
     setModalError('');
@@ -744,13 +776,15 @@ export default function IntegrationsPage() {
       const response = await api.post(`/integrations/${connectedIntegrations[integration.id].id}/test`);
 
       if (response.data.success) {
-        alert('Connection test successful!');
+        setModalError(''); // Clear any errors
+        alert(`✅ Connection test successful!\n\n${response.data.message || 'Your integration is working correctly.'}`);
       } else {
-        setModalError(response.data.message || 'Connection test failed');
+        setModalError(response.data.message || 'Connection test failed. Please check your credentials.');
       }
     } catch (err: any) {
       console.error('Failed to test connection:', err);
-      setModalError(err.response?.data?.message || 'Failed to test connection');
+      const errorMessage = err.response?.data?.message || err.message || 'Failed to test connection. Please check your credentials and try again.';
+      setModalError(errorMessage);
     } finally {
       setIsSubmitting(false);
     }
@@ -791,10 +825,37 @@ export default function IntegrationsPage() {
     setModalError('');
 
     try {
-      await api.post('/integrations/install', {
+      // Separate credential fields (API keys, tokens, secrets) from config fields
+      const credentialFieldNames = ['apiToken', 'apiKey', 'accessToken', 'secretKey', 'authToken', 'secret', 'consumerKey', 'consumerSecret', 'clientSecret', 'apiSecret'];
+      const credentials: Record<string, string> = {};
+      const config: Record<string, string> = {};
+
+      for (const [key, value] of Object.entries(configData)) {
+        if (credentialFieldNames.includes(key)) {
+          credentials[key] = value;
+        } else {
+          config[key] = value;
+        }
+      }
+
+      const response = await api.post('/integrations/install', {
         type: selectedIntegration.id,
-        config: configData,
+        authType: 'api_key',
+        config,
+        credentials,
       });
+
+      // Refetch connected integrations to get the full integration data
+      const connectedResponse = await api.get('/integrations');
+      const connected = connectedResponse.data.integrations || [];
+
+      const connectedMap: Record<string, any> = {};
+      connected.forEach((int: any) => {
+        const typeKey = int.type.toLowerCase();
+        connectedMap[typeKey] = int;
+      });
+
+      setConnectedIntegrations(connectedMap);
 
       // Update the integration status locally
       const updatedIntegrations = integrations.map(int =>
@@ -803,6 +864,14 @@ export default function IntegrationsPage() {
       setIntegrations(updatedIntegrations);
 
       handleCloseModal();
+
+      // Show success message with webhook URL if available
+      const webhookUrl = response.data?.webhookUrl;
+      if (webhookUrl && selectedIntegration.id === 'typeform') {
+        alert(`Integration connected successfully!\n\nWebhook URL (configure in Typeform):\n${webhookUrl}\n\nGo to your Typeform form → Connect → Webhooks → Add a webhook, and paste this URL.`);
+      } else {
+        alert('Integration connected successfully! You can now test the connection.');
+      }
     } catch (err: any) {
       console.error('Failed to connect integration:', err);
       setModalError(err.response?.data?.message || 'Failed to connect integration');
@@ -907,13 +976,24 @@ export default function IntegrationsPage() {
               {/* Icon and Status */}
               <div className="mb-4 flex items-start justify-between">
                 <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-white p-3 shadow-lg border border-gray-100">
-                  <Image
-                    src={integration.logoUrl}
-                    alt={`${integration.name} logo`}
-                    width={48}
-                    height={48}
-                    className="object-contain"
-                  />
+                  {integration.logoUrl ? (
+                    <img
+                      src={integration.logoUrl}
+                      alt={`${integration.name} logo`}
+                      className="w-12 h-12 object-contain"
+                      onError={(e) => {
+                        // Fallback to emoji icon if image fails
+                        const target = e.target as HTMLImageElement;
+                        target.style.display = 'none';
+                        const parent = target.parentElement;
+                        if (parent) {
+                          parent.innerHTML = `<span class="text-3xl">${integration.icon}</span>`;
+                        }
+                      }}
+                    />
+                  ) : (
+                    <span className="text-3xl">{integration.icon}</span>
+                  )}
                 </div>
                 {integration.connected && (
                   <div className="flex items-center gap-1 rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">
@@ -1002,12 +1082,10 @@ export default function IntegrationsPage() {
             {/* Header */}
             <div className="mb-6 flex items-center gap-4">
               <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-white p-3 shadow-lg border border-gray-100">
-                <Image
+                <img
                   src={selectedIntegration.logoUrl}
                   alt={`${selectedIntegration.name} logo`}
-                  width={48}
-                  height={48}
-                  className="object-contain"
+                  className="w-12 h-12 object-contain"
                 />
               </div>
               <div>
@@ -1099,6 +1177,29 @@ export default function IntegrationsPage() {
                 </div>
               ))}
 
+              {/* WhatsApp webhook setup info */}
+              {managingIntegration?.id === 'whatsapp' && (
+                <div className="rounded-xl border border-green-200 bg-green-50 p-4">
+                  <p className="text-xs font-semibold text-green-800 mb-2">Webhook URL for Meta for Developers</p>
+                  <div className="flex items-center gap-2">
+                    <code className="flex-1 text-xs bg-white border border-green-200 rounded-lg px-3 py-2 text-green-900 break-all">
+                      {(process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api/v1').replace('/api/v1', '')}/api/v1/integrations/whatsapp/webhook
+                    </code>
+                    <button
+                      type="button"
+                      onClick={() => navigator.clipboard?.writeText(`${(process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api/v1').replace('/api/v1', '')}/api/v1/integrations/whatsapp/webhook`)}
+                      className="p-2 rounded-lg bg-white border border-green-200 hover:bg-green-100 transition-all"
+                      title="Copy webhook URL"
+                    >
+                      <Copy className="h-4 w-4 text-green-700" />
+                    </button>
+                  </div>
+                  <p className="text-xs text-green-700 mt-2">
+                    Go to <strong>Meta for Developers → App → WhatsApp → Configuration</strong> and paste this URL as the Callback URL. Set the Verify Token to match what you enter above.
+                  </p>
+                </div>
+              )}
+
               {/* Action Buttons */}
               <div className="flex gap-4 pt-4">
                 <button
@@ -1147,12 +1248,10 @@ export default function IntegrationsPage() {
             {/* Header */}
             <div className="mb-6 flex items-center gap-4">
               <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-white p-3 shadow-lg border border-gray-100">
-                <Image
+                <img
                   src={managingIntegration.logoUrl}
                   alt={`${managingIntegration.name} logo`}
-                  width={48}
-                  height={48}
-                  className="object-contain"
+                  className="w-12 h-12 object-contain"
                 />
               </div>
               <div>

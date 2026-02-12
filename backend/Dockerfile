@@ -5,14 +5,17 @@ WORKDIR /app
 
 # Copy package files
 COPY package*.json ./
+COPY tsconfig.json ./
+COPY nest-cli.json* ./
 
 # Install ALL dependencies (including dev dependencies for build)
 RUN npm install && npm cache clean --force
 
-# Copy backend source
-COPY . ./
+# Copy source code
+COPY src ./src
 
-# Build application
+# Verify we're building the correct package and build
+RUN node -e "const pkg = require('./package.json'); if (pkg.name !== '@slackcrm/backend') throw new Error('Wrong package.json! Expected @slackcrm/backend but got ' + pkg.name)"
 RUN npm run build
 
 # Production stage

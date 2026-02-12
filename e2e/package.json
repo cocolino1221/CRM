@@ -1,0 +1,39 @@
+{
+  "name": "slackcrm-e2e",
+  "version": "1.0.0",
+  "description": "E2E tests for SlackCRM using Playwright",
+  "scripts": {
+    "test": "npx playwright test",
+    "test:headed": "npx playwright test --headed",
+    "test:debug": "npx playwright test --debug",
+    "test:ui": "npx playwright test --ui",
+    "test:api": "npx playwright test --project=api",
+    "test:chromium": "npx playwright test --project=chromium",
+    "test:firefox": "npx playwright test --project=firefox",
+    "test:webkit": "npx playwright test --project=webkit",
+    "test:mobile": "npx playwright test --project='Mobile Chrome'",
+    "test:smoke": "npx playwright test --grep @critical",
+    "test:auth": "npx playwright test tests/auth.spec.ts",
+    "test:contacts": "npx playwright test tests/contacts.spec.ts",
+    "test:deals": "npx playwright test tests/deals.spec.ts",
+    "test:forms": "npx playwright test tests/forms.spec.ts",
+    "test:integrations": "npx playwright test tests/integrations.spec.ts",
+    "report": "npx playwright show-report reports/html",
+    "codegen": "npx playwright codegen http://localhost:3001",
+    "install-browsers": "npx playwright install"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.40.0",
+    "@types/node": "^20.10.0",
+    "dotenv": "^16.3.1",
+    "typescript": "^5.3.0"
+  },
+  "keywords": [
+    "e2e",
+    "playwright",
+    "testing",
+    "crm"
+  ],
+  "author": "SlackCRM Team",
+  "license": "MIT"
+}

@@ -38,7 +38,7 @@ export class IntegrationsService {
     private oauthService: OAuthService,
     private webhookService: WebhookService,
     private syncService: SyncService,
-  ) {}
+  ) { }
 
   /**
    * Get all available integration types
@@ -105,10 +105,27 @@ export class IntegrationsService {
     });
 
     if (existing) {
-      throw new BadRequestException(
-        `You've already connected this ${dto.type} integration. ` +
-        `Go to the integrations page to manage or disconnect it.`
-      );
+      // Update existing integration instead of blocking reconnection
+      this.logger.log(`Updating existing ${dto.type} integration ${existing.id}`);
+      existing.config = { ...existing.config, ...dto.config };
+      existing.credentials = { ...existing.credentials, ...dto.credentials };
+      existing.status = IntegrationStatus.PENDING;
+      const updated = await this.integrationRepository.save(existing);
+
+      await this.logActivity(updated.id, 'info', 'Integration reconnected', {
+        type: dto.type,
+        authType: dto.authType,
+      });
+
+      this.eventEmitter.emit('integration.installed', {
+        type: 'integration.installed',
+        integrationId: updated.id,
+        workspaceId,
+        data: updated,
+        timestamp: new Date(),
+      } as IntegrationEvent);
+
+      return updated;
     }
 
     // Get integration metadata
@@ -143,6 +160,7 @@ export class IntegrationsService {
         ...metadata.defaultConfig,
         ...dto.config,
       },
+      credentials: dto.credentials || {},
       metadata: {
         ...metadata,
         ...dto.metadata,
@@ -182,6 +200,7 @@ export class IntegrationsService {
       name: dto.name ?? integration.name,
       description: dto.description ?? integration.description,
       config: { ...integration.config, ...dto.config },
+      credentials: { ...integration.credentials, ...dto.credentials },
       permissions: dto.permissions ?? integration.permissions,
       isEnabled: dto.isEnabled ?? integration.isEnabled,
     });
@@ -216,7 +235,46 @@ export class IntegrationsService {
 
       switch (integration.authType) {
         case IntegrationAuthType.OAUTH2:
+          this.logger.log(`[${id}] Starting OAuth2 token exchange with code: ${authData.code?.substring(0, 10)}...`);
           credentials = await this.oauthService.exchangeCodeForTokens(integration, authData.code);
+
+          // Validate that we received access token
+          this.logger.log(`[${id}] OAuth2 token exchange result - Access Token: ${!!credentials.accessToken}, Refresh Token: ${!!credentials.refreshToken}`);
+
+          if (!credentials.accessToken) {
+            throw new BadRequestException('OAuth provider did not return an access token');
+          }
+
+          // For Google, refresh token is optional - it may not be returned if user already authorized
+          // For other providers, refresh token is usually required for long-term access
+          if (!credentials.refreshToken) {
+            if (integration.type === IntegrationType.GOOGLE) {
+              // Google can work without refresh token, but token will expire and user needs to reconnect
+              this.logger.warn(`[${id}] Google OAuth did not return a refresh token. Access token will expire in ~1 hour. User may need to reconnect.`);
+              
+              // Add a warning note to the integration config
+              if (!integration.config) {
+                integration.config = {};
+              }
+              integration.config.warning = 'No refresh token available. Access token will expire in ~1 hour. Please reconnect to get a refresh token for long-term access.';
+              
+              // Continue without throwing error - integration will work until token expires
+            } else {
+              // For other providers, refresh token is critical
+              this.logger.warn(`[${id}] OAuth provider did not return a refresh token. Integration may fail when access token expires.`);
+              throw new BadRequestException(
+                'OAuth provider did not return a refresh token. ' +
+                'This usually happens when the app was previously authorized. ' +
+                'Please revoke access in your account settings and try again, or wait a few minutes before reconnecting.'
+              );
+            }
+          } else {
+            // Clear any previous warnings if we got a refresh token
+            if (integration.config?.warning) {
+              delete integration.config.warning;
+            }
+          }
+
           break;
         case IntegrationAuthType.API_KEY:
           credentials = { apiKey: authData.apiKey, apiSecret: authData.apiSecret };
@@ -241,10 +299,24 @@ export class IntegrationsService {
         integration.expiresAt = new Date(credentials.expiresAt);
       }
 
+      this.logger.log(`[${id}] Saving integration with valid credentials`);
       const updated = await this.integrationRepository.save(integration);
 
-      // Test connection
-      await this.testConnection(id, workspaceId);
+      // Test connection (but don't let it change status if we just authenticated successfully)
+      this.logger.log(`[${id}] Testing connection after authentication`);
+      const testResult = await this.testConnection(id, workspaceId);
+      
+      // If test failed but we have access token for Google, keep it ACTIVE
+      // (refresh token warning is not fatal)
+      if (!testResult.success && integration.type === IntegrationType.GOOGLE && credentials.accessToken) {
+        const isRefreshTokenWarning = testResult.message?.includes('refresh token') || 
+                                     testResult.message?.includes('No refresh token');
+        if (isRefreshTokenWarning) {
+          this.logger.log(`[${id}] Keeping integration ACTIVE despite refresh token warning - access token is valid`);
+          integration.status = IntegrationStatus.ACTIVE;
+          await this.integrationRepository.save(integration);
+        }
+      }
 
       // Set up sync schedule if enabled
       if (integration.config?.autoSync) {
@@ -296,17 +368,47 @@ export class IntegrationsService {
 
         await this.logActivity(id, 'info', 'Connection test successful', result.data);
       } else {
-        integration.recordError(result.message || 'Connection test failed');
-        await this.integrationRepository.save(integration);
+        // For Google, if error is about missing refresh token but we have access token,
+        // don't mark as ERROR - just keep current status and log warning
+        const isGoogle = integration.type === IntegrationType.GOOGLE;
+        const isRefreshTokenError = result.message?.includes('refresh token') || result.message?.includes('No refresh token');
+        const hasAccessToken = !!integration.credentials?.accessToken;
 
-        await this.logActivity(id, 'error', 'Connection test failed', {
-          message: result.message,
-          data: result.data,
-        });
+        if (isGoogle && isRefreshTokenError && hasAccessToken) {
+          // Don't mark as ERROR - access token might still work
+          // Just log warning and keep current status
+          this.logger.warn(`[${id}] Connection test warning: ${result.message}. Access token may still work until expiration.`);
+          await this.logActivity(id, 'warn', 'Connection test warning', {
+            message: result.message,
+            data: result.data,
+          });
+        } else {
+          // For other errors or if no access token, mark as error
+          integration.recordError(result.message || 'Connection test failed');
+          await this.integrationRepository.save(integration);
+
+          await this.logActivity(id, 'error', 'Connection test failed', {
+            message: result.message,
+            data: result.data,
+          });
+        }
       }
 
       return result;
     } catch (error) {
+      // Similar logic for exceptions
+      const isGoogle = integration.type === IntegrationType.GOOGLE;
+      const isRefreshTokenError = error.message?.includes('refresh token') || error.message?.includes('No refresh token');
+      const hasAccessToken = !!integration.credentials?.accessToken;
+
+      if (isGoogle && isRefreshTokenError && hasAccessToken) {
+        this.logger.warn(`[${id}] Connection test warning: ${error.message}. Access token may still work until expiration.`);
+        await this.logActivity(id, 'warn', 'Connection test warning', {
+          error: error.message,
+        });
+        return { success: false, message: error.message };
+      }
+
       integration.recordError(error.message);
       await this.integrationRepository.save(integration);
 
@@ -328,8 +430,34 @@ export class IntegrationsService {
   }): Promise<any> {
     const integration = await this.findOne(id, workspaceId);
 
-    if (!integration.isHealthy && !options?.force) {
-      throw new BadRequestException('Integration is not healthy. Use force=true to sync anyway.');
+    // Check if we have access token
+    if (!integration.credentials?.accessToken) {
+      throw new BadRequestException('Integration is not authenticated. Please connect this integration first.');
+    }
+
+    // For Google, allow sync even if expired if we have access token (it might still work)
+    // For other providers, check expiry
+    const isGoogle = integration.type === IntegrationType.GOOGLE;
+    const allowExpired = isGoogle && integration.credentials?.accessToken;
+
+    // Relaxed check: Allow sync if active and not expired, even if error count is high
+    // For Google, also allow if status is PENDING but we have access token
+    const canSync = integration.status === IntegrationStatus.ACTIVE || 
+                   (isGoogle && integration.status === IntegrationStatus.PENDING && integration.credentials?.accessToken) ||
+                   options?.force;
+
+    if (!canSync) {
+      throw new BadRequestException(
+        `Integration is not active (Status: ${integration.status}). ` +
+        (options?.force ? 'Use force=true to sync anyway.' : 'Enable it to sync or use force=true.')
+      );
+    }
+
+    if (integration.isExpired && !allowExpired && !options?.force) {
+      throw new BadRequestException(
+        'Integration credentials have expired. Please reconnect. ' +
+        (isGoogle ? 'Or use force=true to sync anyway (may work if token is still valid).' : '')
+      );
     }
 
     try {
@@ -346,6 +474,11 @@ export class IntegrationsService {
         errors: syncResult.errors,
         nextSync: syncResult.nextSync,
       });
+
+      // If sync was successful, clear any previous errors to restore health
+      if (syncResult.success) {
+        integration.clearErrors();
+      }
 
       await this.integrationRepository.save(integration);
 

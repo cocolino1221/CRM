@@ -1,7 +1,8 @@
-import { Injectable, Logger, BadRequestException } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
+import { createHmac, randomBytes, timingSafeEqual as cryptoTimingSafeEqual } from 'crypto';
 import { Integration, IntegrationType } from '../../database/entities/integration.entity';
 import { IntegrationRegistry } from '../registry/integration.registry';
 
@@ -26,12 +27,38 @@ export interface OAuthConfig {
 @Injectable()
 export class OAuthService {
   private readonly logger = new Logger(OAuthService.name);
+  private readonly stateSecret: string;
+  private readonly stateTtlMs = 10 * 60 * 1000;
 
   constructor(
     private configService: ConfigService,
     private httpService: HttpService,
     private integrationRegistry: IntegrationRegistry,
-  ) {}
+  ) {
+    // Use dedicated OAuth state secret for CSRF protection
+    this.stateSecret = this.configService.get<string>('auth.oauthStateSecret');
+    const nodeEnv = this.configService.get<string>('NODE_ENV', 'development');
+
+    if (!this.stateSecret) {
+      if (nodeEnv === 'production') {
+        const error = 'OAUTH_STATE_SECRET is required for OAuth flows in production. Configure it in environment variables (minimum 32 characters).';
+        this.logger.error(error);
+        throw new Error(error);
+      }
+      // In development, fall back to JWT secret with a warning
+      this.stateSecret = this.configService.get<string>('auth.jwtSecret') || 'dev-fallback-not-for-production';
+      this.logger.warn(
+        'OAUTH_STATE_SECRET not set - using JWT_SECRET as fallback for OAuth state. ' +
+        'Set OAUTH_STATE_SECRET in production!'
+      );
+    }
+
+    if (this.stateSecret.length < 32) {
+      const error = 'OAUTH_STATE_SECRET must be at least 32 characters long for security.';
+      this.logger.error(error);
+      throw new Error(error);
+    }
+  }
 
   /**
    * Get OAuth configuration for integration type
@@ -70,8 +97,20 @@ export class OAuthService {
         tokenUrl: 'https://zoom.us/oauth/token',
         revokeUrl: 'https://zoom.us/oauth/revoke',
       },
+      [IntegrationType.DOCUSIGN]: {
+        authUrl: 'https://account.docusign.com/oauth/auth',
+        tokenUrl: 'https://account.docusign.com/oauth/token',
+      },
+      [IntegrationType.CALENDLY]: {
+        authUrl: 'https://auth.calendly.com/oauth/authorize',
+        tokenUrl: 'https://auth.calendly.com/oauth/token',
+        revokeUrl: 'https://auth.calendly.com/oauth/token/revoke',
+      },
       // Non-OAuth integrations have empty configs
+      [IntegrationType.PANDADOC]: {},
       [IntegrationType.TYPEFORM]: {},
+      [IntegrationType.WHATSAPP]: {},
+      [IntegrationType.KAJABI]: {},
       [IntegrationType.CALENDAR]: {},
       [IntegrationType.EMAIL]: {},
       [IntegrationType.SMS]: {},
@@ -99,9 +138,16 @@ export class OAuthService {
       );
     }
 
-    // Get redirect URI
-    const redirectUri = this.configService.get(`OAUTH_${envPrefix}_REDIRECT_URI`) ||
-                       `${this.configService.get('APP_URL')}/integrations/oauth/callback`;
+    // Get redirect URI - use specific env var or construct from APP_URL
+    let redirectUri = this.configService.get(`OAUTH_${envPrefix}_REDIRECT_URI`);
+
+    if (!redirectUri) {
+      // Fallback: construct from APP_URL
+      const appUrl = this.configService.get('APP_URL') || 'http://localhost:3000';
+      // Ensure APP_URL doesn't already end with /api/v1
+      const baseUrl = appUrl.replace(/\/api\/v1\/?$/, '');
+      redirectUri = `${baseUrl}/api/v1/integrations/oauth/callback`;
+    }
 
     // Get scopes (from env or default)
     const scopesEnv = this.configService.get(`OAUTH_${envPrefix}_SCOPES`);
@@ -141,7 +187,7 @@ export class OAuthService {
       redirect_uri: config.redirectUri,
       scope: Array.isArray(scopes) ? scopes.join(' ') : scopes,
       response_type: 'code',
-      state: state || integration.id,
+      state: state || this.generateState(integration),
     });
 
     // Add integration-specific parameters
@@ -157,11 +203,77 @@ export class OAuthService {
         break;
       case IntegrationType.GOOGLE:
         params.append('access_type', 'offline');
-        params.append('prompt', 'consent');
+        // Use both select_account and consent to force fresh authorization
+        params.append('prompt', 'select_account consent');
+        params.append('include_granted_scopes', 'true');
         break;
     }
 
-    return `${config.authUrl}?${params.toString()}`;
+    const authUrl = `${config.authUrl}?${params.toString()}`;
+    this.logger.log(`Generated OAuth URL for ${integration.type} (${integration.id})`);
+    this.logger.log(`OAuth parameters: ${JSON.stringify(Object.fromEntries(params))}`);
+
+    return authUrl;
+  }
+
+  /**
+   * Generate signed state to prevent tampering/CSRF
+   */
+  generateState(integration: Integration): string {
+    const payload = {
+      integrationId: integration.id,
+      workspaceId: integration.workspaceId,
+      nonce: randomBytes(12).toString('hex'),
+      ts: Date.now(),
+    };
+    const payloadStr = JSON.stringify(payload);
+    const payloadB64 = Buffer.from(payloadStr).toString('base64url');
+    const sig = createHmac('sha256', this.stateSecret).update(payloadB64).digest('base64url');
+    return `${payloadB64}.${sig}`;
+  }
+
+  /**
+   * Validate and decode state token
+   */
+  validateState(state?: string): { integrationId: string; workspaceId: string } {
+    if (!state || !state.includes('.')) {
+      throw new UnauthorizedException('Invalid OAuth state');
+    }
+
+    const [payloadB64, sig] = state.split('.');
+    const expectedSig = createHmac('sha256', this.stateSecret).update(payloadB64).digest('base64url');
+
+    if (!this.timingSafeEqual(expectedSig, sig)) {
+      throw new UnauthorizedException('Invalid OAuth state signature');
+    }
+
+    const payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf-8')) as {
+      integrationId: string;
+      workspaceId: string;
+      ts: number;
+    };
+
+    if (!payload.integrationId || !payload.workspaceId) {
+      throw new UnauthorizedException('Invalid OAuth state payload');
+    }
+
+    if (Date.now() - payload.ts > this.stateTtlMs) {
+      throw new UnauthorizedException('OAuth state expired');
+    }
+
+    return {
+      integrationId: payload.integrationId,
+      workspaceId: payload.workspaceId,
+    };
+  }
+
+  private timingSafeEqual(a: string, b: string): boolean {
+    const bufA = Buffer.from(a);
+    const bufB = Buffer.from(b);
+    if (bufA.length !== bufB.length) {
+      return false;
+    }
+    return cryptoTimingSafeEqual(bufA, bufB);
   }
 
   /**
@@ -178,6 +290,8 @@ export class OAuthService {
       redirect_uri: config.redirectUri,
     });
 
+    this.logger.log(`Exchanging code for tokens - Integration: ${integration.id}, Type: ${integration.type}`);
+
     try {
       const response = await firstValueFrom(
         this.httpService.post(config.tokenUrl, params.toString(), {
@@ -189,6 +303,11 @@ export class OAuthService {
 
       const data = response.data;
 
+      this.logger.log(`Token response received for ${integration.id}`);
+      this.logger.log(`Response has access_token: ${!!data.access_token}`);
+      this.logger.log(`Response has refresh_token: ${!!data.refresh_token}`);
+      this.logger.log(`Response keys: ${Object.keys(data).join(', ')}`);
+
       // Handle different response formats
       const accessToken = data.access_token || data.accessToken;
       const refreshToken = data.refresh_token || data.refreshToken;
@@ -197,6 +316,7 @@ export class OAuthService {
       const scope = data.scope;
 
       if (!accessToken) {
+        this.logger.error(`No access token in response: ${JSON.stringify(data)}`);
         throw new BadRequestException('No access token received from OAuth provider');
       }
 
@@ -211,11 +331,15 @@ export class OAuthService {
         tokens.expiresAt = new Date(Date.now() + expiresIn * 1000);
       }
 
-      this.logger.log(`OAuth tokens obtained for integration ${integration.id}`);
+      this.logger.log(`OAuth tokens obtained for integration ${integration.id} - Has refresh token: ${!!refreshToken}`);
 
       return tokens;
     } catch (error) {
-      this.logger.error(`OAuth token exchange failed for integration ${integration.id}:`, error);
+      this.logger.error(`OAuth token exchange failed for integration ${integration.id}:`, error.message);
+      if (error.response) {
+        this.logger.error(`Response status: ${error.response.status}`);
+        this.logger.error(`Response data: ${JSON.stringify(error.response.data)}`);
+      }
       throw new BadRequestException(`OAuth authentication failed: ${error.message}`);
     }
   }

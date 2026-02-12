@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { ArrowLeft, Trash2, RefreshCw, Check, X, AlertTriangle, Activity, Calendar, TrendingUp, Settings as SettingsIcon, Loader2, AlertCircle } from 'lucide-react';
 import api from '@/lib/api';
+import WhatsAppGroupImport from '@/components/integrations/WhatsAppGroupImport';
 
 export default function IntegrationSettingsPage() {
   const params = useParams();
@@ -313,6 +314,13 @@ export default function IntegrationSettingsPage() {
           </button>
         </div>
       </div>
+
+      {/* WhatsApp Group Import (only show for WhatsApp integrations) */}
+      {integrationId === 'whatsapp' && (
+        <div className="glass-effect rounded-2xl p-8 animate-slide-up">
+          <WhatsAppGroupImport integrationId={integrationId} />
+        </div>
+      )}
 
       {/* Recent Activity */}
       <div className="glass-effect rounded-2xl p-8 animate-slide-up">

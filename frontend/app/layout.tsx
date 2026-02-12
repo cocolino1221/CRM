@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import './globals.css';
 import AuthGuard from '@/components/AuthGuard';
+import { ThemeProvider } from '@/contexts/ThemeContext';
 
 export const metadata: Metadata = {
   title: 'SlackCRM - AI-Powered Team CRM',
@@ -15,7 +16,9 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body>
-        <AuthGuard>{children}</AuthGuard>
+        <ThemeProvider>
+          <AuthGuard>{children}</AuthGuard>
+        </ThemeProvider>
       </body>
     </html>
   );

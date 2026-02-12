@@ -10,6 +10,7 @@ import {
 } from 'typeorm';
 import { WorkspaceEntity } from './base.entity';
 import { User } from './user.entity';
+import { encryptionTransformer } from '../../common/transformers/encryption.transformer';
 
 export enum IntegrationType {
   SLACK = 'slack',
@@ -20,6 +21,11 @@ export enum IntegrationType {
   PIPEDRIVE = 'pipedrive',
   ZOOM = 'zoom',
   TYPEFORM = 'typeform',
+  PANDADOC = 'pandadoc',
+  DOCUSIGN = 'docusign',
+  CALENDLY = 'calendly',
+  KAJABI = 'kajabi',
+  WHATSAPP = 'whatsapp',
   CALENDAR = 'calendar',
   EMAIL = 'email',
   SMS = 'sms',
@@ -156,9 +162,10 @@ export class Integration extends WorkspaceEntity {
   };
 
   @Column({
-    type: 'jsonb',
+    type: 'text',
     nullable: true,
-    comment: 'Encrypted authentication credentials',
+    comment: 'Encrypted authentication credentials (AES-256-GCM)',
+    transformer: encryptionTransformer,
   })
   credentials?: {
     accessToken?: string;

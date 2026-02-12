@@ -35,6 +35,11 @@ export class InstallIntegrationDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsObject()
+  credentials?: Record<string, any>;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsObject()
   metadata?: Record<string, any>;
 
   @ApiPropertyOptional()
@@ -59,6 +64,11 @@ export class UpdateIntegrationDto {
   @IsOptional()
   @IsObject()
   config?: Record<string, any>;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsObject()
+  credentials?: Record<string, any>;
 
   @ApiPropertyOptional()
   @IsOptional()

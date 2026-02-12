@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+
+# Test results
+reports/
+test-results/
+playwright-report/
+
+# Auth state (contains tokens)
+.auth/
+
+# Environment files
+.env
+.env.local
+.env.test
+
+# IDE
+.idea/
+.vscode/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Debug logs
+*.log
+npm-debug.log*
+
+# Playwright
+playwright/.cache/

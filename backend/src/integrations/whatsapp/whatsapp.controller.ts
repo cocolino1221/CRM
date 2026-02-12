@@ -4,13 +4,16 @@ import {
   Get,
   Body,
   Query,
+  Req,
   HttpCode,
   HttpStatus,
   BadRequestException,
+  UseGuards,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { WhatsAppService, WhatsAppMessage, WhatsAppWebhook } from './whatsapp.service';
 import { Public } from '../../common/decorators/public.decorator';
+import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 
 @ApiTags('WhatsApp Business')
 @Controller('integrations/whatsapp')
@@ -23,12 +26,12 @@ export class WhatsAppController {
   @ApiOperation({ summary: 'Verify WhatsApp webhook' })
   @ApiResponse({ status: 200, description: 'Webhook verified' })
   @ApiResponse({ status: 403, description: 'Verification failed' })
-  verifyWebhook(
+  async verifyWebhook(
     @Query('hub.mode') mode: string,
     @Query('hub.verify_token') token: string,
     @Query('hub.challenge') challenge: string,
   ) {
-    const result = this.whatsappService.verifyWebhook(mode, token, challenge);
+    const result = await this.whatsappService.verifyWebhookToken(mode, token, challenge);
     if (result) {
       return result;
     }
@@ -105,5 +108,45 @@ export class WhatsAppController {
     },
   ) {
     return this.whatsappService.sendBulkMessages(body.recipients, body.message);
+  }
+
+  @Get('groups')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get list of WhatsApp groups' })
+  @ApiResponse({ status: 200, description: 'Groups retrieved successfully' })
+  async getGroups() {
+    return this.whatsappService.getGroups();
+  }
+
+  @Get('groups/:groupId')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get WhatsApp group information and participants' })
+  @ApiResponse({ status: 200, description: 'Group info retrieved successfully' })
+  async getGroupInfo(@Query('groupId') groupId: string) {
+    return this.whatsappService.getGroupInfo(groupId);
+  }
+
+  @Get('inbox')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get WhatsApp inbox (recent conversations from activities)' })
+  @ApiResponse({ status: 200, description: 'Inbox messages' })
+  async getInbox(@Req() req: any, @Query('limit') limit?: string) {
+    const workspaceId = req.user?.workspaceId;
+    if (!workspaceId) throw new BadRequestException('Workspace ID required');
+    const activities = await this.whatsappService.getWhatsAppActivities(
+      workspaceId,
+      limit ? parseInt(limit, 10) : 50,
+    );
+    return { data: activities };
+  }
+
+  @Post('send')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Send a WhatsApp message to a phone number' })
+  @ApiResponse({ status: 200, description: 'Message sent' })
+  async sendTo(@Body() body: { to: string; message: string }) {
+    return this.whatsappService.sendTextMessage(body.to, body.message);
   }
 }

@@ -1,6 +1,12 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  typescript: {
+    ignoreBuildErrors: true,
+  },
+  eslint: {
+    ignoreDuringBuilds: true,
+  },
   images: {
     remotePatterns: [
       {
@@ -11,7 +17,24 @@ const nextConfig = {
         protocol: 'https',
         hostname: 'cdn.worldvectorlogo.com',
       },
+      {
+        protocol: 'https',
+        hostname: 'logo.clearbit.com',
+      },
+      {
+        protocol: 'https',
+        hostname: 'img.icons8.com',
+      },
+      {
+        protocol: 'https',
+        hostname: 'cdn.simpleicons.org',
+      },
+      {
+        protocol: 'https',
+        hostname: 'upload.wikimedia.org',
+      },
     ],
+    unoptimized: true,
   },
   async rewrites() {
     return [

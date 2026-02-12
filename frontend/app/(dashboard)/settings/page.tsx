@@ -1,8 +1,10 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { User, Bell, Lock, Building2, Loader2, Check, AlertCircle } from 'lucide-react';
+import { User, Bell, Lock, Building2, Palette, Loader2, Check, AlertCircle } from 'lucide-react';
 import api from '@/lib/api';
+import ThemeSettings from '@/components/settings/ThemeSettings';
+import NotificationSettings from '@/components/settings/NotificationSettings';
 
 interface UserProfile {
   id: string;
@@ -101,6 +103,7 @@ export default function SettingsPage() {
 
   const tabs = [
     { id: 'profile', name: 'Profile', icon: User },
+    { id: 'appearance', name: 'Appearance', icon: Palette },
     { id: 'security', name: 'Security', icon: Lock },
     { id: 'notifications', name: 'Notifications', icon: Bell },
     { id: 'workspace', name: 'Workspace', icon: Building2 },
@@ -296,19 +299,12 @@ export default function SettingsPage() {
           </div>
         )}
 
-        {activeTab === 'notifications' && (
-          <div className="space-y-6">
-            <div>
-              <h2 className="text-lg font-semibold text-gray-900 mb-4">Notification Preferences</h2>
-              <p className="text-sm text-gray-600 mb-6">
-                Manage how you receive notifications and updates.
-              </p>
-            </div>
+        {activeTab === 'appearance' && (
+          <ThemeSettings />
+        )}
 
-            <div className="space-y-4">
-              <p className="text-sm text-gray-500">Notification settings coming soon...</p>
-            </div>
-          </div>
+        {activeTab === 'notifications' && (
+          <NotificationSettings />
         )}
 
         {activeTab === 'workspace' && (

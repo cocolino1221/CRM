@@ -24,6 +24,7 @@ export enum ActivityType {
   CONTACT_STATUS_CHANGE = 'contact_status_change',
   SLACK_MESSAGE = 'slack_message',
   SLACK_THREAD = 'slack_thread',
+  WHATSAPP_MESSAGE = 'whatsapp_message',
   FORM_SUBMISSION = 'form_submission',
   DOCUMENT_UPLOAD = 'document_upload',
   SYSTEM_EVENT = 'system_event',

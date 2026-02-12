@@ -16,7 +16,7 @@ import {
   MinLength,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { DealStage, DealPriority, DealSource } from '../../database/entities/deal.entity';
+import { DealStage, DealPriority, DealSource, PaymentMethod, Firm } from '../../database/entities/deal.entity';
 
 export class CreateDealDto {
   @ApiProperty({ description: 'Deal title', example: 'Enterprise SaaS Deal' })
@@ -117,4 +117,20 @@ export class CreateDealDto {
   @IsObject()
   @IsOptional()
   customFields?: Record<string, any>;
+
+  @ApiPropertyOptional({
+    description: 'Payment method when deal is closed won',
+    enum: PaymentMethod,
+  })
+  @IsEnum(PaymentMethod)
+  @IsOptional()
+  paymentMethod?: PaymentMethod;
+
+  @ApiPropertyOptional({
+    description: 'Firm selected for rate or bill payment methods',
+    enum: Firm,
+  })
+  @IsEnum(Firm)
+  @IsOptional()
+  firm?: Firm;
 }
