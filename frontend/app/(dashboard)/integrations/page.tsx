@@ -865,12 +865,16 @@ export default function IntegrationsPage() {
 
       handleCloseModal();
 
-      // Show success message with webhook URL if available
-      const webhookUrl = response.data?.webhookUrl;
-      if (webhookUrl && selectedIntegration.id === 'typeform') {
-        alert(`Integration connected successfully!\n\nWebhook URL (configure in Typeform):\n${webhookUrl}\n\nGo to your Typeform form → Connect → Webhooks → Add a webhook, and paste this URL.`);
+      // Show success message with unique webhook URL
+      const integrationId = response.data?.id;
+      const apiUrl = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api/v1').replace('/api/v1', '');
+      const webhookUrl = `${apiUrl}/api/v1/integrations/webhooks/${integrationId}`;
+      const needsWebhook = ['typeform', 'whatsapp', 'calendly'].includes(selectedIntegration.id);
+
+      if (integrationId && needsWebhook) {
+        alert(`Integration connected!\n\nYour unique webhook URL:\n${webhookUrl}\n\nPaste this URL in ${selectedIntegration.name}'s webhook settings.`);
       } else {
-        alert('Integration connected successfully! You can now test the connection.');
+        alert('Integration connected successfully!');
       }
     } catch (err: any) {
       console.error('Failed to connect integration:', err);
@@ -1312,6 +1316,29 @@ export default function IntegrationsPage() {
                 </div>
               )}
             </div>
+
+            {/* Webhook URL for webhook-based integrations */}
+            {['typeform', 'whatsapp', 'calendly'].includes(managingIntegration.id) && connectedIntegrations[managingIntegration.id]?.id && (
+              <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 mb-6">
+                <p className="text-xs font-semibold text-blue-800 mb-2">Your Webhook URL (unique to your workspace)</p>
+                <div className="flex items-center gap-2">
+                  <code className="flex-1 text-xs bg-white border border-blue-200 rounded-lg px-3 py-2 text-blue-900 break-all">
+                    {(process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api/v1').replace('/api/v1', '')}/api/v1/integrations/webhooks/{connectedIntegrations[managingIntegration.id].id}
+                  </code>
+                  <button
+                    type="button"
+                    onClick={() => navigator.clipboard?.writeText(`${(process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api/v1').replace('/api/v1', '')}/api/v1/integrations/webhooks/${connectedIntegrations[managingIntegration.id].id}`)}
+                    className="p-2 rounded-lg bg-white border border-blue-200 hover:bg-blue-100 transition-all"
+                    title="Copy webhook URL"
+                  >
+                    <Copy className="h-4 w-4 text-blue-700" />
+                  </button>
+                </div>
+                <p className="text-xs text-blue-700 mt-2">
+                  Paste this URL in <strong>{managingIntegration.name}</strong> webhook settings. Each workspace gets a unique URL.
+                </p>
+              </div>
+            )}
 
             {/* Action Buttons */}
             <div className="flex gap-3">
