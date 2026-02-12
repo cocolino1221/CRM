@@ -109,7 +109,8 @@ export class WhatsAppService {
 
     if (!contact) {
       const nameParts = (profileName || '').trim().split(' ');
-      contact = this.contactRepository.create({
+      const newContact = this.contactRepository.create();
+      Object.assign(newContact, {
         workspaceId,
         ownerId,
         firstName: nameParts[0] || 'WhatsApp',
@@ -117,8 +118,8 @@ export class WhatsAppService {
         phone,
         status: ContactStatus.LEAD,
         source: ContactSource.WHATSAPP,
-      } as any);
-      contact = await this.contactRepository.save(contact);
+      });
+      contact = await this.contactRepository.save(newContact);
       this.logger.log(`Created new contact from WhatsApp: ${phone}`);
     }
 
