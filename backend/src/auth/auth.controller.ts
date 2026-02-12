@@ -49,28 +49,16 @@ export class AuthController {
     const nodeEnv = this.configService.get('NODE_ENV', 'development');
     const frontendUrl = this.configService.get('FRONTEND_URL', 'http://localhost:4001');
 
-    // Extract domain from frontend URL (for cross-subdomain cookies)
-    let domain: string | undefined;
-    try {
-      const url = new URL(frontendUrl);
-      // Only set domain for production with proper domain names
-      if (nodeEnv === 'production' && !url.hostname.includes('localhost')) {
-        // Extract root domain (e.g., example.com from app.example.com)
-        const parts = url.hostname.split('.');
-        if (parts.length > 2) {
-          domain = `.${parts.slice(-2).join('.')}`;
-        }
-      }
-    } catch {
-      // If URL parsing fails, don't set domain
-    }
+    // In production the frontend (netlify.app) and backend (fly.dev) are on different
+    // root domains, so SameSite must be 'none' (requires Secure=true) to allow
+    // the browser to send cookies on cross-origin API requests.
+    const isProduction = nodeEnv === 'production';
 
     return {
       httpOnly: true, // Prevents JavaScript access (XSS protection)
-      secure: nodeEnv === 'production', // HTTPS only in production
-      sameSite: 'strict' as const, // CSRF protection
+      secure: isProduction, // HTTPS only in production
+      sameSite: (isProduction ? 'none' : 'lax') as 'none' | 'lax',
       path: '/',
-      domain,
       maxAge: isRefreshToken
         ? 7 * 24 * 60 * 60 * 1000 // 7 days for refresh token
         : 15 * 60 * 1000, // 15 minutes for access token

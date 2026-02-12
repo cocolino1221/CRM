@@ -76,7 +76,7 @@ async function bootstrap() {
 
   // Enable CORS with proper configuration
   const allowedOrigins = nodeEnv === 'production'
-    ? [frontendUrl, 'http://localhost:4001', 'http://localhost:4000'].filter(Boolean)
+    ? [frontendUrl, 'https://easyteamcrm.netlify.app', 'http://localhost:4001', 'http://localhost:4000'].filter(Boolean)
     : ['http://localhost:4001', 'http://localhost:4000', 'http://localhost:3001'];
 
   app.enableCors({
