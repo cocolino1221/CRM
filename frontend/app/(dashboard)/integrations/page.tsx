@@ -259,8 +259,8 @@ export default function IntegrationsPage() {
       connected: false,
       features: ['Auto-create contacts', 'Custom field mapping', 'Real-time sync', 'Form analytics'],
       configFields: [
-        { name: 'apiToken', label: 'Personal Access Token', type: 'password', required: true, placeholder: 'tfp_...' },
-        { name: 'formId', label: 'Form ID', type: 'text', required: true, placeholder: 'aBcDeF12' },
+        { name: 'apiToken', label: 'Personal Access Token', type: 'password', required: true, placeholder: 'tfp_...', helpText: 'Go to Typeform → Settings → Personal tokens → Generate new token. Select scopes: Forms (Read), Responses (Read), Webhooks (Read+Write).' },
+        { name: 'formId', label: 'Form ID (optional)', type: 'text', required: false, placeholder: 'aBcDeF12', helpText: 'Found in the form URL: https://form.typeform.com/to/aBcDeF12. Leave empty to receive webhooks from all forms.' },
       ],
     },
     {
