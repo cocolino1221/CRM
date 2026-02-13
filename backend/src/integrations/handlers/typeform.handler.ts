@@ -143,8 +143,8 @@ export class TypeformIntegrationHandler {
     const formResponse = payload.form_response;
     const workspaceId = integration.workspaceId;
 
-    // Extract contact information from answers
-    const contactData = this.extractContactData(formResponse.answers);
+    // Extract contact information from answers (use definition.fields to resolve field titles)
+    const contactData = this.extractContactData(formResponse.answers, formResponse.definition?.fields || []);
 
     // Build metadata
     const metadata = {
@@ -258,31 +258,80 @@ export class TypeformIntegrationHandler {
 
   /**
    * Extract contact information from form answers
+   * Uses definition fields to resolve human-readable field titles (since field.ref is a UUID)
    */
-  private extractContactData(answers: TypeformAnswer[]): any {
+  private extractContactData(answers: TypeformAnswer[], definitionFields: any[]): any {
     const contactData: any = {
       source: 'typeform',
       customFields: {},
     };
 
-    answers.forEach(answer => {
-      const fieldRef = answer.field.ref.toLowerCase();
-      const fieldType = answer.type;
+    // Build a map of field id -> field title from definition
+    const fieldTitleMap: Record<string, string> = {};
+    for (const field of definitionFields) {
+      if (field.id && field.title) {
+        fieldTitleMap[field.id] = field.title.toLowerCase().trim();
+      }
+    }
 
-      // Map common field types to contact fields
-      if (fieldRef.includes('email') || fieldType === 'email') {
-        contactData.email = answer.email;
-      } else if (fieldRef.includes('name') || fieldRef.includes('first')) {
-        contactData.firstName = answer.text;
-      } else if (fieldRef.includes('last')) {
-        contactData.lastName = answer.text;
-      } else if (fieldRef.includes('phone') || fieldType === 'phone_number') {
-        contactData.phone = answer.phone_number;
-      } else if (fieldRef.includes('company')) {
-        contactData.companyName = answer.text;
+    answers.forEach(answer => {
+      const fieldTitle = fieldTitleMap[answer.field.id] || '';
+      const fieldType = answer.type;
+      const value = this.extractAnswerValue(answer);
+
+      // Match by field title (human-readable) or by answer type
+      if (fieldType === 'email' || fieldTitle.includes('email')) {
+        contactData.email = answer.email || value;
+      } else if (
+        fieldTitle.includes('first name') ||
+        fieldTitle.includes('firstname') ||
+        fieldTitle.includes('prénom') ||
+        fieldTitle.includes('prenume') ||
+        fieldTitle === 'first' ||
+        fieldTitle === 'name'
+      ) {
+        contactData.firstName = answer.text || value;
+      } else if (
+        fieldTitle.includes('last name') ||
+        fieldTitle.includes('lastname') ||
+        fieldTitle.includes('surname') ||
+        fieldTitle.includes('family name') ||
+        fieldTitle.includes('nom') ||
+        fieldTitle.includes('nume') ||
+        fieldTitle === 'last'
+      ) {
+        contactData.lastName = answer.text || value;
+      } else if (
+        fieldTitle.includes('full name') ||
+        fieldTitle.includes('your name') ||
+        fieldTitle.includes('nume complet')
+      ) {
+        // Handle full name field - split into first/last
+        const fullName = (answer.text || value || '').trim();
+        const parts = fullName.split(/\s+/);
+        if (!contactData.firstName) contactData.firstName = parts[0] || '';
+        if (!contactData.lastName) contactData.lastName = parts.slice(1).join(' ') || '';
+      } else if (fieldType === 'phone_number' || fieldTitle.includes('phone') || fieldTitle.includes('telefon')) {
+        contactData.phone = answer.phone_number || value;
+      } else if (
+        fieldTitle.includes('company') ||
+        fieldTitle.includes('organization') ||
+        fieldTitle.includes('companie') ||
+        fieldTitle.includes('firma')
+      ) {
+        contactData.companyName = answer.text || value;
+      } else if (
+        fieldTitle.includes('job') ||
+        fieldTitle.includes('title') ||
+        fieldTitle.includes('position') ||
+        fieldTitle.includes('role') ||
+        fieldTitle.includes('functie')
+      ) {
+        contactData.jobTitle = answer.text || value;
       } else {
-        // Store other fields as custom fields
-        contactData.customFields[answer.field.ref] = this.extractAnswerValue(answer);
+        // Store other fields as custom fields using the readable title
+        const customKey = fieldTitleMap[answer.field.id] || answer.field.ref;
+        contactData.customFields[customKey] = value;
       }
     });
 
