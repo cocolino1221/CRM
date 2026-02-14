@@ -180,8 +180,11 @@ export class TypeformIntegrationHandler {
     }
 
     try {
-      // Get pipeline configuration from integration config
-      const pipelineConfig = integration.config?.typeformPipeline;
+      // Look up form-specific config first, then fall back to global config
+      const formConfig = this.getFormConfig(integration, formResponse.form_id);
+      const pipelineConfig = formConfig?.pipelineId
+        ? formConfig
+        : integration.config?.typeformPipeline;
       let pipelineId = pipelineConfig?.pipelineId;
       let pipelineStageId = pipelineConfig?.pipelineStageId;
 
@@ -225,7 +228,9 @@ export class TypeformIntegrationHandler {
 
       // Auto-send WhatsApp welcome message if contact has phone and feature is enabled
       let whatsAppSent = false;
-      const whatsAppConfig = integration.config?.typeformWhatsApp;
+      const whatsAppConfig = formConfig?.whatsApp?.enabled
+        ? formConfig.whatsApp
+        : integration.config?.typeformWhatsApp;
       if (contactData.phone && whatsAppConfig?.enabled) {
         try {
           const phone = contactData.phone.replace(/[^0-9]/g, '');
@@ -407,6 +412,135 @@ export class TypeformIntegrationHandler {
       default:
         return answer.text;
     }
+  }
+
+  /**
+   * Get form-specific config from integration's typeformForms array
+   */
+  private getFormConfig(integration: any, formId: string): any | null {
+    const forms = integration.config?.typeformForms;
+    if (!Array.isArray(forms)) return null;
+    return forms.find((f: any) => f.formId === formId && f.enabled !== false) || null;
+  }
+
+  /**
+   * Get all connected forms for an integration
+   */
+  async getConnectedForms(integration: any): Promise<any[]> {
+    const forms = integration.config?.typeformForms || [];
+    const apiKey = integration.credentials?.apiToken || integration.credentials?.apiKey || integration.config?.apiToken || integration.config?.apiKey;
+
+    // Enrich form data with Typeform API details if possible
+    const enrichedForms = [];
+    for (const form of forms) {
+      let formDetails: any = { ...form };
+      if (apiKey && form.formId) {
+        try {
+          const details = await this.getFormDetails(form.formId, apiKey);
+          formDetails.title = details.title;
+          formDetails.responseCount = details._links?.display || undefined;
+        } catch {
+          // API call failed, use stored data
+        }
+      }
+      enrichedForms.push(formDetails);
+    }
+    return enrichedForms;
+  }
+
+  /**
+   * Add a form to the integration config
+   */
+  async addForm(integration: any, formId: string, config?: {
+    name?: string;
+    pipelineId?: string;
+    pipelineStageId?: string;
+    whatsApp?: any;
+  }): Promise<any> {
+    const apiKey = integration.credentials?.apiToken || integration.credentials?.apiKey || integration.config?.apiToken || integration.config?.apiKey;
+
+    // Verify form exists
+    let formTitle = config?.name || formId;
+    if (apiKey) {
+      try {
+        const details = await this.getFormDetails(formId, apiKey);
+        formTitle = details.title || formTitle;
+      } catch {
+        // Form might still be valid, continue
+      }
+    }
+
+    const forms = integration.config?.typeformForms || [];
+    const existing = forms.find((f: any) => f.formId === formId);
+    if (existing) {
+      throw new BadRequestException(`Form ${formId} is already connected`);
+    }
+
+    const newForm = {
+      formId,
+      name: formTitle,
+      enabled: true,
+      webhookRegistered: false,
+      pipelineId: config?.pipelineId,
+      pipelineStageId: config?.pipelineStageId,
+      whatsApp: config?.whatsApp,
+      addedAt: new Date().toISOString(),
+    };
+
+    // Register webhook with Typeform API
+    const webhookUrl = `${integration.config?.backendUrl || process.env.BACKEND_URL || ''}/api/v1/integrations/webhooks/${integration.id}`;
+    if (apiKey && webhookUrl) {
+      try {
+        const tag = `slackcrm_${formId.substring(0, 8)}`;
+        await this.createWebhook(formId, webhookUrl, tag, apiKey);
+        newForm.webhookRegistered = true;
+        this.logger.log(`Webhook registered for form ${formId}`);
+      } catch (err) {
+        this.logger.warn(`Failed to auto-register webhook for form ${formId}: ${err.message}`);
+      }
+    }
+
+    forms.push(newForm);
+    return { form: newForm, forms };
+  }
+
+  /**
+   * Remove a form from the integration config
+   */
+  async removeForm(integration: any, formId: string): Promise<any[]> {
+    const forms = integration.config?.typeformForms || [];
+    const formIndex = forms.findIndex((f: any) => f.formId === formId);
+    if (formIndex === -1) {
+      throw new BadRequestException(`Form ${formId} not found`);
+    }
+
+    const apiKey = integration.credentials?.apiToken || integration.credentials?.apiKey || integration.config?.apiToken || integration.config?.apiKey;
+
+    // Try to unregister webhook
+    if (apiKey && forms[formIndex].webhookRegistered) {
+      try {
+        const tag = `slackcrm_${formId.substring(0, 8)}`;
+        await this.deleteWebhook(formId, tag, apiKey);
+      } catch {
+        // Webhook might already be deleted
+      }
+    }
+
+    forms.splice(formIndex, 1);
+    return forms;
+  }
+
+  /**
+   * Update form-specific config
+   */
+  updateFormConfig(integration: any, formId: string, config: any): any[] {
+    const forms = integration.config?.typeformForms || [];
+    const form = forms.find((f: any) => f.formId === formId);
+    if (!form) {
+      throw new BadRequestException(`Form ${formId} not found`);
+    }
+    Object.assign(form, config);
+    return forms;
   }
 
   /**

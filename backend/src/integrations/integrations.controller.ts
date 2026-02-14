@@ -32,6 +32,7 @@ import { QueueService } from '../queues/queue.service';
 import { QUEUE_NAMES } from '../queues/queue.constants';
 import { CreateIntegrationDto, UpdateIntegrationDto, InstallIntegrationDto } from './dto/integration.dto';
 import { Integration, IntegrationType, IntegrationStatus, IntegrationAuthType } from '../database/entities/integration.entity';
+import { TypeformIntegrationHandler } from './handlers/typeform.handler';
 
 @ApiTags('Integrations')
 @Controller('integrations')
@@ -50,6 +51,7 @@ export class IntegrationsController {
     private readonly queueService: QueueService,
     @InjectRepository(Integration)
     private readonly integrationRepository: Repository<Integration>,
+    private readonly typeformHandler: TypeformIntegrationHandler,
   ) {}
 
   @Get('available')
@@ -902,5 +904,102 @@ export class IntegrationsController {
     }
 
     return templates;
+  }
+
+  // ============ Typeform Multi-Form Management ============
+
+  @Get(':id/typeform/forms')
+  @ApiOperation({ summary: 'Get all connected Typeform forms' })
+  async getTypeformForms(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
+    const integration = await this.integrationRepository.findOne({
+      where: { id, workspaceId: req.user.workspaceId },
+    });
+    if (!integration) {
+      return { forms: [] };
+    }
+    const forms = await this.typeformHandler.getConnectedForms(integration);
+    return { forms };
+  }
+
+  @Post(':id/typeform/forms')
+  @ApiOperation({ summary: 'Add a Typeform form to integration' })
+  async addTypeformForm(
+    @Param('id') id: string,
+    @Req() req: AuthenticatedRequest,
+    @Body() body: { formId: string; name?: string; pipelineId?: string; pipelineStageId?: string; whatsApp?: any },
+  ) {
+    const integration = await this.integrationRepository.findOne({
+      where: { id, workspaceId: req.user.workspaceId },
+    });
+    if (!integration) {
+      return { success: false, message: 'Integration not found' };
+    }
+
+    const result = await this.typeformHandler.addForm(integration, body.formId, {
+      name: body.name,
+      pipelineId: body.pipelineId,
+      pipelineStageId: body.pipelineStageId,
+      whatsApp: body.whatsApp,
+    });
+
+    // Save updated config
+    integration.config = {
+      ...integration.config,
+      typeformForms: result.forms,
+    };
+    await this.integrationRepository.save(integration);
+
+    return { success: true, form: result.form };
+  }
+
+  @Delete(':id/typeform/forms/:formId')
+  @ApiOperation({ summary: 'Remove a Typeform form from integration' })
+  async removeTypeformForm(
+    @Param('id') id: string,
+    @Param('formId') formId: string,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const integration = await this.integrationRepository.findOne({
+      where: { id, workspaceId: req.user.workspaceId },
+    });
+    if (!integration) {
+      return { success: false, message: 'Integration not found' };
+    }
+
+    const forms = await this.typeformHandler.removeForm(integration, formId);
+
+    integration.config = {
+      ...integration.config,
+      typeformForms: forms,
+    };
+    await this.integrationRepository.save(integration);
+
+    return { success: true };
+  }
+
+  @Patch(':id/typeform/forms/:formId')
+  @ApiOperation({ summary: 'Update Typeform form config' })
+  async updateTypeformFormConfig(
+    @Param('id') id: string,
+    @Param('formId') formId: string,
+    @Req() req: AuthenticatedRequest,
+    @Body() body: { name?: string; pipelineId?: string; pipelineStageId?: string; whatsApp?: any; enabled?: boolean },
+  ) {
+    const integration = await this.integrationRepository.findOne({
+      where: { id, workspaceId: req.user.workspaceId },
+    });
+    if (!integration) {
+      return { success: false, message: 'Integration not found' };
+    }
+
+    const forms = this.typeformHandler.updateFormConfig(integration, formId, body);
+
+    integration.config = {
+      ...integration.config,
+      typeformForms: forms,
+    };
+    await this.integrationRepository.save(integration);
+
+    return { success: true };
   }
 }

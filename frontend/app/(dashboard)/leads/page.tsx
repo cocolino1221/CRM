@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Plus, Search, Phone, Video, Trophy, TrendingUp, TrendingDown, UserCheck, Loader2, Mail, Building, Calendar, DollarSign, MoreVertical, Edit, Trash2, X, AlertCircle, Settings, Users } from 'lucide-react';
+import { Plus, Search, Phone, Video, Trophy, TrendingUp, TrendingDown, UserCheck, Loader2, Mail, Building, Calendar, DollarSign, MoreVertical, Edit, Trash2, X, AlertCircle, Settings, Users, Tag, FileText, Star, Clock, Briefcase, Eye } from 'lucide-react';
+import { getInitials } from '@/lib/utils';
 import api from '@/lib/api';
 
 interface Contact {
@@ -11,6 +12,7 @@ interface Contact {
   lastName: string;
   phone?: string;
   company?: { name: string; id: string };
+  jobTitle?: string;
   status: string;
   source?: string;
   leadScore: number;
@@ -28,6 +30,7 @@ interface Contact {
   setter?: User;
   caller?: User;
   closer?: User;
+  customFields?: Record<string, any>;
 }
 
 interface Pipeline {
@@ -94,9 +97,12 @@ export default function LeadsPage() {
   // Modal states
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
+  const [showDetailModal, setShowDetailModal] = useState(false);
   const [showPipelineModal, setShowPipelineModal] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [editingContact, setEditingContact] = useState<Contact | null>(null);
+  const [detailContact, setDetailContact] = useState<Contact | null>(null);
+  const [isLoadingDetail, setIsLoadingDetail] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [modalError, setModalError] = useState('');
 
@@ -560,6 +566,47 @@ export default function LeadsPage() {
     };
   };
 
+  const openDetailModal = async (contact: Contact) => {
+    setShowDetailModal(true);
+    setDetailContact(contact);
+    setIsLoadingDetail(true);
+    try {
+      const response = await api.get(`/contacts/${contact.id}`, {
+        params: { relations: 'company,owner' },
+      });
+      setDetailContact(response.data);
+    } catch (err) {
+      console.error('Failed to fetch contact details:', err);
+    } finally {
+      setIsLoadingDetail(false);
+    }
+  };
+
+  const getTypeformData = (contact: Contact) => {
+    if (!contact.customFields) return null;
+    const { typeformMetadata, ...answers } = contact.customFields;
+    const hasAnswers = Object.keys(answers).length > 0;
+    if (!typeformMetadata && !hasAnswers) return null;
+    return { metadata: typeformMetadata, answers };
+  };
+
+  const formatFieldValue = (value: any): string => {
+    if (value === null || value === undefined) return '—';
+    if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+    if (Array.isArray(value)) return value.join(', ');
+    if (typeof value === 'object') return JSON.stringify(value);
+    return String(value);
+  };
+
+  const statusColors: Record<string, string> = {
+    lead: 'bg-blue-100 text-blue-700',
+    prospect: 'bg-purple-100 text-purple-700',
+    qualified: 'bg-green-100 text-green-700',
+    customer: 'bg-emerald-100 text-emerald-700',
+    inactive: 'bg-gray-100 text-gray-700',
+    churned: 'bg-red-100 text-red-700',
+  };
+
   const setters = users.filter(u => u.role?.toLowerCase() === 'setter');
   const callers = users.filter(u => u.role?.toLowerCase() === 'caller');
   const closers = users.filter(u => u.role?.toLowerCase() === 'closer');
@@ -784,7 +831,7 @@ export default function LeadsPage() {
                       stageLeads.map((contact) => (
                         <div
                           key={contact.id}
-                          onClick={() => openEditModal(contact)}
+                          onClick={() => openDetailModal(contact)}
                           className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm hover:shadow-md transition-all cursor-pointer group"
                         >
                           {/* Lead Name */}
@@ -883,6 +930,263 @@ export default function LeadsPage() {
             >
               Refresh
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Lead Detail Modal */}
+      {showDetailModal && detailContact && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm animate-fade-in">
+          <div className="relative w-full max-w-3xl mx-4 bg-white rounded-2xl shadow-2xl animate-scale-in max-h-[90vh] overflow-y-auto">
+            {/* Header */}
+            <div className="sticky top-0 bg-white border-b border-gray-200 rounded-t-2xl p-6 flex items-start justify-between z-10">
+              <div className="flex items-center gap-4">
+                <div className="flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 text-xl font-bold text-white flex-shrink-0">
+                  {getInitials(`${detailContact.firstName} ${detailContact.lastName}`)}
+                </div>
+                <div>
+                  <h2 className="text-2xl font-bold text-gray-900">
+                    {detailContact.firstName} {detailContact.lastName}
+                  </h2>
+                  <div className="flex items-center gap-2 mt-1">
+                    <span className={`rounded-full px-3 py-0.5 text-xs font-semibold ${statusColors[detailContact.status] || 'bg-gray-100 text-gray-700'}`}>
+                      {detailContact.status}
+                    </span>
+                    {detailContact.source && (
+                      <span className="rounded-full px-3 py-0.5 text-xs font-semibold bg-gray-100 text-gray-600">
+                        {detailContact.source}
+                      </span>
+                    )}
+                    {detailContact.pipelineStage && (
+                      <span
+                        className="rounded-full px-3 py-0.5 text-xs font-semibold text-white"
+                        style={{ backgroundColor: detailContact.pipelineStage.color || '#6366F1' }}
+                      >
+                        {detailContact.pipelineStage.name}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => { setShowDetailModal(false); setDetailContact(null); openEditModal(detailContact); }}
+                  className="rounded-lg p-2 text-gray-500 hover:bg-blue-50 hover:text-blue-600 transition-all"
+                  title="Edit"
+                >
+                  <Edit className="h-5 w-5" />
+                </button>
+                <button
+                  onClick={() => { setShowDetailModal(false); setDetailContact(null); }}
+                  className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-all"
+                >
+                  <X className="h-6 w-6" />
+                </button>
+              </div>
+            </div>
+
+            {isLoadingDetail ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="h-6 w-6 animate-spin text-indigo-600" />
+              </div>
+            ) : (
+              <div className="p-6 space-y-6">
+                {/* Contact Information */}
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">Contact Information</h3>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl">
+                      <Mail className="h-5 w-5 text-gray-400 flex-shrink-0" />
+                      <div>
+                        <p className="text-xs text-gray-500">Email</p>
+                        <p className="text-sm font-medium text-gray-900">{detailContact.email}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl">
+                      <Phone className="h-5 w-5 text-gray-400 flex-shrink-0" />
+                      <div>
+                        <p className="text-xs text-gray-500">Phone</p>
+                        <p className="text-sm font-medium text-gray-900">{detailContact.phone || '—'}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl">
+                      <Briefcase className="h-5 w-5 text-gray-400 flex-shrink-0" />
+                      <div>
+                        <p className="text-xs text-gray-500">Job Title</p>
+                        <p className="text-sm font-medium text-gray-900">{detailContact.jobTitle || '—'}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl">
+                      <Building className="h-5 w-5 text-gray-400 flex-shrink-0" />
+                      <div>
+                        <p className="text-xs text-gray-500">Company</p>
+                        <p className="text-sm font-medium text-gray-900">{detailContact.company?.name || '—'}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl">
+                      <Star className="h-5 w-5 text-yellow-500 flex-shrink-0" />
+                      <div>
+                        <p className="text-xs text-gray-500">Lead Score</p>
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-bold text-gray-900">{detailContact.leadScore}/100</p>
+                          <div className="flex-1 w-24 bg-gray-200 rounded-full h-1.5">
+                            <div
+                              className={`h-1.5 rounded-full ${detailContact.leadScore >= 75 ? 'bg-green-500' : detailContact.leadScore >= 50 ? 'bg-yellow-500' : 'bg-red-500'}`}
+                              style={{ width: `${Math.min(detailContact.leadScore, 100)}%` }}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl">
+                      <Clock className="h-5 w-5 text-gray-400 flex-shrink-0" />
+                      <div>
+                        <p className="text-xs text-gray-500">Created</p>
+                        <p className="text-sm font-medium text-gray-900">
+                          {new Date(detailContact.createdAt).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Team Assignments */}
+                {(detailContact.setter || detailContact.caller || detailContact.closer || detailContact.owner) && (
+                  <div>
+                    <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">Team</h3>
+                    <div className="grid grid-cols-2 gap-3">
+                      {detailContact.owner && (
+                        <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl">
+                          <div className="h-8 w-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-semibold text-xs">
+                            {getInitials(`${detailContact.owner.firstName} ${detailContact.owner.lastName}`)}
+                          </div>
+                          <div>
+                            <p className="text-xs text-gray-500">Owner</p>
+                            <p className="text-sm font-medium text-gray-900">{detailContact.owner.firstName} {detailContact.owner.lastName}</p>
+                          </div>
+                        </div>
+                      )}
+                      {detailContact.setter && (
+                        <div className="flex items-center gap-3 p-3 bg-blue-50 rounded-xl">
+                          <Users className="h-5 w-5 text-blue-600 flex-shrink-0" />
+                          <div>
+                            <p className="text-xs text-blue-600">Setter</p>
+                            <p className="text-sm font-medium text-gray-900">{detailContact.setter.firstName} {detailContact.setter.lastName}</p>
+                          </div>
+                        </div>
+                      )}
+                      {detailContact.caller && (
+                        <div className="flex items-center gap-3 p-3 bg-purple-50 rounded-xl">
+                          <Phone className="h-5 w-5 text-purple-600 flex-shrink-0" />
+                          <div>
+                            <p className="text-xs text-purple-600">Caller</p>
+                            <p className="text-sm font-medium text-gray-900">{detailContact.caller.firstName} {detailContact.caller.lastName}</p>
+                          </div>
+                        </div>
+                      )}
+                      {detailContact.closer && (
+                        <div className="flex items-center gap-3 p-3 bg-green-50 rounded-xl">
+                          <Trophy className="h-5 w-5 text-green-600 flex-shrink-0" />
+                          <div>
+                            <p className="text-xs text-green-600">Closer</p>
+                            <p className="text-sm font-medium text-gray-900">{detailContact.closer.firstName} {detailContact.closer.lastName}</p>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Tags */}
+                {detailContact.tags && detailContact.tags.length > 0 && (
+                  <div>
+                    <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">Tags</h3>
+                    <div className="flex flex-wrap gap-2">
+                      {detailContact.tags.map((tag, i) => (
+                        <span key={i} className="inline-flex items-center gap-1 px-3 py-1 bg-indigo-50 text-indigo-700 rounded-full text-xs font-medium">
+                          <Tag className="h-3 w-3" />
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Notes */}
+                {detailContact.notes && (
+                  <div>
+                    <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">Notes</h3>
+                    <div className="p-4 bg-gray-50 rounded-xl">
+                      <p className="text-sm text-gray-700 whitespace-pre-wrap">{detailContact.notes}</p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Typeform Data */}
+                {(() => {
+                  const tfData = getTypeformData(detailContact);
+                  if (!tfData) return null;
+                  return (
+                    <div>
+                      <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3 flex items-center gap-2">
+                        <FileText className="h-4 w-4" />
+                        Typeform Responses
+                      </h3>
+
+                      {/* Typeform Metadata */}
+                      {tfData.metadata && (
+                        <div className="mb-4 p-4 bg-purple-50 border border-purple-100 rounded-xl">
+                          <div className="flex items-center justify-between mb-2">
+                            <h4 className="text-sm font-semibold text-purple-900">
+                              {tfData.metadata.formTitle || 'Form Submission'}
+                            </h4>
+                            {tfData.metadata.score !== undefined && tfData.metadata.score !== null && (
+                              <span className="px-2 py-0.5 bg-purple-200 text-purple-800 rounded-full text-xs font-bold">
+                                Score: {tfData.metadata.score}
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-4 text-xs text-purple-700">
+                            {tfData.metadata.submittedAt && (
+                              <span>Submitted: {new Date(tfData.metadata.submittedAt).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                            )}
+                            {tfData.metadata.formId && (
+                              <span>Form ID: {tfData.metadata.formId}</span>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Form Answers */}
+                      {tfData.answers && Object.keys(tfData.answers).length > 0 && (
+                        <div className="border border-gray-200 rounded-xl overflow-hidden">
+                          <table className="min-w-full">
+                            <thead>
+                              <tr className="bg-gray-50">
+                                <th className="px-4 py-2 text-left text-xs font-semibold text-gray-600 uppercase">Question</th>
+                                <th className="px-4 py-2 text-left text-xs font-semibold text-gray-600 uppercase">Answer</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-100">
+                              {Object.entries(tfData.answers).map(([key, value], i) => (
+                                <tr key={i} className="hover:bg-gray-50">
+                                  <td className="px-4 py-3 text-sm font-medium text-gray-700 capitalize w-1/3">
+                                    {key.replace(/_/g, ' ')}
+                                  </td>
+                                  <td className="px-4 py-3 text-sm text-gray-900">
+                                    {formatFieldValue(value)}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
           </div>
         </div>
       )}

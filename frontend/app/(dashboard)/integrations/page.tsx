@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Search, Check, ExternalLink, Zap, Settings, Webhook, X, Copy, Key, Lock, Link as LinkIcon, AlertCircle, Loader2 } from 'lucide-react';
+import { Search, Check, ExternalLink, Zap, Settings, Webhook, X, Copy, Key, Lock, Link as LinkIcon, AlertCircle, Loader2, Plus, Trash2, FileText, Edit } from 'lucide-react';
 import api from '@/lib/api';
 import { integrationIcons } from '@/lib/integration-icons';
 
@@ -62,6 +62,13 @@ export default function IntegrationsPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [modalError, setModalError] = useState('');
   const [connectedIntegrations, setConnectedIntegrations] = useState<Record<string, any>>({});
+
+  // Typeform multi-form management
+  const [typeformForms, setTypeformForms] = useState<any[]>([]);
+  const [showAddFormModal, setShowAddFormModal] = useState(false);
+  const [newFormId, setNewFormId] = useState('');
+  const [newFormName, setNewFormName] = useState('');
+  const [isLoadingForms, setIsLoadingForms] = useState(false);
 
   const [integrations, setIntegrations] = useState<Integration[]>([
     // Communication
@@ -665,6 +672,14 @@ export default function IntegrationsPage() {
 
     if (integration.connected && existing) {
       setManagingIntegration(integration);
+      // Fetch Typeform forms if applicable
+      if (integration.id === 'typeform' && existing.id) {
+        setIsLoadingForms(true);
+        api.get(`/integrations/${existing.id}/typeform/forms`)
+          .then(res => setTypeformForms(res.data.forms || []))
+          .catch(() => setTypeformForms([]))
+          .finally(() => setIsLoadingForms(false));
+      }
       return;
     }
 
@@ -1337,6 +1352,133 @@ export default function IntegrationsPage() {
                 <p className="text-xs text-blue-700 mt-2">
                   Paste this URL in <strong>{managingIntegration.name}</strong> webhook settings. Each workspace gets a unique URL.
                 </p>
+              </div>
+            )}
+
+            {/* Typeform Forms Management */}
+            {managingIntegration.id === 'typeform' && connectedIntegrations[managingIntegration.id]?.id && (
+              <div className="rounded-xl border border-purple-200 bg-purple-50 p-4 mb-6">
+                <div className="flex items-center justify-between mb-3">
+                  <h4 className="text-sm font-semibold text-purple-900 flex items-center gap-2">
+                    <FileText className="h-4 w-4" />
+                    Connected Forms
+                  </h4>
+                  <button
+                    type="button"
+                    onClick={() => setShowAddFormModal(true)}
+                    className="flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-purple-700 bg-white border border-purple-300 rounded-lg hover:bg-purple-100 transition-all"
+                  >
+                    <Plus className="h-3 w-3" />
+                    Add Form
+                  </button>
+                </div>
+
+                {isLoadingForms ? (
+                  <div className="flex items-center justify-center py-4">
+                    <Loader2 className="h-4 w-4 animate-spin text-purple-600" />
+                  </div>
+                ) : typeformForms.length === 0 ? (
+                  <p className="text-xs text-purple-700 py-3 text-center">
+                    No forms connected yet. Add a form to enable per-form pipeline and WhatsApp settings.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {typeformForms.map((form: any) => (
+                      <div key={form.formId} className="flex items-center justify-between bg-white rounded-lg border border-purple-100 p-3">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-gray-900 truncate">{form.name || form.formId}</p>
+                          <p className="text-xs text-gray-500">ID: {form.formId}</p>
+                          {form.pipelineId && (
+                            <p className="text-xs text-purple-600 mt-0.5">Pipeline configured</p>
+                          )}
+                          {form.whatsApp?.enabled && (
+                            <p className="text-xs text-green-600 mt-0.5">WhatsApp auto-send enabled</p>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2 ml-3">
+                          <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${form.enabled !== false ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
+                            {form.enabled !== false ? 'Active' : 'Disabled'}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              if (!confirm(`Remove form "${form.name || form.formId}"?`)) return;
+                              try {
+                                await api.delete(`/integrations/${connectedIntegrations[managingIntegration.id].id}/typeform/forms/${form.formId}`);
+                                setTypeformForms(prev => prev.filter(f => f.formId !== form.formId));
+                              } catch (err) {
+                                console.error('Failed to remove form:', err);
+                              }
+                            }}
+                            className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition-all"
+                            title="Remove form"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Add Form Inline */}
+                {showAddFormModal && (
+                  <div className="mt-3 p-3 bg-white rounded-lg border border-purple-200">
+                    <p className="text-xs font-semibold text-gray-700 mb-2">Add New Form</p>
+                    <div className="space-y-2">
+                      <input
+                        type="text"
+                        value={newFormId}
+                        onChange={(e) => setNewFormId(e.target.value)}
+                        placeholder="Form ID (e.g., aBcDeF12)"
+                        className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                      />
+                      <input
+                        type="text"
+                        value={newFormName}
+                        onChange={(e) => setNewFormName(e.target.value)}
+                        placeholder="Form name (optional)"
+                        className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                      />
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => { setShowAddFormModal(false); setNewFormId(''); setNewFormName(''); }}
+                          className="flex-1 px-3 py-2 text-xs font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-all"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          disabled={!newFormId.trim() || isSubmitting}
+                          onClick={async () => {
+                            setIsSubmitting(true);
+                            try {
+                              const res = await api.post(`/integrations/${connectedIntegrations[managingIntegration.id].id}/typeform/forms`, {
+                                formId: newFormId.trim(),
+                                name: newFormName.trim() || undefined,
+                              });
+                              if (res.data.success && res.data.form) {
+                                setTypeformForms(prev => [...prev, res.data.form]);
+                              }
+                              setShowAddFormModal(false);
+                              setNewFormId('');
+                              setNewFormName('');
+                            } catch (err: any) {
+                              alert(err.response?.data?.message || 'Failed to add form');
+                            } finally {
+                              setIsSubmitting(false);
+                            }
+                          }}
+                          className="flex-1 px-3 py-2 text-xs font-semibold text-white bg-purple-600 rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-1"
+                        >
+                          {isSubmitting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />}
+                          Add
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Search, Filter, Plus, Mail, Phone, MoreVertical, Star, Loader2, X, Edit, Trash2, AlertCircle, User, Briefcase, Building2, Grid3x3, List, Calendar } from 'lucide-react';
+import { Search, Filter, Plus, Mail, Phone, MoreVertical, Star, Loader2, X, Edit, Trash2, AlertCircle, User, Briefcase, Building2, Grid3x3, List, Calendar, Tag, FileText, ExternalLink, Clock, MessageSquare, Eye } from 'lucide-react';
 import { getInitials } from '@/lib/utils';
 import api from '@/lib/api';
 
@@ -17,6 +17,11 @@ interface Contact {
   score?: number;
   source?: string;
   createdAt?: string;
+  customFields?: Record<string, any>;
+  tags?: string[];
+  notes?: string;
+  leadScore?: number;
+  owner?: { firstName: string; lastName: string };
 }
 
 interface ContactsResponse {
@@ -56,7 +61,10 @@ export default function ContactsPage() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showDetailModal, setShowDetailModal] = useState(false);
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
+  const [detailContact, setDetailContact] = useState<Contact | null>(null);
+  const [isLoadingDetail, setIsLoadingDetail] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [modalError, setModalError] = useState('');
 
@@ -238,6 +246,38 @@ export default function ContactsPage() {
     setModalError('');
   };
 
+  const openDetailModal = async (contact: Contact) => {
+    setShowDetailModal(true);
+    setDetailContact(contact);
+    setIsLoadingDetail(true);
+    try {
+      const response = await api.get(`/contacts/${contact.id}`, {
+        params: { relations: 'company,owner' },
+      });
+      setDetailContact(response.data);
+    } catch (err) {
+      console.error('Failed to fetch contact details:', err);
+    } finally {
+      setIsLoadingDetail(false);
+    }
+  };
+
+  const getTypeformData = (contact: Contact) => {
+    if (!contact.customFields) return null;
+    const { typeformMetadata, ...answers } = contact.customFields;
+    const hasAnswers = Object.keys(answers).length > 0;
+    if (!typeformMetadata && !hasAnswers) return null;
+    return { metadata: typeformMetadata, answers };
+  };
+
+  const formatFieldValue = (value: any): string => {
+    if (value === null || value === undefined) return '—';
+    if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+    if (Array.isArray(value)) return value.join(', ');
+    if (typeof value === 'object') return JSON.stringify(value);
+    return String(value);
+  };
+
   const filters = [
     { id: 'all', name: 'All Contacts' },
     { id: 'leads', name: 'Leads' },
@@ -375,7 +415,8 @@ export default function ContactsPage() {
           {contacts.map((contact) => (
             <div
               key={contact.id}
-              className="group relative rounded-xl border border-gray-200 bg-white p-6 transition-all hover:border-blue-200 hover:shadow-md"
+              onClick={() => openDetailModal(contact)}
+              className="group relative rounded-xl border border-gray-200 bg-white p-6 transition-all hover:border-blue-200 hover:shadow-md cursor-pointer"
             >
               {/* Dropdown Menu */}
               <div className="absolute right-4 top-4 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -385,14 +426,14 @@ export default function ContactsPage() {
                   </button>
                   <div className="absolute right-0 mt-1 w-32 rounded-lg bg-white shadow-lg border border-gray-200 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-10">
                     <button
-                      onClick={() => openEditModal(contact)}
+                      onClick={(e) => { e.stopPropagation(); openEditModal(contact); }}
                       className="flex w-full items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
                     >
                       <Edit className="h-4 w-4" />
                       Edit
                     </button>
                     <button
-                      onClick={() => openDeleteModal(contact)}
+                      onClick={(e) => { e.stopPropagation(); openDeleteModal(contact); }}
                       className="flex w-full items-center gap-2 px-4 py-2 text-sm text-red-600 hover:bg-red-50"
                     >
                       <Trash2 className="h-4 w-4" />
@@ -480,7 +521,7 @@ export default function ContactsPage() {
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {contacts.map((contact) => (
-                <tr key={contact.id} className="hover:bg-gray-50 transition-colors">
+                <tr key={contact.id} onClick={() => openDetailModal(contact)} className="hover:bg-gray-50 transition-colors cursor-pointer">
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className="flex items-center">
                       <div className="flex-shrink-0 h-10 w-10">
@@ -542,13 +583,13 @@ export default function ContactsPage() {
                   <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                     <div className="flex items-center justify-end gap-2">
                       <button
-                        onClick={() => openEditModal(contact)}
+                        onClick={(e) => { e.stopPropagation(); openEditModal(contact); }}
                         className="text-blue-600 hover:text-blue-900"
                       >
                         <Edit className="h-4 w-4" />
                       </button>
                       <button
-                        onClick={() => openDeleteModal(contact)}
+                        onClick={(e) => { e.stopPropagation(); openDeleteModal(contact); }}
                         className="text-red-600 hover:text-red-900"
                       >
                         <Trash2 className="h-4 w-4" />
@@ -559,6 +600,221 @@ export default function ContactsPage() {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* Contact Detail Modal */}
+      {showDetailModal && detailContact && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm animate-fade-in">
+          <div className="relative w-full max-w-3xl mx-4 bg-white rounded-2xl shadow-2xl animate-scale-in max-h-[90vh] overflow-y-auto">
+            {/* Header */}
+            <div className="sticky top-0 bg-white border-b border-gray-200 rounded-t-2xl p-6 flex items-start justify-between z-10">
+              <div className="flex items-center gap-4">
+                <div className="flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 text-xl font-bold text-white flex-shrink-0">
+                  {getInitials(`${detailContact.firstName} ${detailContact.lastName}`)}
+                </div>
+                <div>
+                  <h2 className="text-2xl font-bold text-gray-900">
+                    {detailContact.firstName} {detailContact.lastName}
+                  </h2>
+                  <div className="flex items-center gap-2 mt-1">
+                    <span className={`rounded-full px-3 py-0.5 text-xs font-semibold ${statusColors[detailContact.status] || 'bg-gray-100 text-gray-700'}`}>
+                      {detailContact.status}
+                    </span>
+                    {detailContact.source && (
+                      <span className="rounded-full px-3 py-0.5 text-xs font-semibold bg-gray-100 text-gray-600">
+                        {detailContact.source}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => { setShowDetailModal(false); openEditModal(detailContact); }}
+                  className="rounded-lg p-2 text-gray-500 hover:bg-blue-50 hover:text-blue-600 transition-all"
+                  title="Edit"
+                >
+                  <Edit className="h-5 w-5" />
+                </button>
+                <button
+                  onClick={() => { setShowDetailModal(false); setDetailContact(null); }}
+                  className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-all"
+                >
+                  <X className="h-6 w-6" />
+                </button>
+              </div>
+            </div>
+
+            {isLoadingDetail ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="h-6 w-6 animate-spin text-indigo-600" />
+              </div>
+            ) : (
+              <div className="p-6 space-y-6">
+                {/* Contact Information */}
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">Contact Information</h3>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl">
+                      <Mail className="h-5 w-5 text-gray-400 flex-shrink-0" />
+                      <div>
+                        <p className="text-xs text-gray-500">Email</p>
+                        <p className="text-sm font-medium text-gray-900">{detailContact.email}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl">
+                      <Phone className="h-5 w-5 text-gray-400 flex-shrink-0" />
+                      <div>
+                        <p className="text-xs text-gray-500">Phone</p>
+                        <p className="text-sm font-medium text-gray-900">{detailContact.phone || '—'}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl">
+                      <Briefcase className="h-5 w-5 text-gray-400 flex-shrink-0" />
+                      <div>
+                        <p className="text-xs text-gray-500">Job Title</p>
+                        <p className="text-sm font-medium text-gray-900">{detailContact.jobTitle || '—'}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl">
+                      <Building2 className="h-5 w-5 text-gray-400 flex-shrink-0" />
+                      <div>
+                        <p className="text-xs text-gray-500">Company</p>
+                        <p className="text-sm font-medium text-gray-900">{detailContact.company?.name || '—'}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl">
+                      <Star className="h-5 w-5 text-yellow-500 flex-shrink-0" />
+                      <div>
+                        <p className="text-xs text-gray-500">Lead Score</p>
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-bold text-gray-900">{detailContact.leadScore ?? detailContact.score ?? 0}</p>
+                          <div className="flex-1 w-24 bg-gray-200 rounded-full h-1.5">
+                            <div
+                              className={`h-1.5 rounded-full ${(detailContact.leadScore ?? detailContact.score ?? 0) >= 75 ? 'bg-green-500' : (detailContact.leadScore ?? detailContact.score ?? 0) >= 50 ? 'bg-yellow-500' : 'bg-red-500'}`}
+                              style={{ width: `${Math.min(detailContact.leadScore ?? detailContact.score ?? 0, 100)}%` }}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl">
+                      <Clock className="h-5 w-5 text-gray-400 flex-shrink-0" />
+                      <div>
+                        <p className="text-xs text-gray-500">Created</p>
+                        <p className="text-sm font-medium text-gray-900">
+                          {detailContact.createdAt ? new Date(detailContact.createdAt).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Tags */}
+                {detailContact.tags && detailContact.tags.length > 0 && (
+                  <div>
+                    <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">Tags</h3>
+                    <div className="flex flex-wrap gap-2">
+                      {detailContact.tags.map((tag, i) => (
+                        <span key={i} className="inline-flex items-center gap-1 px-3 py-1 bg-indigo-50 text-indigo-700 rounded-full text-xs font-medium">
+                          <Tag className="h-3 w-3" />
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Notes */}
+                {detailContact.notes && (
+                  <div>
+                    <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">Notes</h3>
+                    <div className="p-4 bg-gray-50 rounded-xl">
+                      <p className="text-sm text-gray-700 whitespace-pre-wrap">{detailContact.notes}</p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Typeform Data */}
+                {(() => {
+                  const tfData = getTypeformData(detailContact);
+                  if (!tfData) return null;
+                  return (
+                    <div>
+                      <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3 flex items-center gap-2">
+                        <FileText className="h-4 w-4" />
+                        Typeform Responses
+                      </h3>
+
+                      {/* Typeform Metadata */}
+                      {tfData.metadata && (
+                        <div className="mb-4 p-4 bg-purple-50 border border-purple-100 rounded-xl">
+                          <div className="flex items-center justify-between mb-2">
+                            <h4 className="text-sm font-semibold text-purple-900">
+                              {tfData.metadata.formTitle || 'Form Submission'}
+                            </h4>
+                            {tfData.metadata.score !== undefined && tfData.metadata.score !== null && (
+                              <span className="px-2 py-0.5 bg-purple-200 text-purple-800 rounded-full text-xs font-bold">
+                                Score: {tfData.metadata.score}
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-4 text-xs text-purple-700">
+                            {tfData.metadata.submittedAt && (
+                              <span>Submitted: {new Date(tfData.metadata.submittedAt).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                            )}
+                            {tfData.metadata.formId && (
+                              <span>Form ID: {tfData.metadata.formId}</span>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Form Answers */}
+                      {tfData.answers && Object.keys(tfData.answers).length > 0 && (
+                        <div className="border border-gray-200 rounded-xl overflow-hidden">
+                          <table className="min-w-full">
+                            <thead>
+                              <tr className="bg-gray-50">
+                                <th className="px-4 py-2 text-left text-xs font-semibold text-gray-600 uppercase">Question</th>
+                                <th className="px-4 py-2 text-left text-xs font-semibold text-gray-600 uppercase">Answer</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-100">
+                              {Object.entries(tfData.answers).map(([key, value], i) => (
+                                <tr key={i} className="hover:bg-gray-50">
+                                  <td className="px-4 py-3 text-sm font-medium text-gray-700 capitalize w-1/3">
+                                    {key.replace(/_/g, ' ')}
+                                  </td>
+                                  <td className="px-4 py-3 text-sm text-gray-900">
+                                    {formatFieldValue(value)}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+
+                {/* Owner */}
+                {detailContact.owner && (
+                  <div>
+                    <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">Assigned To</h3>
+                    <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl">
+                      <div className="h-8 w-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-semibold text-xs">
+                        {getInitials(`${detailContact.owner.firstName} ${detailContact.owner.lastName}`)}
+                      </div>
+                      <p className="text-sm font-medium text-gray-900">{detailContact.owner.firstName} {detailContact.owner.lastName}</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       )}
 

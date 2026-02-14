@@ -101,13 +101,27 @@ export class WhatsAppService {
   }
 
   private async findIntegrationForPhone(phoneNumberId: string): Promise<Integration | null> {
+    // Accept any non-disabled/non-expired integration — ACTIVE, PENDING, ERROR all work
     const integrations = await this.integrationRepository.find({
-      where: { type: IntegrationType.WHATSAPP, status: IntegrationStatus.ACTIVE },
+      where: { type: IntegrationType.WHATSAPP },
     });
-    for (const integration of integrations) {
-      const storedId = integration.credentials?.phoneNumberId || integration.config?.phoneNumberId;
-      if (storedId === phoneNumberId) return integration;
+
+    const usable = integrations.filter(
+      i => i.status !== IntegrationStatus.DISABLED && i.status !== IntegrationStatus.EXPIRED && i.status !== IntegrationStatus.SUSPENDED,
+    );
+
+    // First try exact match on phoneNumberId
+    for (const integration of usable) {
+      const storedId = integration.credentials?.phoneNumberId
+        || integration.config?.phoneNumberId
+        || integration.config?.phoneId;
+      if (storedId && storedId === phoneNumberId) return integration;
     }
+
+    // Fall back to first usable integration
+    if (usable.length > 0) return usable[0];
+
+    // Last resort: any WhatsApp integration
     return integrations[0] || null;
   }
 
@@ -322,7 +336,7 @@ export class WhatsAppService {
 
   async handleWebhook(webhook: WhatsAppWebhook): Promise<any> {
     try {
-      this.logger.log('Received WhatsApp webhook');
+      this.logger.log(`Received WhatsApp webhook: ${JSON.stringify(webhook).substring(0, 200)}`);
 
       for (const entry of webhook.entry) {
         for (const change of entry.changes) {
@@ -341,9 +355,10 @@ export class WhatsAppService {
           const integration = await this.findIntegrationForPhone(phoneNumberId);
 
           if (!integration) {
-            this.logger.warn(`No active WhatsApp integration found for phoneNumberId: ${phoneNumberId}`);
+            this.logger.warn(`No WhatsApp integration found for phoneNumberId: ${phoneNumberId} — skipping message`);
             continue;
           }
+          this.logger.log(`Processing message for integration ${integration.id} (workspace: ${integration.workspaceId}, status: ${integration.status})`);
 
           const owner = await this.userRepository.findOne({
             where: { workspaceId: integration.workspaceId },
