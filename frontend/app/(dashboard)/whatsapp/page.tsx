@@ -423,6 +423,18 @@ export default function WhatsAppPage() {
   const [isSavingToken, setIsSavingToken] = useState(false);
   const [tokenSaveError, setTokenSaveError] = useState('');
 
+  // Auto-send on contact creation
+  const [showAutoSend, setShowAutoSend] = useState(false);
+  const [autoSendEnabled, setAutoSendEnabled] = useState(false);
+  const [autoSendTemplate, setAutoSendTemplate] = useState('hello_world');
+  const [autoSendLanguage, setAutoSendLanguage] = useState('en');
+  const [autoSendIncludeName, setAutoSendIncludeName] = useState(false);
+  const [autoSendSources, setAutoSendSources] = useState<string[]>([]);
+  const [autoSendStatuses, setAutoSendStatuses] = useState<string[]>([]);
+  const [autoSendRequirePhone, setAutoSendRequirePhone] = useState(true);
+  const [isSavingAutoSend, setIsSavingAutoSend] = useState(false);
+  const [autoSendSaveError, setAutoSendSaveError] = useState('');
+
   // Auto-responses
   const [showAutoResponses, setShowAutoResponses] = useState(false);
   const [autoRespondEnabled, setAutoRespondEnabled] = useState(true);
@@ -447,6 +459,7 @@ export default function WhatsAppPage() {
     fetchInbox();
     fetchWebhookInfo();
     fetchAutoResponses();
+    fetchAutoSend();
     const interval = setInterval(fetchInbox, 30000);
     return () => clearInterval(interval);
   }, []);
@@ -570,6 +583,43 @@ export default function WhatsAppPage() {
         { id: 'r2', name: 'Pricing', keywords: 'pricing, price, cost, pret', response: 'Thank you for your interest{{name}}! A team member will get back to you with pricing details shortly.', enabled: true },
       ]);
     } catch { /* silent */ }
+  };
+
+  const fetchAutoSend = async () => {
+    try {
+      const res = await api.get('/integrations/whatsapp/auto-send');
+      const cfg = res.data;
+      setAutoSendEnabled(cfg.enabled ?? false);
+      setAutoSendTemplate(cfg.templateName || 'hello_world');
+      setAutoSendLanguage(cfg.language || 'en');
+      setAutoSendIncludeName(cfg.includeNameParam ?? false);
+      setAutoSendSources(cfg.conditions?.sources || []);
+      setAutoSendStatuses(cfg.conditions?.statuses || []);
+      setAutoSendRequirePhone(cfg.conditions?.requirePhone ?? true);
+    } catch { /* silent */ }
+  };
+
+  const saveAutoSendConfig = async () => {
+    setIsSavingAutoSend(true);
+    setAutoSendSaveError('');
+    try {
+      await api.post('/integrations/whatsapp/auto-send', {
+        enabled: autoSendEnabled,
+        templateName: autoSendTemplate.trim(),
+        language: autoSendLanguage.trim() || 'en',
+        includeNameParam: autoSendIncludeName,
+        conditions: {
+          sources: autoSendSources.length > 0 ? autoSendSources : undefined,
+          statuses: autoSendStatuses.length > 0 ? autoSendStatuses : undefined,
+          requirePhone: autoSendRequirePhone,
+        },
+      });
+      setShowAutoSend(false);
+    } catch (err: any) {
+      setAutoSendSaveError(err?.response?.data?.message || 'Failed to save');
+    } finally {
+      setIsSavingAutoSend(false);
+    }
   };
 
   const saveAutoResponses = async () => {
@@ -833,6 +883,9 @@ export default function WhatsAppPage() {
               </button>
               <button onClick={() => { setShowTemplateManager(true); fetchMetaTemplates(); }} className="p-1.5 rounded-lg hover:bg-gray-100 transition-all" title="Message templates">
                 <LayoutTemplate className="h-4 w-4 text-gray-500" />
+              </button>
+              <button onClick={() => { setShowAutoSend(true); fetchAutoSend(); }} className="p-1.5 rounded-lg hover:bg-gray-100 transition-all" title="Auto-send on new contact">
+                <Timer className="h-4 w-4 text-gray-500" />
               </button>
               <button onClick={() => setShowWebhookSetup(true)} className="p-1.5 rounded-lg hover:bg-gray-100 transition-all" title="Webhook setup">
                 <Settings className="h-4 w-4 text-gray-500" />
@@ -1625,6 +1678,123 @@ export default function WhatsAppPage() {
             <div className="p-4 border-t border-gray-100 flex justify-end">
               <button onClick={() => { setShowWebhookSetup(false); setCustomToken(''); setTokenSaveError(''); }}
                 className="px-4 py-2 text-sm font-medium text-white bg-green-500 hover:bg-green-600 rounded-xl">Done</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Auto-Send Modal */}
+      {showAutoSend && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 flex flex-col max-h-[90vh]">
+            <div className="flex items-center justify-between p-4 border-b border-gray-100">
+              <div>
+                <h3 className="font-semibold text-gray-900">Auto-Send on New Contact</h3>
+                <p className="text-xs text-gray-400 mt-0.5">Send a WhatsApp template when a new contact is created</p>
+              </div>
+              <button onClick={() => { setShowAutoSend(false); setAutoSendSaveError(''); }}>
+                <X className="h-5 w-5 text-gray-400" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 space-y-5">
+              {/* Master toggle */}
+              <div className="flex items-center justify-between p-3 bg-gray-50 rounded-xl">
+                <div>
+                  <p className="text-sm font-medium text-gray-900">Enable Auto-Send</p>
+                  <p className="text-xs text-gray-500 mt-0.5">Automatically send a template when conditions match</p>
+                </div>
+                <button onClick={() => setAutoSendEnabled(!autoSendEnabled)}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${autoSendEnabled ? 'bg-green-500' : 'bg-gray-300'}`}>
+                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${autoSendEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
+                </button>
+              </div>
+
+              {/* Template config */}
+              <div className="space-y-3">
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Template</p>
+                <div>
+                  <label className="text-xs text-gray-500 mb-1 block">Template Name</label>
+                  <input type="text" value={autoSendTemplate} onChange={e => setAutoSendTemplate(e.target.value)}
+                    placeholder="e.g. hello_world"
+                    className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-green-400 focus:ring-2 focus:ring-green-100" />
+                  <p className="text-xs text-gray-400 mt-1">Must be an approved template in your Meta account</p>
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500 mb-1 block">Language Code</label>
+                  <input type="text" value={autoSendLanguage} onChange={e => setAutoSendLanguage(e.target.value)}
+                    placeholder="e.g. en, en_US, ro"
+                    className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-green-400 focus:ring-2 focus:ring-green-100" />
+                </div>
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <input type="checkbox" checked={autoSendIncludeName} onChange={e => setAutoSendIncludeName(e.target.checked)}
+                    className="h-4 w-4 rounded border-gray-300 text-green-600 accent-green-600" />
+                  <div>
+                    <p className="text-sm text-gray-800">Include contact first name as parameter</p>
+                    <p className="text-xs text-gray-400">Passes {`{{1}}`} = first name to the template</p>
+                  </div>
+                </label>
+              </div>
+
+              {/* Source filter */}
+              <div className="space-y-2">
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Filter by Source</p>
+                <p className="text-xs text-gray-400">Leave all unchecked to send for contacts from any source</p>
+                <div className="grid grid-cols-2 gap-2">
+                  {['typeform', 'manychat', 'manual', 'form', 'import', 'webhook'].map(src => (
+                    <label key={src} className="flex items-center gap-2 cursor-pointer p-2 rounded-lg hover:bg-gray-50">
+                      <input type="checkbox"
+                        checked={autoSendSources.includes(src)}
+                        onChange={e => setAutoSendSources(prev => e.target.checked ? [...prev, src] : prev.filter(s => s !== src))}
+                        className="h-4 w-4 rounded border-gray-300 accent-green-600" />
+                      <span className="text-sm text-gray-700 capitalize">{src}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              {/* Status filter */}
+              <div className="space-y-2">
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Filter by Status</p>
+                <p className="text-xs text-gray-400">Leave all unchecked to send for any contact status</p>
+                <div className="grid grid-cols-2 gap-2">
+                  {['lead', 'prospect', 'customer', 'active'].map(st => (
+                    <label key={st} className="flex items-center gap-2 cursor-pointer p-2 rounded-lg hover:bg-gray-50">
+                      <input type="checkbox"
+                        checked={autoSendStatuses.includes(st)}
+                        onChange={e => setAutoSendStatuses(prev => e.target.checked ? [...prev, st] : prev.filter(s => s !== st))}
+                        className="h-4 w-4 rounded border-gray-300 accent-green-600" />
+                      <span className="text-sm text-gray-700 capitalize">{st}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              {/* Require phone */}
+              <label className="flex items-center gap-3 cursor-pointer p-3 bg-gray-50 rounded-xl">
+                <input type="checkbox" checked={autoSendRequirePhone} onChange={e => setAutoSendRequirePhone(e.target.checked)}
+                  className="h-4 w-4 rounded border-gray-300 accent-green-600" />
+                <div>
+                  <p className="text-sm font-medium text-gray-800">Only send if contact has a phone number</p>
+                  <p className="text-xs text-gray-400">Skip contacts without a phone — recommended</p>
+                </div>
+              </label>
+
+              {autoSendSaveError && (
+                <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-xl px-3 py-2">{autoSendSaveError}</p>
+              )}
+            </div>
+
+            <div className="p-4 border-t border-gray-100 flex gap-2">
+              <button onClick={() => { setShowAutoSend(false); setAutoSendSaveError(''); }}
+                className="flex-1 px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-xl">
+                Cancel
+              </button>
+              <button onClick={saveAutoSendConfig} disabled={isSavingAutoSend || !autoSendTemplate.trim()}
+                className="flex-1 px-4 py-2 text-sm font-medium text-white bg-green-500 hover:bg-green-600 rounded-xl disabled:opacity-50 flex items-center justify-center gap-2">
+                {isSavingAutoSend ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                Save
+              </button>
             </div>
           </div>
         </div>
