@@ -47,21 +47,45 @@ export class WhatsAppController {
     return this.whatsappService.handleWebhook(webhook);
   }
 
+  @Post('send')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Send a WhatsApp text message' })
+  @ApiResponse({ status: 200, description: 'Message sent' })
+  async sendTo(@Req() req: any, @Body() body: { to: string; message: string }) {
+    const result = await this.whatsappService.sendTextMessage(body.to, body.message);
+    const workspaceId = req.user?.workspaceId;
+    const userId = req.user?.id;
+    if (workspaceId && userId) {
+      const msgId = result?.messages?.[0]?.id;
+      await this.whatsappService.saveOutboundActivity(body.to, body.message, 'text', workspaceId, userId, msgId);
+    }
+    return result;
+  }
+
   @Post('send/text')
+  @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Send a text message' })
   @ApiResponse({ status: 200, description: 'Message sent successfully' })
-  async sendTextMessage(
-    @Body() body: { to: string; message: string },
-  ) {
-    return this.whatsappService.sendTextMessage(body.to, body.message);
+  async sendTextMessage(@Req() req: any, @Body() body: { to: string; message: string }) {
+    const result = await this.whatsappService.sendTextMessage(body.to, body.message);
+    const workspaceId = req.user?.workspaceId;
+    const userId = req.user?.id;
+    if (workspaceId && userId) {
+      const msgId = result?.messages?.[0]?.id;
+      await this.whatsappService.saveOutboundActivity(body.to, body.message, 'text', workspaceId, userId, msgId);
+    }
+    return result;
   }
 
   @Post('send/template')
+  @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Send a template message' })
   @ApiResponse({ status: 200, description: 'Template message sent successfully' })
   async sendTemplateMessage(
+    @Req() req: any,
     @Body() body: {
       to: string;
       templateName: string;
@@ -69,35 +93,142 @@ export class WhatsAppController {
       parameters?: any[];
     },
   ) {
-    return this.whatsappService.sendTemplateMessage(
+    const result = await this.whatsappService.sendTemplateMessage(
       body.to,
       body.templateName,
       body.language || 'en',
       body.parameters || [],
     );
+    const workspaceId = req.user?.workspaceId;
+    const userId = req.user?.id;
+    if (workspaceId && userId) {
+      const msgId = result?.messages?.[0]?.id;
+      await this.whatsappService.saveOutboundActivity(
+        body.to, `[Template: ${body.templateName}]`, 'template', workspaceId, userId, msgId,
+      );
+    }
+    return result;
   }
 
   @Post('send/image')
+  @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Send an image message' })
   @ApiResponse({ status: 200, description: 'Image sent successfully' })
-  async sendImageMessage(
-    @Body() body: { to: string; imageUrl: string; caption?: string },
-  ) {
-    return this.whatsappService.sendImageMessage(body.to, body.imageUrl, body.caption);
+  async sendImageMessage(@Req() req: any, @Body() body: { to: string; imageUrl: string; caption?: string }) {
+    const result = await this.whatsappService.sendImageMessage(body.to, body.imageUrl, body.caption);
+    const workspaceId = req.user?.workspaceId;
+    const userId = req.user?.id;
+    if (workspaceId && userId) {
+      const msgId = result?.messages?.[0]?.id;
+      await this.whatsappService.saveOutboundActivity(
+        body.to, `[Image] ${body.caption || ''}`.trim(), 'image', workspaceId, userId, msgId,
+      );
+    }
+    return result;
   }
 
   @Post('send/document')
+  @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Send a document message' })
   @ApiResponse({ status: 200, description: 'Document sent successfully' })
   async sendDocumentMessage(
-    @Body() body: { to: string; documentUrl: string; caption?: string },
+    @Req() req: any,
+    @Body() body: { to: string; documentUrl: string; caption?: string; filename?: string },
   ) {
-    return this.whatsappService.sendDocumentMessage(body.to, body.documentUrl, body.caption);
+    const result = await this.whatsappService.sendDocumentMessage(body.to, body.documentUrl, body.caption, body.filename);
+    const workspaceId = req.user?.workspaceId;
+    const userId = req.user?.id;
+    if (workspaceId && userId) {
+      const msgId = result?.messages?.[0]?.id;
+      await this.whatsappService.saveOutboundActivity(
+        body.to, `[Document: ${body.filename || 'file'}] ${body.caption || ''}`.trim(), 'document', workspaceId, userId, msgId,
+      );
+    }
+    return result;
+  }
+
+  @Post('send/video')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Send a video message (MP4/3GPP, max 16MB)' })
+  @ApiResponse({ status: 200, description: 'Video sent successfully' })
+  async sendVideoMessage(@Req() req: any, @Body() body: { to: string; videoUrl: string; caption?: string }) {
+    const result = await this.whatsappService.sendVideoMessage(body.to, body.videoUrl, body.caption);
+    const workspaceId = req.user?.workspaceId;
+    const userId = req.user?.id;
+    if (workspaceId && userId) {
+      const msgId = result?.messages?.[0]?.id;
+      await this.whatsappService.saveOutboundActivity(
+        body.to, `[Video] ${body.caption || ''}`.trim(), 'video', workspaceId, userId, msgId,
+      );
+    }
+    return result;
+  }
+
+  @Post('send/buttons')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Send interactive button message (max 3 buttons, 20 char titles)' })
+  @ApiResponse({ status: 200, description: 'Interactive message sent' })
+  async sendButtons(
+    @Req() req: any,
+    @Body() body: {
+      to: string;
+      body: string;
+      buttons: Array<{ id: string; title: string }>;
+      header?: string;
+      footer?: string;
+    },
+  ) {
+    const result = await this.whatsappService.sendInteractiveButtons(
+      body.to, body.body, body.buttons, body.header, body.footer,
+    );
+    const workspaceId = req.user?.workspaceId;
+    const userId = req.user?.id;
+    if (workspaceId && userId) {
+      const msgId = result?.messages?.[0]?.id;
+      const btnLabels = body.buttons.map(b => b.title).join(', ');
+      await this.whatsappService.saveOutboundActivity(
+        body.to, `[Buttons: ${btnLabels}] ${body.body}`, 'interactive', workspaceId, userId, msgId,
+      );
+    }
+    return result;
+  }
+
+  @Post('send/list')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Send interactive list message (menu with sections)' })
+  @ApiResponse({ status: 200, description: 'List message sent' })
+  async sendList(
+    @Req() req: any,
+    @Body() body: {
+      to: string;
+      body: string;
+      buttonText: string;
+      sections: Array<{ title: string; rows: Array<{ id: string; title: string; description?: string }> }>;
+      header?: string;
+      footer?: string;
+    },
+  ) {
+    const result = await this.whatsappService.sendInteractiveList(
+      body.to, body.body, body.buttonText, body.sections, body.header, body.footer,
+    );
+    const workspaceId = req.user?.workspaceId;
+    const userId = req.user?.id;
+    if (workspaceId && userId) {
+      const msgId = result?.messages?.[0]?.id;
+      await this.whatsappService.saveOutboundActivity(
+        body.to, `[List menu] ${body.body}`, 'interactive', workspaceId, userId, msgId,
+      );
+    }
+    return result;
   }
 
   @Post('send/bulk')
+  @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Send bulk messages' })
   @ApiResponse({ status: 200, description: 'Bulk messages sent' })
@@ -111,6 +242,7 @@ export class WhatsAppController {
   }
 
   @Get('groups')
+  @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get list of WhatsApp groups' })
   @ApiResponse({ status: 200, description: 'Groups retrieved successfully' })
@@ -119,6 +251,7 @@ export class WhatsAppController {
   }
 
   @Get('groups/:groupId')
+  @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get WhatsApp group information and participants' })
   @ApiResponse({ status: 200, description: 'Group info retrieved successfully' })
@@ -141,12 +274,12 @@ export class WhatsAppController {
     return { data: activities };
   }
 
-  @Post('send')
+  @Get('limits')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Send a WhatsApp message to a phone number' })
-  @ApiResponse({ status: 200, description: 'Message sent' })
-  async sendTo(@Body() body: { to: string; message: string }) {
-    return this.whatsappService.sendTextMessage(body.to, body.message);
+  @ApiOperation({ summary: 'Get WhatsApp Business API limits and pricing info' })
+  @ApiResponse({ status: 200, description: 'API limits' })
+  async getLimits() {
+    return this.whatsappService.getApiLimits();
   }
 }

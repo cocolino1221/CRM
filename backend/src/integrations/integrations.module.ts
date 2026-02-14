@@ -49,6 +49,7 @@ import { WhatsAppIntegrationHandler } from './handlers/whatsapp.handler';
 // Modules
 import { ContactsModule } from '../contacts/contacts.module';
 import { QueueModule } from '../queues/queue.module';
+import { WhatsAppModule } from './whatsapp/whatsapp.module';
 
 @Module({
   imports: [
@@ -73,6 +74,7 @@ import { QueueModule } from '../queues/queue.module';
     EventEmitterModule,
     ContactsModule, // Import ContactsModule to access ContactsService
     QueueModule, // Import QueueModule to enable async import jobs
+    WhatsAppModule, // Import WhatsAppModule for auto-send on new leads
   ],
   controllers: [IntegrationsController],
   providers: [

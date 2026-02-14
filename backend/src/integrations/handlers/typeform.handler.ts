@@ -7,6 +7,7 @@ import { ContactsService } from '../../contacts/contacts.service';
 import { Pipeline } from '../../database/entities/pipeline.entity';
 import { PipelineStage } from '../../database/entities/pipeline-stage.entity';
 import { ContactSource, ContactStatus } from '../../database/entities/contact.entity';
+import { WhatsAppService } from '../whatsapp/whatsapp.service';
 
 interface TypeformWebhookPayload {
   event_id: string;
@@ -51,6 +52,8 @@ export class TypeformIntegrationHandler {
     private configService: ConfigService,
     @Inject(forwardRef(() => ContactsService))
     private contactsService: ContactsService,
+    @Inject(forwardRef(() => WhatsAppService))
+    private whatsAppService: WhatsAppService,
     @InjectRepository(Pipeline)
     private pipelineRepository: Repository<Pipeline>,
     @InjectRepository(PipelineStage)
@@ -220,6 +223,41 @@ export class TypeformIntegrationHandler {
 
       this.logger.log(`Contact created from Typeform: ${contact.id} (${contact.email})`);
 
+      // Auto-send WhatsApp welcome message if contact has phone and feature is enabled
+      let whatsAppSent = false;
+      const whatsAppConfig = integration.config?.typeformWhatsApp;
+      if (contactData.phone && whatsAppConfig?.enabled) {
+        try {
+          const phone = contactData.phone.replace(/[^0-9]/g, '');
+          if (phone.length >= 10) {
+            if (whatsAppConfig.templateName) {
+              // Send template message (works outside 24h window)
+              const params = [];
+              if (whatsAppConfig.includeNameParam) {
+                params.push({ type: 'body', parameters: [{ type: 'text', text: contactData.firstName || 'there' }] });
+              }
+              await this.whatsAppService.sendTemplateMessage(
+                phone,
+                whatsAppConfig.templateName,
+                whatsAppConfig.templateLanguage || 'en',
+                params,
+              );
+              this.logger.log(`WhatsApp template sent to new Typeform lead: ${phone}`);
+            } else if (whatsAppConfig.welcomeMessage) {
+              // Send text message (only works within 24h window - likely won't work for new leads)
+              const msg = whatsAppConfig.welcomeMessage
+                .replace('{{firstName}}', contactData.firstName || 'there')
+                .replace('{{formTitle}}', formResponse.definition.title || 'our form');
+              await this.whatsAppService.sendTextMessage(phone, msg);
+              this.logger.log(`WhatsApp welcome sent to new Typeform lead: ${phone}`);
+            }
+            whatsAppSent = true;
+          }
+        } catch (err) {
+          this.logger.warn(`Failed to send WhatsApp to Typeform lead: ${err.message}`);
+        }
+      }
+
       return {
         event: 'form_response',
         status: 'success',
@@ -234,6 +272,7 @@ export class TypeformIntegrationHandler {
           pipelineId,
           pipelineStageId,
           metadata,
+          whatsAppSent,
         },
       };
     } catch (error) {

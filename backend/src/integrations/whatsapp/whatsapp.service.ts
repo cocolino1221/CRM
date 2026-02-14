@@ -11,7 +11,7 @@ import { User } from '../../database/entities/user.entity';
 
 export interface WhatsAppMessage {
   to: string;
-  type: 'text' | 'template' | 'image' | 'document';
+  type: 'text' | 'template' | 'image' | 'document' | 'video' | 'audio' | 'interactive';
   content: string;
   template?: {
     name: string;
@@ -21,6 +21,18 @@ export interface WhatsAppMessage {
   media?: {
     url: string;
     caption?: string;
+    filename?: string;
+  };
+  interactive?: {
+    type: 'button' | 'list';
+    header?: { type: 'text'; text: string };
+    body: { text: string };
+    footer?: { text: string };
+    action: {
+      buttons?: Array<{ type: 'reply'; reply: { id: string; title: string } }>;
+      button?: string;
+      sections?: Array<{ title: string; rows: Array<{ id: string; title: string; description?: string }> }>;
+    };
   };
 }
 
@@ -49,6 +61,7 @@ export interface WhatsAppWebhook {
           document?: { id: string; filename: string; mime_type: string; sha256: string; caption?: string };
           audio?: { id: string; mime_type: string };
           video?: { id: string; mime_type: string; sha256: string; caption?: string };
+          interactive?: { type: string; button_reply?: { id: string; title: string }; list_reply?: { id: string; title: string } };
         }>;
         statuses?: Array<{
           id: string;
@@ -108,6 +121,11 @@ export class WhatsAppService {
     let contact = await this.contactRepository.findOne({ where: { workspaceId, phone } });
 
     if (!contact) {
+      // Also try without + prefix
+      contact = await this.contactRepository.findOne({ where: { workspaceId, phone: waId } });
+    }
+
+    if (!contact) {
       const nameParts = (profileName || '').trim().split(' ');
       const newContact = this.contactRepository.create();
       Object.assign(newContact, {
@@ -143,6 +161,9 @@ export class WhatsAppService {
       messageBody = '[Voice message]';
     } else if (message.type === 'video') {
       messageBody = `[Video] ${message.video?.caption || ''}`.trim();
+    } else if (message.type === 'interactive') {
+      const reply = message.interactive?.button_reply?.title || message.interactive?.list_reply?.title || '';
+      messageBody = `[Button reply: ${reply}]`;
     } else {
       messageBody = `[${message.type}]`;
     }
@@ -165,6 +186,47 @@ export class WhatsAppService {
     });
 
     await this.activityRepository.save(activity);
+  }
+
+  /**
+   * Save outbound message as activity so it shows in inbox
+   */
+  async saveOutboundActivity(
+    to: string,
+    messageBody: string,
+    messageType: string,
+    workspaceId: string,
+    userId: string,
+    whatsappMessageId?: string,
+  ): Promise<void> {
+    try {
+      const phone = to.startsWith('+') ? to : `+${to}`;
+      const contact = await this.contactRepository.findOne({ where: { workspaceId, phone } });
+      // Also try without +
+      const contact2 = contact || await this.contactRepository.findOne({ where: { workspaceId, phone: to } });
+
+      const activity = this.activityRepository.create({
+        workspaceId,
+        contactId: contact2?.id || undefined,
+        userId,
+        type: ActivityType.WHATSAPP_MESSAGE,
+        title: `WhatsApp to ${contact2 ? `${contact2.firstName} ${contact2.lastName}` : phone}`,
+        description: messageBody,
+        direction: ActivityDirection.OUTBOUND,
+        outcome: ActivityOutcome.SUCCESSFUL,
+        occurredAt: new Date(),
+        metadata: {
+          whatsappMessageId: whatsappMessageId || undefined,
+          waId: to,
+          messageType,
+          messageStatus: 'sent',
+        },
+      });
+
+      await this.activityRepository.save(activity);
+    } catch (error) {
+      this.logger.warn(`Failed to save outbound activity: ${error.message}`);
+    }
   }
 
   async sendMessageWithCredentials(credentials: Record<string, any>, message: WhatsAppMessage): Promise<any> {
@@ -202,8 +264,60 @@ export class WhatsAppService {
     return this.sendMessage({ to, type: 'image', content: '', media: { url: imageUrl, caption } });
   }
 
-  async sendDocumentMessage(to: string, documentUrl: string, caption?: string): Promise<any> {
-    return this.sendMessage({ to, type: 'document', content: '', media: { url: documentUrl, caption } });
+  async sendDocumentMessage(to: string, documentUrl: string, caption?: string, filename?: string): Promise<any> {
+    return this.sendMessage({ to, type: 'document', content: '', media: { url: documentUrl, caption, filename } });
+  }
+
+  async sendVideoMessage(to: string, videoUrl: string, caption?: string): Promise<any> {
+    return this.sendMessage({ to, type: 'video', content: '', media: { url: videoUrl, caption } });
+  }
+
+  async sendInteractiveButtons(
+    to: string,
+    body: string,
+    buttons: Array<{ id: string; title: string }>,
+    header?: string,
+    footer?: string,
+  ): Promise<any> {
+    return this.sendMessage({
+      to,
+      type: 'interactive',
+      content: '',
+      interactive: {
+        type: 'button',
+        ...(header ? { header: { type: 'text', text: header } } : {}),
+        body: { text: body },
+        ...(footer ? { footer: { text: footer } } : {}),
+        action: {
+          buttons: buttons.slice(0, 3).map(b => ({ type: 'reply' as const, reply: { id: b.id, title: b.title.slice(0, 20) } })),
+        },
+      },
+    });
+  }
+
+  async sendInteractiveList(
+    to: string,
+    body: string,
+    buttonText: string,
+    sections: Array<{ title: string; rows: Array<{ id: string; title: string; description?: string }> }>,
+    header?: string,
+    footer?: string,
+  ): Promise<any> {
+    return this.sendMessage({
+      to,
+      type: 'interactive',
+      content: '',
+      interactive: {
+        type: 'list',
+        ...(header ? { header: { type: 'text', text: header } } : {}),
+        body: { text: body },
+        ...(footer ? { footer: { text: footer } } : {}),
+        action: {
+          button: buttonText,
+          sections,
+        },
+      },
+    });
   }
 
   async handleWebhook(webhook: WhatsAppWebhook): Promise<any> {
@@ -213,6 +327,14 @@ export class WhatsAppService {
       for (const entry of webhook.entry) {
         for (const change of entry.changes) {
           const { value } = change;
+
+          // Handle message status updates (sent → delivered → read)
+          if (value.statuses?.length) {
+            for (const status of value.statuses) {
+              await this.updateMessageStatus(status);
+            }
+          }
+
           if (!value.messages?.length) continue;
 
           const phoneNumberId = value.metadata?.phone_number_id;
@@ -251,15 +373,32 @@ export class WhatsAppService {
     }
   }
 
+  /**
+   * Update message status (sent → delivered → read) from webhook status callbacks
+   */
+  private async updateMessageStatus(status: { id: string; status: string; timestamp: string; recipient_id: string }): Promise<void> {
+    try {
+      const activity = await this.activityRepository.findOne({
+        where: { metadata: { whatsappMessageId: status.id } as any },
+      });
+      if (activity && activity.metadata) {
+        activity.metadata.messageStatus = status.status;
+        await this.activityRepository.save(activity);
+      }
+    } catch (error) {
+      // Silently ignore - status updates are best-effort
+    }
+  }
+
   private async autoRespond(message: any, profileName: string | undefined, credentials: Record<string, any>): Promise<void> {
     if (message.type !== 'text' || !message.text) return;
     const text = message.text.body.toLowerCase();
     const name = profileName ? ` ${profileName.split(' ')[0]}` : '';
     let reply: string | null = null;
 
-    if (text.includes('hello') || text.includes('hi') || text.includes('hey')) {
+    if (text.includes('hello') || text.includes('hi') || text.includes('hey') || text.includes('salut') || text.includes('buna')) {
       reply = `Hello${name}! Thank you for contacting us. How can we help you today?`;
-    } else if (text.includes('pricing') || text.includes('price') || text.includes('cost')) {
+    } else if (text.includes('pricing') || text.includes('price') || text.includes('cost') || text.includes('pret')) {
       reply = `Thank you for your interest${name}! A team member will get back to you with pricing details shortly.`;
     }
 
@@ -315,13 +454,19 @@ export class WhatsAppService {
   private buildMessagePayload(message: WhatsAppMessage): any {
     const base = { messaging_product: 'whatsapp', recipient_type: 'individual', to: message.to };
     switch (message.type) {
-      case 'text': return { ...base, type: 'text', text: { preview_url: false, body: message.content } };
+      case 'text': return { ...base, type: 'text', text: { preview_url: true, body: message.content } };
       case 'template': return {
         ...base, type: 'template',
         template: { name: message.template!.name, language: { code: message.template!.language }, components: message.template!.parameters || [] },
       };
       case 'image': return { ...base, type: 'image', image: { link: message.media!.url, caption: message.media!.caption } };
-      case 'document': return { ...base, type: 'document', document: { link: message.media!.url, caption: message.media!.caption } };
+      case 'document': return {
+        ...base, type: 'document',
+        document: { link: message.media!.url, caption: message.media!.caption, filename: message.media!.filename },
+      };
+      case 'video': return { ...base, type: 'video', video: { link: message.media!.url, caption: message.media!.caption } };
+      case 'audio': return { ...base, type: 'audio', audio: { link: message.media!.url } };
+      case 'interactive': return { ...base, type: 'interactive', interactive: message.interactive };
       default: throw new BadRequestException(`Unsupported message type: ${message.type}`);
     }
   }
@@ -378,5 +523,31 @@ export class WhatsAppService {
       order: { occurredAt: 'DESC' },
       take: limit,
     });
+  }
+
+  /**
+   * Get WhatsApp Business API limits info
+   */
+  getApiLimits(): any {
+    return {
+      messaging: {
+        businessInitiated: '1,000 unique contacts/24h (Tier 1). Scales to 10K, 100K, unlimited with quality.',
+        userInitiated: 'Unlimited within 24h window',
+        templateMessages: 'Must be pre-approved by Meta. Marketing, Utility, or Authentication category.',
+        sessionWindow: '24 hours from last customer message for free-form replies',
+      },
+      media: {
+        image: { maxSize: '5 MB', formats: 'JPEG, PNG' },
+        video: { maxSize: '16 MB', formats: 'MP4, 3GPP' },
+        audio: { maxSize: '16 MB', formats: 'AAC, MP4, MPEG, AMR, OGG' },
+        document: { maxSize: '100 MB', formats: 'PDF, DOC, DOCX, PPT, PPTX, XLS, XLSX, TXT' },
+      },
+      interactive: {
+        buttons: { max: 3, titleMaxLength: 20 },
+        list: { maxSections: 10, maxRowsPerSection: 10, rowTitleMaxLength: 24 },
+      },
+      rateLimit: '80 messages/second per phone number',
+      pricing: 'Business-initiated: ~$0.05-0.15/msg. User-initiated: ~$0.01-0.05/msg. Varies by country.',
+    };
   }
 }

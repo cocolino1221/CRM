@@ -406,7 +406,7 @@ export default function WhatsAppPage() {
 
   // Attachment
   const [showAttachmentModal, setShowAttachmentModal] = useState(false);
-  const [attachmentType, setAttachmentType] = useState<'image' | 'document'>('image');
+  const [attachmentType, setAttachmentType] = useState<'image' | 'document' | 'video'>('image');
   const [attachmentUrl, setAttachmentUrl] = useState('');
   const [attachmentCaption, setAttachmentCaption] = useState('');
 
@@ -585,10 +585,18 @@ export default function WhatsAppPage() {
     setIsSending(true);
     setSendError('');
     try {
-      const endpoint = attachmentType === 'image' ? '/integrations/whatsapp/send/image' : '/integrations/whatsapp/send/document';
-      const body = attachmentType === 'image'
-        ? { to: selectedConv.waId, imageUrl: attachmentUrl.trim(), caption: attachmentCaption.trim() || undefined }
-        : { to: selectedConv.waId, documentUrl: attachmentUrl.trim(), caption: attachmentCaption.trim() || undefined };
+      let endpoint: string;
+      let body: any;
+      if (attachmentType === 'image') {
+        endpoint = '/integrations/whatsapp/send/image';
+        body = { to: selectedConv.waId, imageUrl: attachmentUrl.trim(), caption: attachmentCaption.trim() || undefined };
+      } else if (attachmentType === 'video') {
+        endpoint = '/integrations/whatsapp/send/video';
+        body = { to: selectedConv.waId, videoUrl: attachmentUrl.trim(), caption: attachmentCaption.trim() || undefined };
+      } else {
+        endpoint = '/integrations/whatsapp/send/document';
+        body = { to: selectedConv.waId, documentUrl: attachmentUrl.trim(), caption: attachmentCaption.trim() || undefined };
+      }
       await api.post(endpoint, body);
       setShowAttachmentModal(false);
       setAttachmentUrl('');
@@ -1059,6 +1067,12 @@ export default function WhatsAppPage() {
                   }`}>
                   <Image className="h-4 w-4" /> Image
                 </button>
+                <button onClick={() => setAttachmentType('video')}
+                  className={`flex-1 py-2 text-sm font-medium rounded-xl flex items-center justify-center gap-2 transition-all ${
+                    attachmentType === 'video' ? 'bg-green-100 text-green-700 border border-green-300' : 'bg-gray-50 text-gray-600 border border-gray-200'
+                  }`}>
+                  <Video className="h-4 w-4" /> Video
+                </button>
                 <button onClick={() => setAttachmentType('document')}
                   className={`flex-1 py-2 text-sm font-medium rounded-xl flex items-center justify-center gap-2 transition-all ${
                     attachmentType === 'document' ? 'bg-green-100 text-green-700 border border-green-300' : 'bg-gray-50 text-gray-600 border border-gray-200'
@@ -1066,7 +1080,11 @@ export default function WhatsAppPage() {
                   <FileText className="h-4 w-4" /> Document
                 </button>
               </div>
-              <input type="url" placeholder={attachmentType === 'image' ? 'Image URL (https://...)' : 'Document URL (https://...)'}
+              <input type="url" placeholder={
+                attachmentType === 'image' ? 'Image URL (JPEG/PNG, max 5MB)' :
+                attachmentType === 'video' ? 'Video URL (MP4/3GPP, max 16MB)' :
+                'Document URL (PDF/DOC/XLS, max 100MB)'
+              }
                 value={attachmentUrl} onChange={e => setAttachmentUrl(e.target.value)}
                 className="w-full px-4 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-green-400" />
               <input type="text" placeholder="Caption (optional)" value={attachmentCaption} onChange={e => setAttachmentCaption(e.target.value)}
