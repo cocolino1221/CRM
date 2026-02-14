@@ -2,8 +2,10 @@ import {
   Controller,
   Post,
   Get,
+  Delete,
   Body,
   Query,
+  Param,
   Req,
   HttpCode,
   HttpStatus,
@@ -317,5 +319,50 @@ export class WhatsAppController {
     if (!workspaceId) throw new BadRequestException('Workspace ID required');
     await this.whatsappService.saveAutoResponses(workspaceId, body.enabled, body.rules);
     return { success: true };
+  }
+
+  @Get('templates')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'List approved message templates from Meta' })
+  @ApiResponse({ status: 200, description: 'Template list' })
+  async listTemplates(@Req() req: any) {
+    const workspaceId = req.user?.workspaceId;
+    if (!workspaceId) throw new BadRequestException('Workspace ID required');
+    const templates = await this.whatsappService.listTemplates(workspaceId);
+    return { data: templates };
+  }
+
+  @Post('templates')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Create and submit a message template to Meta for approval' })
+  @ApiResponse({ status: 200, description: 'Template created' })
+  async createTemplate(
+    @Req() req: any,
+    @Body() body: {
+      name: string;
+      language: string;
+      category: 'MARKETING' | 'UTILITY' | 'AUTHENTICATION';
+      headerText?: string;
+      bodyText: string;
+      footerText?: string;
+      buttons?: Array<{ type: 'QUICK_REPLY' | 'URL' | 'PHONE_NUMBER'; text: string; url?: string; phoneNumber?: string }>;
+    },
+  ) {
+    const workspaceId = req.user?.workspaceId;
+    if (!workspaceId) throw new BadRequestException('Workspace ID required');
+    return this.whatsappService.createTemplate(workspaceId, body);
+  }
+
+  @Delete('templates/:name')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Delete a message template from Meta' })
+  @ApiResponse({ status: 200, description: 'Template deleted' })
+  async deleteTemplate(@Req() req: any, @Param('name') templateName: string) {
+    const workspaceId = req.user?.workspaceId;
+    if (!workspaceId) throw new BadRequestException('Workspace ID required');
+    return this.whatsappService.deleteTemplate(workspaceId, templateName);
   }
 }

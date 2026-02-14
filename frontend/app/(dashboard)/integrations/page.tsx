@@ -86,6 +86,7 @@ export default function IntegrationsPage() {
         { name: 'phoneNumberId', label: 'Phone Number ID', type: 'text', required: true, placeholder: '1234567890123456', helpText: 'Found in Meta for Developers → Your App → WhatsApp → API Setup' },
         { name: 'accessToken', label: 'Access Token', type: 'password', required: true, placeholder: 'EAAxxxxxxxx...', helpText: 'Permanent access token from Meta App Settings → System Users' },
         { name: 'verifyToken', label: 'Verify Token', type: 'text', required: true, placeholder: 'my-secret-verify-token', helpText: 'A string you choose — enter the same value in Meta webhook settings' },
+        { name: 'wabaId', label: 'WABA ID (optional)', type: 'text', required: false, placeholder: '123456789012345', helpText: 'WhatsApp Business Account ID — needed for template management. Found in Meta Business Suite → Settings → Business Account.' },
       ],
     },
     {

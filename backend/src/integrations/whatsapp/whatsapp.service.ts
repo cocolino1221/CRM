@@ -575,6 +575,101 @@ export class WhatsAppService {
     return response.data.url;
   }
 
+  /**
+   * List message templates from Meta (requires WABA ID)
+   */
+  async listTemplates(workspaceId: string): Promise<any[]> {
+    const integration = await this.integrationRepository.findOne({
+      where: { type: IntegrationType.WHATSAPP, workspaceId },
+    });
+    const { accessToken } = this.getCredentials(integration?.credentials);
+    const wabaId = integration?.credentials?.wabaId || integration?.config?.wabaId
+      || this.configService.get<string>('WHATSAPP_WABA_ID');
+    if (!wabaId) return [];
+    try {
+      const response = await firstValueFrom(
+        this.httpService.get(`${this.apiUrl}/${wabaId}/message_templates?fields=name,status,language,category,components&limit=100`, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        }),
+      );
+      return response.data.data || [];
+    } catch (error) {
+      this.logger.warn(`Failed to fetch templates: ${error.message}`);
+      return [];
+    }
+  }
+
+  /**
+   * Create/submit a message template to Meta for approval
+   */
+  async createTemplate(workspaceId: string, template: {
+    name: string;
+    language: string;
+    category: 'MARKETING' | 'UTILITY' | 'AUTHENTICATION';
+    headerText?: string;
+    bodyText: string;
+    footerText?: string;
+    buttons?: Array<{ type: 'QUICK_REPLY' | 'URL' | 'PHONE_NUMBER'; text: string; url?: string; phoneNumber?: string }>;
+  }): Promise<any> {
+    const integration = await this.integrationRepository.findOne({
+      where: { type: IntegrationType.WHATSAPP, workspaceId },
+    });
+    const { accessToken } = this.getCredentials(integration?.credentials);
+    const wabaId = integration?.credentials?.wabaId || integration?.config?.wabaId
+      || this.configService.get<string>('WHATSAPP_WABA_ID');
+    if (!wabaId) throw new BadRequestException('WABA ID not configured. Add it in your WhatsApp integration settings.');
+    if (!accessToken) throw new BadRequestException('WhatsApp access token not configured');
+
+    const components: any[] = [];
+    if (template.headerText) {
+      components.push({ type: 'HEADER', format: 'TEXT', text: template.headerText });
+    }
+    components.push({ type: 'BODY', text: template.bodyText });
+    if (template.footerText) {
+      components.push({ type: 'FOOTER', text: template.footerText });
+    }
+    if (template.buttons?.length) {
+      components.push({
+        type: 'BUTTONS',
+        buttons: template.buttons.map(b => {
+          if (b.type === 'QUICK_REPLY') return { type: 'QUICK_REPLY', text: b.text };
+          if (b.type === 'URL') return { type: 'URL', text: b.text, url: b.url };
+          if (b.type === 'PHONE_NUMBER') return { type: 'PHONE_NUMBER', text: b.text, phone_number: b.phoneNumber };
+          return { type: b.type, text: b.text };
+        }),
+      });
+    }
+
+    const response = await firstValueFrom(
+      this.httpService.post(
+        `${this.apiUrl}/${wabaId}/message_templates`,
+        { name: template.name, language: template.language, category: template.category, components },
+        { headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' } },
+      ),
+    );
+    return response.data;
+  }
+
+  /**
+   * Delete a template from Meta
+   */
+  async deleteTemplate(workspaceId: string, templateName: string): Promise<any> {
+    const integration = await this.integrationRepository.findOne({
+      where: { type: IntegrationType.WHATSAPP, workspaceId },
+    });
+    const { accessToken } = this.getCredentials(integration?.credentials);
+    const wabaId = integration?.credentials?.wabaId || integration?.config?.wabaId
+      || this.configService.get<string>('WHATSAPP_WABA_ID');
+    if (!wabaId) throw new BadRequestException('WABA ID not configured');
+    const response = await firstValueFrom(
+      this.httpService.delete(
+        `${this.apiUrl}/${wabaId}/message_templates?name=${encodeURIComponent(templateName)}`,
+        { headers: { Authorization: `Bearer ${accessToken}` } },
+      ),
+    );
+    return response.data;
+  }
+
   async getGroups(): Promise<any[]> {
     try {
       const { accessToken, phoneNumberId } = this.getCredentials();

@@ -425,6 +425,18 @@ export default function WhatsAppPage() {
   const [autoResponseRules, setAutoResponseRules] = useState<Array<{ id: string; name: string; keywords: string; response: string; enabled: boolean }>>([]);
   const [isSavingAutoResp, setIsSavingAutoResp] = useState(false);
 
+  // Template manager
+  const [showTemplateManager, setShowTemplateManager] = useState(false);
+  const [metaTemplates, setMetaTemplates] = useState<any[]>([]);
+  const [isLoadingTemplates, setIsLoadingTemplates] = useState(false);
+  const [showCreateTemplate, setShowCreateTemplate] = useState(false);
+  const [newTemplate, setNewTemplate] = useState({
+    name: '', language: 'en_US', category: 'UTILITY' as 'MARKETING' | 'UTILITY' | 'AUTHENTICATION',
+    headerText: '', bodyText: '', footerText: '',
+  });
+  const [isCreatingTemplate, setIsCreatingTemplate] = useState(false);
+  const [templateError, setTemplateError] = useState('');
+
   // ─── Effects ──────────────────────────────────────────────
 
   useEffect(() => {
@@ -575,6 +587,45 @@ export default function WhatsAppPage() {
   };
 
   // ─── Actions ──────────────────────────────────────────────
+
+  const fetchMetaTemplates = async () => {
+    setIsLoadingTemplates(true);
+    try {
+      const res = await api.get('/integrations/whatsapp/templates');
+      setMetaTemplates(res.data.data || []);
+    } catch { /* silent */ }
+    finally { setIsLoadingTemplates(false); }
+  };
+
+  const handleCreateTemplate = async () => {
+    if (!newTemplate.name.trim() || !newTemplate.bodyText.trim()) return;
+    setIsCreatingTemplate(true);
+    setTemplateError('');
+    try {
+      await api.post('/integrations/whatsapp/templates', {
+        name: newTemplate.name.trim().toLowerCase().replace(/\s+/g, '_'),
+        language: newTemplate.language,
+        category: newTemplate.category,
+        headerText: newTemplate.headerText.trim() || undefined,
+        bodyText: newTemplate.bodyText.trim(),
+        footerText: newTemplate.footerText.trim() || undefined,
+      });
+      setShowCreateTemplate(false);
+      setNewTemplate({ name: '', language: 'en_US', category: 'UTILITY', headerText: '', bodyText: '', footerText: '' });
+      await fetchMetaTemplates();
+    } catch (err: any) {
+      setTemplateError(err.response?.data?.message || 'Failed to create template. Check WABA ID is configured in integration settings.');
+    } finally {
+      setIsCreatingTemplate(false);
+    }
+  };
+
+  const handleDeleteTemplate = async (templateName: string) => {
+    try {
+      await api.delete(`/integrations/whatsapp/templates/${encodeURIComponent(templateName)}`);
+      setMetaTemplates(prev => prev.filter(t => t.name !== templateName));
+    } catch { /* silent */ }
+  };
 
   const markAsRead = (waId: string) => {
     const timestamps = JSON.parse(localStorage.getItem('wa_read_timestamps') || '{}');
@@ -752,6 +803,9 @@ export default function WhatsAppPage() {
               </button>
               <button onClick={() => { setShowAutoResponses(true); fetchAutoResponses(); }} className="p-1.5 rounded-lg hover:bg-gray-100 transition-all" title="Auto-responses">
                 <Zap className="h-4 w-4 text-gray-500" />
+              </button>
+              <button onClick={() => { setShowTemplateManager(true); fetchMetaTemplates(); }} className="p-1.5 rounded-lg hover:bg-gray-100 transition-all" title="Message templates">
+                <LayoutTemplate className="h-4 w-4 text-gray-500" />
               </button>
               <button onClick={() => setShowWebhookSetup(true)} className="p-1.5 rounded-lg hover:bg-gray-100 transition-all" title="Webhook setup">
                 <Settings className="h-4 w-4 text-gray-500" />
@@ -1181,6 +1235,153 @@ export default function WhatsAppPage() {
                 {isSending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
                 Send
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Template Manager Modal */}
+      {showTemplateManager && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl mx-4 max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between p-4 border-b border-gray-100">
+              <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+                <LayoutTemplate className="h-5 w-5 text-green-600" /> Message Templates
+              </h3>
+              <div className="flex items-center gap-2">
+                <button onClick={() => { setShowCreateTemplate(true); setTemplateError(''); }}
+                  className="px-3 py-1.5 text-sm font-medium text-white bg-green-500 hover:bg-green-600 rounded-xl flex items-center gap-1.5">
+                  <Plus className="h-3.5 w-3.5" /> New Template
+                </button>
+                <button onClick={() => { setShowTemplateManager(false); setShowCreateTemplate(false); }}><X className="h-5 w-5 text-gray-400" /></button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-y-auto p-5">
+              {!showCreateTemplate ? (
+                <>
+                  <div className="text-xs text-gray-500 bg-blue-50 border border-blue-100 rounded-xl p-3 mb-4">
+                    Templates must be approved by Meta before use. After creating, status will show as <strong>PENDING</strong> until reviewed (usually 24-48h). Requires WABA ID in integration settings.
+                  </div>
+                  {isLoadingTemplates ? (
+                    <div className="flex justify-center py-8"><Loader2 className="h-6 w-6 animate-spin text-gray-400" /></div>
+                  ) : metaTemplates.length === 0 ? (
+                    <div className="text-center py-12">
+                      <LayoutTemplate className="h-10 w-10 text-gray-300 mx-auto mb-3" />
+                      <p className="text-sm font-medium text-gray-500">No templates yet</p>
+                      <p className="text-xs text-gray-400 mt-1">Create your first template to start messaging outside the 24h window</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {metaTemplates.map((t: any) => (
+                        <div key={t.id || t.name} className="p-4 border border-gray-200 rounded-xl">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2 mb-1">
+                                <span className="font-medium text-sm text-gray-900">{t.name}</span>
+                                <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                                  t.status === 'APPROVED' ? 'bg-green-100 text-green-700' :
+                                  t.status === 'PENDING' ? 'bg-yellow-100 text-yellow-700' :
+                                  t.status === 'REJECTED' ? 'bg-red-100 text-red-700' :
+                                  'bg-gray-100 text-gray-600'
+                                }`}>{t.status}</span>
+                                <span className={`text-xs px-2 py-0.5 rounded-full ${
+                                  t.category === 'MARKETING' ? 'bg-purple-100 text-purple-600' :
+                                  t.category === 'UTILITY' ? 'bg-blue-100 text-blue-600' :
+                                  'bg-gray-100 text-gray-600'
+                                }`}>{t.category}</span>
+                              </div>
+                              <p className="text-xs text-gray-500">{t.language} · {t.components?.find((c: any) => c.type === 'BODY')?.text || 'No body'}</p>
+                            </div>
+                            <div className="flex items-center gap-1 flex-shrink-0">
+                              {t.status === 'APPROVED' && (
+                                <button onClick={() => {
+                                  setSelectedTemplate({
+                                    id: t.id || t.name, name: t.name, displayName: t.name,
+                                    language: t.language, body: t.components?.find((c: any) => c.type === 'BODY')?.text || '',
+                                    parameterCount: 0, category: t.category?.toLowerCase() || 'utility',
+                                  });
+                                  setTemplateParams([]);
+                                  setShowTemplatePanel(true);
+                                  setShowTemplateManager(false);
+                                }}
+                                  className="text-xs px-2 py-1 bg-green-50 text-green-700 hover:bg-green-100 rounded-lg font-medium">Use</button>
+                              )}
+                              <button onClick={() => handleDeleteTemplate(t.name)}
+                                className="p-1.5 hover:bg-red-50 rounded-lg"><Trash2 className="h-3.5 w-3.5 text-red-400" /></button>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="space-y-4">
+                  <h4 className="font-medium text-gray-900">Create New Template</h4>
+                  {templateError && <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700">{templateError}</div>}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs font-medium text-gray-700 mb-1 block">Template Name *</label>
+                      <input type="text" value={newTemplate.name} placeholder="e.g. order_confirmation" onChange={e => setNewTemplate(p => ({ ...p, name: e.target.value }))}
+                        className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-green-400" />
+                      <p className="text-xs text-gray-400 mt-1">lowercase, underscores only</p>
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium text-gray-700 mb-1 block">Language *</label>
+                      <select value={newTemplate.language} onChange={e => setNewTemplate(p => ({ ...p, language: e.target.value }))}
+                        className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-green-400">
+                        <option value="en_US">English (US)</option>
+                        <option value="en_GB">English (UK)</option>
+                        <option value="ro">Romanian</option>
+                        <option value="de">German</option>
+                        <option value="fr">French</option>
+                        <option value="es">Spanish</option>
+                        <option value="pt_BR">Portuguese (BR)</option>
+                        <option value="it">Italian</option>
+                        <option value="nl">Dutch</option>
+                        <option value="pl">Polish</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-gray-700 mb-1 block">Category *</label>
+                    <div className="flex gap-2">
+                      {(['MARKETING', 'UTILITY', 'AUTHENTICATION'] as const).map(cat => (
+                        <button key={cat} onClick={() => setNewTemplate(p => ({ ...p, category: cat }))}
+                          className={`flex-1 py-2 text-xs font-medium rounded-xl border transition-all ${newTemplate.category === cat ? 'bg-green-50 border-green-400 text-green-700' : 'bg-gray-50 border-gray-200 text-gray-600 hover:border-gray-300'}`}>
+                          {cat}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-gray-700 mb-1 block">Header (optional)</label>
+                    <input type="text" value={newTemplate.headerText} placeholder="e.g. Order Confirmation" onChange={e => setNewTemplate(p => ({ ...p, headerText: e.target.value }))}
+                      className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-green-400" />
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-gray-700 mb-1 block">Body *</label>
+                    <textarea value={newTemplate.bodyText} rows={4} placeholder="Hello {{1}}, your order {{2}} has been confirmed. Thank you!"
+                      onChange={e => setNewTemplate(p => ({ ...p, bodyText: e.target.value }))}
+                      className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-green-400 resize-none" />
+                    <p className="text-xs text-gray-400 mt-1">Use {'{'}{'{'}'1{'}'}{'}'}, {'{'}{'{'}'2{'}'}{'}'} for dynamic variables</p>
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-gray-700 mb-1 block">Footer (optional)</label>
+                    <input type="text" value={newTemplate.footerText} placeholder="e.g. Reply STOP to unsubscribe" onChange={e => setNewTemplate(p => ({ ...p, footerText: e.target.value }))}
+                      className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-green-400" />
+                  </div>
+                  <div className="flex gap-2 pt-2">
+                    <button onClick={() => setShowCreateTemplate(false)}
+                      className="flex-1 px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-xl">Back</button>
+                    <button onClick={handleCreateTemplate} disabled={isCreatingTemplate || !newTemplate.name.trim() || !newTemplate.bodyText.trim()}
+                      className="flex-1 px-4 py-2 text-sm font-medium text-white bg-green-500 hover:bg-green-600 rounded-xl disabled:opacity-50 flex items-center justify-center gap-2">
+                      {isCreatingTemplate ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                      Submit to Meta
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
