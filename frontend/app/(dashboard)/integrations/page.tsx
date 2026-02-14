@@ -46,6 +46,7 @@ const getEmojiForIntegration = (type: string): string => {
     'docusign': '✍️',
     'calendly': '📅',
     'whatsapp': '💬',
+    'manychat': '🤖',
     'webhook': '🔗',
     'api': '⚡',
   };
@@ -271,6 +272,38 @@ export default function IntegrationsPage() {
         { name: 'formId', label: 'Form ID (optional)', type: 'text', required: false, placeholder: 'aBcDeF12', helpText: 'Found in the form URL: https://form.typeform.com/to/aBcDeF12. Leave empty to receive webhooks from all forms.' },
       ],
     },
+
+    // ManyChat Integration
+    {
+      id: 'manychat',
+      name: 'ManyChat',
+      description: 'Import leads from ManyChat chatbot flows and trigger ManyChat automation sequences directly from your CRM contacts.',
+      category: 'marketing',
+      icon: '🤖',
+      logoUrl: 'https://manychat.com/favicon.ico',
+      color: 'from-indigo-500 to-purple-600',
+      connected: false,
+      features: ['Lead import from flows', 'Auto-create CRM contacts', 'Trigger flows from CRM', 'WhatsApp auto-send', 'Custom field mapping'],
+      configFields: [
+        {
+          name: 'apiKey',
+          label: 'ManyChat API Key',
+          type: 'password',
+          required: true,
+          placeholder: 'your_manychat_api_key',
+          helpText: 'Go to ManyChat → Settings → API → Copy your API key.',
+        },
+        {
+          name: 'securityKey',
+          label: 'Webhook Security Key (optional)',
+          type: 'text',
+          required: false,
+          placeholder: 'my_secret_key',
+          helpText: 'Optional: set a security key and add it to your ManyChat External Request as the "key" field to validate incoming webhooks.',
+        },
+      ],
+    },
+
     {
       id: 'google-forms',
       name: 'Google Forms',
@@ -885,7 +918,7 @@ export default function IntegrationsPage() {
       const integrationId = response.data?.id;
       const apiUrl = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api/v1').replace('/api/v1', '');
       const webhookUrl = `${apiUrl}/api/v1/integrations/webhooks/${integrationId}`;
-      const needsWebhook = ['typeform', 'whatsapp', 'calendly'].includes(selectedIntegration.id);
+      const needsWebhook = ['typeform', 'whatsapp', 'calendly', 'manychat'].includes(selectedIntegration.id);
 
       if (integrationId && needsWebhook) {
         alert(`Integration connected!\n\nYour unique webhook URL:\n${webhookUrl}\n\nPaste this URL in ${selectedIntegration.name}'s webhook settings.`);
@@ -1334,7 +1367,7 @@ export default function IntegrationsPage() {
             </div>
 
             {/* Webhook URL for webhook-based integrations */}
-            {['typeform', 'whatsapp', 'calendly'].includes(managingIntegration.id) && connectedIntegrations[managingIntegration.id]?.id && (
+            {['typeform', 'whatsapp', 'calendly', 'manychat'].includes(managingIntegration.id) && connectedIntegrations[managingIntegration.id]?.id && (
               <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 mb-6">
                 <p className="text-xs font-semibold text-blue-800 mb-2">Your Webhook URL (unique to your workspace)</p>
                 <div className="flex items-center gap-2">
@@ -1352,6 +1385,34 @@ export default function IntegrationsPage() {
                 </div>
                 <p className="text-xs text-blue-700 mt-2">
                   Paste this URL in <strong>{managingIntegration.name}</strong> webhook settings. Each workspace gets a unique URL.
+                </p>
+              </div>
+            )}
+
+            {/* ManyChat Setup Guide */}
+            {managingIntegration.id === 'manychat' && connectedIntegrations[managingIntegration.id]?.id && (
+              <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-4 mb-6 space-y-3">
+                <h4 className="text-sm font-semibold text-indigo-900 flex items-center gap-2">
+                  🤖 How to Connect ManyChat Flows
+                </h4>
+                <ol className="text-xs text-indigo-800 space-y-1.5 list-decimal list-inside">
+                  <li>Copy the webhook URL above.</li>
+                  <li>In ManyChat, open any flow and add an <strong>External Request</strong> action.</li>
+                  <li>Set the method to <strong>POST</strong> and paste the webhook URL.</li>
+                  <li>
+                    Add these fields to the request body (merge tags):{' '}
+                    <code className="bg-white px-1 rounded text-indigo-700">first_name</code>,{' '}
+                    <code className="bg-white px-1 rounded text-indigo-700">last_name</code>,{' '}
+                    <code className="bg-white px-1 rounded text-indigo-700">email</code>,{' '}
+                    <code className="bg-white px-1 rounded text-indigo-700">phone</code>,{' '}
+                    <code className="bg-white px-1 rounded text-indigo-700">id</code>{' '}
+                    (subscriber ID).
+                  </li>
+                  <li>Optionally add a <code className="bg-white px-1 rounded text-indigo-700">key</code> field with the security key set above.</li>
+                  <li>Test the flow — a new contact should appear in your CRM instantly.</li>
+                </ol>
+                <p className="text-xs text-indigo-600">
+                  💡 <strong>Tip:</strong> In ManyChat External Request, use merge tags like <code className="bg-white px-1 rounded">{'{{first name}}'}</code> for subscriber data.
                 </p>
               </div>
             )}

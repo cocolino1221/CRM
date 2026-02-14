@@ -26,6 +26,7 @@ export enum IntegrationType {
   CALENDLY = 'calendly',
   KAJABI = 'kajabi',
   WHATSAPP = 'whatsapp',
+  MANYCHAT = 'manychat',
   CALENDAR = 'calendar',
   EMAIL = 'email',
   SMS = 'sms',

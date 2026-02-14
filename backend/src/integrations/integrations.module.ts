@@ -45,6 +45,7 @@ import { KajabiIntegrationHandler } from './handlers/kajabi.handler';
 import { WebhookIntegrationHandler } from './handlers/webhook.handler';
 import { ApiIntegrationHandler } from './handlers/api.handler';
 import { WhatsAppIntegrationHandler } from './handlers/whatsapp.handler';
+import { ManyChatIntegrationHandler } from './handlers/manychat.handler';
 
 // Modules
 import { ContactsModule } from '../contacts/contacts.module';
@@ -100,6 +101,7 @@ import { WhatsAppModule } from './whatsapp/whatsapp.module';
     WebhookIntegrationHandler,
     ApiIntegrationHandler,
     WhatsAppIntegrationHandler,
+    ManyChatIntegrationHandler,
 
     // Registry initialization
     // Registry initialization
@@ -130,6 +132,7 @@ export class IntegrationsModule implements OnModuleInit {
     private webhook: WebhookIntegrationHandler,
     private api: ApiIntegrationHandler,
     private whatsapp: WhatsAppIntegrationHandler,
+    private manychat: ManyChatIntegrationHandler,
   ) { }
 
   onModuleInit() {
@@ -148,5 +151,6 @@ export class IntegrationsModule implements OnModuleInit {
     this.registry.register(this.registry.getIntegrationMetadata(IntegrationType.WEBHOOK), this.webhook);
     this.registry.register(this.registry.getIntegrationMetadata(IntegrationType.API), this.api);
     this.registry.register(this.registry.getIntegrationMetadata(IntegrationType.WHATSAPP), this.whatsapp);
+    this.registry.register(this.registry.getIntegrationMetadata(IntegrationType.MANYCHAT), this.manychat);
   }
 }

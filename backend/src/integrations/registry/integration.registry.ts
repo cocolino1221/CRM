@@ -733,6 +733,70 @@ export class IntegrationRegistry {
       },
     });
 
+    // ManyChat Integration
+    this.register({
+      type: IntegrationType.MANYCHAT,
+      name: 'ManyChat',
+      description: 'Import leads from ManyChat flows and trigger automation sequences for CRM contacts',
+      category: 'Marketing Automation',
+      icon: 'https://manychat.com/favicon.ico',
+      color: '#5856D6',
+      provider: 'ManyChat Inc.',
+      homepage: 'https://manychat.com',
+      documentation: 'https://api.manychat.com',
+      supportEmail: 'support@manychat.com',
+
+      defaultAuthType: IntegrationAuthType.API_KEY,
+      supportedAuthTypes: [IntegrationAuthType.API_KEY, IntegrationAuthType.WEBHOOK],
+
+      defaultConfig: {
+        autoSendWhatsApp: false,
+        tags: ['manychat'],
+        features: {
+          webhooks: true,
+          contacts: true,
+          flows: true,
+          messaging: true,
+        },
+        syncFrequency: 'realtime',
+        syncDirection: 'inbound',
+        autoSync: true,
+      },
+
+      configSchema: {
+        type: 'object',
+        properties: {
+          apiKey: { type: 'string' },
+          securityKey: { type: 'string' },
+          pipelineId: { type: 'string' },
+          pipelineStageId: { type: 'string' },
+          tags: { type: 'array', items: { type: 'string' } },
+        },
+      },
+
+      defaultPermissions: [
+        'read:contacts',
+        'write:contacts',
+        'receive:webhooks',
+        'manage:flows',
+      ],
+      supportedFeatures: [
+        'webhooks',
+        'contacts',
+        'flows',
+        'messaging',
+        'lead-import',
+      ],
+
+      apiVersion: 'v1',
+      baseUrl: 'https://api.manychat.com',
+
+      rateLimit: {
+        requests: 10,
+        period: 'second',
+      },
+    });
+
     this.logger.log(`Initialized ${this.integrations.size} integrations`);
   }
 
