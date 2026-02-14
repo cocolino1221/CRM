@@ -282,4 +282,14 @@ export class WhatsAppController {
   async getLimits() {
     return this.whatsappService.getApiLimits();
   }
+
+  @Get('setup')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get WhatsApp webhook setup configuration' })
+  @ApiResponse({ status: 200, description: 'Webhook setup info' })
+  async getSetupInfo(@Req() req: any) {
+    const appUrl = process.env.APP_URL || 'https://slackcrm-backend.fly.dev';
+    return this.whatsappService.getWebhookSetupInfo(appUrl);
+  }
 }

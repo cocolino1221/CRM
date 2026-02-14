@@ -414,10 +414,16 @@ export default function WhatsAppPage() {
   const [messageSearch, setMessageSearch] = useState('');
   const [showMessageSearch, setShowMessageSearch] = useState(false);
 
+  // Webhook setup
+  const [webhookInfo, setWebhookInfo] = useState<{ webhookUrl: string; verifyTokenConfigured: boolean; verifyTokenHint: string | null } | null>(null);
+  const [showWebhookSetup, setShowWebhookSetup] = useState(false);
+  const [copiedWebhook, setCopiedWebhook] = useState(false);
+
   // ─── Effects ──────────────────────────────────────────────
 
   useEffect(() => {
     fetchInbox();
+    fetchWebhookInfo();
     const interval = setInterval(fetchInbox, 30000);
     return () => clearInterval(interval);
   }, []);
@@ -494,6 +500,13 @@ export default function WhatsAppPage() {
       setIsLoading(false);
     }
   }, [selectedConv]);
+
+  const fetchWebhookInfo = async () => {
+    try {
+      const res = await api.get('/integrations/whatsapp/setup');
+      setWebhookInfo(res.data);
+    } catch { /* silent */ }
+  };
 
   const fetchContactDetail = async (contactId: string) => {
     setIsLoadingContact(true);
@@ -655,6 +668,11 @@ export default function WhatsAppPage() {
   const sessionStatus = selectedConv ? getSessionStatus(selectedConv) : 'closed';
   const sessionOpen = sessionStatus === 'open' || sessionStatus === 'closing';
 
+  // True if this conversation has NEVER received an inbound message
+  const hasEverReceivedInbound = selectedConv?.messages.some(m => m.direction === 'inbound') ?? false;
+  // True if webhooks may not be configured (no inbound messages across all conversations)
+  const noInboundEver = conversations.length > 0 && conversations.every(c => !c.lastInboundTime);
+
   const filteredMessages = selectedConv?.messages.filter(m =>
     !messageSearch || m.description?.toLowerCase().includes(messageSearch.toLowerCase())
   ) || [];
@@ -691,9 +709,9 @@ export default function WhatsAppPage() {
               <button onClick={fetchInbox} className="p-1.5 rounded-lg hover:bg-gray-100 transition-all" title="Refresh">
                 <RefreshCw className="h-4 w-4 text-gray-500" />
               </button>
-              <Link href="/integrations" className="p-1.5 rounded-lg hover:bg-gray-100 transition-all" title="Settings">
+              <button onClick={() => setShowWebhookSetup(true)} className="p-1.5 rounded-lg hover:bg-gray-100 transition-all" title="Webhook setup">
                 <Settings className="h-4 w-4 text-gray-500" />
-              </Link>
+              </button>
             </div>
           </div>
           <div className="relative">
@@ -797,10 +815,22 @@ export default function WhatsAppPage() {
           )}
 
           {/* 24h session banner */}
-          {!sessionOpen && (
+          {!sessionOpen && !hasEverReceivedInbound && (
+            <div className="flex items-center gap-2 px-4 py-2 bg-blue-50 border-b border-blue-200">
+              <AlertTriangle className="h-4 w-4 text-blue-500 flex-shrink-0" />
+              <p className="text-xs text-blue-700 flex-1">
+                Waiting for customer reply. If they don&apos;t respond, configure your{' '}
+                <button onClick={() => setShowWebhookSetup(true)} className="underline font-medium hover:text-blue-900">
+                  WhatsApp webhook
+                </button>{' '}
+                so messages appear here.
+              </p>
+            </div>
+          )}
+          {!sessionOpen && hasEverReceivedInbound && (
             <div className="flex items-center gap-2 px-4 py-2 bg-amber-50 border-b border-amber-200">
               <AlertTriangle className="h-4 w-4 text-amber-500 flex-shrink-0" />
-              <p className="text-xs text-amber-700">Customer session expired. Send a template message to re-engage.</p>
+              <p className="text-xs text-amber-700">Customer session expired (24h). Send a template message to re-engage.</p>
             </div>
           )}
           {sessionStatus === 'closing' && (
@@ -940,12 +970,21 @@ export default function WhatsAppPage() {
         </div>
       ) : (
         <div className="flex-1 flex items-center justify-center bg-gray-50">
-          <div className="text-center">
+          <div className="text-center max-w-sm px-4">
             <div className="flex h-20 w-20 items-center justify-center rounded-full bg-green-100 mx-auto mb-4">
               <MessageCircle className="h-10 w-10 text-green-600" />
             </div>
             <h3 className="text-lg font-semibold text-gray-900 mb-2">WhatsApp Inbox</h3>
-            <p className="text-sm text-gray-500 max-w-xs mb-4">Select a conversation or start a new one to begin messaging.</p>
+            <p className="text-sm text-gray-500 mb-4">Select a conversation or start a new one to begin messaging.</p>
+            {noInboundEver && (
+              <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-xl text-xs text-blue-700 text-left">
+                <p className="font-medium mb-1">⚠️ Replies from customers not appearing?</p>
+                <p>Configure your WhatsApp webhook so incoming messages show here automatically.</p>
+                <button onClick={() => setShowWebhookSetup(true)} className="mt-2 text-blue-600 underline font-medium hover:text-blue-800">
+                  View setup instructions →
+                </button>
+              </div>
+            )}
             <button onClick={() => setShowNewConversation(true)}
               className="px-4 py-2 text-sm font-medium text-white bg-green-500 hover:bg-green-600 rounded-xl transition-all flex items-center gap-2 mx-auto">
               <Plus className="h-4 w-4" /> New Conversation
@@ -1098,6 +1137,74 @@ export default function WhatsAppPage() {
                 {isSending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
                 Send
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Webhook Setup Modal */}
+      {showWebhookSetup && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-4">
+            <div className="flex items-center justify-between p-4 border-b border-gray-100">
+              <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+                <Settings className="h-5 w-5 text-green-600" /> WhatsApp Webhook Setup
+              </h3>
+              <button onClick={() => setShowWebhookSetup(false)}><X className="h-5 w-5 text-gray-400" /></button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800">
+                <strong>Why configure this?</strong> WhatsApp uses webhooks to notify your CRM when customers reply. Without this, only messages you send will appear here.
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5 block">Step 1: Set Callback URL in Meta Developer Console</label>
+                <div className="flex items-center gap-2 p-3 bg-gray-50 rounded-xl border border-gray-200">
+                  <code className="flex-1 text-sm text-gray-800 break-all font-mono">
+                    {webhookInfo?.webhookUrl || 'https://slackcrm-backend.fly.dev/api/v1/integrations/whatsapp/webhook'}
+                  </code>
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(webhookInfo?.webhookUrl || 'https://slackcrm-backend.fly.dev/api/v1/integrations/whatsapp/webhook');
+                      setCopiedWebhook(true);
+                      setTimeout(() => setCopiedWebhook(false), 2000);
+                    }}
+                    className="flex-shrink-0 p-1.5 hover:bg-gray-200 rounded-lg transition-all">
+                    {copiedWebhook ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4 text-gray-500" />}
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5 block">Step 2: Verify Token</label>
+                <div className="p-3 bg-gray-50 rounded-xl border border-gray-200 text-sm text-gray-700">
+                  {webhookInfo?.verifyTokenConfigured ? (
+                    <span>✅ Verify token is configured on the server (starts with <code className="font-mono bg-white px-1 rounded">{webhookInfo.verifyTokenHint}</code>). Use the same value you set as <code className="font-mono bg-white px-1 rounded">WHATSAPP_VERIFY_TOKEN</code> in your server config when setting up the webhook in Meta.</span>
+                  ) : (
+                    <span>⚠️ No verify token found. Set <code className="font-mono bg-white px-1 rounded">WHATSAPP_VERIFY_TOKEN</code> as a Fly.io secret and use the same value in Meta.</span>
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5 block">Step 3: Subscribe to Webhook Fields</label>
+                <div className="p-3 bg-gray-50 rounded-xl border border-gray-200 text-sm text-gray-700 space-y-1">
+                  <p>In Meta Developer Console → WhatsApp → Configuration → Webhook fields, subscribe to:</p>
+                  <div className="flex flex-wrap gap-1.5 mt-2">
+                    {['messages', 'message_deliveries', 'message_reads'].map(f => (
+                      <span key={f} className="px-2 py-0.5 bg-green-100 text-green-700 rounded-full text-xs font-medium">{f}</span>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="text-xs text-gray-500 bg-blue-50 border border-blue-100 rounded-xl p-3">
+                <strong>Quick guide:</strong> Meta for Developers → Your App → WhatsApp → Configuration → Edit (Webhook section) → Set the URL above → Set the verify token → Verify and Save → Subscribe to &apos;messages&apos; field.
+              </div>
+            </div>
+            <div className="p-4 border-t border-gray-100 flex justify-end">
+              <button onClick={() => setShowWebhookSetup(false)}
+                className="px-4 py-2 text-sm font-medium text-white bg-green-500 hover:bg-green-600 rounded-xl">Done</button>
             </div>
           </div>
         </div>

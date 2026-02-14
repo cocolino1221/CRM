@@ -432,8 +432,9 @@ export class WhatsAppService {
     const envToken = this.configService.get<string>('WHATSAPP_VERIFY_TOKEN');
     if (envToken && token === envToken) return challenge;
 
+    // Accept any WhatsApp integration (not just ACTIVE) for token verification
     const integrations = await this.integrationRepository.find({
-      where: { type: IntegrationType.WHATSAPP, status: IntegrationStatus.ACTIVE },
+      where: { type: IntegrationType.WHATSAPP },
     });
     for (const integration of integrations) {
       const storedToken = integration.credentials?.verifyToken || integration.config?.verifyToken;
@@ -442,6 +443,28 @@ export class WhatsAppService {
 
     this.logger.warn('Webhook verification failed: token mismatch');
     return null;
+  }
+
+  /**
+   * Returns webhook configuration for display in the UI
+   */
+  getWebhookSetupInfo(appUrl: string): any {
+    const envToken = this.configService.get<string>('WHATSAPP_VERIFY_TOKEN');
+    const webhookUrl = `${appUrl}/api/v1/integrations/whatsapp/webhook`;
+    return {
+      webhookUrl,
+      verifyTokenConfigured: !!envToken,
+      // Show first 4 chars of the token so user can confirm it matches
+      verifyTokenHint: envToken ? `${envToken.substring(0, 4)}...` : null,
+      instructions: [
+        '1. Go to Meta for Developers → Your App → WhatsApp → Configuration',
+        `2. Set Callback URL to: ${webhookUrl}`,
+        '3. Set Verify Token to the same value as WHATSAPP_VERIFY_TOKEN in your server config',
+        '4. Click "Verify and Save"',
+        '5. Under Webhook fields, subscribe to: messages, message_deliveries, message_reads',
+        '6. Save the configuration',
+      ],
+    };
   }
 
   verifyWebhook(mode: string, token: string, challenge: string): string | null {
