@@ -119,6 +119,7 @@ export class OAuthService {
       [IntegrationType.API]: {},
       [IntegrationType.DATABASE]: {},
       [IntegrationType.CUSTOM]: {},
+      [IntegrationType.MANYCHAT]: {},
     };
 
     const baseConfig = configs[type];
