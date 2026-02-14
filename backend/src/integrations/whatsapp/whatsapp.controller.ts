@@ -292,7 +292,20 @@ export class WhatsAppController {
   @ApiResponse({ status: 200, description: 'Webhook setup info' })
   async getSetupInfo(@Req() req: any) {
     const appUrl = process.env.APP_URL || 'https://slackcrm-backend.fly.dev';
-    return this.whatsappService.getWebhookSetupInfo(appUrl);
+    const workspaceId = req.user?.workspaceId;
+    return this.whatsappService.getWebhookSetupInfo(appUrl, workspaceId);
+  }
+
+  @Post('setup/verify-token')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Set a custom verify token for this workspace (save before entering in Meta)' })
+  @ApiResponse({ status: 200, description: 'Token saved' })
+  async setVerifyToken(@Req() req: any, @Body() body: { token: string }) {
+    const workspaceId = req.user?.workspaceId;
+    if (!workspaceId) throw new BadRequestException('Workspace ID required');
+    await this.whatsappService.setVerifyToken(workspaceId, body.token);
+    return { success: true };
   }
 
   @Get('auto-responses')

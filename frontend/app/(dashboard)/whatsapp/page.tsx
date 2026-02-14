@@ -415,9 +415,13 @@ export default function WhatsAppPage() {
   const [showMessageSearch, setShowMessageSearch] = useState(false);
 
   // Webhook setup
-  const [webhookInfo, setWebhookInfo] = useState<{ webhookUrl: string; verifyTokenConfigured: boolean; verifyTokenHint: string | null } | null>(null);
+  const [webhookInfo, setWebhookInfo] = useState<{ webhookUrl: string; verifyTokenConfigured: boolean; verifyTokenHint: string | null; verifyTokenExact: string | null } | null>(null);
   const [showWebhookSetup, setShowWebhookSetup] = useState(false);
   const [copiedWebhook, setCopiedWebhook] = useState(false);
+  const [copiedToken, setCopiedToken] = useState(false);
+  const [customToken, setCustomToken] = useState('');
+  const [isSavingToken, setIsSavingToken] = useState(false);
+  const [tokenSaveError, setTokenSaveError] = useState('');
 
   // Auto-responses
   const [showAutoResponses, setShowAutoResponses] = useState(false);
@@ -525,6 +529,29 @@ export default function WhatsAppPage() {
       const res = await api.get('/integrations/whatsapp/setup');
       setWebhookInfo(res.data);
     } catch { /* silent */ }
+  };
+
+  const saveVerifyToken = async () => {
+    if (!customToken.trim()) return;
+    setIsSavingToken(true);
+    setTokenSaveError('');
+    try {
+      await api.post('/integrations/whatsapp/setup/verify-token', { token: customToken.trim() });
+      const res = await api.get('/integrations/whatsapp/setup');
+      setWebhookInfo(res.data);
+      setCustomToken('');
+    } catch (err: any) {
+      setTokenSaveError(err?.response?.data?.message || 'Failed to save token');
+    } finally {
+      setIsSavingToken(false);
+    }
+  };
+
+  const generateRandomToken = () => {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
+    let token = '';
+    for (let i = 0; i < 32; i++) token += chars[Math.floor(Math.random() * chars.length)];
+    setCustomToken(token);
   };
 
   const fetchAutoResponses = async () => {
@@ -1464,22 +1491,27 @@ export default function WhatsAppPage() {
       {/* Webhook Setup Modal */}
       {showWebhookSetup && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-4">
-            <div className="flex items-center justify-between p-4 border-b border-gray-100">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between p-4 border-b border-gray-100 sticky top-0 bg-white z-10">
               <h3 className="font-semibold text-gray-900 flex items-center gap-2">
                 <Settings className="h-5 w-5 text-green-600" /> WhatsApp Webhook Setup
               </h3>
-              <button onClick={() => setShowWebhookSetup(false)}><X className="h-5 w-5 text-gray-400" /></button>
+              <button onClick={() => { setShowWebhookSetup(false); setCustomToken(''); setTokenSaveError(''); }}>
+                <X className="h-5 w-5 text-gray-400" />
+              </button>
             </div>
             <div className="p-5 space-y-4">
               <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800">
-                <strong>Why configure this?</strong> WhatsApp uses webhooks to notify your CRM when customers reply. Without this, only messages you send will appear here.
+                <strong>Why configure this?</strong> WhatsApp uses webhooks to send customer replies to your CRM. Without this, inbound messages will never appear here.
               </div>
 
+              {/* Step 1: Callback URL */}
               <div>
-                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5 block">Step 1: Set Callback URL in Meta Developer Console</label>
+                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5 block">
+                  Step 1 — Set Callback URL
+                </label>
                 <div className="flex items-center gap-2 p-3 bg-gray-50 rounded-xl border border-gray-200">
-                  <code className="flex-1 text-sm text-gray-800 break-all font-mono">
+                  <code className="flex-1 text-xs text-gray-800 break-all font-mono">
                     {webhookInfo?.webhookUrl || 'https://slackcrm-backend.fly.dev/api/v1/integrations/whatsapp/webhook'}
                   </code>
                   <button
@@ -1492,24 +1524,80 @@ export default function WhatsAppPage() {
                     {copiedWebhook ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4 text-gray-500" />}
                   </button>
                 </div>
+                <p className="text-xs text-gray-500 mt-1">In Meta: App → WhatsApp → Configuration → Edit (Webhook) → Callback URL</p>
               </div>
 
+              {/* Step 2: Verify Token */}
               <div>
-                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5 block">Step 2: Verify Token</label>
-                <div className="p-3 bg-gray-50 rounded-xl border border-gray-200 text-sm text-gray-700">
-                  {webhookInfo?.verifyTokenConfigured ? (
-                    <span>✅ Verify token is configured on the server (starts with <code className="font-mono bg-white px-1 rounded">{webhookInfo.verifyTokenHint}</code>). Use the same value you set as <code className="font-mono bg-white px-1 rounded">WHATSAPP_VERIFY_TOKEN</code> in your server config when setting up the webhook in Meta.</span>
-                  ) : (
-                    <span>⚠️ No verify token found. Set <code className="font-mono bg-white px-1 rounded">WHATSAPP_VERIFY_TOKEN</code> as a Fly.io secret and use the same value in Meta.</span>
-                  )}
+                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5 block">
+                  Step 2 — Set Verify Token
+                </label>
+
+                {/* Current token display */}
+                {webhookInfo?.verifyTokenExact ? (
+                  <div className="mb-3 p-3 bg-green-50 border border-green-200 rounded-xl">
+                    <p className="text-xs text-green-700 font-medium mb-1">✅ Your verify token (copy this into Meta exactly):</p>
+                    <div className="flex items-center gap-2">
+                      <code className="flex-1 text-sm font-mono text-green-900 bg-white px-2 py-1 rounded-lg border border-green-200 break-all">
+                        {webhookInfo.verifyTokenExact}
+                      </code>
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(webhookInfo.verifyTokenExact!);
+                          setCopiedToken(true);
+                          setTimeout(() => setCopiedToken(false), 2000);
+                        }}
+                        className="flex-shrink-0 p-1.5 hover:bg-green-100 rounded-lg transition-all">
+                        {copiedToken ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4 text-green-600" />}
+                      </button>
+                    </div>
+                  </div>
+                ) : webhookInfo?.verifyTokenHint ? (
+                  <div className="mb-3 p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-700">
+                    ⚠️ A token is set via server environment (starts with <code className="font-mono bg-white px-1 rounded">{webhookInfo.verifyTokenHint}</code>), but you need to know the full value to enter in Meta. Use the form below to set a new token you control.
+                  </div>
+                ) : (
+                  <div className="mb-3 p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700">
+                    ❌ No verify token configured yet. Use the form below to create one.
+                  </div>
+                )}
+
+                {/* Set new token */}
+                <div className="p-3 bg-gray-50 rounded-xl border border-gray-200 space-y-2">
+                  <p className="text-xs text-gray-600 font-medium">Set a new verify token:</p>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={customToken}
+                      onChange={e => setCustomToken(e.target.value)}
+                      placeholder="Enter any secret string (min 8 chars)"
+                      className="flex-1 text-sm px-3 py-2 rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-green-400 font-mono"
+                    />
+                    <button
+                      onClick={generateRandomToken}
+                      className="px-3 py-2 text-xs font-medium text-green-700 bg-green-100 hover:bg-green-200 rounded-lg whitespace-nowrap">
+                      Generate
+                    </button>
+                  </div>
+                  {tokenSaveError && <p className="text-xs text-red-600">{tokenSaveError}</p>}
+                  <button
+                    onClick={saveVerifyToken}
+                    disabled={isSavingToken || !customToken.trim()}
+                    className="w-full py-2 text-sm font-medium text-white bg-green-500 hover:bg-green-600 disabled:opacity-50 rounded-lg">
+                    {isSavingToken ? 'Saving…' : 'Save Token'}
+                  </button>
+                  <p className="text-xs text-gray-400">After saving, the token will appear above — copy it exactly into Meta&apos;s &quot;Verify Token&quot; field.</p>
                 </div>
               </div>
 
+              {/* Step 3: Subscribe */}
               <div>
-                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5 block">Step 3: Subscribe to Webhook Fields</label>
-                <div className="p-3 bg-gray-50 rounded-xl border border-gray-200 text-sm text-gray-700 space-y-1">
-                  <p>In Meta Developer Console → WhatsApp → Configuration → Webhook fields, subscribe to:</p>
-                  <div className="flex flex-wrap gap-1.5 mt-2">
+                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5 block">
+                  Step 3 — Subscribe to Webhook Fields
+                </label>
+                <div className="p-3 bg-gray-50 rounded-xl border border-gray-200 text-sm text-gray-700">
+                  <p className="text-xs mb-2">After verifying, subscribe to these fields:</p>
+                  <div className="flex flex-wrap gap-1.5">
                     {['messages', 'message_deliveries', 'message_reads'].map(f => (
                       <span key={f} className="px-2 py-0.5 bg-green-100 text-green-700 rounded-full text-xs font-medium">{f}</span>
                     ))}
@@ -1517,12 +1605,25 @@ export default function WhatsAppPage() {
                 </div>
               </div>
 
-              <div className="text-xs text-gray-500 bg-blue-50 border border-blue-100 rounded-xl p-3">
-                <strong>Quick guide:</strong> Meta for Developers → Your App → WhatsApp → Configuration → Edit (Webhook section) → Set the URL above → Set the verify token → Verify and Save → Subscribe to &apos;messages&apos; field.
+              {/* Step 4: Live Mode */}
+              <div>
+                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5 block">
+                  Step 4 — Switch Meta App to Live Mode
+                </label>
+                <div className="p-3 bg-blue-50 border border-blue-200 rounded-xl text-xs text-blue-800 space-y-1">
+                  <p className="font-medium">⚠️ Critical: Real customer messages only work in Live mode.</p>
+                  <p>In Meta for Developers → Your App → <strong>App Settings → Basic</strong>, find the &quot;App Mode&quot; toggle and switch from <strong>Development</strong> to <strong>Live</strong>.</p>
+                  <p className="text-blue-600">Without this, only test webhooks from the Meta dashboard are delivered — real customer replies are blocked.</p>
+                </div>
+              </div>
+
+              {/* Quick summary */}
+              <div className="text-xs text-gray-500 bg-gray-50 border border-gray-100 rounded-xl p-3">
+                <strong>Path in Meta:</strong> App → WhatsApp → Configuration → Edit (Webhook) → paste URL → paste token → Verify and Save → subscribe to &apos;messages&apos; → App Settings → Basic → switch to Live.
               </div>
             </div>
             <div className="p-4 border-t border-gray-100 flex justify-end">
-              <button onClick={() => setShowWebhookSetup(false)}
+              <button onClick={() => { setShowWebhookSetup(false); setCustomToken(''); setTokenSaveError(''); }}
                 className="px-4 py-2 text-sm font-medium text-white bg-green-500 hover:bg-green-600 rounded-xl">Done</button>
             </div>
           </div>

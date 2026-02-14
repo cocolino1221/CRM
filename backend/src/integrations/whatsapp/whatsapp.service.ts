@@ -492,23 +492,58 @@ export class WhatsAppService {
   /**
    * Returns webhook configuration for display in the UI
    */
-  getWebhookSetupInfo(appUrl: string): any {
+  async getWebhookSetupInfo(appUrl: string, workspaceId?: string): Promise<any> {
     const envToken = this.configService.get<string>('WHATSAPP_VERIFY_TOKEN');
     const webhookUrl = `${appUrl}/api/v1/integrations/whatsapp/webhook`;
+
+    let integrationToken: string | null = null;
+    let integrationTokenFull: string | null = null;
+    if (workspaceId) {
+      const integration = await this.integrationRepository.findOne({
+        where: { type: IntegrationType.WHATSAPP, workspaceId },
+      });
+      integrationToken = integration?.config?.verifyToken || integration?.credentials?.verifyToken || null;
+      if (integrationToken) {
+        integrationTokenFull = integrationToken; // Return full token so user can copy it into Meta
+      }
+    }
+
+    const activeToken = integrationToken || envToken;
     return {
       webhookUrl,
-      verifyTokenConfigured: !!envToken,
-      // Show first 4 chars of the token so user can confirm it matches
-      verifyTokenHint: envToken ? `${envToken.substring(0, 4)}...` : null,
+      verifyTokenConfigured: !!activeToken,
+      // Show hint of env token (we don't expose it fully), but DO expose the integration-stored one
+      verifyTokenHint: activeToken ? (integrationTokenFull || `${envToken!.substring(0, 4)}...`) : null,
+      // If there's an integration-stored token, the user can see the full value to copy
+      verifyTokenExact: integrationTokenFull,
       instructions: [
         '1. Go to Meta for Developers → Your App → WhatsApp → Configuration',
         `2. Set Callback URL to: ${webhookUrl}`,
-        '3. Set Verify Token to the same value as WHATSAPP_VERIFY_TOKEN in your server config',
+        '3. Set Verify Token to the value shown below',
         '4. Click "Verify and Save"',
-        '5. Under Webhook fields, subscribe to: messages, message_deliveries, message_reads',
-        '6. Save the configuration',
+        '5. Under Webhook fields, subscribe to: messages',
+        '6. Switch your Meta app to Live mode (App Settings → Basic → Status)',
       ],
     };
+  }
+
+  /**
+   * Save a custom verify token for this workspace's WhatsApp integration
+   */
+  async setVerifyToken(workspaceId: string, token: string): Promise<void> {
+    if (!token || token.length < 8) {
+      throw new BadRequestException('Verify token must be at least 8 characters');
+    }
+    const integration = await this.integrationRepository.findOne({
+      where: { type: IntegrationType.WHATSAPP, workspaceId },
+    });
+    if (!integration) throw new BadRequestException('No WhatsApp integration found for this workspace');
+    integration.config = {
+      ...(integration.config || {}),
+      verifyToken: token,
+    };
+    await this.integrationRepository.save(integration);
+    this.logger.log(`Verify token updated for workspace ${workspaceId}`);
   }
 
   verifyWebhook(mode: string, token: string, challenge: string): string | null {
