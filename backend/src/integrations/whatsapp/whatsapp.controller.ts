@@ -292,4 +292,30 @@ export class WhatsAppController {
     const appUrl = process.env.APP_URL || 'https://slackcrm-backend.fly.dev';
     return this.whatsappService.getWebhookSetupInfo(appUrl);
   }
+
+  @Get('auto-responses')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get auto-response rules for this workspace' })
+  @ApiResponse({ status: 200, description: 'Auto-response config' })
+  async getAutoResponses(@Req() req: any) {
+    const workspaceId = req.user?.workspaceId;
+    if (!workspaceId) throw new BadRequestException('Workspace ID required');
+    return this.whatsappService.getAutoResponses(workspaceId);
+  }
+
+  @Post('auto-responses')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Save auto-response rules for this workspace' })
+  @ApiResponse({ status: 200, description: 'Saved' })
+  async saveAutoResponses(
+    @Req() req: any,
+    @Body() body: { enabled: boolean; rules: Array<{ keywords: string[]; response: string; enabled: boolean; name?: string }> },
+  ) {
+    const workspaceId = req.user?.workspaceId;
+    if (!workspaceId) throw new BadRequestException('Workspace ID required');
+    await this.whatsappService.saveAutoResponses(workspaceId, body.enabled, body.rules);
+    return { success: true };
+  }
 }

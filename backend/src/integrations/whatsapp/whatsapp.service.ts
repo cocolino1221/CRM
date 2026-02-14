@@ -376,7 +376,7 @@ export class WhatsAppService {
 
             await this.saveMessageActivity(contact, message, integration.workspaceId, ownerId);
             await this.markMessageAsRead(message.id, integration.credentials);
-            await this.autoRespond(message, profileName, integration.credentials || {});
+            await this.autoRespond(message, profileName, integration);
           }
         }
       }
@@ -405,25 +405,69 @@ export class WhatsAppService {
     }
   }
 
-  private async autoRespond(message: any, profileName: string | undefined, credentials: Record<string, any>): Promise<void> {
+  private async autoRespond(message: any, profileName: string | undefined, integration: Integration): Promise<void> {
     if (message.type !== 'text' || !message.text) return;
     const text = message.text.body.toLowerCase();
     const name = profileName ? ` ${profileName.split(' ')[0]}` : '';
-    let reply: string | null = null;
+    const credentials = integration.credentials || {};
 
-    if (text.includes('hello') || text.includes('hi') || text.includes('hey') || text.includes('salut') || text.includes('buna')) {
-      reply = `Hello${name}! Thank you for contacting us. How can we help you today?`;
-    } else if (text.includes('pricing') || text.includes('price') || text.includes('cost') || text.includes('pret')) {
-      reply = `Thank you for your interest${name}! A team member will get back to you with pricing details shortly.`;
-    }
+    // Use custom auto-responses if configured, otherwise use defaults
+    const customRules: Array<{ keywords: string[]; response: string; enabled: boolean }> =
+      integration.config?.autoResponses || [];
 
-    if (reply) {
-      try {
-        await this.sendTextMessage(message.from, reply, credentials);
-      } catch (err) {
-        this.logger.warn(`Auto-respond failed: ${err.message}`);
+    if (customRules.length > 0) {
+      for (const rule of customRules) {
+        if (rule.enabled === false) continue;
+        const matches = (rule.keywords || []).some((kw: string) => text.includes(kw.toLowerCase()));
+        if (matches) {
+          const reply = rule.response.replace('{{name}}', name);
+          try {
+            await this.sendTextMessage(message.from, reply, credentials);
+          } catch (err) {
+            this.logger.warn(`Auto-respond failed: ${err.message}`);
+          }
+          return;
+        }
+      }
+    } else if (integration.config?.autoRespondEnabled !== false) {
+      // Default responses (only if not explicitly disabled)
+      let reply: string | null = null;
+      if (text.includes('hello') || text.includes('hi') || text.includes('hey') || text.includes('salut') || text.includes('buna')) {
+        reply = `Hello${name}! Thank you for contacting us. How can we help you today?`;
+      } else if (text.includes('pricing') || text.includes('price') || text.includes('cost') || text.includes('pret')) {
+        reply = `Thank you for your interest${name}! A team member will get back to you with pricing details shortly.`;
+      }
+      if (reply) {
+        try {
+          await this.sendTextMessage(message.from, reply, credentials);
+        } catch (err) {
+          this.logger.warn(`Auto-respond failed: ${err.message}`);
+        }
       }
     }
+  }
+
+  async getAutoResponses(workspaceId: string): Promise<any> {
+    const integration = await this.integrationRepository.findOne({
+      where: { type: IntegrationType.WHATSAPP, workspaceId },
+    });
+    return {
+      enabled: integration?.config?.autoRespondEnabled !== false,
+      rules: integration?.config?.autoResponses || [],
+    };
+  }
+
+  async saveAutoResponses(workspaceId: string, enabled: boolean, rules: any[]): Promise<void> {
+    const integration = await this.integrationRepository.findOne({
+      where: { type: IntegrationType.WHATSAPP, workspaceId },
+    });
+    if (!integration) throw new BadRequestException('No WhatsApp integration found for this workspace');
+    integration.config = {
+      ...(integration.config || {}),
+      autoRespondEnabled: enabled,
+      autoResponses: rules,
+    };
+    await this.integrationRepository.save(integration);
   }
 
   async verifyWebhookToken(mode: string, token: string, challenge: string): Promise<string | null> {

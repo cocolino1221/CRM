@@ -419,11 +419,18 @@ export default function WhatsAppPage() {
   const [showWebhookSetup, setShowWebhookSetup] = useState(false);
   const [copiedWebhook, setCopiedWebhook] = useState(false);
 
+  // Auto-responses
+  const [showAutoResponses, setShowAutoResponses] = useState(false);
+  const [autoRespondEnabled, setAutoRespondEnabled] = useState(true);
+  const [autoResponseRules, setAutoResponseRules] = useState<Array<{ id: string; name: string; keywords: string; response: string; enabled: boolean }>>([]);
+  const [isSavingAutoResp, setIsSavingAutoResp] = useState(false);
+
   // ─── Effects ──────────────────────────────────────────────
 
   useEffect(() => {
     fetchInbox();
     fetchWebhookInfo();
+    fetchAutoResponses();
     const interval = setInterval(fetchInbox, 30000);
     return () => clearInterval(interval);
   }, []);
@@ -506,6 +513,40 @@ export default function WhatsAppPage() {
       const res = await api.get('/integrations/whatsapp/setup');
       setWebhookInfo(res.data);
     } catch { /* silent */ }
+  };
+
+  const fetchAutoResponses = async () => {
+    try {
+      const res = await api.get('/integrations/whatsapp/auto-responses');
+      setAutoRespondEnabled(res.data.enabled ?? true);
+      const rules = (res.data.rules || []).map((r: any, i: number) => ({
+        id: r.id || `rule_${i}`,
+        name: r.name || `Rule ${i + 1}`,
+        keywords: Array.isArray(r.keywords) ? r.keywords.join(', ') : (r.keywords || ''),
+        response: r.response || '',
+        enabled: r.enabled !== false,
+      }));
+      setAutoResponseRules(rules.length > 0 ? rules : [
+        { id: 'r1', name: 'Greeting', keywords: 'hello, hi, hey, salut, buna', response: 'Hello{{name}}! Thank you for contacting us. How can we help you today?', enabled: true },
+        { id: 'r2', name: 'Pricing', keywords: 'pricing, price, cost, pret', response: 'Thank you for your interest{{name}}! A team member will get back to you with pricing details shortly.', enabled: true },
+      ]);
+    } catch { /* silent */ }
+  };
+
+  const saveAutoResponses = async () => {
+    setIsSavingAutoResp(true);
+    try {
+      const rules = autoResponseRules.map(r => ({
+        id: r.id,
+        name: r.name,
+        keywords: r.keywords.split(',').map(k => k.trim()).filter(Boolean),
+        response: r.response,
+        enabled: r.enabled,
+      }));
+      await api.post('/integrations/whatsapp/auto-responses', { enabled: autoRespondEnabled, rules });
+      setShowAutoResponses(false);
+    } catch { /* silent */ }
+    finally { setIsSavingAutoResp(false); }
   };
 
   const fetchContactDetail = async (contactId: string) => {
@@ -708,6 +749,9 @@ export default function WhatsAppPage() {
               </button>
               <button onClick={fetchInbox} className="p-1.5 rounded-lg hover:bg-gray-100 transition-all" title="Refresh">
                 <RefreshCw className="h-4 w-4 text-gray-500" />
+              </button>
+              <button onClick={() => { setShowAutoResponses(true); fetchAutoResponses(); }} className="p-1.5 rounded-lg hover:bg-gray-100 transition-all" title="Auto-responses">
+                <Zap className="h-4 w-4 text-gray-500" />
               </button>
               <button onClick={() => setShowWebhookSetup(true)} className="p-1.5 rounded-lg hover:bg-gray-100 transition-all" title="Webhook setup">
                 <Settings className="h-4 w-4 text-gray-500" />
@@ -1136,6 +1180,80 @@ export default function WhatsAppPage() {
                 className="flex-1 px-4 py-2 text-sm font-medium text-white bg-green-500 hover:bg-green-600 rounded-xl disabled:opacity-50 flex items-center justify-center gap-2">
                 {isSending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
                 Send
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Auto Responses Modal */}
+      {showAutoResponses && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl mx-4 max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between p-4 border-b border-gray-100">
+              <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+                <Zap className="h-5 w-5 text-green-600" /> Auto-Responses
+              </h3>
+              <button onClick={() => setShowAutoResponses(false)}><X className="h-5 w-5 text-gray-400" /></button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-5 space-y-4">
+              {/* Master toggle */}
+              <div className="flex items-center justify-between p-3 bg-gray-50 rounded-xl border border-gray-200">
+                <div>
+                  <p className="text-sm font-medium text-gray-900">Enable Auto-Responses</p>
+                  <p className="text-xs text-gray-500 mt-0.5">Automatically reply when customers send matching keywords</p>
+                </div>
+                <button onClick={() => setAutoRespondEnabled(!autoRespondEnabled)}
+                  className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${autoRespondEnabled ? 'bg-green-500' : 'bg-gray-200'}`}>
+                  <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${autoRespondEnabled ? 'translate-x-5' : 'translate-x-0'}`} />
+                </button>
+              </div>
+
+              {/* Rules */}
+              <div className="space-y-3">
+                {autoResponseRules.map((rule, idx) => (
+                  <div key={rule.id} className={`p-3 rounded-xl border ${rule.enabled ? 'border-gray-200 bg-white' : 'border-gray-100 bg-gray-50 opacity-60'}`}>
+                    <div className="flex items-center gap-2 mb-2">
+                      <input type="text" value={rule.name} placeholder="Rule name"
+                        onChange={e => setAutoResponseRules(prev => prev.map((r, i) => i === idx ? { ...r, name: e.target.value } : r))}
+                        className="flex-1 text-sm font-medium bg-transparent border-0 focus:outline-none text-gray-900" />
+                      <button onClick={() => setAutoResponseRules(prev => prev.map((r, i) => i === idx ? { ...r, enabled: !r.enabled } : r))}
+                        className={`text-xs px-2 py-0.5 rounded-full font-medium transition-all ${rule.enabled ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                        {rule.enabled ? 'ON' : 'OFF'}
+                      </button>
+                      <button onClick={() => setAutoResponseRules(prev => prev.filter((_, i) => i !== idx))}
+                        className="p-1 hover:bg-red-50 rounded-lg"><Trash2 className="h-3.5 w-3.5 text-red-400" /></button>
+                    </div>
+                    <div className="space-y-2">
+                      <div>
+                        <label className="text-xs text-gray-400 mb-1 block">Keywords (comma-separated)</label>
+                        <input type="text" value={rule.keywords} placeholder="hello, hi, salut, buna"
+                          onChange={e => setAutoResponseRules(prev => prev.map((r, i) => i === idx ? { ...r, keywords: e.target.value } : r))}
+                          className="w-full px-3 py-1.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:border-green-400" />
+                      </div>
+                      <div>
+                        <label className="text-xs text-gray-400 mb-1 block">Response (use {'{{name}}'} for customer&apos;s first name)</label>
+                        <textarea value={rule.response} rows={2} placeholder="Hello! How can I help you?"
+                          onChange={e => setAutoResponseRules(prev => prev.map((r, i) => i === idx ? { ...r, response: e.target.value } : r))}
+                          className="w-full px-3 py-1.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:border-green-400 resize-none" />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <button onClick={() => setAutoResponseRules(prev => [...prev, { id: `r_${Date.now()}`, name: 'New Rule', keywords: '', response: '', enabled: true }])}
+                className="w-full py-2 text-sm text-green-600 border-2 border-dashed border-green-300 rounded-xl hover:bg-green-50 transition-all flex items-center justify-center gap-2">
+                <Plus className="h-4 w-4" /> Add Rule
+              </button>
+            </div>
+            <div className="p-4 border-t border-gray-100 flex gap-2">
+              <button onClick={() => setShowAutoResponses(false)}
+                className="flex-1 px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-xl">Cancel</button>
+              <button onClick={saveAutoResponses} disabled={isSavingAutoResp}
+                className="flex-1 px-4 py-2 text-sm font-medium text-white bg-green-500 hover:bg-green-600 rounded-xl disabled:opacity-50 flex items-center justify-center gap-2">
+                {isSavingAutoResp ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                Save
               </button>
             </div>
           </div>
