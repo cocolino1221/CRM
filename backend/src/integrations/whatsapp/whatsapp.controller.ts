@@ -296,6 +296,16 @@ export class WhatsAppController {
     return this.whatsappService.getWebhookSetupInfo(appUrl, workspaceId);
   }
 
+  @Get('diagnostic')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Diagnostic check — shows integration status and Meta checklist' })
+  @ApiResponse({ status: 200, description: 'Diagnostic info' })
+  async getDiagnostic(@Req() req: any) {
+    const workspaceId = req.user?.workspaceId;
+    return this.whatsappService.getDiagnostic(workspaceId);
+  }
+
   @Post('setup/verify-token')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()

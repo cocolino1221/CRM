@@ -415,8 +415,10 @@ export class WhatsAppService {
 
       return { status: 'success' };
     } catch (error) {
-      this.logger.error(`Failed to process WhatsApp webhook: ${error.message}`);
-      throw error;
+      // Always return 200 to Meta so it doesn't stop sending webhooks.
+      // Log the error for debugging but don't propagate it.
+      this.logger.error(`Failed to process WhatsApp webhook: ${error.message}`, error.stack);
+      return { status: 'error', message: error.message };
     }
   }
 
@@ -1057,6 +1059,74 @@ export class WhatsAppService {
     }
     integration.config = { ...(integration.config || {}), conversationAssignments: current };
     await this.integrationRepository.save(integration);
+  }
+
+  /**
+   * Public diagnostic — shows what's configured for WhatsApp without exposing secrets.
+   * Used by the frontend "Webhook Setup" panel to show live status.
+   */
+  async getDiagnostic(workspaceId?: string): Promise<Record<string, any>> {
+    const envToken = this.configService.get<string>('WHATSAPP_VERIFY_TOKEN');
+    const envAccessToken = this.configService.get<string>('WHATSAPP_ACCESS_TOKEN');
+    const envPhoneId = this.configService.get<string>('WHATSAPP_PHONE_NUMBER_ID');
+
+    // Count total WhatsApp integrations
+    const allIntegrations = await this.integrationRepository.find({
+      where: { type: IntegrationType.WHATSAPP },
+    });
+
+    let workspaceIntegration: Integration | null = null;
+    if (workspaceId) {
+      workspaceIntegration = await this.integrationRepository.findOne({
+        where: { type: IntegrationType.WHATSAPP, workspaceId },
+      });
+    }
+
+    // Last received message
+    let lastMessageAt: string | null = null;
+    let totalMessagesIn24h = 0;
+    if (workspaceId) {
+      const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      const recentActivities = await this.activityRepository.find({
+        where: { workspaceId, type: ActivityType.WHATSAPP_MESSAGE },
+        order: { occurredAt: 'DESC' },
+        take: 100,
+      });
+      if (recentActivities.length > 0) {
+        lastMessageAt = recentActivities[0].occurredAt?.toISOString?.() || String(recentActivities[0].occurredAt);
+      }
+      totalMessagesIn24h = recentActivities.filter(a => new Date(a.occurredAt) > since).length;
+    }
+
+    const integrationStatus = workspaceIntegration?.status || 'NOT_CONFIGURED';
+    const hasIntegrationToken = !!(workspaceIntegration?.credentials?.verifyToken || workspaceIntegration?.config?.verifyToken);
+    const hasEnvToken = !!envToken;
+    const hasVerifyToken = hasIntegrationToken || hasEnvToken;
+    const hasAccessToken = !!(workspaceIntegration?.credentials?.accessToken || envAccessToken);
+    const hasPhoneNumberId = !!(workspaceIntegration?.credentials?.phoneNumberId || workspaceIntegration?.config?.phoneNumberId || envPhoneId);
+
+    return {
+      status: integrationStatus,
+      integrationCount: allIntegrations.length,
+      checks: {
+        verifyToken: hasVerifyToken,
+        accessToken: hasAccessToken,
+        phoneNumberId: hasPhoneNumberId,
+        integrationExists: !!workspaceIntegration,
+      },
+      messages: {
+        lastReceivedAt: lastMessageAt,
+        receivedInLast24h: totalMessagesIn24h,
+      },
+      metaChecklist: [
+        { step: 1, label: 'Webhook URL set in Meta', hint: 'Meta App → WhatsApp → Configuration → Webhook → Callback URL' },
+        { step: 2, label: 'Webhook verified (Verify and Save clicked)', hint: 'The verify token must match exactly' },
+        { step: 3, label: '"messages" field subscribed', hint: 'Under Webhook fields, click Manage and enable "messages"' },
+        { step: 4, label: 'App is in Live mode', hint: 'Meta App → Settings → Basic → App Mode = Live (not Development)' },
+        { step: 5, label: 'WHATSAPP_ACCESS_TOKEN configured on server', hint: hasAccessToken ? '✅ Configured' : '❌ Missing — set in Fly.io secrets' },
+        { step: 6, label: 'WHATSAPP_PHONE_NUMBER_ID configured on server', hint: hasPhoneNumberId ? '✅ Configured' : '❌ Missing — set in Fly.io secrets' },
+      ],
+    };
   }
 
   /**

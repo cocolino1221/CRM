@@ -431,6 +431,7 @@ export default function WhatsAppPage() {
   // Webhook setup
   const [webhookInfo, setWebhookInfo] = useState<{ webhookUrl: string; verifyTokenConfigured: boolean; verifyTokenHint: string | null; verifyTokenExact: string | null } | null>(null);
   const [showWebhookSetup, setShowWebhookSetup] = useState(false);
+  const [diagnostic, setDiagnostic] = useState<any | null>(null);
   const [copiedWebhook, setCopiedWebhook] = useState(false);
   const [copiedToken, setCopiedToken] = useState(false);
   const [customToken, setCustomToken] = useState('');
@@ -585,8 +586,12 @@ export default function WhatsAppPage() {
 
   const fetchWebhookInfo = async () => {
     try {
-      const res = await api.get('/integrations/whatsapp/setup');
-      setWebhookInfo(res.data);
+      const [setupRes, diagRes] = await Promise.all([
+        api.get('/integrations/whatsapp/setup'),
+        api.get('/integrations/whatsapp/diagnostic'),
+      ]);
+      setWebhookInfo(setupRes.data);
+      setDiagnostic(diagRes.data);
     } catch { /* silent */ }
   };
 
@@ -2166,12 +2171,73 @@ export default function WhatsAppPage() {
                 </div>
               </div>
 
+              {/* Live Diagnostic */}
+              {diagnostic && (
+                <div>
+                  <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5 block">
+                    Live Diagnostic
+                  </label>
+                  <div className="p-3 bg-gray-50 border border-gray-200 rounded-xl space-y-2">
+                    {/* Messages received */}
+                    <div className={`flex items-start gap-2 text-xs p-2 rounded-lg ${diagnostic.messages.receivedInLast24h > 0 ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'}`}>
+                      <span className="font-bold text-base leading-none">{diagnostic.messages.receivedInLast24h > 0 ? '✅' : '⚠️'}</span>
+                      <div>
+                        <p className="font-medium">{diagnostic.messages.receivedInLast24h > 0 ? `${diagnostic.messages.receivedInLast24h} message(s) received in last 24h` : 'No messages received in last 24h'}</p>
+                        {diagnostic.messages.lastReceivedAt && (
+                          <p className="opacity-75">Last: {new Date(diagnostic.messages.lastReceivedAt).toLocaleString()}</p>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Server config checks */}
+                    <div className="grid grid-cols-2 gap-1.5">
+                      {[
+                        { label: 'Verify Token', ok: diagnostic.checks.verifyToken },
+                        { label: 'Access Token', ok: diagnostic.checks.accessToken },
+                        { label: 'Phone Number ID', ok: diagnostic.checks.phoneNumberId },
+                        { label: 'Integration exists', ok: diagnostic.checks.integrationExists },
+                      ].map(c => (
+                        <div key={c.label} className={`flex items-center gap-1.5 text-xs p-1.5 rounded-lg ${c.ok ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-600'}`}>
+                          <span>{c.ok ? '✅' : '❌'}</span>
+                          <span className="font-medium">{c.label}</span>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Meta checklist items that need manual verification */}
+                    <div className="border-t border-gray-200 pt-2">
+                      <p className="text-xs font-semibold text-gray-600 mb-1.5">Meta Developer Portal checklist — verify manually:</p>
+                      {[
+                        { label: 'Webhook URL entered in Meta', hint: 'App → WhatsApp → Configuration → Webhook' },
+                        { label: '"Verify and Save" clicked successfully', hint: 'Webhook must show green checkmark' },
+                        { label: '"messages" field subscribed', hint: 'Click Manage under Webhook Fields → enable messages' },
+                        { label: 'App Mode is LIVE (not Development)', hint: 'App Settings → Basic → App Mode → Live' },
+                      ].map((item, i) => (
+                        <div key={i} className="flex items-start gap-2 text-xs mb-1.5">
+                          <span className="text-gray-400 font-mono mt-0.5">{i + 1}.</span>
+                          <div>
+                            <p className="font-medium text-gray-800">{item.label}</p>
+                            <p className="text-gray-500 italic">{item.hint}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Quick summary */}
               <div className="text-xs text-gray-500 bg-gray-50 border border-gray-100 rounded-xl p-3">
                 <strong>Path in Meta:</strong> App → WhatsApp → Configuration → Edit (Webhook) → paste URL → paste token → Verify and Save → subscribe to &apos;messages&apos; → App Settings → Basic → switch to Live.
               </div>
             </div>
-            <div className="p-4 border-t border-gray-100 flex justify-end">
+            <div className="p-4 border-t border-gray-100 flex justify-end gap-2">
+              <button
+                onClick={() => fetchWebhookInfo()}
+                className="px-4 py-2 text-sm font-medium text-green-700 bg-green-50 hover:bg-green-100 rounded-xl"
+              >
+                Refresh Diagnostic
+              </button>
               <button onClick={() => { setShowWebhookSetup(false); setCustomToken(''); setTokenSaveError(''); }}
                 className="px-4 py-2 text-sm font-medium text-white bg-green-500 hover:bg-green-600 rounded-xl">Done</button>
             </div>
