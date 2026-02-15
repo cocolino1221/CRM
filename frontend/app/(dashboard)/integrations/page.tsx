@@ -917,10 +917,13 @@ export default function IntegrationsPage() {
       // Show success message with unique webhook URL
       const integrationId = response.data?.id;
       const apiUrl = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api/v1').replace('/api/v1', '');
-      const webhookUrl = `${apiUrl}/api/v1/integrations/webhooks/${integrationId}`;
-      const needsWebhook = ['typeform', 'whatsapp', 'calendly', 'manychat'].includes(selectedIntegration.id);
+      const needsWebhook = ['typeform', 'calendly', 'manychat'].includes(selectedIntegration.id);
 
-      if (integrationId && needsWebhook) {
+      if (selectedIntegration.id === 'whatsapp') {
+        const waWebhookUrl = `${apiUrl}/api/v1/integrations/whatsapp/webhook`;
+        alert(`WhatsApp integration connected!\n\nWebhook URL for Meta for Developers:\n${waWebhookUrl}\n\nPaste this URL in Meta → App → WhatsApp → Configuration → Webhook URL.`);
+      } else if (integrationId && needsWebhook) {
+        const webhookUrl = `${apiUrl}/api/v1/integrations/webhooks/${integrationId}`;
         alert(`Integration connected!\n\nYour unique webhook URL:\n${webhookUrl}\n\nPaste this URL in ${selectedIntegration.name}'s webhook settings.`);
       } else {
         alert('Integration connected successfully!');
@@ -1366,8 +1369,8 @@ export default function IntegrationsPage() {
               )}
             </div>
 
-            {/* Webhook URL for webhook-based integrations */}
-            {['typeform', 'whatsapp', 'calendly', 'manychat'].includes(managingIntegration.id) && connectedIntegrations[managingIntegration.id]?.id && (
+            {/* Webhook URL for webhook-based integrations (not WhatsApp — it has its own URL block above) */}
+            {['typeform', 'calendly', 'manychat'].includes(managingIntegration.id) && connectedIntegrations[managingIntegration.id]?.id && (
               <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 mb-6">
                 <p className="text-xs font-semibold text-blue-800 mb-2">Your Webhook URL (unique to your workspace)</p>
                 <div className="flex items-center gap-2">
