@@ -526,7 +526,9 @@ export class WhatsAppService {
    */
   async getWebhookSetupInfo(appUrl: string, workspaceId?: string): Promise<any> {
     const envToken = this.configService.get<string>('WHATSAPP_VERIFY_TOKEN');
-    const webhookUrl = `${appUrl}/api/v1/integrations/whatsapp/webhook`;
+    // Strip any trailing /api/v1 or /api so APP_URL can be set with or without the path suffix
+    const baseUrl = appUrl.replace(/\/api\/v1\/?$/, '').replace(/\/api\/?$/, '');
+    const webhookUrl = `${baseUrl}/api/v1/integrations/whatsapp/webhook`;
 
     let integrationToken: string | null = null;
     let integrationTokenFull: string | null = null;
