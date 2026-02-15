@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Plus, Search, Phone, Video, Trophy, TrendingUp, TrendingDown, UserCheck, Loader2, Mail, Building, Calendar, DollarSign, MoreVertical, Edit, Trash2, X, AlertCircle, Settings, Users, Tag, FileText, Star, Clock, Briefcase, Eye } from 'lucide-react';
+import { Plus, Search, Phone, Video, Trophy, TrendingUp, TrendingDown, UserCheck, Loader2, Mail, Building, Calendar, DollarSign, MoreVertical, Edit, Trash2, X, AlertCircle, Settings, Users, Tag, FileText, Star, Clock, Briefcase, Eye, ChevronLeft, ChevronRight } from 'lucide-react';
 import { getInitials } from '@/lib/utils';
 import api from '@/lib/api';
 
@@ -516,6 +516,34 @@ export default function LeadsPage() {
     setPipelineStages(updated);
   };
 
+  const handleQuickStageChange = async (contact: Contact, newStageId: string) => {
+    if (newStageId === contact.pipelineStageId) return;
+    const stage = selectedPipeline?.stages.find(s => s.id === newStageId);
+    if (!stage) return;
+
+    // Closed-won requires payment info — reuse existing payment modal flow
+    if (stage.isClosedWon) {
+      setPendingStageChange({ contact, newStageId, stage });
+      setShowPaymentModal(true);
+      return;
+    }
+
+    // Optimistic update
+    setContacts(prev => prev.map(c =>
+      c.id === contact.id ? { ...c, pipelineStageId: newStageId, pipelineStage: stage } : c
+    ));
+
+    try {
+      await api.put(`/pipelines/contacts/${contact.id}`, { pipelineStageId: newStageId });
+    } catch (err: any) {
+      console.error('Failed to move lead:', err);
+      // Revert on error
+      setContacts(prev => prev.map(c =>
+        c.id === contact.id ? { ...c, pipelineStageId: contact.pipelineStageId, pipelineStage: contact.pipelineStage } : c
+      ));
+    }
+  };
+
   const getLeadsForStage = (stageId: string): Contact[] => {
     let filteredContacts = contacts.filter(contact => contact.pipelineStageId === stageId);
 
@@ -899,9 +927,49 @@ export default function LeadsPage() {
                           </div>
 
                           {/* Date and Time */}
-                          <div className="text-xs text-gray-400">
+                          <div className="text-xs text-gray-400 mb-3">
                             Added {new Date(contact.createdAt).toLocaleDateString()} at {new Date(contact.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                           </div>
+
+                          {/* Quick Stage Controls */}
+                          {(() => {
+                            const sortedStages = [...(selectedPipeline?.stages || [])].sort((a, b) => a.displayOrder - b.displayOrder);
+                            const currentIdx = sortedStages.findIndex(s => s.id === contact.pipelineStageId);
+                            const prevStage = currentIdx > 0 ? sortedStages[currentIdx - 1] : null;
+                            const nextStage = currentIdx < sortedStages.length - 1 ? sortedStages[currentIdx + 1] : null;
+                            return (
+                              <div
+                                className="flex items-center gap-1.5 pt-3 border-t border-gray-100"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <button
+                                  onClick={() => prevStage && handleQuickStageChange(contact, prevStage.id)}
+                                  disabled={!prevStage}
+                                  title={prevStage ? `← ${prevStage.name}` : 'Already at first stage'}
+                                  className="p-1.5 rounded-lg hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-all flex-shrink-0"
+                                >
+                                  <ChevronLeft className="h-3.5 w-3.5 text-gray-600" />
+                                </button>
+                                <select
+                                  value={contact.pipelineStageId || ''}
+                                  onChange={(e) => handleQuickStageChange(contact, e.target.value)}
+                                  className="flex-1 text-xs rounded-lg border border-gray-200 px-2 py-1.5 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 bg-white text-gray-700 cursor-pointer"
+                                >
+                                  {sortedStages.map(s => (
+                                    <option key={s.id} value={s.id}>{s.name}</option>
+                                  ))}
+                                </select>
+                                <button
+                                  onClick={() => nextStage && handleQuickStageChange(contact, nextStage.id)}
+                                  disabled={!nextStage}
+                                  title={nextStage ? `${nextStage.name} →` : 'Already at last stage'}
+                                  className="p-1.5 rounded-lg hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-all flex-shrink-0"
+                                >
+                                  <ChevronRight className="h-3.5 w-3.5 text-gray-600" />
+                                </button>
+                              </div>
+                            );
+                          })()}
                         </div>
                       ))
                     )}
