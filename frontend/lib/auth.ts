@@ -14,7 +14,8 @@ export interface RegisterData {
 }
 
 export interface AuthResponse {
-  // Tokens are now in httpOnly cookies (not returned in response body)
+  // accessToken returned in body as Bearer fallback for iOS Safari (also set as httpOnly cookie)
+  accessToken?: string;
   user: {
     id: string;
     email: string;
@@ -36,8 +37,9 @@ export interface User {
 }
 
 class AuthService {
-  // Tokens are now in httpOnly cookies (not managed by frontend)
+  // Tokens are primarily in httpOnly cookies; accessToken also stored in localStorage as Bearer fallback for iOS Safari
   private readonly USER_KEY = 'user';
+  private readonly TOKEN_KEY = 'accessToken';
 
   /**
    * Login user with credentials
@@ -101,11 +103,14 @@ class AuthService {
   }
 
   /**
-   * Store auth session (only user data, tokens are in httpOnly cookies)
+   * Store auth session — user data + accessToken for Bearer fallback (iOS Safari ITP)
    */
   private setSession(data: AuthResponse): void {
     if (typeof window !== 'undefined') {
       localStorage.setItem(this.USER_KEY, JSON.stringify(data.user));
+      if (data.accessToken) {
+        localStorage.setItem(this.TOKEN_KEY, data.accessToken);
+      }
     }
   }
 
@@ -119,11 +124,12 @@ class AuthService {
   }
 
   /**
-   * Clear auth session (only user data, cookies cleared by backend)
+   * Clear auth session — user data and Bearer fallback token
    */
   clearSession(): void {
     if (typeof window !== 'undefined') {
       localStorage.removeItem(this.USER_KEY);
+      localStorage.removeItem(this.TOKEN_KEY);
     }
   }
 

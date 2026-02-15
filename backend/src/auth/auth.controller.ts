@@ -87,15 +87,16 @@ export class AuthController {
     @Body() loginDto: LoginDto,
     @Ip() ipAddress: string,
     @Res({ passthrough: true }) res: Response,
-  ): Promise<Omit<AuthResponse, 'accessToken' | 'refreshToken'>> {
+  ): Promise<Omit<AuthResponse, 'refreshToken'>> {
     const result = await this.authService.login(loginDto, ipAddress);
 
     // Set httpOnly cookies for tokens (XSS protection)
     res.cookie('accessToken', result.accessToken, this.getCookieOptions(false));
     res.cookie('refreshToken', result.refreshToken, this.getCookieOptions(true));
 
-    // Return response without tokens (they're in cookies now)
-    const { accessToken, refreshToken, ...userResponse } = result;
+    // Return response with accessToken in body as Bearer fallback for iOS Safari
+    // (iOS ITP blocks cross-site httpOnly cookies; Bearer header is the fallback)
+    const { refreshToken, ...userResponse } = result;
     return userResponse;
   }
 
@@ -120,15 +121,15 @@ export class AuthController {
   async register(
     @Body() registerDto: RegisterDto,
     @Res({ passthrough: true }) res: Response,
-  ): Promise<Omit<AuthResponse, 'accessToken' | 'refreshToken'>> {
+  ): Promise<Omit<AuthResponse, 'refreshToken'>> {
     const result = await this.authService.register(registerDto);
 
     // Set httpOnly cookies for tokens
     res.cookie('accessToken', result.accessToken, this.getCookieOptions(false));
     res.cookie('refreshToken', result.refreshToken, this.getCookieOptions(true));
 
-    // Return response without tokens (they're in cookies now)
-    const { accessToken, refreshToken, ...userResponse } = result;
+    // Return response with accessToken in body as Bearer fallback for iOS Safari
+    const { refreshToken, ...userResponse } = result;
     return userResponse;
   }
 
@@ -147,7 +148,7 @@ export class AuthController {
   async refreshTokens(
     @Request() req,
     @Res({ passthrough: true }) res: Response,
-  ): Promise<{ message: string }> {
+  ): Promise<{ message: string; accessToken?: string }> {
     // Extract refresh token from httpOnly cookie (or fallback to body for backward compatibility)
     const refreshToken = req.cookies?.refreshToken || req.body?.refreshToken;
 
@@ -161,7 +162,8 @@ export class AuthController {
     res.cookie('accessToken', result.accessToken, this.getCookieOptions(false));
     res.cookie('refreshToken', result.refreshToken, this.getCookieOptions(true));
 
-    return { message: 'Tokens refreshed successfully' };
+    // Also return accessToken in body so iOS Safari can store it in localStorage
+    return { message: 'Tokens refreshed successfully', accessToken: result.accessToken };
   }
 
   @UseGuards(JwtAuthGuard)
@@ -502,15 +504,15 @@ export class AuthController {
   async exchangeOAuthCode(
     @Body('code') code: string,
     @Res({ passthrough: true }) res: Response,
-  ): Promise<Omit<AuthResponse, 'accessToken' | 'refreshToken'>> {
+  ): Promise<Omit<AuthResponse, 'refreshToken'>> {
     const result = await this.authService.consumeOAuthAuthCode(code);
 
     // Set httpOnly cookies (same as login/register)
     res.cookie('accessToken', result.accessToken, this.getCookieOptions(false));
     res.cookie('refreshToken', result.refreshToken, this.getCookieOptions(true));
 
-    // Return only user data (tokens are in cookies)
-    const { accessToken, refreshToken, ...userResponse } = result;
+    // Return with accessToken in body as Bearer fallback for iOS Safari
+    const { refreshToken, ...userResponse } = result;
     return userResponse;
   }
 }

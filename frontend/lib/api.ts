@@ -27,12 +27,17 @@ const processQueue = (error: AxiosError | null, token: string | null = null) => 
   failedQueue = [];
 };
 
-// Request interceptor - tokens are now in httpOnly cookies (sent automatically)
-// No need to manually add Authorization header
+// Request interceptor — cookies sent automatically; also add Bearer header as
+// fallback for iOS Safari (ITP blocks cross-site httpOnly cookies)
 api.interceptors.request.use(
-  (config: InternalAxionsRequestConfig) => {
-    // Cookies are automatically included with withCredentials: true
-    // No manual token management needed
+  (config: InternalAxiosRequestConfig) => {
+    if (typeof window !== 'undefined') {
+      const token = localStorage.getItem('accessToken');
+      if (token) {
+        config.headers = config.headers ?? {};
+        config.headers.Authorization = `Bearer ${token}`;
+      }
+    }
     return config;
   },
   (error) => {
@@ -42,7 +47,13 @@ api.interceptors.request.use(
 
 // Response interceptor for handling errors and token refresh
 api.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    // If the backend returns a new accessToken in the body, store it for Bearer fallback
+    if (typeof window !== 'undefined' && response.data?.accessToken) {
+      localStorage.setItem('accessToken', response.data.accessToken);
+    }
+    return response;
+  },
   async (error: AxiosError) => {
     const originalRequest = error.config as InternalAxiosRequestConfig & { _retry?: boolean };
 
@@ -74,13 +85,14 @@ api.interceptors.response.use(
             { withCredentials: true } // Ensure cookies are sent
           );
 
-          // New tokens are set as httpOnly cookies by the backend
-          // No need to manually store them
+          // New tokens are set as httpOnly cookies; accessToken also in response body
+          // (response interceptor above already saves it to localStorage)
+          const newToken = response.data?.accessToken ?? null;
 
-          processQueue(null, 'refreshed');
+          processQueue(null, newToken);
           isRefreshing = false;
 
-          // Retry the original request (cookies will be sent automatically)
+          // Retry the original request
           return api(originalRequest);
         } catch (refreshError) {
           processQueue(refreshError as AxiosError, null);
@@ -88,6 +100,7 @@ api.interceptors.response.use(
 
           // Clear stored user data so AuthGuard doesn't redirect back to dashboard
           localStorage.removeItem('user');
+          localStorage.removeItem('accessToken');
 
           // Refresh failed, redirect to login (only if not already on auth pages)
           const currentPath = window.location.pathname;
