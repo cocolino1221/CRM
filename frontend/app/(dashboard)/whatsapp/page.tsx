@@ -507,8 +507,15 @@ export default function WhatsAppPage() {
     fetchAutoSend();
     fetchAssignments();
     fetchTeamUsers();
-    const interval = setInterval(fetchInbox, 30000);
-    return () => clearInterval(interval);
+    // Poll every 5 seconds for near-real-time inbox updates
+    const interval = setInterval(fetchInbox, 5000);
+    // Also refresh when the user tabs back to the page
+    const onVisible = () => { if (document.visibilityState === 'visible') fetchInbox(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, []);
 
   useEffect(() => {

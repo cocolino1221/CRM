@@ -1134,14 +1134,17 @@ export class WhatsAppService {
    * This removes the conversation from the inbox.
    */
   async deleteConversation(workspaceId: string, waId: string): Promise<{ deleted: number }> {
-    const result = await this.activityRepository
-      .createQueryBuilder()
-      .delete()
-      .where(
-        `workspace_id = :workspaceId AND type = :type AND metadata->>'waId' = :waId`,
-        { workspaceId, type: ActivityType.WHATSAPP_MESSAGE, waId },
-      )
-      .execute();
-    return { deleted: result.affected || 0 };
+    // Use two-step: find by workspaceId+type (TypeORM handles column mapping),
+    // then filter in-memory for the waId JSONB field, then delete by id.
+    const toDelete = await this.activityRepository.find({
+      where: { workspaceId, type: ActivityType.WHATSAPP_MESSAGE },
+      select: ['id', 'metadata'],
+    });
+    const ids = toDelete
+      .filter(a => (a.metadata as any)?.waId === waId)
+      .map(a => a.id);
+    if (ids.length === 0) return { deleted: 0 };
+    await this.activityRepository.delete(ids);
+    return { deleted: ids.length };
   }
 }
