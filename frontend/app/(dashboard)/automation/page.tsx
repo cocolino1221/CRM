@@ -386,8 +386,8 @@ export default function AutomationPage() {
               <TrendingUp className="h-6 w-6 text-white" />
             </div>
             <div>
-              <p className="text-sm text-gray-600">Total Interactions</p>
-              <p className="text-2xl font-bold text-gray-900">9.8k</p>
+              <p className="text-sm text-gray-600">Total Executions</p>
+              <p className="text-2xl font-bold text-gray-900">{workflows.reduce((sum, w) => sum + (w.executions || 0), 0)}</p>
             </div>
           </div>
         </div>
@@ -434,6 +434,20 @@ export default function AutomationPage() {
       {/* Content */}
       <div>
         {/* Chatbots Tab */}
+        {activeTab === 'chatbots' && chatbots.length === 0 && (
+          <div className="flex flex-col items-center justify-center py-20 text-center">
+            <div className="p-5 rounded-2xl bg-gradient-to-br from-blue-50 to-indigo-100 mb-5">
+              <MessageSquare className="h-12 w-12 text-indigo-400" />
+            </div>
+            <h3 className="text-xl font-bold text-gray-900 mb-2">Chatbots Coming Soon</h3>
+            <p className="text-gray-500 max-w-md mb-6">
+              Build intelligent chatbots for WhatsApp, Facebook, Instagram, and more. Connect them to your CRM to automatically qualify leads and answer questions 24/7.
+            </p>
+            <span className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-indigo-100 text-indigo-700 text-sm font-medium">
+              <Sparkles className="h-4 w-4" /> In development
+            </span>
+          </div>
+        )}
         {activeTab === 'chatbots' && (
           <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
             {chatbots.map((bot) => (
@@ -508,6 +522,20 @@ export default function AutomationPage() {
         )}
 
         {/* AI Agents Tab */}
+        {activeTab === 'ai-agents' && aiAgents.length === 0 && (
+          <div className="flex flex-col items-center justify-center py-20 text-center">
+            <div className="p-5 rounded-2xl bg-gradient-to-br from-purple-50 to-pink-100 mb-5">
+              <Brain className="h-12 w-12 text-purple-400" />
+            </div>
+            <h3 className="text-xl font-bold text-gray-900 mb-2">AI Agents Coming Soon</h3>
+            <p className="text-gray-500 max-w-md mb-6">
+              Deploy AI-powered sales and support agents that learn from your data, qualify leads automatically, and book appointments — all without human intervention.
+            </p>
+            <span className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-purple-100 text-purple-700 text-sm font-medium">
+              <Sparkles className="h-4 w-4" /> In development
+            </span>
+          </div>
+        )}
         {activeTab === 'ai-agents' && (
           <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
             {aiAgents.map((agent) => (
@@ -835,6 +863,20 @@ export default function AutomationPage() {
         )}
 
         {/* Pages Tab */}
+        {activeTab === 'pages' && pages.length === 0 && (
+          <div className="flex flex-col items-center justify-center py-20 text-center">
+            <div className="p-5 rounded-2xl bg-gradient-to-br from-emerald-50 to-teal-100 mb-5">
+              <FileText className="h-12 w-12 text-emerald-400" />
+            </div>
+            <h3 className="text-xl font-bold text-gray-900 mb-2">Landing Pages Coming Soon</h3>
+            <p className="text-gray-500 max-w-md mb-6">
+              Create high-converting landing pages, forms, surveys, and booking pages — all connected to your CRM so every lead is captured automatically.
+            </p>
+            <span className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-emerald-100 text-emerald-700 text-sm font-medium">
+              <Sparkles className="h-4 w-4" /> In development
+            </span>
+          </div>
+        )}
         {activeTab === 'pages' && (
           <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
             {pages.map((page) => {

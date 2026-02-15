@@ -23,6 +23,8 @@ import {
   Menu,
   X,
   ChevronLeft,
+  KanbanSquare,
+  FolderOpen,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { authService } from '@/lib/auth';
@@ -33,12 +35,14 @@ const allNavigation = [
   { name: 'Contacts', href: '/contacts', icon: Users, color: 'from-purple-500 to-pink-500' },
   { name: 'Companies', href: '/companies', icon: Building2, color: 'from-orange-500 to-red-500', adminOnly: true },
   { name: 'Leads', href: '/leads', icon: Briefcase, color: 'from-green-500 to-emerald-500' },
+  { name: 'Pipeline', href: '/pipeline', icon: KanbanSquare, color: 'from-sky-500 to-blue-500' },
   { name: 'Forms', href: '/forms', icon: FileText, color: 'from-emerald-500 to-green-500' },
   { name: 'WhatsApp', href: '/whatsapp', icon: MessageCircle, color: 'from-green-500 to-emerald-500' },
   { name: 'Team', href: '/users', icon: Shield, color: 'from-teal-500 to-cyan-500' },
   { name: 'Tasks', href: '/tasks', icon: CheckSquare, color: 'from-yellow-500 to-orange-500' },
   { name: 'Automation', href: '/automation', icon: Bot, color: 'from-violet-500 to-fuchsia-500' },
   { name: 'Analytics', href: '/analytics', icon: BarChart3, color: 'from-indigo-500 to-purple-500' },
+  { name: 'Documents', href: '/documents', icon: FolderOpen, color: 'from-amber-500 to-orange-500' },
   { name: 'Integrations', href: '/integrations', icon: Zap, color: 'from-pink-500 to-rose-500' },
   { name: 'Settings', href: '/settings', icon: Settings, color: 'from-slate-500 to-gray-500' },
 ];
