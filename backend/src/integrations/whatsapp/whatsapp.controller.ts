@@ -308,6 +308,38 @@ export class WhatsAppController {
     return { success: true };
   }
 
+  @Get('auto-send')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get auto-send config (WhatsApp template on new contact creation)' })
+  @ApiResponse({ status: 200, description: 'Auto-send config' })
+  async getAutoSend(@Req() req: any) {
+    const workspaceId = req.user?.workspaceId;
+    if (!workspaceId) throw new BadRequestException('Workspace ID required');
+    return this.whatsappService.getAutoSend(workspaceId);
+  }
+
+  @Post('auto-send')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Save auto-send config (send WhatsApp template on new contact creation)' })
+  @ApiResponse({ status: 200, description: 'Saved' })
+  async saveAutoSend(
+    @Req() req: any,
+    @Body() body: {
+      enabled: boolean;
+      templateName: string;
+      language?: string;
+      includeNameParam?: boolean;
+      conditions?: { sources?: string[]; statuses?: string[]; requirePhone?: boolean };
+    },
+  ) {
+    const workspaceId = req.user?.workspaceId;
+    if (!workspaceId) throw new BadRequestException('Workspace ID required');
+    await this.whatsappService.saveAutoSend(workspaceId, body);
+    return { success: true };
+  }
+
   @Get('auto-responses')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
@@ -377,5 +409,73 @@ export class WhatsAppController {
     const workspaceId = req.user?.workspaceId;
     if (!workspaceId) throw new BadRequestException('Workspace ID required');
     return this.whatsappService.deleteTemplate(workspaceId, templateName);
+  }
+
+  @Post('broadcast')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Broadcast an approved template to contacts matching a filter' })
+  @ApiResponse({ status: 200, description: 'Broadcast results' })
+  async broadcast(
+    @Req() req: any,
+    @Body() body: {
+      filter: { tags?: string[]; status?: string[]; source?: string[] };
+      template: { name: string; language: string; params?: any[] };
+    },
+  ) {
+    const workspaceId = req.user?.workspaceId;
+    if (!workspaceId) throw new BadRequestException('Workspace ID required');
+    return this.whatsappService.broadcastTemplate(workspaceId, body.filter || {}, body.template);
+  }
+
+  @Post('bulk/csv-import')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Import contacts from CSV rows and optionally send a template' })
+  @ApiResponse({ status: 200, description: 'Import results' })
+  async csvImport(
+    @Req() req: any,
+    @Body() body: {
+      rows: Array<{ phone: string; firstName?: string; lastName?: string; tags?: string[] }>;
+      addTags?: string[];
+      sendTemplate?: { name: string; language: string; params?: any[] };
+    },
+  ) {
+    const workspaceId = req.user?.workspaceId;
+    const userId = req.user?.id;
+    if (!workspaceId) throw new BadRequestException('Workspace ID required');
+    if (!body.rows?.length) throw new BadRequestException('rows array is required');
+    return this.whatsappService.csvImportAndSend(workspaceId, userId, body.rows, {
+      addTags: body.addTags,
+      sendTemplate: body.sendTemplate,
+    });
+  }
+
+  @Get('assignments')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get conversation assignments for this workspace' })
+  @ApiResponse({ status: 200, description: 'Assignment map { [waId]: { userId, userName, color, assignedAt } }' })
+  async getAssignments(@Req() req: any) {
+    const workspaceId = req.user?.workspaceId;
+    if (!workspaceId) throw new BadRequestException('Workspace ID required');
+    const data = await this.whatsappService.getConversationAssignments(workspaceId);
+    return { data };
+  }
+
+  @Post('conversations/:waId/assign')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Assign a user to a conversation (or unassign with null)' })
+  @ApiResponse({ status: 200, description: 'Assignment saved' })
+  async assignConversation(
+    @Req() req: any,
+    @Param('waId') waId: string,
+    @Body() body: { userId: string | null; userName: string; color: string } | null,
+  ) {
+    const workspaceId = req.user?.workspaceId;
+    if (!workspaceId) throw new BadRequestException('Workspace ID required');
+    await this.whatsappService.assignConversation(workspaceId, waId, body);
+    return { success: true };
   }
 }

@@ -1,8 +1,9 @@
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
+import { OnEvent } from '@nestjs/event-emitter';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, In } from 'typeorm';
 import { firstValueFrom } from 'rxjs';
 import { Contact, ContactStatus, ContactSource } from '../../database/entities/contact.entity';
 import { Activity, ActivityType, ActivityDirection, ActivityOutcome } from '../../database/entities/activity.entity';
@@ -148,6 +149,7 @@ export class WhatsAppService {
         firstName: nameParts[0] || 'WhatsApp',
         lastName: nameParts.slice(1).join(' ') || 'Contact',
         phone,
+        email: `${waId}@whatsapp.placeholder.invalid`,
         status: ContactStatus.LEAD,
         source: ContactSource.WHATSAPP,
       });
@@ -761,5 +763,258 @@ export class WhatsAppService {
       rateLimit: '80 messages/second per phone number',
       pricing: 'Business-initiated: ~$0.05-0.15/msg. User-initiated: ~$0.01-0.05/msg. Varies by country.',
     };
+  }
+
+  // ─── Contact Auto-Send ──────────────────────────────────────────────────────
+
+  /**
+   * Get auto-send config for this workspace
+   */
+  async getAutoSend(workspaceId: string): Promise<any> {
+    const integration = await this.integrationRepository.findOne({
+      where: { type: IntegrationType.WHATSAPP, workspaceId },
+    });
+    return integration?.config?.autoSend || {
+      enabled: false,
+      templateName: 'hello_world',
+      language: 'en',
+      includeNameParam: true,
+      conditions: { sources: [], statuses: [], requirePhone: true },
+    };
+  }
+
+  /**
+   * Save auto-send config for this workspace
+   */
+  async saveAutoSend(workspaceId: string, config: any): Promise<void> {
+    const integration = await this.integrationRepository.findOne({
+      where: { type: IntegrationType.WHATSAPP, workspaceId },
+    });
+    if (!integration) throw new BadRequestException('No WhatsApp integration found for this workspace');
+    integration.config = { ...(integration.config || {}), autoSend: config };
+    await this.integrationRepository.save(integration);
+    this.logger.log(`Auto-send config updated for workspace ${workspaceId}`);
+  }
+
+  // ─── Bulk / Broadcast ───────────────────────────────────────────────────────
+
+  /**
+   * Send an approved template message to all contacts matching a filter.
+   * filter.tags: contact must have ALL specified tags
+   * filter.status: contact status must be IN the list
+   * filter.source: contact source must be IN the list
+   */
+  async broadcastTemplate(
+    workspaceId: string,
+    filter: { tags?: string[]; status?: string[]; source?: string[] },
+    template: { name: string; language: string; params?: any[] },
+  ): Promise<{ total: number; sent: number; failed: number; results: any[] }> {
+    const where: any = { workspaceId };
+    if (filter.status?.length) where.status = In(filter.status);
+    if (filter.source?.length) where.source = In(filter.source);
+
+    let contacts = await this.contactRepository.find({ where, take: 1000 });
+
+    // Filter by tags in memory (simple-array columns don't support SQL LIKE easily)
+    if (filter.tags?.length) {
+      contacts = contacts.filter(c => {
+        const contactTags = c.tags || [];
+        return filter.tags!.every(t => contactTags.includes(t));
+      });
+    }
+
+    // Only contacts that have a phone number
+    contacts = contacts.filter(c => c.phone);
+
+    const results: any[] = [];
+    let sent = 0;
+    let failed = 0;
+
+    for (const contact of contacts) {
+      const phone = contact.phone!.replace(/[^0-9+]/g, '');
+      try {
+        const msgResult = await this.sendTemplateMessage(phone, template.name, template.language, template.params || []);
+        const msgId = msgResult?.messages?.[0]?.id;
+        await this.saveOutboundActivity(phone, `[Broadcast template: ${template.name}]`, 'template', workspaceId, contact.ownerId || '', msgId);
+        results.push({ phone, contactId: contact.id, success: true });
+        sent++;
+      } catch (err) {
+        results.push({ phone, contactId: contact.id, success: false, error: err.message });
+        failed++;
+      }
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+
+    this.logger.log(`Broadcast "${template.name}" to ${sent}/${contacts.length} contacts in workspace ${workspaceId}`);
+    return { total: contacts.length, sent, failed, results };
+  }
+
+  /**
+   * Import contacts from CSV rows and optionally send a template to each.
+   * rows: { phone, firstName?, lastName?, tags? }[]
+   * options.addTags: tags to add to every imported contact
+   * options.sendTemplate: if set, sends template after import
+   */
+  async csvImportAndSend(
+    workspaceId: string,
+    ownerId: string,
+    rows: Array<{ phone: string; firstName?: string; lastName?: string; tags?: string[] }>,
+    options: { addTags?: string[]; sendTemplate?: { name: string; language: string; params?: any[] } },
+  ): Promise<{ imported: number; created: number; updated: number; sent: number; failed: number; results: any[] }> {
+    let created = 0;
+    let updated = 0;
+    let sent = 0;
+    let failed = 0;
+    const results: any[] = [];
+
+    for (const row of rows) {
+      const rawPhone = (row.phone || '').trim();
+      if (!rawPhone) { results.push({ phone: rawPhone, status: 'skipped', reason: 'empty phone' }); continue; }
+
+      // Normalise: ensure + prefix
+      const phone = rawPhone.startsWith('+') ? rawPhone : `+${rawPhone.replace(/[^0-9]/g, '')}`;
+
+      let contact = await this.contactRepository.findOne({ where: { workspaceId, phone } });
+      if (!contact) contact = await this.contactRepository.findOne({ where: { workspaceId, phone: rawPhone } });
+
+      let isNew = false;
+      if (!contact) {
+        contact = this.contactRepository.create();
+        Object.assign(contact, {
+          workspaceId,
+          ownerId,
+          firstName: row.firstName || 'Contact',
+          lastName: row.lastName || '',
+          phone,
+          email: `${rawPhone.replace(/[^0-9]/g, '')}@whatsapp.placeholder.invalid`,
+          status: ContactStatus.LEAD,
+          source: ContactSource.WHATSAPP,
+        });
+        isNew = true;
+      } else {
+        if (row.firstName) contact.firstName = row.firstName;
+        if (row.lastName) contact.lastName = row.lastName;
+      }
+
+      // Merge tags
+      const existingTags: string[] = contact.tags || [];
+      const newTags = [...(row.tags || []), ...(options.addTags || [])];
+      const mergedTags = Array.from(new Set([...existingTags, ...newTags]));
+      if (mergedTags.length) contact.tags = mergedTags;
+
+      contact = await this.contactRepository.save(contact);
+      if (isNew) { created++; } else { updated++; }
+
+      const resultEntry: any = { phone, contactId: contact.id, status: isNew ? 'created' : 'updated' };
+
+      if (options.sendTemplate) {
+        try {
+          const msgResult = await this.sendTemplateMessage(phone, options.sendTemplate.name, options.sendTemplate.language, options.sendTemplate.params || []);
+          const msgId = msgResult?.messages?.[0]?.id;
+          await this.saveOutboundActivity(phone, `[CSV import template: ${options.sendTemplate.name}]`, 'template', workspaceId, ownerId, msgId);
+          resultEntry.sent = true;
+          sent++;
+        } catch (err) {
+          resultEntry.sent = false;
+          resultEntry.sendError = err.message;
+          failed++;
+        }
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+
+      results.push(resultEntry);
+    }
+
+    this.logger.log(`CSV import: ${created} created, ${updated} updated, ${sent} sent in workspace ${workspaceId}`);
+    return { imported: created + updated, created, updated, sent, failed, results };
+  }
+
+  /**
+   * Listen for contact creation events and auto-send WhatsApp template if configured
+   */
+  @OnEvent('contact.created')
+  async handleContactCreated(payload: { contact: any; workspaceId: string }): Promise<void> {
+    const { contact, workspaceId } = payload;
+    try {
+      const integration = await this.integrationRepository.findOne({
+        where: { type: IntegrationType.WHATSAPP, workspaceId },
+      });
+      if (!integration) return;
+
+      const autoSend = integration.config?.autoSend;
+      if (!autoSend?.enabled) return;
+
+      // Check conditions
+      const conditions = autoSend.conditions || {};
+
+      // Phone is required for WhatsApp — strip all non-digits; `+40712` → `40712`
+      const rawPhone = contact.phone || '';
+      const phone = rawPhone.replace(/[^0-9]/g, '');
+      if (!phone || phone.length < 10) {
+        this.logger.log(`Auto-send skipped for contact ${contact.id}: no phone or too short ("${rawPhone}")`);
+        return;
+      }
+
+      // Filter by source (if any sources are specified)
+      if (conditions.sources?.length > 0 && !conditions.sources.includes(contact.source)) {
+        this.logger.log(`Auto-send skipped for contact ${contact.id}: source "${contact.source}" not in [${conditions.sources.join(',')}]`);
+        return;
+      }
+
+      // Filter by status (if any statuses are specified)
+      if (conditions.statuses?.length > 0 && !conditions.statuses.includes(contact.status)) {
+        this.logger.log(`Auto-send skipped for contact ${contact.id}: status "${contact.status}" not in [${conditions.statuses.join(',')}]`);
+        return;
+      }
+
+      // Send template
+      const templateName = autoSend.templateName || 'hello_world';
+      const language = autoSend.language || 'en';
+      const params: any[] = [];
+      if (autoSend.includeNameParam && contact.firstName) {
+        params.push({ type: 'body', parameters: [{ type: 'text', text: contact.firstName }] });
+      }
+
+      this.logger.log(`Auto-send: template="${templateName}" to phone="${phone}" (raw="${rawPhone}") contact=${contact.id} source=${contact.source}`);
+      await this.sendTemplateMessage(phone, templateName, language, params);
+      this.logger.log(`Auto-send SUCCESS: template "${templateName}" sent to ${phone} for contact ${contact.id}`);
+    } catch (err) {
+      this.logger.warn(`Auto-send FAILED for contact ${payload.contact?.id}: ${err.response?.data?.error?.message || err.message}`);
+    }
+  }
+
+  // ─── Conversation Assignments ────────────────────────────────────────────────
+
+  /**
+   * Returns { [waId]: { userId, userName, color, assignedAt } } for this workspace
+   */
+  async getConversationAssignments(workspaceId: string): Promise<Record<string, any>> {
+    const integration = await this.integrationRepository.findOne({
+      where: { type: IntegrationType.WHATSAPP, workspaceId },
+    });
+    return integration?.config?.conversationAssignments || {};
+  }
+
+  /**
+   * Assign (or unassign) a user to a conversation.
+   * Passing userId=null removes the assignment.
+   */
+  async assignConversation(
+    workspaceId: string,
+    waId: string,
+    assignment: { userId: string | null; userName: string; color: string } | null,
+  ): Promise<void> {
+    const integration = await this.integrationRepository.findOne({
+      where: { type: IntegrationType.WHATSAPP, workspaceId },
+    });
+    if (!integration) throw new BadRequestException('No WhatsApp integration found for this workspace');
+    const current = integration.config?.conversationAssignments || {};
+    if (assignment) {
+      current[waId] = { ...assignment, assignedAt: new Date().toISOString() };
+    } else {
+      delete current[waId];
+    }
+    integration.config = { ...(integration.config || {}), conversationAssignments: current };
+    await this.integrationRepository.save(integration);
   }
 }

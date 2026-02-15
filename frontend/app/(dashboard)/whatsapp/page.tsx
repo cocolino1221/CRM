@@ -37,6 +37,13 @@ interface WhatsAppActivity {
   } | null;
 }
 
+interface ConvAssignment {
+  userId: string;
+  userName: string;
+  color: string;
+  assignedAt: string;
+}
+
 interface Conversation {
   waId: string;
   contactName: string;
@@ -48,6 +55,7 @@ interface Conversation {
   messages: WhatsAppActivity[];
   unreadCount: number;
   lastInboundTime: string | null;
+  assignment?: ConvAssignment;
 }
 
 interface ContactDetail {
@@ -453,6 +461,36 @@ export default function WhatsAppPage() {
   const [isCreatingTemplate, setIsCreatingTemplate] = useState(false);
   const [templateError, setTemplateError] = useState('');
 
+  // ─── Page tabs ────────────────────────────────────────────
+  const [pageTab, setPageTab] = useState<'inbox' | 'broadcasts'>('inbox');
+
+  // ─── Broadcasts: Segment send ─────────────────────────────
+  const [broadcastFilterTags, setBroadcastFilterTags] = useState<string[]>([]);
+  const [broadcastTagInput, setBroadcastTagInput] = useState('');
+  const [broadcastFilterStatus, setBroadcastFilterStatus] = useState<string[]>([]);
+  const [broadcastTemplateName, setBroadcastTemplateName] = useState('hello_world');
+  const [broadcastTemplateLanguage, setBroadcastTemplateLanguage] = useState('en');
+  const [broadcastResults, setBroadcastResults] = useState<any | null>(null);
+  const [isBroadcasting, setIsBroadcasting] = useState(false);
+  const [broadcastError, setBroadcastError] = useState('');
+
+  // ─── Broadcasts: CSV Import ───────────────────────────────
+  const [csvFile, setCsvFile] = useState<File | null>(null);
+  const [csvRows, setCsvRows] = useState<Array<{ phone: string; firstName?: string; lastName?: string }>>([]);
+  const [csvParseError, setCsvParseError] = useState('');
+  const [csvAddTags, setCsvAddTags] = useState('');
+  const [csvSendTemplate, setCsvSendTemplate] = useState(false);
+  const [csvTemplateName, setCsvTemplateName] = useState('hello_world');
+  const [csvTemplateLanguage, setCsvTemplateLanguage] = useState('en');
+  const [csvImportResults, setCsvImportResults] = useState<any | null>(null);
+  const [isImporting, setIsImporting] = useState(false);
+  const [csvImportError, setCsvImportError] = useState('');
+
+  // ─── Assignments ──────────────────────────────────────────
+  const [assignments, setAssignments] = useState<Record<string, ConvAssignment>>({});
+  const [teamUsers, setTeamUsers] = useState<Array<{ id: string; firstName: string; lastName: string; email: string }>>([]);
+  const [showAssignDropdown, setShowAssignDropdown] = useState(false);
+
   // ─── Effects ──────────────────────────────────────────────
 
   useEffect(() => {
@@ -460,6 +498,8 @@ export default function WhatsAppPage() {
     fetchWebhookInfo();
     fetchAutoResponses();
     fetchAutoSend();
+    fetchAssignments();
+    fetchTeamUsers();
     const interval = setInterval(fetchInbox, 30000);
     return () => clearInterval(interval);
   }, []);
@@ -663,6 +703,41 @@ export default function WhatsAppPage() {
     }
   };
 
+  // ─── Assignment helpers ───────────────────────────────────
+
+  // 8 distinct colors for team members
+  const USER_COLORS = ['#16a34a','#2563eb','#9333ea','#dc2626','#ea580c','#0891b2','#be185d','#65a30d'];
+  const getUserColor = (userId: string) => USER_COLORS[Math.abs(userId.split('').reduce((a,c) => a + c.charCodeAt(0), 0)) % USER_COLORS.length];
+  const getUserInitials = (name: string) => name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
+
+  const fetchAssignments = async () => {
+    try {
+      const res = await api.get('/integrations/whatsapp/assignments');
+      setAssignments(res.data.data || {});
+    } catch { /* silent */ }
+  };
+
+  const fetchTeamUsers = async () => {
+    try {
+      const res = await api.get('/users');
+      setTeamUsers(res.data.data || res.data || []);
+    } catch { /* silent */ }
+  };
+
+  const assignConversation = async (waId: string, user: { id: string; firstName: string; lastName: string } | null) => {
+    try {
+      const color = user ? getUserColor(user.id) : '#6b7280';
+      const body = user ? { userId: user.id, userName: `${user.firstName} ${user.lastName}`.trim(), color } : null;
+      await api.post(`/integrations/whatsapp/conversations/${waId}/assign`, body);
+      if (user) {
+        setAssignments(prev => ({ ...prev, [waId]: { userId: user.id, userName: `${user.firstName} ${user.lastName}`.trim(), color, assignedAt: new Date().toISOString() } }));
+      } else {
+        setAssignments(prev => { const n = { ...prev }; delete n[waId]; return n; });
+      }
+    } catch { /* silent */ }
+    setShowAssignDropdown(false);
+  };
+
   // ─── Actions ──────────────────────────────────────────────
 
   const fetchMetaTemplates = async () => {
@@ -858,19 +933,342 @@ export default function WhatsAppPage() {
     messagesWithDates.push({ type: 'message', msg });
   }
 
+  // ─── CSV parsing ─────────────────────────────────────────
+
+  const parseCsv = (text: string) => {
+    const lines = text.split(/\r?\n/).filter(l => l.trim());
+    if (!lines.length) { setCsvParseError('File is empty'); return; }
+    const headers = lines[0].split(',').map(h => h.trim().replace(/["']/g, '').toLowerCase());
+    const phoneIdx = headers.findIndex(h => ['phone', 'telefon', 'number', 'phone_number', 'mobile'].includes(h));
+    const firstIdx = headers.findIndex(h => ['first_name', 'firstname', 'first', 'name', 'prenume'].includes(h));
+    const lastIdx = headers.findIndex(h => ['last_name', 'lastname', 'last', 'surname', 'nume'].includes(h));
+    if (phoneIdx === -1) { setCsvParseError('Could not find a "phone" column. Expected: phone, telefon, number, mobile'); return; }
+    const rows: Array<{ phone: string; firstName?: string; lastName?: string }> = [];
+    for (let i = 1; i < lines.length; i++) {
+      const cols = lines[i].split(',').map(c => c.trim().replace(/^["']|["']$/g, ''));
+      const phone = cols[phoneIdx]?.trim();
+      if (!phone) continue;
+      rows.push({
+        phone,
+        firstName: firstIdx >= 0 ? cols[firstIdx]?.trim() || undefined : undefined,
+        lastName: lastIdx >= 0 ? cols[lastIdx]?.trim() || undefined : undefined,
+      });
+    }
+    if (!rows.length) { setCsvParseError('No valid rows found'); return; }
+    setCsvParseError('');
+    setCsvRows(rows);
+  };
+
+  const handleCsvFile = (file: File) => {
+    setCsvFile(file);
+    setCsvRows([]);
+    setCsvParseError('');
+    setCsvImportResults(null);
+    const reader = new FileReader();
+    reader.onload = e => parseCsv((e.target?.result as string) || '');
+    reader.readAsText(file);
+  };
+
+  const handleBroadcast = async () => {
+    if (!broadcastTemplateName.trim()) { setBroadcastError('Template name is required'); return; }
+    setIsBroadcasting(true);
+    setBroadcastError('');
+    setBroadcastResults(null);
+    try {
+      const res = await api.post('/integrations/whatsapp/broadcast', {
+        filter: {
+          tags: broadcastFilterTags.length > 0 ? broadcastFilterTags : undefined,
+          status: broadcastFilterStatus.length > 0 ? broadcastFilterStatus : undefined,
+        },
+        template: { name: broadcastTemplateName.trim(), language: broadcastTemplateLanguage.trim() || 'en' },
+      });
+      setBroadcastResults(res.data);
+    } catch (err: any) {
+      setBroadcastError(err?.response?.data?.message || 'Broadcast failed');
+    } finally {
+      setIsBroadcasting(false);
+    }
+  };
+
+  const handleCsvImport = async () => {
+    if (!csvRows.length) { setCsvImportError('No rows to import'); return; }
+    setIsImporting(true);
+    setCsvImportError('');
+    setCsvImportResults(null);
+    try {
+      const addTags = csvAddTags.trim() ? csvAddTags.split(',').map(t => t.trim()).filter(Boolean) : undefined;
+      const res = await api.post('/integrations/whatsapp/bulk/csv-import', {
+        rows: csvRows,
+        addTags,
+        sendTemplate: csvSendTemplate ? { name: csvTemplateName.trim(), language: csvTemplateLanguage.trim() || 'en' } : undefined,
+      });
+      setCsvImportResults(res.data);
+    } catch (err: any) {
+      setCsvImportError(err?.response?.data?.message || 'Import failed');
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
   // ─── Render ───────────────────────────────────────────────
 
   return (
-    <div className="flex h-[calc(100vh-64px)] bg-white rounded-2xl overflow-hidden shadow-sm border border-gray-100">
+    <div className="flex flex-col h-[calc(100vh-64px)] bg-white rounded-2xl overflow-hidden shadow-sm border border-gray-100">
+
+      {/* ── Tab bar ── */}
+      <div className="flex items-center border-b border-gray-100 bg-white px-4 py-0 flex-shrink-0">
+        <div className="flex items-center gap-2 mr-4">
+          <MessageCircle className="h-5 w-5 text-green-600" />
+          <span className="text-base font-bold text-gray-900">WhatsApp</span>
+        </div>
+        <nav className="flex gap-1">
+          <button onClick={() => setPageTab('inbox')}
+            className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${pageTab === 'inbox' ? 'border-green-500 text-green-700' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
+            Inbox
+          </button>
+          <button onClick={() => setPageTab('broadcasts')}
+            className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${pageTab === 'broadcasts' ? 'border-green-500 text-green-700' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
+            Broadcasts
+          </button>
+        </nav>
+      </div>
+
+      {pageTab === 'broadcasts' && (
+        <div className="flex-1 overflow-y-auto bg-gray-50 p-6 space-y-6">
+
+          {/* ── Section A: Send to Segment ── */}
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
+            <h2 className="text-base font-semibold text-gray-900 mb-1 flex items-center gap-2">
+              <Send className="h-4 w-4 text-green-600" /> Send to Segment
+            </h2>
+            <p className="text-sm text-gray-500 mb-4">Filter your contacts and send an approved template to all of them.</p>
+
+            <div className="space-y-4">
+              {/* Tag filter */}
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Filter by Tags (contact must have ALL selected tags)</label>
+                <div className="flex gap-2">
+                  <input type="text" placeholder="Add tag and press Enter" value={broadcastTagInput}
+                    onChange={e => setBroadcastTagInput(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter' && broadcastTagInput.trim()) { setBroadcastFilterTags(prev => Array.from(new Set([...prev, broadcastTagInput.trim()]))); setBroadcastTagInput(''); e.preventDefault(); }}}
+                    className="flex-1 px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-green-400" />
+                  <button onClick={() => { if (broadcastTagInput.trim()) { setBroadcastFilterTags(prev => Array.from(new Set([...prev, broadcastTagInput.trim()]))); setBroadcastTagInput(''); }}}
+                    className="px-3 py-2 text-sm bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl font-medium">Add</button>
+                </div>
+                {broadcastFilterTags.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 mt-2">
+                    {broadcastFilterTags.map(tag => (
+                      <span key={tag} className="flex items-center gap-1 px-2 py-0.5 text-xs font-medium bg-green-100 text-green-700 rounded-full">
+                        {tag}
+                        <button onClick={() => setBroadcastFilterTags(prev => prev.filter(t => t !== tag))} className="hover:text-green-900"><X className="h-3 w-3" /></button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Status filter */}
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Filter by Status</label>
+                <div className="flex flex-wrap gap-2">
+                  {['lead', 'active', 'customer', 'prospect', 'qualified', 'inactive'].map(s => (
+                    <button key={s} onClick={() => setBroadcastFilterStatus(prev => prev.includes(s) ? prev.filter(x => x !== s) : [...prev, s])}
+                      className={`px-3 py-1 text-xs font-medium rounded-full border transition-all ${broadcastFilterStatus.includes(s) ? 'bg-green-500 text-white border-green-500' : 'bg-white text-gray-600 border-gray-200 hover:border-green-400'}`}>
+                      {s}
+                    </button>
+                  ))}
+                </div>
+                {broadcastFilterStatus.length === 0 && <p className="text-xs text-gray-400 mt-1">No filter = all statuses</p>}
+              </div>
+
+              {/* Template */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Template Name *</label>
+                  <input type="text" placeholder="hello_world" value={broadcastTemplateName} onChange={e => setBroadcastTemplateName(e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-green-400" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Language Code</label>
+                  <input type="text" placeholder="en" value={broadcastTemplateLanguage} onChange={e => setBroadcastTemplateLanguage(e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-green-400" />
+                </div>
+              </div>
+
+              {broadcastError && <p className="text-sm text-red-600">{broadcastError}</p>}
+
+              <button onClick={handleBroadcast} disabled={isBroadcasting || !broadcastTemplateName.trim()}
+                className="px-6 py-2.5 text-sm font-semibold text-white bg-green-500 hover:bg-green-600 rounded-xl disabled:opacity-50 flex items-center gap-2">
+                {isBroadcasting ? <><Loader2 className="h-4 w-4 animate-spin" /> Sending...</> : <><Send className="h-4 w-4" /> Send Broadcast</>}
+              </button>
+            </div>
+
+            {/* Results */}
+            {broadcastResults && (
+              <div className="mt-6">
+                <div className="flex items-center gap-4 mb-3 text-sm">
+                  <span className="font-semibold text-gray-700">Total: {broadcastResults.total}</span>
+                  <span className="text-green-600 font-semibold">✓ Sent: {broadcastResults.sent}</span>
+                  {broadcastResults.failed > 0 && <span className="text-red-500 font-semibold">✗ Failed: {broadcastResults.failed}</span>}
+                </div>
+                <div className="max-h-64 overflow-y-auto border border-gray-100 rounded-xl">
+                  <table className="w-full text-xs">
+                    <thead className="bg-gray-50 sticky top-0">
+                      <tr>
+                        <th className="text-left px-3 py-2 font-medium text-gray-500">Phone</th>
+                        <th className="text-left px-3 py-2 font-medium text-gray-500">Status</th>
+                        <th className="text-left px-3 py-2 font-medium text-gray-500">Error</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {broadcastResults.results.map((r: any, i: number) => (
+                        <tr key={i} className={r.success ? '' : 'bg-red-50'}>
+                          <td className="px-3 py-1.5 font-mono">{r.phone}</td>
+                          <td className="px-3 py-1.5">{r.success ? <span className="text-green-600">✓ Sent</span> : <span className="text-red-500">✗ Failed</span>}</td>
+                          <td className="px-3 py-1.5 text-gray-400">{r.error || ''}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* ── Section B: CSV Import & Send ── */}
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
+            <h2 className="text-base font-semibold text-gray-900 mb-1 flex items-center gap-2">
+              <FileText className="h-4 w-4 text-blue-600" /> CSV Import & Send
+            </h2>
+            <p className="text-sm text-gray-500 mb-4">Import phone numbers from a CSV and create contacts. Optionally send a template.</p>
+            <p className="text-xs text-gray-400 mb-4 font-mono bg-gray-50 rounded-lg p-2">
+              Expected CSV headers: <strong>phone</strong> (required), first_name, last_name<br />
+              Example: +40712345678,Ion,Popescu
+            </p>
+
+            <div className="space-y-4">
+              {/* File input */}
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">CSV File *</label>
+                <div className="flex items-center gap-3">
+                  <label className="cursor-pointer px-4 py-2 text-sm font-medium bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl border border-dashed border-gray-300 flex items-center gap-2">
+                    <FileText className="h-4 w-4" />
+                    {csvFile ? csvFile.name : 'Choose CSV file'}
+                    <input type="file" accept=".csv,text/csv" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) handleCsvFile(f); }} />
+                  </label>
+                  {csvRows.length > 0 && <span className="text-sm font-medium text-green-600">{csvRows.length} rows ready</span>}
+                </div>
+                {csvParseError && <p className="text-sm text-red-600 mt-1">{csvParseError}</p>}
+                {csvRows.length > 0 && (
+                  <div className="mt-2 max-h-32 overflow-y-auto border border-gray-100 rounded-xl">
+                    <table className="w-full text-xs">
+                      <thead className="bg-gray-50 sticky top-0">
+                        <tr>
+                          <th className="text-left px-3 py-1.5 font-medium text-gray-500">Phone</th>
+                          <th className="text-left px-3 py-1.5 font-medium text-gray-500">First Name</th>
+                          <th className="text-left px-3 py-1.5 font-medium text-gray-500">Last Name</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {csvRows.slice(0, 20).map((r, i) => (
+                          <tr key={i}>
+                            <td className="px-3 py-1 font-mono">{r.phone}</td>
+                            <td className="px-3 py-1">{r.firstName || '-'}</td>
+                            <td className="px-3 py-1">{r.lastName || '-'}</td>
+                          </tr>
+                        ))}
+                        {csvRows.length > 20 && <tr><td colSpan={3} className="px-3 py-1 text-gray-400">...and {csvRows.length - 20} more</td></tr>}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              {/* Tags to add */}
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Tags to Add (comma-separated)</label>
+                <input type="text" placeholder="e.g. imported, campaign-feb" value={csvAddTags} onChange={e => setCsvAddTags(e.target.value)}
+                  className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-green-400" />
+              </div>
+
+              {/* Send template toggle */}
+              <div>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={csvSendTemplate} onChange={e => setCsvSendTemplate(e.target.checked)}
+                    className="w-4 h-4 rounded border-gray-300 text-green-500 focus:ring-green-400" />
+                  <span className="text-sm font-medium text-gray-700">Send template message after import</span>
+                </label>
+              </div>
+
+              {csvSendTemplate && (
+                <div className="grid grid-cols-2 gap-3 pl-6">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">Template Name *</label>
+                    <input type="text" placeholder="hello_world" value={csvTemplateName} onChange={e => setCsvTemplateName(e.target.value)}
+                      className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-green-400" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">Language Code</label>
+                    <input type="text" placeholder="en" value={csvTemplateLanguage} onChange={e => setCsvTemplateLanguage(e.target.value)}
+                      className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-green-400" />
+                  </div>
+                </div>
+              )}
+
+              {csvImportError && <p className="text-sm text-red-600">{csvImportError}</p>}
+
+              <button onClick={handleCsvImport} disabled={isImporting || !csvRows.length}
+                className="px-6 py-2.5 text-sm font-semibold text-white bg-blue-500 hover:bg-blue-600 rounded-xl disabled:opacity-50 flex items-center gap-2">
+                {isImporting ? <><Loader2 className="h-4 w-4 animate-spin" /> Importing...</> : <><FileText className="h-4 w-4" /> Import Contacts</>}
+              </button>
+            </div>
+
+            {/* Results */}
+            {csvImportResults && (
+              <div className="mt-6">
+                <div className="flex items-center gap-4 mb-3 text-sm flex-wrap">
+                  <span className="font-semibold text-gray-700">Imported: {csvImportResults.imported}</span>
+                  <span className="text-green-600">Created: {csvImportResults.created}</span>
+                  <span className="text-blue-600">Updated: {csvImportResults.updated}</span>
+                  {csvSendTemplate && <span className="text-green-600 font-semibold">✓ Sent: {csvImportResults.sent}</span>}
+                  {csvSendTemplate && csvImportResults.failed > 0 && <span className="text-red-500 font-semibold">✗ Failed: {csvImportResults.failed}</span>}
+                </div>
+                <div className="max-h-64 overflow-y-auto border border-gray-100 rounded-xl">
+                  <table className="w-full text-xs">
+                    <thead className="bg-gray-50 sticky top-0">
+                      <tr>
+                        <th className="text-left px-3 py-2 font-medium text-gray-500">Phone</th>
+                        <th className="text-left px-3 py-2 font-medium text-gray-500">Action</th>
+                        {csvSendTemplate && <th className="text-left px-3 py-2 font-medium text-gray-500">Sent</th>}
+                        <th className="text-left px-3 py-2 font-medium text-gray-500">Error</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {csvImportResults.results.map((r: any, i: number) => (
+                        <tr key={i} className={r.sendError ? 'bg-red-50' : ''}>
+                          <td className="px-3 py-1.5 font-mono">{r.phone}</td>
+                          <td className="px-3 py-1.5"><span className={r.status === 'created' ? 'text-green-600' : 'text-blue-600'}>{r.status}</span></td>
+                          {csvSendTemplate && <td className="px-3 py-1.5">{r.sent ? <span className="text-green-600">✓</span> : r.sendError ? <span className="text-red-500">✗</span> : '-'}</td>}
+                          <td className="px-3 py-1.5 text-gray-400 max-w-xs truncate">{r.sendError || r.reason || ''}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {pageTab === 'inbox' && (
+      <div className="flex flex-1 overflow-hidden">
 
       {/* ═══ LEFT: Conversation List ═══ */}
       <div className="w-80 flex-shrink-0 border-r border-gray-100 flex flex-col">
         <div className="p-4 border-b border-gray-100">
           <div className="flex items-center justify-between mb-3">
-            <h1 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-              <MessageCircle className="h-5 w-5 text-green-600" />
-              WhatsApp
-            </h1>
+            <span className="text-sm font-semibold text-gray-600">Conversations</span>
             <div className="flex gap-1">
               <button onClick={() => setShowNewConversation(true)} className="p-1.5 rounded-lg bg-green-500 hover:bg-green-600 transition-all" title="New conversation">
                 <Plus className="h-4 w-4 text-white" />
@@ -916,6 +1314,7 @@ export default function WhatsAppPage() {
               const ss = getSessionStatus(conv);
               const isSelected = selectedConv?.waId === conv.waId;
               const hasUnread = conv.unreadCount > 0;
+              const convAssignment = assignments[conv.waId];
               return (
                 <button key={conv.waId} onClick={() => selectConversation(conv)}
                   className={`w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 transition-all border-b border-gray-50 text-left ${
@@ -932,7 +1331,16 @@ export default function WhatsAppPage() {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between">
                       <p className={`text-sm truncate ${hasUnread ? 'font-bold text-gray-900' : 'font-semibold text-gray-900'}`}>{conv.contactName}</p>
-                      <span className="text-xs text-gray-400 flex-shrink-0 ml-2">{formatTime(conv.lastMessageTime)}</span>
+                      <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
+                        {convAssignment && (
+                          <div className="h-5 w-5 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0"
+                            style={{ backgroundColor: convAssignment.color }}
+                            title={`Assigned: ${convAssignment.userName}`}>
+                            {getUserInitials(convAssignment.userName)}
+                          </div>
+                        )}
+                        <span className="text-xs text-gray-400">{formatTime(conv.lastMessageTime)}</span>
+                      </div>
                     </div>
                     <div className="flex items-center justify-between mt-0.5">
                       <p className={`text-xs truncate ${hasUnread ? 'font-medium text-gray-700' : 'text-gray-500'}`}>{conv.lastMessage}</p>
@@ -960,9 +1368,49 @@ export default function WhatsAppPage() {
             </div>
             <div className="min-w-0">
               <h2 className="font-semibold text-gray-900 truncate">{selectedConv.contactName}</h2>
-              <p className="text-xs text-gray-500 flex items-center gap-1"><Phone className="h-3 w-3" />{selectedConv.phone}</p>
+              <div className="flex items-center gap-2">
+                <p className="text-xs text-gray-500 flex items-center gap-1"><Phone className="h-3 w-3" />{selectedConv.phone}</p>
+                {assignments[selectedConv.waId] && (
+                  <span className="flex items-center gap-1 text-xs text-gray-500">
+                    <div className="h-4 w-4 rounded-full flex items-center justify-center text-white text-xs font-bold"
+                      style={{ backgroundColor: assignments[selectedConv.waId].color }}>
+                      {getUserInitials(assignments[selectedConv.waId].userName)}
+                    </div>
+                    {assignments[selectedConv.waId].userName}
+                  </span>
+                )}
+              </div>
             </div>
             <div className="ml-auto flex items-center gap-1">
+              {/* Assign dropdown */}
+              <div className="relative">
+                <button onClick={() => setShowAssignDropdown(v => !v)}
+                  className={`px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1 ${assignments[selectedConv.waId] ? 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100' : 'hover:bg-gray-100 text-gray-500'}`}
+                  title="Assign conversation">
+                  <User className="h-3.5 w-3.5" />
+                  {assignments[selectedConv.waId] ? assignments[selectedConv.waId].userName.split(' ')[0] : 'Assign'}
+                </button>
+                {showAssignDropdown && (
+                  <div className="absolute right-0 top-full mt-1 bg-white rounded-xl shadow-xl border border-gray-100 py-1 z-20 min-w-40">
+                    {teamUsers.map(u => (
+                      <button key={u.id} onClick={() => assignConversation(selectedConv.waId, u)}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-gray-50 text-left">
+                        <div className="h-6 w-6 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0"
+                          style={{ backgroundColor: getUserColor(u.id) }}>
+                          {getUserInitials(`${u.firstName} ${u.lastName}`)}
+                        </div>
+                        <span>{u.firstName} {u.lastName}</span>
+                      </button>
+                    ))}
+                    {assignments[selectedConv.waId] && (
+                      <button onClick={() => assignConversation(selectedConv.waId, null)}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-red-50 text-red-500 border-t border-gray-100">
+                        <X className="h-4 w-4" /> Unassign
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
               <button onClick={() => { setShowMessageSearch(!showMessageSearch); setMessageSearch(''); }}
                 className={`p-2 rounded-lg transition-all ${showMessageSearch ? 'bg-green-100 text-green-600' : 'hover:bg-gray-100 text-gray-500'}`} title="Search messages">
                 <Search className="h-4 w-4" />
@@ -1174,6 +1622,9 @@ export default function WhatsAppPage() {
       {/* ═══ RIGHT: Contact Info Sidebar ═══ */}
       {showContactInfo && selectedConv?.contactId && (
         <ContactInfoSidebar contact={contactDetail} isLoading={isLoadingContact} onClose={() => setShowContactInfo(false)} />
+      )}
+
+      </div>
       )}
 
       {/* ═══ MODALS ═══ */}
