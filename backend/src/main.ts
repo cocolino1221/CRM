@@ -50,10 +50,10 @@ async function bootstrap() {
       },
     },
     // Cross-Origin Policies
-    crossOriginEmbedderPolicy: nodeEnv === 'production',
-    crossOriginResourcePolicy: {
-      policy: nodeEnv === 'production' ? 'same-site' : 'cross-origin'
-    },
+    // COEP disabled — it causes issues with cross-origin API reads in some mobile browsers
+    crossOriginEmbedderPolicy: false,
+    // CORP must be cross-origin: this is a REST API consumed by a different domain (Netlify → Fly.io)
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
     crossOriginOpenerPolicy: { policy: 'same-origin-allow-popups' }, // Allow OAuth popups
     // Referrer Policy - Control information sent in Referer header
     referrerPolicy: { policy: 'strict-origin-when-cross-origin' },

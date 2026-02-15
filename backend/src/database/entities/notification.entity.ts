@@ -9,6 +9,7 @@ export enum NotificationType {
   CALL = 'call',
   MEETING = 'meeting',
   SYSTEM = 'system',
+  WHATSAPP = 'whatsapp',
 }
 
 @Entity('notifications')

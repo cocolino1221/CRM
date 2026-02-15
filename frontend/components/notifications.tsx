@@ -1,12 +1,12 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { Bell, Check, X, Mail, Phone, Calendar, UserPlus, AlertCircle, TrendingUp } from 'lucide-react';
+import { Bell, Check, X, Mail, Phone, Calendar, UserPlus, AlertCircle, TrendingUp, MessageSquare } from 'lucide-react';
 import api from '@/lib/api';
 
 interface Notification {
   id: string;
-  type: 'lead' | 'task' | 'email' | 'call' | 'meeting' | 'system';
+  type: 'lead' | 'task' | 'email' | 'call' | 'meeting' | 'system' | 'whatsapp';
   title: string;
   message: string;
   isRead: boolean;
@@ -106,6 +106,8 @@ export default function Notifications() {
         return <Calendar className="h-5 w-5 text-indigo-600" />;
       case 'system':
         return <TrendingUp className="h-5 w-5 text-gray-600" />;
+      case 'whatsapp':
+        return <MessageSquare className="h-5 w-5 text-green-600" />;
       default:
         return <Bell className="h-5 w-5 text-gray-600" />;
     }
@@ -161,9 +163,13 @@ export default function Notifications() {
                 {notifications.map((notification) => (
                   <div
                     key={notification.id}
-                    className={`px-4 py-3 hover:bg-gray-50 transition-colors ${
+                    className={`px-4 py-3 hover:bg-gray-50 transition-colors cursor-pointer ${
                       !notification.isRead ? 'bg-blue-50' : ''
                     }`}
+                    onClick={() => {
+                      if (!notification.isRead) markAsRead(notification.id);
+                      if (notification.link) { setIsOpen(false); window.location.href = notification.link; }
+                    }}
                   >
                     <div className="flex gap-3">
                       <div className="flex-shrink-0 mt-1">

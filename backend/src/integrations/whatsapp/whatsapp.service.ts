@@ -8,7 +8,9 @@ import { firstValueFrom } from 'rxjs';
 import { Contact, ContactStatus, ContactSource } from '../../database/entities/contact.entity';
 import { Activity, ActivityType, ActivityDirection, ActivityOutcome } from '../../database/entities/activity.entity';
 import { Integration, IntegrationType, IntegrationStatus } from '../../database/entities/integration.entity';
-import { User } from '../../database/entities/user.entity';
+import { User, UserStatus } from '../../database/entities/user.entity';
+import { NotificationsService, CreateNotificationDto } from '../../notifications/notifications.service';
+import { NotificationType } from '../../database/entities/notification.entity';
 
 export interface WhatsAppMessage {
   to: string;
@@ -92,7 +94,25 @@ export class WhatsAppService {
     private readonly integrationRepository: Repository<Integration>,
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
+    private readonly notificationsService: NotificationsService,
   ) {}
+
+  /**
+   * Send a notification to all active users in a workspace.
+   */
+  private async notifyWorkspace(workspaceId: string, dto: Omit<CreateNotificationDto, 'userId'>): Promise<void> {
+    try {
+      const users = await this.userRepository.find({
+        where: { workspaceId, status: UserStatus.ACTIVE },
+        select: ['id'],
+      });
+      await Promise.all(
+        users.map(u => this.notificationsService.create(workspaceId, { ...dto, userId: u.id }).catch(() => {})),
+      );
+    } catch (err) {
+      this.logger.warn(`notifyWorkspace failed: ${err.message}`);
+    }
+  }
 
   private getCredentials(credentials?: Record<string, any>) {
     return {
@@ -379,6 +399,16 @@ export class WhatsAppService {
             await this.saveMessageActivity(contact, message, integration.workspaceId, ownerId);
             await this.markMessageAsRead(message.id, integration.credentials);
             await this.autoRespond(message, profileName, integration);
+
+            // Notify all workspace users about the new inbound message
+            const senderName = profileName || contact.firstName || `+${message.from}`;
+            const msgPreview = message.text?.body || message.type || 'media';
+            await this.notifyWorkspace(integration.workspaceId, {
+              type: NotificationType.WHATSAPP,
+              title: 'New WhatsApp message',
+              message: `${senderName}: ${msgPreview.substring(0, 80)}`,
+              link: '/whatsapp',
+            });
           }
         }
       }
@@ -936,6 +966,15 @@ export class WhatsAppService {
   async handleContactCreated(payload: { contact: any; workspaceId: string }): Promise<void> {
     const { contact, workspaceId } = payload;
     try {
+      // Always notify workspace users about the new contact/lead
+      const fullName = `${contact.firstName || ''} ${contact.lastName || ''}`.trim() || 'New contact';
+      await this.notifyWorkspace(workspaceId, {
+        type: NotificationType.LEAD,
+        title: 'New lead added',
+        message: `${fullName} was added${contact.source ? ` via ${contact.source}` : ''}`,
+        link: '/contacts',
+      });
+
       const integration = await this.integrationRepository.findOne({
         where: { type: IntegrationType.WHATSAPP, workspaceId },
       });

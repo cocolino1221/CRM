@@ -8,12 +8,14 @@ import { Contact } from '../../database/entities/contact.entity';
 import { Activity } from '../../database/entities/activity.entity';
 import { Integration } from '../../database/entities/integration.entity';
 import { User } from '../../database/entities/user.entity';
+import { NotificationsModule } from '../../notifications/notifications.module';
 
 @Module({
   imports: [
     HttpModule,
     ConfigModule,
     TypeOrmModule.forFeature([Contact, Activity, Integration, User]),
+    NotificationsModule,
   ],
   controllers: [WhatsAppController],
   providers: [WhatsAppService],
