@@ -463,6 +463,17 @@ export class WhatsAppController {
     return { data };
   }
 
+  @Delete('conversation/:waId')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Delete all messages in a conversation (remove from inbox)' })
+  @ApiResponse({ status: 200, description: 'Conversation deleted' })
+  async deleteConversation(@Req() req: any, @Param('waId') waId: string) {
+    const workspaceId = req.user?.workspaceId;
+    if (!workspaceId) throw new BadRequestException('Workspace ID required');
+    return this.whatsappService.deleteConversation(workspaceId, waId);
+  }
+
   @Post('conversations/:waId/assign')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()

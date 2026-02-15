@@ -1058,4 +1058,20 @@ export class WhatsAppService {
     integration.config = { ...(integration.config || {}), conversationAssignments: current };
     await this.integrationRepository.save(integration);
   }
+
+  /**
+   * Delete all WhatsApp activities for a specific waId (phone number) in a workspace.
+   * This removes the conversation from the inbox.
+   */
+  async deleteConversation(workspaceId: string, waId: string): Promise<{ deleted: number }> {
+    const result = await this.activityRepository
+      .createQueryBuilder()
+      .delete()
+      .where(
+        `workspace_id = :workspaceId AND type = :type AND metadata->>'waId' = :waId`,
+        { workspaceId, type: ActivityType.WHATSAPP_MESSAGE, waId },
+      )
+      .execute();
+    return { deleted: result.affected || 0 };
+  }
 }

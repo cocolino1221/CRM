@@ -6,7 +6,7 @@ import {
   CheckCheck, Check, Loader2, Settings, Plus, Smile, Paperclip,
   Image, FileText, Mic, Video, Info, X, Zap, LayoutTemplate,
   Building2, Tag, Star, AlertTriangle, Timer, Edit, Trash2,
-  Copy, ExternalLink, Mail, Briefcase, ArrowRight,
+  Copy, ExternalLink, Mail, Briefcase, ArrowRight, ChevronLeft,
 } from 'lucide-react';
 import Link from 'next/link';
 import api from '@/lib/api';
@@ -381,6 +381,12 @@ export default function WhatsAppPage() {
   const [search, setSearch] = useState('');
   const [sendError, setSendError] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Mobile layout: 'list' shows conv list, 'chat' shows selected chat
+  const [mobilePanel, setMobilePanel] = useState<'list' | 'chat'>('list');
+
+  // Delete conversation
+  const [deletingConvId, setDeletingConvId] = useState<string | null>(null);
 
   // Contact info sidebar
   const [showContactInfo, setShowContactInfo] = useState(false);
@@ -787,6 +793,7 @@ export default function WhatsAppPage() {
 
   const selectConversation = (conv: Conversation) => {
     setSelectedConv(conv);
+    setMobilePanel('chat');
     markAsRead(conv.waId);
     conv.unreadCount = 0;
     setConversations(prev => prev.map(c => c.waId === conv.waId ? { ...c, unreadCount: 0 } : c));
@@ -794,6 +801,26 @@ export default function WhatsAppPage() {
       fetchContactDetail(conv.contactId);
     } else {
       setContactDetail(null);
+    }
+  };
+
+  const handleDeleteConversation = async (waId: string) => {
+    if (!window.confirm('Delete this conversation? All messages will be removed from the inbox.')) return;
+    setDeletingConvId(waId);
+    try {
+      // Remove from local state immediately (optimistic)
+      setConversations(prev => prev.filter(c => c.waId !== waId));
+      if (selectedConv?.waId === waId) {
+        setSelectedConv(null);
+        setMobilePanel('list');
+      }
+      // Delete activities for this waId on the server
+      await api.delete(`/integrations/whatsapp/conversation/${waId}`);
+    } catch {
+      // If server fails, refresh to restore
+      await fetchInbox();
+    } finally {
+      setDeletingConvId(null);
     }
   };
 
@@ -1265,7 +1292,10 @@ export default function WhatsAppPage() {
       <div className="flex flex-1 overflow-hidden">
 
       {/* ═══ LEFT: Conversation List ═══ */}
-      <div className="w-80 flex-shrink-0 border-r border-gray-100 flex flex-col">
+      <div className={`flex-shrink-0 border-r border-gray-100 flex flex-col
+        w-full md:w-80
+        ${mobilePanel === 'chat' ? 'hidden md:flex' : 'flex'}
+      `}>
         <div className="p-4 border-b border-gray-100">
           <div className="flex items-center justify-between mb-3">
             <span className="text-sm font-semibold text-gray-600">Conversations</span>
@@ -1316,10 +1346,9 @@ export default function WhatsAppPage() {
               const hasUnread = conv.unreadCount > 0;
               const convAssignment = assignments[conv.waId];
               return (
-                <button key={conv.waId} onClick={() => selectConversation(conv)}
-                  className={`w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 transition-all border-b border-gray-50 text-left ${
-                    isSelected ? 'bg-green-50 border-l-2 border-l-green-500' : ''
-                  }`}>
+                <div key={conv.waId} className={`relative group/conv border-b border-gray-50 ${isSelected ? 'bg-green-50 border-l-2 border-l-green-500' : ''}`}>
+                <button onClick={() => selectConversation(conv)}
+                  className={`w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 transition-all text-left`}>
                   <div className="relative flex-shrink-0">
                     <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-green-400 to-emerald-600">
                       <span className="text-white text-sm font-bold">{conv.contactName.charAt(0).toUpperCase()}</span>
@@ -1352,6 +1381,15 @@ export default function WhatsAppPage() {
                     </div>
                   </div>
                 </button>
+                {/* Delete conversation button — appears on hover */}
+                <button
+                  onClick={(e) => { e.stopPropagation(); handleDeleteConversation(conv.waId); }}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover/conv:opacity-100 transition-opacity p-1.5 bg-white rounded-lg shadow-sm border border-gray-100 hover:bg-red-50 hover:border-red-200 hover:text-red-500 text-gray-400"
+                  title="Delete conversation"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+                </div>
               );
             })
           )}
@@ -1360,9 +1398,16 @@ export default function WhatsAppPage() {
 
       {/* ═══ CENTER: Chat Area ═══ */}
       {selectedConv ? (
-        <div className="flex-1 flex flex-col min-w-0">
+        <div className={`flex-1 flex flex-col min-w-0 ${mobilePanel === 'list' ? 'hidden md:flex' : 'flex'}`}>
           {/* Chat header */}
           <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-100 bg-white">
+            {/* Back button - mobile only */}
+            <button
+              onClick={() => { setSelectedConv(null); setMobilePanel('list'); }}
+              className="md:hidden p-2 -ml-1 rounded-lg hover:bg-gray-100 text-gray-500 flex-shrink-0"
+            >
+              <ChevronLeft className="h-5 w-5" />
+            </button>
             <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-green-400 to-emerald-600 flex-shrink-0">
               <span className="text-white font-bold">{selectedConv.contactName.charAt(0).toUpperCase()}</span>
             </div>
@@ -1595,7 +1640,7 @@ export default function WhatsAppPage() {
           </div>
         </div>
       ) : (
-        <div className="flex-1 flex items-center justify-center bg-gray-50">
+        <div className={`flex-1 items-center justify-center bg-gray-50 ${mobilePanel === 'list' ? 'hidden md:flex' : 'flex'}`}>
           <div className="text-center max-w-sm px-4">
             <div className="flex h-20 w-20 items-center justify-center rounded-full bg-green-100 mx-auto mb-4">
               <MessageCircle className="h-10 w-10 text-green-600" />

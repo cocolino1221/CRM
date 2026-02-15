@@ -516,6 +516,18 @@ export default function LeadsPage() {
     setPipelineStages(updated);
   };
 
+  const handleDeleteLead = async (contact: Contact, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!window.confirm(`Delete ${contact.firstName} ${contact.lastName}? This cannot be undone.`)) return;
+    setContacts(prev => prev.filter(c => c.id !== contact.id));
+    try {
+      await api.delete(`/contacts/${contact.id}`);
+    } catch (err: any) {
+      console.error('Failed to delete lead:', err);
+      setContacts(prev => [...prev, contact]);
+    }
+  };
+
   const handleQuickStageChange = async (contact: Contact, newStageId: string) => {
     if (newStageId === contact.pipelineStageId) return;
     const stage = selectedPipeline?.stages.find(s => s.id === newStageId);
@@ -862,11 +874,20 @@ export default function LeadsPage() {
                           onClick={() => openDetailModal(contact)}
                           className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm hover:shadow-md transition-all cursor-pointer group"
                         >
-                          {/* Lead Name */}
+                          {/* Lead Name + delete button */}
                           <div className="mb-3">
-                            <h4 className="font-semibold text-gray-900 text-sm mb-1">
-                              {contact.firstName} {contact.lastName}
-                            </h4>
+                            <div className="flex items-start justify-between gap-1 mb-1">
+                              <h4 className="font-semibold text-gray-900 text-sm">
+                                {contact.firstName} {contact.lastName}
+                              </h4>
+                              <button
+                                onClick={(e) => handleDeleteLead(contact, e)}
+                                className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-red-50 hover:text-red-500 text-gray-300 flex-shrink-0 -mt-0.5 -mr-1"
+                                title="Delete lead"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
                             <div className="flex items-center gap-1.5 text-xs text-gray-600 mb-1">
                               <Mail className="h-3 w-3" />
                               <span className="truncate">{contact.email}</span>
