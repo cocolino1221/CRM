@@ -97,6 +97,22 @@ const WHATSAPP_TEMPLATES: WhatsAppTemplate[] = [
   { id: '1', name: 'hello_world', displayName: 'Hello World', language: 'en_US', body: 'Hello World', parameterCount: 0, category: 'utility' },
 ];
 
+// Convert a Meta API template object to the local WhatsAppTemplate format
+function toSendableTemplate(t: any): WhatsAppTemplate {
+  const bodyComponent = t.components?.find((c: any) => c.type === 'BODY');
+  const bodyText = bodyComponent?.text || t.name;
+  const paramCount = (bodyText.match(/\{\{\d+\}\}/g) || []).length;
+  return {
+    id: t.id || t.name,
+    name: t.name,
+    displayName: t.name.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase()),
+    language: t.language || 'en_US',
+    body: bodyText,
+    parameterCount: paramCount,
+    category: (t.category || 'utility').toLowerCase() as any,
+  };
+}
+
 const DEFAULT_QUICK_REPLIES: QuickReply[] = [
   { id: 'qr1', title: 'Welcome', message: 'Thank you for reaching out! How can I help you today?' },
   { id: 'qr2', title: 'Follow up', message: 'Just checking in. Is there anything else you need help with?' },
@@ -1327,7 +1343,7 @@ export default function WhatsAppPage() {
           <div className="flex items-center justify-between mb-3">
             <span className="text-sm font-semibold text-gray-600">Conversations</span>
             <div className="flex gap-1">
-              <button onClick={() => setShowNewConversation(true)} className="p-1.5 rounded-lg bg-green-500 hover:bg-green-600 transition-all" title="New conversation">
+              <button onClick={() => { setShowNewConversation(true); if (metaTemplates.length === 0) fetchMetaTemplates(); }} className="p-1.5 rounded-lg bg-green-500 hover:bg-green-600 transition-all" title="New conversation">
                 <Plus className="h-4 w-4 text-white" />
               </button>
               <button onClick={fetchInbox} className="p-1.5 rounded-lg hover:bg-gray-100 transition-all" title="Refresh">
@@ -1560,8 +1576,14 @@ export default function WhatsAppPage() {
                 </button>
               </div>
               {!selectedTemplate ? (
+                isLoadingTemplates ? (
+                  <div className="flex justify-center py-6"><Loader2 className="h-5 w-5 animate-spin text-gray-400" /></div>
+                ) : (
                 <div className="grid grid-cols-2 gap-2">
-                  {WHATSAPP_TEMPLATES.map(t => (
+                  {(metaTemplates.filter((t: any) => t.status === 'APPROVED').map(toSendableTemplate).length > 0
+                    ? metaTemplates.filter((t: any) => t.status === 'APPROVED').map(toSendableTemplate)
+                    : WHATSAPP_TEMPLATES
+                  ).map(t => (
                     <button key={t.id} onClick={() => { setSelectedTemplate(t); setTemplateParams(Array(t.parameterCount).fill('')); }}
                       className="p-3 text-left bg-gray-50 hover:bg-green-50 rounded-xl border border-gray-200 hover:border-green-300 transition-all">
                       <div className="flex items-center gap-2 mb-1">
@@ -1574,6 +1596,7 @@ export default function WhatsAppPage() {
                     </button>
                   ))}
                 </div>
+                ))
               ) : (
                 <div>
                   <p className="text-sm text-gray-700 mb-3 p-2 bg-gray-50 rounded-lg">{selectedTemplate.body}</p>
@@ -1616,7 +1639,7 @@ export default function WhatsAppPage() {
                 className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500 transition-all" title="Attachment">
                 <Paperclip className="h-4 w-4" />
               </button>
-              <button onClick={() => { setShowTemplatePanel(!showTemplatePanel); setShowEmojiPicker(false); setShowQuickReplies(false); }}
+              <button onClick={() => { const opening = !showTemplatePanel; setShowTemplatePanel(opening); setShowEmojiPicker(false); setShowQuickReplies(false); if (opening && metaTemplates.length === 0) fetchMetaTemplates(); }}
                 className={`p-1.5 rounded-lg transition-all ${showTemplatePanel ? 'bg-green-100 text-green-600' : 'hover:bg-gray-100 text-gray-500'}`} title="Templates">
                 <LayoutTemplate className="h-4 w-4" />
               </button>
@@ -1754,7 +1777,12 @@ export default function WhatsAppPage() {
                   <LayoutTemplate className="h-3.5 w-3.5" /> Select template <span className="text-xs text-gray-400">(required for first message)</span>
                 </label>
                 <div className="space-y-2">
-                  {WHATSAPP_TEMPLATES.map(t => (
+                  {isLoadingTemplates ? (
+                    <div className="flex justify-center py-4"><Loader2 className="h-5 w-5 animate-spin text-gray-400" /></div>
+                  ) : (metaTemplates.filter((t: any) => t.status === 'APPROVED').map(toSendableTemplate).length > 0
+                    ? metaTemplates.filter((t: any) => t.status === 'APPROVED').map(toSendableTemplate)
+                    : WHATSAPP_TEMPLATES
+                  ).map(t => (
                     <button key={t.id} onClick={() => { setNewConvTemplate(t); setNewConvTemplateParams(Array(t.parameterCount).fill('')); }}
                       className={`w-full p-3 text-left rounded-xl border transition-all ${
                         newConvTemplate?.id === t.id ? 'border-green-400 bg-green-50' : 'border-gray-200 hover:border-green-300 hover:bg-gray-50'
