@@ -437,6 +437,8 @@ export default function WhatsAppPage() {
   const [customToken, setCustomToken] = useState('');
   const [isSavingToken, setIsSavingToken] = useState(false);
   const [tokenSaveError, setTokenSaveError] = useState('');
+  const [verificationTest, setVerificationTest] = useState<any | null>(null);
+  const [isTestingVerification, setIsTestingVerification] = useState(false);
 
   // Auto-send on contact creation
   const [showAutoSend, setShowAutoSend] = useState(false);
@@ -623,6 +625,19 @@ export default function WhatsAppPage() {
     let token = '';
     for (let i = 0; i < 32; i++) token += chars[Math.floor(Math.random() * chars.length)];
     setCustomToken(token);
+  };
+
+  const runVerificationTest = async () => {
+    setIsTestingVerification(true);
+    setVerificationTest(null);
+    try {
+      const res = await api.get('/integrations/whatsapp/test-verification');
+      setVerificationTest(res.data);
+    } catch (err: any) {
+      setVerificationTest({ working: false, reason: err?.response?.data?.message || err.message || 'Request failed' });
+    } finally {
+      setIsTestingVerification(false);
+    }
   };
 
   const fetchAutoResponses = async () => {
@@ -2057,7 +2072,7 @@ export default function WhatsAppPage() {
               <h3 className="font-semibold text-gray-900 flex items-center gap-2">
                 <Settings className="h-5 w-5 text-green-600" /> WhatsApp Webhook Setup
               </h3>
-              <button onClick={() => { setShowWebhookSetup(false); setCustomToken(''); setTokenSaveError(''); }}>
+              <button onClick={() => { setShowWebhookSetup(false); setCustomToken(''); setTokenSaveError(''); setVerificationTest(null); }}>
                 <X className="h-5 w-5 text-gray-400" />
               </button>
             </div>
@@ -2149,6 +2164,45 @@ export default function WhatsAppPage() {
                   </button>
                   <p className="text-xs text-gray-400">After saving, the token will appear above — copy it exactly into Meta&apos;s &quot;Verify Token&quot; field.</p>
                 </div>
+              </div>
+
+              {/* Step 2b: Test Verification */}
+              <div>
+                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5 block">
+                  Step 2b — Test Webhook Verification
+                </label>
+                <p className="text-xs text-gray-500 mb-2">
+                  Click below to test if the webhook verification URL actually works. This simulates what Meta does when you click &quot;Verify and Save&quot;.
+                </p>
+                <button
+                  onClick={runVerificationTest}
+                  disabled={isTestingVerification}
+                  className="w-full flex items-center justify-center gap-2 py-2 text-sm font-medium text-white bg-blue-500 hover:bg-blue-600 disabled:opacity-50 rounded-xl"
+                >
+                  {isTestingVerification ? (
+                    <><Loader2 className="h-4 w-4 animate-spin" /> Testing…</>
+                  ) : (
+                    'Test Webhook Verification'
+                  )}
+                </button>
+                {verificationTest && (
+                  <div className={`mt-2 p-3 rounded-xl text-xs ${verificationTest.working ? 'bg-green-50 border border-green-200 text-green-800' : 'bg-red-50 border border-red-200 text-red-800'}`}>
+                    <p className="font-semibold mb-1">{verificationTest.working ? '✅ Verification is working!' : '❌ Verification FAILED'}</p>
+                    <p>{verificationTest.reason}</p>
+                    {verificationTest.fullToken && (
+                      <div className="mt-2">
+                        <p className="font-medium text-red-700 mb-1">The exact token Meta needs to see:</p>
+                        <div className="flex items-center gap-2">
+                          <code className="flex-1 font-mono bg-white px-2 py-1 rounded-lg border border-red-200 break-all text-red-900">{verificationTest.fullToken}</code>
+                          <button onClick={() => navigator.clipboard.writeText(verificationTest.fullToken)} className="p-1.5 hover:bg-red-100 rounded-lg">
+                            <Copy className="h-3.5 w-3.5 text-red-600" />
+                          </button>
+                        </div>
+                        <p className="mt-1 text-red-600 italic">Go to Meta → WhatsApp → Configuration → Edit → paste this exact value as &quot;Verify Token&quot; → Verify and Save.</p>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Step 3: Subscribe */}
@@ -2245,7 +2299,7 @@ export default function WhatsAppPage() {
               >
                 Refresh Diagnostic
               </button>
-              <button onClick={() => { setShowWebhookSetup(false); setCustomToken(''); setTokenSaveError(''); }}
+              <button onClick={() => { setShowWebhookSetup(false); setCustomToken(''); setTokenSaveError(''); setVerificationTest(null); }}
                 className="px-4 py-2 text-sm font-medium text-white bg-green-500 hover:bg-green-600 rounded-xl">Done</button>
             </div>
           </div>

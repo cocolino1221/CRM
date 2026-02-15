@@ -1062,6 +1062,67 @@ export class WhatsAppService {
   }
 
   /**
+   * Test webhook verification by making an internal HTTP GET to the public webhook endpoint.
+   * This tells the user definitively whether Meta would be able to verify the webhook.
+   */
+  async testVerification(appUrl: string, workspaceId?: string): Promise<Record<string, any>> {
+    const baseUrl = appUrl.replace(/\/api\/v1\/?$/, '').replace(/\/api\/?$/, '');
+    const webhookUrl = `${baseUrl}/api/v1/integrations/whatsapp/webhook`;
+    const challenge = 'test_challenge_' + Math.random().toString(36).slice(2, 10);
+
+    // Find the active verify token
+    const envToken = this.configService.get<string>('WHATSAPP_VERIFY_TOKEN');
+    let token = envToken || '';
+
+    if (workspaceId) {
+      const integration = await this.integrationRepository.findOne({
+        where: { type: IntegrationType.WHATSAPP, workspaceId },
+      });
+      const storedToken = integration?.credentials?.verifyToken || integration?.config?.verifyToken;
+      if (storedToken) token = storedToken; // prefer integration-stored token
+    }
+
+    if (!token) {
+      return {
+        working: false,
+        reason: 'No verify token configured. Set one using the form below and click Save Token.',
+        webhookUrl,
+        challenge,
+      };
+    }
+
+    const testUrl = `${webhookUrl}?hub.mode=subscribe&hub.verify_token=${encodeURIComponent(token)}&hub.challenge=${encodeURIComponent(challenge)}`;
+    try {
+      const response = await firstValueFrom(
+        this.httpService.get(testUrl, { responseType: 'text' }),
+      );
+      const body = String(response.data || '').trim().replace(/^"(.*)"$/, '$1'); // strip JSON quotes if any
+      const working = body === challenge;
+      return {
+        working,
+        reason: working
+          ? 'Webhook verification is working correctly. Meta can verify your webhook.'
+          : `Verification returned unexpected body: "${body}" (expected "${challenge}")`,
+        webhookUrl,
+        testedToken: token.substring(0, 4) + '...',
+        statusCode: response.status,
+      };
+    } catch (err: any) {
+      const statusCode = err.response?.status;
+      return {
+        working: false,
+        reason: statusCode === 400
+          ? `Verification endpoint returned 400 — the token in Meta does NOT match your saved token. Update the verify token in Meta to: ${token}`
+          : `HTTP error ${statusCode || err.message}`,
+        webhookUrl,
+        testedToken: token.substring(0, 4) + '...',
+        statusCode,
+        fullToken: token, // return full token so UI can show it
+      };
+    }
+  }
+
+  /**
    * Public diagnostic — shows what's configured for WhatsApp without exposing secrets.
    * Used by the frontend "Webhook Setup" panel to show live status.
    */

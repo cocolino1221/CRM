@@ -306,6 +306,17 @@ export class WhatsAppController {
     return this.whatsappService.getDiagnostic(workspaceId);
   }
 
+  @Get('test-verification')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Test webhook verification — calls the public endpoint internally to verify it works' })
+  @ApiResponse({ status: 200, description: 'Test result' })
+  async testVerification(@Req() req: any) {
+    const appUrl = process.env.APP_URL || 'https://slackcrm-backend.fly.dev';
+    const workspaceId = req.user?.workspaceId;
+    return this.whatsappService.testVerification(appUrl, workspaceId);
+  }
+
   @Post('setup/verify-token')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
