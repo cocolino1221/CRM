@@ -213,11 +213,13 @@ export class WhatsAppService {
       description: messageBody,
       direction: ActivityDirection.INBOUND,
       outcome: ActivityOutcome.SUCCESSFUL,
-      occurredAt: new Date(parseInt(message.timestamp) * 1000),
+      // Use server receive time — Meta test messages often carry stale timestamps (e.g. Sep 2023)
+      occurredAt: new Date(),
       metadata: {
         whatsappMessageId: message.id,
         waId: message.from,
         messageType: message.type,
+        metaTimestamp: message.timestamp, // keep original for reference
       },
     });
 
@@ -765,12 +767,31 @@ export class WhatsAppService {
   }
 
   async getWhatsAppActivities(workspaceId: string, limit = 50): Promise<Activity[]> {
-    return this.activityRepository.find({
+    // Fetch without TypeORM relation JOIN to avoid silent exclusion on Neon/Postgres FK edge cases
+    const activities = await this.activityRepository.find({
       where: { workspaceId, type: ActivityType.WHATSAPP_MESSAGE },
-      relations: ['contact'],
       order: { occurredAt: 'DESC' },
       take: limit,
     });
+
+    // Manually hydrate contacts
+    if (activities.length > 0) {
+      const contactIds = [...new Set(activities.map(a => a.contactId).filter(Boolean))] as string[];
+      if (contactIds.length > 0) {
+        const contacts = await this.contactRepository.find({ where: { id: In(contactIds) } });
+        const contactMap = new Map(contacts.map(c => [c.id, c]));
+        for (const activity of activities) {
+          (activity as any).contact = activity.contactId ? (contactMap.get(activity.contactId) ?? null) : null;
+        }
+      } else {
+        for (const activity of activities) {
+          (activity as any).contact = null;
+        }
+      }
+    }
+
+    this.logger.log(`getWhatsAppActivities: found ${activities.length} activities for workspace ${workspaceId}`);
+    return activities;
   }
 
   /**
@@ -1010,17 +1031,25 @@ export class WhatsAppService {
         return;
       }
 
-      // Send template
+      // Send template — use integration's stored credentials (not global env vars)
       const templateName = autoSend.templateName || 'hello_world';
-      const language = autoSend.language || 'en';
+      const language = autoSend.language || 'en_US';
       const params: any[] = [];
       if (autoSend.includeNameParam && contact.firstName) {
         params.push({ type: 'body', parameters: [{ type: 'text', text: contact.firstName }] });
       }
 
-      this.logger.log(`Auto-send: template="${templateName}" to phone="${phone}" (raw="${rawPhone}") contact=${contact.id} source=${contact.source}`);
-      await this.sendTemplateMessage(phone, templateName, language, params);
-      this.logger.log(`Auto-send SUCCESS: template "${templateName}" sent to ${phone} for contact ${contact.id}`);
+      this.logger.log(`Auto-send: template="${templateName}" lang="${language}" to phone="${phone}" (raw="${rawPhone}") contact=${contact.id} source=${contact.source}`);
+      const msgResult = await this.sendMessageWithCredentials(integration.credentials || {}, {
+        to: phone,
+        type: 'template',
+        content: '',
+        template: { name: templateName, language, parameters: params },
+      });
+      const msgId = msgResult?.messages?.[0]?.id;
+      // Save as outbound activity so it appears in the WhatsApp inbox
+      await this.saveOutboundActivity(phone, `[Auto-send template: ${templateName}]`, 'template', workspaceId, integration.userId || '', msgId);
+      this.logger.log(`Auto-send SUCCESS: template "${templateName}" sent to ${phone} for contact ${contact.id} msgId=${msgId}`);
     } catch (err) {
       this.logger.warn(`Auto-send FAILED for contact ${payload.contact?.id}: ${err.response?.data?.error?.message || err.message}`);
     }

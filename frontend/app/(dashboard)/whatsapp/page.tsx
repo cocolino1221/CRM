@@ -680,7 +680,7 @@ export default function WhatsAppPage() {
       const cfg = res.data;
       setAutoSendEnabled(cfg.enabled ?? false);
       setAutoSendTemplate(cfg.templateName || 'hello_world');
-      setAutoSendLanguage(cfg.language || 'en');
+      setAutoSendLanguage(cfg.language || 'en_US');
       setAutoSendIncludeName(cfg.includeNameParam ?? false);
       setAutoSendSources(cfg.conditions?.sources || []);
       setAutoSendStatuses(cfg.conditions?.statuses || []);
@@ -1355,7 +1355,7 @@ export default function WhatsAppPage() {
               <button onClick={() => { setShowTemplateManager(true); fetchMetaTemplates(); }} className="p-1.5 rounded-lg hover:bg-gray-100 transition-all" title="Message templates">
                 <LayoutTemplate className="h-4 w-4 text-gray-500" />
               </button>
-              <button onClick={() => { setShowAutoSend(true); fetchAutoSend(); }} className="p-1.5 rounded-lg hover:bg-gray-100 transition-all" title="Auto-send on new contact">
+              <button onClick={() => { setShowAutoSend(true); fetchAutoSend(); fetchMetaTemplates(); }} className="p-1.5 rounded-lg hover:bg-gray-100 transition-all" title="Auto-send on new contact">
                 <Timer className="h-4 w-4 text-gray-500" />
               </button>
               <button onClick={() => setShowWebhookSetup(true)} className="p-1.5 rounded-lg hover:bg-gray-100 transition-all" title="Webhook setup">
@@ -2364,18 +2364,39 @@ export default function WhatsAppPage() {
               {/* Template config */}
               <div className="space-y-3">
                 <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Template</p>
-                <div>
-                  <label className="text-xs text-gray-500 mb-1 block">Template Name</label>
-                  <input type="text" value={autoSendTemplate} onChange={e => setAutoSendTemplate(e.target.value)}
-                    placeholder="e.g. hello_world"
-                    className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-green-400 focus:ring-2 focus:ring-green-100" />
-                  <p className="text-xs text-gray-400 mt-1">Must be an approved template in your Meta account</p>
-                </div>
+                {metaTemplates.filter((t: any) => t.status === 'APPROVED').length > 0 ? (
+                  <div>
+                    <label className="text-xs text-gray-500 mb-1 block">Select Template</label>
+                    <select
+                      value={autoSendTemplate}
+                      onChange={e => {
+                        const selected = metaTemplates.find((t: any) => t.name === e.target.value);
+                        setAutoSendTemplate(e.target.value);
+                        if (selected?.language) setAutoSendLanguage(selected.language);
+                      }}
+                      className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-green-400 focus:ring-2 focus:ring-green-100 bg-white">
+                      <option value="">— choose a template —</option>
+                      {metaTemplates.filter((t: any) => t.status === 'APPROVED').map((t: any) => (
+                        <option key={t.name} value={t.name}>{t.name} ({t.language})</option>
+                      ))}
+                    </select>
+                    <p className="text-xs text-gray-400 mt-1">Only approved templates are listed</p>
+                  </div>
+                ) : (
+                  <div>
+                    <label className="text-xs text-gray-500 mb-1 block">Template Name</label>
+                    <input type="text" value={autoSendTemplate} onChange={e => setAutoSendTemplate(e.target.value)}
+                      placeholder="e.g. hello_world"
+                      className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-green-400 focus:ring-2 focus:ring-green-100" />
+                    <p className="text-xs text-gray-400 mt-1">Must be an approved template in your Meta account</p>
+                  </div>
+                )}
                 <div>
                   <label className="text-xs text-gray-500 mb-1 block">Language Code</label>
                   <input type="text" value={autoSendLanguage} onChange={e => setAutoSendLanguage(e.target.value)}
-                    placeholder="e.g. en, en_US, ro"
+                    placeholder="e.g. en_US, ro"
                     className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-green-400 focus:ring-2 focus:ring-green-100" />
+                  <p className="text-xs text-gray-400 mt-1">Auto-filled when you select a template above</p>
                 </div>
                 <label className="flex items-center gap-3 cursor-pointer">
                   <input type="checkbox" checked={autoSendIncludeName} onChange={e => setAutoSendIncludeName(e.target.checked)}
