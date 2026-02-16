@@ -6,7 +6,7 @@ import {
   CheckCheck, Check, Loader2, Settings, Plus, Smile, Paperclip,
   Image, FileText, Mic, Video, Info, X, Zap, LayoutTemplate,
   Building2, Tag, Star, AlertTriangle, Timer, Edit, Trash2,
-  Copy, ExternalLink, Mail, Briefcase, ArrowRight, ChevronLeft,
+  Copy, ExternalLink, Mail, Briefcase, ArrowRight, ChevronLeft, Brain,
 } from 'lucide-react';
 import Link from 'next/link';
 import api from '@/lib/api';
@@ -479,6 +479,19 @@ export default function WhatsAppPage() {
   const [autoResponseRules, setAutoResponseRules] = useState<Array<{ id: string; name: string; keywords: string; response: string; enabled: boolean }>>([]);
   const [isSavingAutoResp, setIsSavingAutoResp] = useState(false);
 
+  // AI auto-reply settings
+  const [showAISettings, setShowAISettings] = useState(false);
+  const [aiEnabled, setAiEnabled] = useState(false);
+  const [aiSystemPrompt, setAiSystemPrompt] = useState('');
+  const [aiMaxTokens, setAiMaxTokens] = useState(300);
+  const [aiFallbackToKeywords, setAiFallbackToKeywords] = useState(true);
+  const [isSavingAI, setIsSavingAI] = useState(false);
+  const [aiSaveError, setAiSaveError] = useState('');
+  const [aiTestMessage, setAiTestMessage] = useState('');
+  const [aiTestReply, setAiTestReply] = useState<string | null>(null);
+  const [aiTestError, setAiTestError] = useState('');
+  const [isTestingAI, setIsTestingAI] = useState(false);
+
   // Template manager
   const [showTemplateManager, setShowTemplateManager] = useState(false);
   const [metaTemplates, setMetaTemplates] = useState<any[]>([]);
@@ -714,6 +727,54 @@ export default function WhatsAppPage() {
       setAutoSendSaveError(err?.response?.data?.message || 'Failed to save');
     } finally {
       setIsSavingAutoSend(false);
+    }
+  };
+
+  const fetchAIConfig = async () => {
+    try {
+      const res = await api.get('/integrations/whatsapp/ai-config');
+      const cfg = res.data;
+      setAiEnabled(cfg.enabled ?? false);
+      setAiSystemPrompt(cfg.systemPrompt || '');
+      setAiMaxTokens(cfg.maxTokens || 300);
+      setAiFallbackToKeywords(cfg.fallbackToKeywords ?? true);
+    } catch { /* silent */ }
+  };
+
+  const saveAIConfig = async () => {
+    setIsSavingAI(true);
+    setAiSaveError('');
+    try {
+      await api.post('/integrations/whatsapp/ai-config', {
+        enabled: aiEnabled,
+        systemPrompt: aiSystemPrompt.trim() || undefined,
+        maxTokens: aiMaxTokens,
+        fallbackToKeywords: aiFallbackToKeywords,
+      });
+      setShowAISettings(false);
+    } catch (err: any) {
+      setAiSaveError(err?.response?.data?.message || 'Failed to save AI config');
+    } finally {
+      setIsSavingAI(false);
+    }
+  };
+
+  const testAIReply = async () => {
+    if (!aiTestMessage.trim()) return;
+    setIsTestingAI(true);
+    setAiTestReply(null);
+    setAiTestError('');
+    try {
+      const res = await api.post('/integrations/whatsapp/ai-test', { message: aiTestMessage.trim() });
+      if (res.data.reply) {
+        setAiTestReply(res.data.reply);
+      } else {
+        setAiTestError(res.data.error || 'No reply generated');
+      }
+    } catch (err: any) {
+      setAiTestError(err?.response?.data?.message || 'Test failed');
+    } finally {
+      setIsTestingAI(false);
     }
   };
 
@@ -1400,6 +1461,9 @@ export default function WhatsAppPage() {
               <button onClick={() => { setShowAutoSend(true); fetchAutoSend(); fetchMetaTemplates(); }} className="p-1.5 rounded-lg hover:bg-gray-100 transition-all" title="Auto-send">
                 <Timer className="h-3.5 w-3.5 text-gray-400" />
               </button>
+              <button onClick={() => { setShowAISettings(true); fetchAIConfig(); }} className="p-1.5 rounded-lg hover:bg-gray-100 transition-all" title="AI Auto-Reply">
+                <Brain className="h-3.5 w-3.5 text-gray-400" />
+              </button>
               <button onClick={() => setShowWebhookSetup(true)} className="p-1.5 rounded-lg hover:bg-gray-100 transition-all" title="Settings">
                 <Settings className="h-3.5 w-3.5 text-gray-400" />
               </button>
@@ -1663,7 +1727,7 @@ export default function WhatsAppPage() {
                     </button>
                   ))}
                 </div>
-                ))
+                )
               ) : (
                 <div>
                   <p className="text-sm text-gray-700 mb-3 p-2 bg-gray-50 rounded-lg">{selectedTemplate.body}</p>
@@ -2613,6 +2677,136 @@ export default function WhatsAppPage() {
               <button onClick={saveAutoSendConfig} disabled={isSavingAutoSend || !autoSendTemplate.trim()}
                 className="flex-1 px-4 py-2 text-sm font-medium text-white bg-green-500 hover:bg-green-600 rounded-xl disabled:opacity-50 flex items-center justify-center gap-2">
                 {isSavingAutoSend ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* AI Auto-Reply Settings Modal */}
+      {showAISettings && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-4 flex flex-col max-h-[90vh]">
+            <div className="flex items-center justify-between p-4 border-b border-gray-100">
+              <div className="flex items-center gap-3">
+                <div className="h-9 w-9 rounded-xl bg-purple-100 flex items-center justify-center">
+                  <Brain className="h-5 w-5 text-purple-600" />
+                </div>
+                <div>
+                  <h3 className="font-semibold text-gray-900">AI Auto-Reply</h3>
+                  <p className="text-xs text-gray-400 mt-0.5">Powered by Claude AI — responds when no keyword rules match</p>
+                </div>
+              </div>
+              <button onClick={() => { setShowAISettings(false); setAiSaveError(''); }}>
+                <X className="h-5 w-5 text-gray-400" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 space-y-5">
+              {/* Master toggle */}
+              <div className="flex items-center justify-between p-3 bg-gray-50 rounded-xl">
+                <div>
+                  <p className="text-sm font-medium text-gray-900">Enable AI Replies</p>
+                  <p className="text-xs text-gray-500 mt-0.5">AI will respond to inbound messages when no keyword auto-response matches</p>
+                </div>
+                <button onClick={() => setAiEnabled(!aiEnabled)}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${aiEnabled ? 'bg-purple-500' : 'bg-gray-300'}`}>
+                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${aiEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
+                </button>
+              </div>
+
+              {/* System prompt */}
+              <div className="space-y-2">
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">System Prompt</p>
+                <p className="text-xs text-gray-400">Instructions that define how the AI should respond to customers</p>
+                <textarea
+                  value={aiSystemPrompt}
+                  onChange={e => setAiSystemPrompt(e.target.value)}
+                  rows={5}
+                  placeholder="You are a helpful customer service assistant. Answer customer questions concisely and professionally..."
+                  className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-purple-400 focus:ring-2 focus:ring-purple-100 resize-none font-mono"
+                />
+                <p className="text-xs text-gray-400">Leave empty for default prompt. The AI also receives contact info and message history for context.</p>
+              </div>
+
+              {/* Max tokens */}
+              <div className="space-y-2">
+                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Max Response Length</label>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="range"
+                    min={50}
+                    max={1000}
+                    step={50}
+                    value={aiMaxTokens}
+                    onChange={e => setAiMaxTokens(parseInt(e.target.value))}
+                    className="flex-1 accent-purple-500"
+                  />
+                  <span className="text-sm font-medium text-gray-700 w-16 text-right">{aiMaxTokens} tokens</span>
+                </div>
+                <p className="text-xs text-gray-400">~{Math.round(aiMaxTokens * 0.75)} words maximum per reply</p>
+              </div>
+
+              {/* Fallback option */}
+              <label className="flex items-center gap-3 cursor-pointer p-3 bg-gray-50 rounded-xl">
+                <input type="checkbox" checked={aiFallbackToKeywords} onChange={e => setAiFallbackToKeywords(e.target.checked)}
+                  className="h-4 w-4 rounded border-gray-300 accent-purple-600" />
+                <div>
+                  <p className="text-sm font-medium text-gray-800">Keyword rules take priority</p>
+                  <p className="text-xs text-gray-400">AI only replies when no keyword auto-response matches</p>
+                </div>
+              </label>
+
+              {/* Divider */}
+              <div className="border-t border-gray-100 pt-4">
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Test AI Reply</p>
+                <div className="space-y-3">
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={aiTestMessage}
+                      onChange={e => setAiTestMessage(e.target.value)}
+                      placeholder="Type a test message..."
+                      onKeyDown={e => { if (e.key === 'Enter') testAIReply(); }}
+                      className="flex-1 px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-purple-400 focus:ring-2 focus:ring-purple-100"
+                    />
+                    <button
+                      onClick={testAIReply}
+                      disabled={isTestingAI || !aiTestMessage.trim()}
+                      className="px-4 py-2 text-sm font-medium text-white bg-purple-500 hover:bg-purple-600 rounded-xl disabled:opacity-50 flex items-center gap-2"
+                    >
+                      {isTestingAI ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                      Test
+                    </button>
+                  </div>
+                  {aiTestReply && (
+                    <div className="p-3 bg-purple-50 border border-purple-200 rounded-xl">
+                      <p className="text-xs font-medium text-purple-600 mb-1">AI Response:</p>
+                      <p className="text-sm text-gray-800 whitespace-pre-wrap">{aiTestReply}</p>
+                    </div>
+                  )}
+                  {aiTestError && (
+                    <div className="p-3 bg-red-50 border border-red-200 rounded-xl">
+                      <p className="text-sm text-red-600">{aiTestError}</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {aiSaveError && (
+                <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-xl px-3 py-2">{aiSaveError}</p>
+              )}
+            </div>
+
+            <div className="p-4 border-t border-gray-100 flex gap-2">
+              <button onClick={() => { setShowAISettings(false); setAiSaveError(''); }}
+                className="flex-1 px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-xl">
+                Cancel
+              </button>
+              <button onClick={saveAIConfig} disabled={isSavingAI}
+                className="flex-1 px-4 py-2 text-sm font-medium text-white bg-purple-500 hover:bg-purple-600 rounded-xl disabled:opacity-50 flex items-center justify-center gap-2">
+                {isSavingAI ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
                 Save
               </button>
             </div>

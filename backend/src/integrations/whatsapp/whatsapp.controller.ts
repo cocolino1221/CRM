@@ -14,13 +14,17 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { WhatsAppService, WhatsAppMessage, WhatsAppWebhook } from './whatsapp.service';
+import { WhatsAppAIService } from './whatsapp-ai.service';
 import { Public } from '../../common/decorators/public.decorator';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 
 @ApiTags('WhatsApp Business')
 @Controller('integrations/whatsapp')
 export class WhatsAppController {
-  constructor(private readonly whatsappService: WhatsAppService) {}
+  constructor(
+    private readonly whatsappService: WhatsAppService,
+    private readonly whatsappAIService: WhatsAppAIService,
+  ) {}
 
   @Public()
   @Get('webhook')
@@ -509,5 +513,40 @@ export class WhatsAppController {
     if (!workspaceId) throw new BadRequestException('Workspace ID required');
     await this.whatsappService.assignConversation(workspaceId, waId, body);
     return { success: true };
+  }
+
+  // ─── AI Auto-Reply ──────────────────────────────────────────────────────────
+
+  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard)
+  @Get('ai-config')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get AI auto-reply configuration' })
+  async getAIConfig(@Req() req: any) {
+    const workspaceId = req.user?.workspaceId;
+    if (!workspaceId) throw new BadRequestException('Workspace ID required');
+    return this.whatsappAIService.getConfig(workspaceId);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('ai-config')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Save AI auto-reply configuration' })
+  async saveAIConfig(@Req() req: any, @Body() body: any) {
+    const workspaceId = req.user?.workspaceId;
+    if (!workspaceId) throw new BadRequestException('Workspace ID required');
+    await this.whatsappAIService.saveConfig(workspaceId, body);
+    return { success: true };
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('ai-test')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Test AI auto-reply with a sample message' })
+  async testAIReply(@Req() req: any, @Body() body: { message: string }) {
+    const workspaceId = req.user?.workspaceId;
+    if (!workspaceId) throw new BadRequestException('Workspace ID required');
+    if (!body.message?.trim()) throw new BadRequestException('Message required');
+    return this.whatsappAIService.testReply(workspaceId, body.message);
   }
 }

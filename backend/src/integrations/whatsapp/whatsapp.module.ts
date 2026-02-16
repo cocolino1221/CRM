@@ -3,6 +3,7 @@ import { HttpModule } from '@nestjs/axios';
 import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { WhatsAppService } from './whatsapp.service';
+import { WhatsAppAIService } from './whatsapp-ai.service';
 import { WhatsAppController } from './whatsapp.controller';
 import { Contact } from '../../database/entities/contact.entity';
 import { Activity } from '../../database/entities/activity.entity';
@@ -18,7 +19,7 @@ import { NotificationsModule } from '../../notifications/notifications.module';
     NotificationsModule,
   ],
   controllers: [WhatsAppController],
-  providers: [WhatsAppService],
-  exports: [WhatsAppService],
+  providers: [WhatsAppService, WhatsAppAIService],
+  exports: [WhatsAppService, WhatsAppAIService],
 })
 export class WhatsAppModule {}

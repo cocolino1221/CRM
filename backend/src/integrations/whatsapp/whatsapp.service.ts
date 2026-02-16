@@ -11,6 +11,7 @@ import { Integration, IntegrationType, IntegrationStatus } from '../../database/
 import { User, UserStatus } from '../../database/entities/user.entity';
 import { NotificationsService, CreateNotificationDto } from '../../notifications/notifications.service';
 import { NotificationType } from '../../database/entities/notification.entity';
+import { WhatsAppAIService } from './whatsapp-ai.service';
 
 export interface WhatsAppMessage {
   to: string;
@@ -95,6 +96,7 @@ export class WhatsAppService {
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
     private readonly notificationsService: NotificationsService,
+    private readonly whatsAppAIService: WhatsAppAIService,
   ) {}
 
   /**
@@ -479,7 +481,24 @@ export class WhatsAppService {
         } catch (err) {
           this.logger.warn(`Auto-respond failed: ${err.message}`);
         }
+        return;
       }
+    }
+
+    // AI auto-reply fallback: if no keyword rule matched, try AI
+    try {
+      const aiReply = await this.whatsAppAIService.generateReply(
+        integration.workspaceId,
+        message.from,
+        message.text.body,
+        profileName || 'Customer',
+      );
+      if (aiReply) {
+        await this.sendTextMessage(message.from, aiReply, credentials);
+        this.logger.log(`AI auto-reply sent to ${message.from}`);
+      }
+    } catch (err) {
+      this.logger.warn(`AI auto-reply failed: ${err.message}`);
     }
   }
 
@@ -832,7 +851,7 @@ export class WhatsAppService {
     return integration?.config?.autoSend || {
       enabled: false,
       templateName: 'hello_world',
-      language: 'en',
+      language: 'en_US',
       includeNameParam: true,
       conditions: { sources: [], statuses: [], requirePhone: true },
     };
@@ -1010,8 +1029,9 @@ export class WhatsAppService {
       }
 
       const autoSend = integration.config?.autoSend;
+      this.logger.log(`Auto-send config: ${JSON.stringify(autoSend)}`);
       if (!autoSend?.enabled) {
-        this.logger.log(`Auto-send skipped: autoSend.enabled=${autoSend?.enabled} (config=${JSON.stringify(autoSend)})`);
+        this.logger.log(`Auto-send skipped: enabled=${autoSend?.enabled}`);
         return;
       }
 
