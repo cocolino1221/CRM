@@ -2,7 +2,7 @@ import { Injectable, NotFoundException, BadRequestException, ConflictException, 
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, SelectQueryBuilder, FindOptionsWhere, ILike, In } from 'typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { Contact, ContactStatus } from '../database/entities/contact.entity';
+import { Contact, ContactStatus, ContactSource } from '../database/entities/contact.entity';
 import { User } from '../database/entities/user.entity';
 import { Company } from '../database/entities/company.entity';
 import { Activity } from '../database/entities/activity.entity';
@@ -137,14 +137,45 @@ export class ContactsService {
     return contact;
   }
 
+  // Sources that come from external integrations — on duplicate, skip silently instead of throwing
+  private readonly externalSources = new Set<ContactSource>([
+    ContactSource.TYPEFORM,
+    ContactSource.WHATSAPP,
+    ContactSource.SLACK,
+    ContactSource.FACEBOOK,
+    ContactSource.INSTAGRAM,
+    ContactSource.KAJABI,
+  ]);
+
   async create(workspaceId: string, dto: CreateContactDto): Promise<Contact> {
-    // Check if contact with email already exists in workspace
-    const existingContact = await this.contactRepository.findOne({
+    const isExternal = dto.source && this.externalSources.has(dto.source);
+
+    // Check for duplicate by email
+    const existingByEmail = await this.contactRepository.findOne({
       where: { workspaceId, email: dto.email },
     });
 
-    if (existingContact) {
-      throw new ConflictException(`Contact with email ${dto.email} already exists`);
+    if (existingByEmail) {
+      if (isExternal) {
+        this.logger.log(`Duplicate contact (email=${dto.email}) skipped silently for source=${dto.source}`);
+        return existingByEmail;
+      }
+      throw new ConflictException(`A contact with email "${dto.email}" already exists`);
+    }
+
+    // Check for duplicate by phone (only when phone is provided)
+    if (dto.phone) {
+      const existingByPhone = await this.contactRepository.findOne({
+        where: { workspaceId, phone: dto.phone },
+      });
+
+      if (existingByPhone) {
+        if (isExternal) {
+          this.logger.log(`Duplicate contact (phone=${dto.phone}) skipped silently for source=${dto.source}`);
+          return existingByPhone;
+        }
+        throw new ConflictException(`A contact with phone "${dto.phone}" already exists`);
+      }
     }
 
     // Validate owner if provided
@@ -169,13 +200,38 @@ export class ContactsService {
 
     // If pipelineStageId is provided but pipelineId is not, automatically infer pipelineId from the stage
     let pipelineId = dto.pipelineId;
-    if (dto.pipelineStageId && !pipelineId) {
+    let pipelineStageId = dto.pipelineStageId;
+    if (pipelineStageId && !pipelineId) {
       const stage = await this.contactRepository.manager
         .getRepository('PipelineStage')
-        .findOne({ where: { id: dto.pipelineStageId, workspaceId } });
+        .findOne({ where: { id: pipelineStageId, workspaceId } });
 
       if (stage) {
         pipelineId = (stage as any).pipelineId;
+      }
+    }
+
+    // Auto-assign to default pipeline if no pipeline specified (so leads show up on Leads page)
+    if (!pipelineId && !pipelineStageId) {
+      try {
+        const defaultPipeline = await this.contactRepository.manager
+          .getRepository('Pipeline')
+          .findOne({
+            where: { workspaceId, isDefault: true },
+            relations: ['stages'],
+          });
+        if (defaultPipeline) {
+          pipelineId = defaultPipeline.id;
+          const sortedStages = (defaultPipeline as any).stages
+            ?.filter((s: any) => s)
+            ?.sort((a: any, b: any) => (a.displayOrder || 0) - (b.displayOrder || 0));
+          if (sortedStages?.length > 0) {
+            pipelineStageId = sortedStages[0].id;
+            this.logger.log(`Auto-assigned new contact to pipeline "${defaultPipeline.name}" stage "${sortedStages[0].name}"`);
+          }
+        }
+      } catch (err) {
+        this.logger.warn(`Failed to auto-assign pipeline: ${err.message}`);
       }
     }
 
@@ -184,6 +240,7 @@ export class ContactsService {
       ...dto,
       workspaceId,
       pipelineId: pipelineId || dto.pipelineId,
+      pipelineStageId: pipelineStageId || dto.pipelineStageId,
       status: dto.status || ContactStatus.LEAD,
       leadScore: dto.leadScore || 0,
       emailOptIn: dto.emailOptIn || false,
