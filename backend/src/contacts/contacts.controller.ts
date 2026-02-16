@@ -317,4 +317,15 @@ export class ContactsController {
     const ownerId = ['admin', 'manager'].includes(user.role) ? undefined : user.id;
     return this.contactsService.getConversionFunnel(workspaceId, ownerId);
   }
+
+  @Post('fix-pipeline')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Assign all contacts without a pipeline to the default pipeline' })
+  @ApiResponse({ status: 200, description: 'Orphan contacts assigned' })
+  @Roles('admin', 'manager')
+  async fixPipeline(
+    @CurrentWorkspace('id') workspaceId: string,
+  ) {
+    return this.contactsService.assignOrphansToPipeline(workspaceId);
+  }
 }

@@ -1085,4 +1085,46 @@ export class ContactsService {
 
     return { created, updated, skipped, errors };
   }
+
+  /**
+   * One-time migration: assign all contacts without a pipeline to the default pipeline's first stage.
+   */
+  async assignOrphansToPipeline(workspaceId: string): Promise<{ updated: number }> {
+    const defaultPipeline = await this.contactRepository.manager
+      .getRepository('Pipeline')
+      .findOne({
+        where: { workspaceId, isDefault: true },
+        relations: ['stages'],
+      });
+
+    if (!defaultPipeline) {
+      this.logger.warn('No default pipeline found for workspace');
+      return { updated: 0 };
+    }
+
+    const sortedStages = (defaultPipeline as any).stages
+      ?.filter((s: any) => s)
+      ?.sort((a: any, b: any) => (a.displayOrder || 0) - (b.displayOrder || 0));
+
+    if (!sortedStages?.length) {
+      this.logger.warn('Default pipeline has no stages');
+      return { updated: 0 };
+    }
+
+    const firstStageId = sortedStages[0].id;
+
+    const result = await this.contactRepository
+      .createQueryBuilder()
+      .update(Contact)
+      .set({
+        pipelineId: defaultPipeline.id,
+        pipelineStageId: firstStageId,
+      })
+      .where('workspaceId = :workspaceId', { workspaceId })
+      .andWhere('pipelineId IS NULL')
+      .execute();
+
+    this.logger.log(`Assigned ${result.affected} orphan contacts to pipeline "${defaultPipeline.name}" stage "${sortedStages[0].name}"`);
+    return { updated: result.affected || 0 };
+  }
 }
