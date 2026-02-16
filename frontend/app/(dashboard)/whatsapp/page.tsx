@@ -478,6 +478,7 @@ export default function WhatsAppPage() {
   const [showTemplateManager, setShowTemplateManager] = useState(false);
   const [metaTemplates, setMetaTemplates] = useState<any[]>([]);
   const [isLoadingTemplates, setIsLoadingTemplates] = useState(false);
+  const [templatesLoaded, setTemplatesLoaded] = useState(false);
   const [showCreateTemplate, setShowCreateTemplate] = useState(false);
   const [newTemplate, setNewTemplate] = useState({
     name: '', language: 'en_US', category: 'UTILITY' as 'MARKETING' | 'UTILITY' | 'AUTHENTICATION',
@@ -795,7 +796,7 @@ export default function WhatsAppPage() {
       const res = await api.get('/integrations/whatsapp/templates');
       setMetaTemplates(res.data.data || []);
     } catch { /* silent */ }
-    finally { setIsLoadingTemplates(false); }
+    finally { setIsLoadingTemplates(false); setTemplatesLoaded(true); }
   };
 
   const handleCreateTemplate = async () => {
@@ -2364,9 +2365,20 @@ export default function WhatsAppPage() {
               {/* Template config */}
               <div className="space-y-3">
                 <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Template</p>
-                {metaTemplates.filter((t: any) => t.status === 'APPROVED').length > 0 ? (
-                  <div>
-                    <label className="text-xs text-gray-500 mb-1 block">Select Template</label>
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-xs text-gray-500">Select Template</label>
+                    <button
+                      type="button"
+                      onClick={fetchMetaTemplates}
+                      disabled={isLoadingTemplates}
+                      className="text-xs text-green-600 hover:text-green-700 flex items-center gap-1 disabled:opacity-50">
+                      {isLoadingTemplates ? 'Loading…' : '↻ Reload'}
+                    </button>
+                  </div>
+                  {isLoadingTemplates ? (
+                    <div className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl bg-gray-50 text-gray-400">Loading templates…</div>
+                  ) : (
                     <select
                       value={autoSendTemplate}
                       onChange={e => {
@@ -2380,17 +2392,17 @@ export default function WhatsAppPage() {
                         <option key={t.name} value={t.name}>{t.name} ({t.language})</option>
                       ))}
                     </select>
-                    <p className="text-xs text-gray-400 mt-1">Only approved templates are listed</p>
-                  </div>
-                ) : (
-                  <div>
-                    <label className="text-xs text-gray-500 mb-1 block">Template Name</label>
-                    <input type="text" value={autoSendTemplate} onChange={e => setAutoSendTemplate(e.target.value)}
-                      placeholder="e.g. hello_world"
-                      className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-green-400 focus:ring-2 focus:ring-green-100" />
-                    <p className="text-xs text-gray-400 mt-1">Must be an approved template in your Meta account</p>
-                  </div>
-                )}
+                  )}
+                  {templatesLoaded && !isLoadingTemplates && metaTemplates.filter((t: any) => t.status === 'APPROVED').length === 0 && (
+                    <p className="text-xs text-amber-600 mt-1">No approved templates found. Make sure WABA ID is set in integration settings and you have approved templates in Meta.</p>
+                  )}
+                  {!templatesLoaded && !isLoadingTemplates && (
+                    <p className="text-xs text-gray-400 mt-1">Click ↻ Reload to load your approved templates.</p>
+                  )}
+                  {templatesLoaded && metaTemplates.filter((t: any) => t.status === 'APPROVED').length > 0 && (
+                    <p className="text-xs text-gray-400 mt-1">Only approved templates are listed.</p>
+                  )}
+                </div>
                 <div>
                   <label className="text-xs text-gray-500 mb-1 block">Language Code</label>
                   <input type="text" value={autoSendLanguage} onChange={e => setAutoSendLanguage(e.target.value)}
