@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Plus, Search, Phone, Video, Trophy, TrendingUp, TrendingDown, UserCheck, Loader2, Mail, Building, Calendar, DollarSign, MoreVertical, Edit, Trash2, X, AlertCircle, Settings, Users, Tag, FileText, Star, Clock, Briefcase, Eye, ChevronLeft, ChevronRight, MessageSquare, Send, ExternalLink } from 'lucide-react';
+import { Plus, Search, Phone, Video, Trophy, TrendingUp, TrendingDown, UserCheck, Loader2, Mail, Building, Calendar, DollarSign, MoreVertical, Edit, Trash2, X, AlertCircle, Settings, Users, Tag, FileText, Star, Clock, Briefcase, Eye, ChevronLeft, ChevronRight, MessageSquare, Send, ExternalLink, RefreshCw } from 'lucide-react';
 import { getInitials } from '@/lib/utils';
 import api from '@/lib/api';
 
@@ -750,6 +750,22 @@ export default function LeadsPage() {
           >
             <Plus className="h-4 w-4" />
             Add Lead
+          </button>
+          <button
+            onClick={async () => {
+              try {
+                const res = await api.post('/contacts/fix-pipeline');
+                alert(`Done! ${res.data.updated} contacts assigned to pipeline.`);
+                fetchContacts();
+              } catch (err: any) {
+                alert(err?.response?.data?.message || 'Failed');
+              }
+            }}
+            className="flex items-center gap-2 rounded-xl bg-gray-100 hover:bg-gray-200 px-4 py-2.5 text-sm font-medium text-gray-700 transition-all"
+            title="Assign contacts without a pipeline to the default pipeline"
+          >
+            <RefreshCw className="h-4 w-4" />
+            Sync Contacts
           </button>
         </div>
       </div>
