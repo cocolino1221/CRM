@@ -44,6 +44,10 @@ export class CreateContactDto {
 
   @IsOptional()
   @IsString()
+  @Transform(({ value }) => {
+    const trimmed = value?.trim();
+    return trimmed === '' ? undefined : trimmed;
+  })
   @Length(1, 100)
   jobTitle?: string;
 

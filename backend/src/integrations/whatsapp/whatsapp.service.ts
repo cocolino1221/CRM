@@ -465,8 +465,8 @@ export class WhatsAppService {
           return;
         }
       }
-    } else if (integration.config?.autoRespondEnabled !== false) {
-      // Default responses (only if not explicitly disabled)
+    } else if (integration.config?.autoRespondEnabled === true) {
+      // Default responses (only if explicitly enabled)
       let reply: string | null = null;
       if (text.includes('hello') || text.includes('hi') || text.includes('hey') || text.includes('salut') || text.includes('buna')) {
         reply = `Hello${name}! Thank you for contacting us. How can we help you today?`;
@@ -488,7 +488,7 @@ export class WhatsAppService {
       where: { type: IntegrationType.WHATSAPP, workspaceId },
     });
     return {
-      enabled: integration?.config?.autoRespondEnabled !== false,
+      enabled: integration?.config?.autoRespondEnabled === true,
       rules: integration?.config?.autoResponses || [],
     };
   }
@@ -990,6 +990,7 @@ export class WhatsAppService {
   @OnEvent('contact.created')
   async handleContactCreated(payload: { contact: any; workspaceId: string }): Promise<void> {
     const { contact, workspaceId } = payload;
+    this.logger.log(`handleContactCreated: contact=${contact.id} phone="${contact.phone}" source=${contact.source} workspace=${workspaceId}`);
     try {
       // Always notify workspace users about the new contact/lead
       const fullName = `${contact.firstName || ''} ${contact.lastName || ''}`.trim() || 'New contact';
@@ -1003,10 +1004,16 @@ export class WhatsAppService {
       const integration = await this.integrationRepository.findOne({
         where: { type: IntegrationType.WHATSAPP, workspaceId },
       });
-      if (!integration) return;
+      if (!integration) {
+        this.logger.log(`Auto-send skipped: no WhatsApp integration in workspace ${workspaceId}`);
+        return;
+      }
 
       const autoSend = integration.config?.autoSend;
-      if (!autoSend?.enabled) return;
+      if (!autoSend?.enabled) {
+        this.logger.log(`Auto-send skipped: autoSend.enabled=${autoSend?.enabled} (config=${JSON.stringify(autoSend)})`);
+        return;
+      }
 
       // Check conditions
       const conditions = autoSend.conditions || {};
@@ -1033,7 +1040,9 @@ export class WhatsAppService {
 
       // Send template — use integration's stored credentials (not global env vars)
       const templateName = autoSend.templateName || 'hello_world';
-      const language = autoSend.language || 'en_US';
+      // Normalize: 'en' → 'en_US' (Meta rejects the short code for hello_world and most templates)
+      const rawLang = autoSend.language || 'en_US';
+      const language = rawLang === 'en' ? 'en_US' : rawLang;
       const params: any[] = [];
       if (autoSend.includeNameParam && contact.firstName) {
         params.push({ type: 'body', parameters: [{ type: 'text', text: contact.firstName }] });
