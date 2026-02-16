@@ -1266,4 +1266,123 @@ export class WhatsAppService {
     await this.activityRepository.delete(ids);
     return { deleted: ids.length };
   }
+
+  // ─── Campaign Management ───────────────────────────────────────
+
+  async getCampaigns(workspaceId: string): Promise<any[]> {
+    const integration = await this.findIntegrationForWorkspace(workspaceId);
+    if (!integration) return [];
+    return (integration.config?.campaigns || []).sort(
+      (a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+    );
+  }
+
+  async createCampaign(
+    workspaceId: string,
+    campaign: { name: string; templateName: string; language: string; filter: any },
+  ): Promise<any> {
+    const integration = await this.findIntegrationForWorkspace(workspaceId);
+    if (!integration) throw new Error('WhatsApp integration not found');
+
+    const newCampaign = {
+      id: `camp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      name: campaign.name,
+      templateName: campaign.templateName,
+      language: campaign.language,
+      filter: campaign.filter || {},
+      status: 'draft',
+      createdAt: new Date().toISOString(),
+      sentAt: null,
+      results: null,
+    };
+
+    integration.config = {
+      ...(integration.config || {}),
+      campaigns: [...(integration.config?.campaigns || []), newCampaign],
+    };
+    await this.integrationRepository.save(integration);
+    return newCampaign;
+  }
+
+  async previewCampaignAudience(
+    workspaceId: string,
+    filter: { tags?: string[]; status?: string[]; source?: string[] },
+  ): Promise<{ count: number; sample: Array<{ id: string; name: string; phone: string }> }> {
+    const where: any = { workspaceId };
+    if (filter.status?.length) where.status = In(filter.status);
+    if (filter.source?.length) where.source = In(filter.source);
+
+    let contacts = await this.contactRepository.find({ where, take: 1000 });
+    if (filter.tags?.length) {
+      contacts = contacts.filter(c => {
+        const contactTags = c.tags || [];
+        return filter.tags!.every(t => contactTags.includes(t));
+      });
+    }
+    contacts = contacts.filter(c => c.phone);
+
+    return {
+      count: contacts.length,
+      sample: contacts.slice(0, 10).map(c => ({
+        id: c.id,
+        name: `${c.firstName || ''} ${c.lastName || ''}`.trim() || 'Unknown',
+        phone: c.phone!,
+      })),
+    };
+  }
+
+  async sendCampaign(workspaceId: string, campaignId: string): Promise<any> {
+    const integration = await this.findIntegrationForWorkspace(workspaceId);
+    if (!integration) throw new Error('WhatsApp integration not found');
+
+    const campaigns: any[] = integration.config?.campaigns || [];
+    const campaign = campaigns.find((c: any) => c.id === campaignId);
+    if (!campaign) throw new Error('Campaign not found');
+    if (campaign.status === 'sent') throw new Error('Campaign already sent');
+
+    campaign.status = 'sending';
+    await this.integrationRepository.save(integration);
+
+    try {
+      const results = await this.broadcastTemplate(
+        workspaceId,
+        campaign.filter || {},
+        { name: campaign.templateName, language: campaign.language },
+      );
+
+      campaign.status = 'sent';
+      campaign.sentAt = new Date().toISOString();
+      campaign.results = {
+        total: results.total,
+        sent: results.sent,
+        failed: results.failed,
+      };
+      await this.integrationRepository.save(integration);
+
+      this.logger.log(`Campaign "${campaign.name}" sent: ${results.sent}/${results.total}`);
+      return { ...campaign, detailedResults: results.results };
+    } catch (err) {
+      campaign.status = 'failed';
+      campaign.results = { error: err.message };
+      await this.integrationRepository.save(integration);
+      throw err;
+    }
+  }
+
+  async deleteCampaign(workspaceId: string, campaignId: string): Promise<void> {
+    const integration = await this.findIntegrationForWorkspace(workspaceId);
+    if (!integration) return;
+
+    integration.config = {
+      ...(integration.config || {}),
+      campaigns: (integration.config?.campaigns || []).filter((c: any) => c.id !== campaignId),
+    };
+    await this.integrationRepository.save(integration);
+  }
+
+  private async findIntegrationForWorkspace(workspaceId: string): Promise<any> {
+    return this.integrationRepository.findOne({
+      where: { workspaceId, type: IntegrationType.WHATSAPP },
+    });
+  }
 }

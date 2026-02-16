@@ -518,7 +518,6 @@ export class WhatsAppController {
   // ─── AI Auto-Reply ──────────────────────────────────────────────────────────
 
   @UseGuards(JwtAuthGuard)
-  @UseGuards(JwtAuthGuard)
   @Get('ai-config')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get AI auto-reply configuration' })
@@ -548,5 +547,71 @@ export class WhatsAppController {
     if (!workspaceId) throw new BadRequestException('Workspace ID required');
     if (!body.message?.trim()) throw new BadRequestException('Message required');
     return this.whatsappAIService.testReply(workspaceId, body.message);
+  }
+
+  // ─── Campaigns ─────────────────────────────────────────────────────────────
+
+  @UseGuards(JwtAuthGuard)
+  @Get('campaigns')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'List all WhatsApp broadcast campaigns' })
+  async listCampaigns(@Req() req: any) {
+    const workspaceId = req.user?.workspaceId;
+    if (!workspaceId) throw new BadRequestException('Workspace ID required');
+    return this.whatsappService.getCampaigns(workspaceId);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('campaigns')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Create a new broadcast campaign' })
+  async createCampaign(
+    @Req() req: any,
+    @Body() body: { name: string; templateName: string; language: string; filter?: any },
+  ) {
+    const workspaceId = req.user?.workspaceId;
+    if (!workspaceId) throw new BadRequestException('Workspace ID required');
+    if (!body.name?.trim()) throw new BadRequestException('Campaign name required');
+    if (!body.templateName?.trim()) throw new BadRequestException('Template name required');
+    return this.whatsappService.createCampaign(workspaceId, {
+      name: body.name.trim(),
+      templateName: body.templateName.trim(),
+      language: body.language?.trim() || 'en_US',
+      filter: body.filter || {},
+    });
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('campaigns/:id/send')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Send a campaign immediately' })
+  async sendCampaign(@Req() req: any, @Param('id') campaignId: string) {
+    const workspaceId = req.user?.workspaceId;
+    if (!workspaceId) throw new BadRequestException('Workspace ID required');
+    return this.whatsappService.sendCampaign(workspaceId, campaignId);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('campaigns/preview-audience')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Preview audience count for campaign filters' })
+  async previewAudience(
+    @Req() req: any,
+    @Body() body: { tags?: string[]; status?: string[]; source?: string[] },
+  ) {
+    const workspaceId = req.user?.workspaceId;
+    if (!workspaceId) throw new BadRequestException('Workspace ID required');
+    return this.whatsappService.previewCampaignAudience(workspaceId, body);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Delete('campaigns/:id')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Delete a campaign' })
+  async deleteCampaign(@Req() req: any, @Param('id') campaignId: string) {
+    const workspaceId = req.user?.workspaceId;
+    if (!workspaceId) throw new BadRequestException('Workspace ID required');
+    await this.whatsappService.deleteCampaign(workspaceId, campaignId);
+    return { success: true };
   }
 }

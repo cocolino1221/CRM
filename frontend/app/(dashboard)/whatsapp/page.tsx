@@ -518,6 +518,22 @@ export default function WhatsAppPage() {
   const [isBroadcasting, setIsBroadcasting] = useState(false);
   const [broadcastError, setBroadcastError] = useState('');
 
+  // ─── Campaigns ──────────────────────────────────────────────
+  const [campaigns, setCampaigns] = useState<any[]>([]);
+  const [isLoadingCampaigns, setIsLoadingCampaigns] = useState(false);
+  const [showCreateCampaign, setShowCreateCampaign] = useState(false);
+  const [campName, setCampName] = useState('');
+  const [campTemplate, setCampTemplate] = useState('');
+  const [campLanguage, setCampLanguage] = useState('en_US');
+  const [campFilterTags, setCampFilterTags] = useState<string[]>([]);
+  const [campTagInput, setCampTagInput] = useState('');
+  const [campFilterStatus, setCampFilterStatus] = useState<string[]>([]);
+  const [audiencePreview, setAudiencePreview] = useState<{ count: number; sample: any[] } | null>(null);
+  const [isPreviewingAudience, setIsPreviewingAudience] = useState(false);
+  const [isCreatingCampaign, setIsCreatingCampaign] = useState(false);
+  const [isSendingCampaign, setIsSendingCampaign] = useState<string | null>(null);
+  const [campaignError, setCampaignError] = useState('');
+
   // ─── Broadcasts: CSV Import ───────────────────────────────
   const [csvFile, setCsvFile] = useState<File | null>(null);
   const [csvRows, setCsvRows] = useState<Array<{ phone: string; firstName?: string; lastName?: string }>>([]);
@@ -1175,6 +1191,77 @@ export default function WhatsAppPage() {
     }
   };
 
+  // ─── Campaign functions ──────────────────────────────────
+
+  const fetchCampaigns = async () => {
+    setIsLoadingCampaigns(true);
+    try {
+      const res = await api.get('/integrations/whatsapp/campaigns');
+      setCampaigns(res.data || []);
+    } catch { /* silent */ }
+    finally { setIsLoadingCampaigns(false); }
+  };
+
+  const previewAudience = async () => {
+    setIsPreviewingAudience(true);
+    try {
+      const res = await api.post('/integrations/whatsapp/campaigns/preview-audience', {
+        tags: campFilterTags.length > 0 ? campFilterTags : undefined,
+        status: campFilterStatus.length > 0 ? campFilterStatus : undefined,
+      });
+      setAudiencePreview(res.data);
+    } catch { /* silent */ }
+    finally { setIsPreviewingAudience(false); }
+  };
+
+  const createAndSendCampaign = async (sendNow: boolean) => {
+    if (!campName.trim() || !campTemplate.trim()) return;
+    setIsCreatingCampaign(true);
+    setCampaignError('');
+    try {
+      const res = await api.post('/integrations/whatsapp/campaigns', {
+        name: campName.trim(),
+        templateName: campTemplate.trim(),
+        language: campLanguage.trim() || 'en_US',
+        filter: {
+          tags: campFilterTags.length > 0 ? campFilterTags : undefined,
+          status: campFilterStatus.length > 0 ? campFilterStatus : undefined,
+        },
+      });
+      const campaign = res.data;
+      if (sendNow) {
+        setIsSendingCampaign(campaign.id);
+        await api.post(`/integrations/whatsapp/campaigns/${campaign.id}/send`);
+      }
+      setShowCreateCampaign(false);
+      setCampName(''); setCampTemplate(''); setCampLanguage('en_US');
+      setCampFilterTags([]); setCampFilterStatus([]);
+      setAudiencePreview(null);
+      fetchCampaigns();
+    } catch (err: any) {
+      setCampaignError(err?.response?.data?.message || 'Failed');
+    } finally {
+      setIsCreatingCampaign(false);
+      setIsSendingCampaign(null);
+    }
+  };
+
+  const sendExistingCampaign = async (campaignId: string) => {
+    setIsSendingCampaign(campaignId);
+    try {
+      await api.post(`/integrations/whatsapp/campaigns/${campaignId}/send`);
+      fetchCampaigns();
+    } catch { /* silent */ }
+    finally { setIsSendingCampaign(null); }
+  };
+
+  const deleteCampaign = async (campaignId: string) => {
+    try {
+      await api.delete(`/integrations/whatsapp/campaigns/${campaignId}`);
+      setCampaigns(prev => prev.filter(c => c.id !== campaignId));
+    } catch { /* silent */ }
+  };
+
   // ─── Render ───────────────────────────────────────────────
 
   return (
@@ -1191,7 +1278,7 @@ export default function WhatsAppPage() {
             className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${pageTab === 'inbox' ? 'border-green-500 text-green-700' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
             Inbox
           </button>
-          <button onClick={() => setPageTab('broadcasts')}
+          <button onClick={() => { setPageTab('broadcasts'); fetchCampaigns(); fetchMetaTemplates(); }}
             className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${pageTab === 'broadcasts' ? 'border-green-500 text-green-700' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
             Broadcasts
           </button>
@@ -1201,101 +1288,198 @@ export default function WhatsAppPage() {
       {pageTab === 'broadcasts' && (
         <div className="flex-1 overflow-y-auto bg-gray-50 p-6 space-y-6">
 
-          {/* ── Section A: Send to Segment ── */}
+          {/* ── Section A: Campaigns ── */}
           <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
-            <h2 className="text-base font-semibold text-gray-900 mb-1 flex items-center gap-2">
-              <Send className="h-4 w-4 text-green-600" /> Send to Segment
-            </h2>
-            <p className="text-sm text-gray-500 mb-4">Filter your contacts and send an approved template to all of them.</p>
-
-            <div className="space-y-4">
-              {/* Tag filter */}
+            <div className="flex items-center justify-between mb-4">
               <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">Filter by Tags (contact must have ALL selected tags)</label>
-                <div className="flex gap-2">
-                  <input type="text" placeholder="Add tag and press Enter" value={broadcastTagInput}
-                    onChange={e => setBroadcastTagInput(e.target.value)}
-                    onKeyDown={e => { if (e.key === 'Enter' && broadcastTagInput.trim()) { setBroadcastFilterTags(prev => Array.from(new Set([...prev, broadcastTagInput.trim()]))); setBroadcastTagInput(''); e.preventDefault(); }}}
-                    className="flex-1 px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-green-400" />
-                  <button onClick={() => { if (broadcastTagInput.trim()) { setBroadcastFilterTags(prev => Array.from(new Set([...prev, broadcastTagInput.trim()]))); setBroadcastTagInput(''); }}}
-                    className="px-3 py-2 text-sm bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl font-medium">Add</button>
-                </div>
-                {broadcastFilterTags.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5 mt-2">
-                    {broadcastFilterTags.map(tag => (
-                      <span key={tag} className="flex items-center gap-1 px-2 py-0.5 text-xs font-medium bg-green-100 text-green-700 rounded-full">
-                        {tag}
-                        <button onClick={() => setBroadcastFilterTags(prev => prev.filter(t => t !== tag))} className="hover:text-green-900"><X className="h-3 w-3" /></button>
-                      </span>
-                    ))}
-                  </div>
-                )}
+                <h2 className="text-base font-semibold text-gray-900 flex items-center gap-2">
+                  <Send className="h-4 w-4 text-green-600" /> Broadcast Campaigns
+                </h2>
+                <p className="text-sm text-gray-500 mt-0.5">Create campaigns to send approved templates to filtered contact segments</p>
               </div>
-
-              {/* Status filter */}
-              <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">Filter by Status</label>
-                <div className="flex flex-wrap gap-2">
-                  {['lead', 'active', 'customer', 'prospect', 'qualified', 'inactive'].map(s => (
-                    <button key={s} onClick={() => setBroadcastFilterStatus(prev => prev.includes(s) ? prev.filter(x => x !== s) : [...prev, s])}
-                      className={`px-3 py-1 text-xs font-medium rounded-full border transition-all ${broadcastFilterStatus.includes(s) ? 'bg-green-500 text-white border-green-500' : 'bg-white text-gray-600 border-gray-200 hover:border-green-400'}`}>
-                      {s}
-                    </button>
-                  ))}
-                </div>
-                {broadcastFilterStatus.length === 0 && <p className="text-xs text-gray-400 mt-1">No filter = all statuses</p>}
-              </div>
-
-              {/* Template */}
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">Template Name *</label>
-                  <input type="text" placeholder="hello_world" value={broadcastTemplateName} onChange={e => setBroadcastTemplateName(e.target.value)}
-                    className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-green-400" />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">Language Code</label>
-                  <input type="text" placeholder="en" value={broadcastTemplateLanguage} onChange={e => setBroadcastTemplateLanguage(e.target.value)}
-                    className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-green-400" />
-                </div>
-              </div>
-
-              {broadcastError && <p className="text-sm text-red-600">{broadcastError}</p>}
-
-              <button onClick={handleBroadcast} disabled={isBroadcasting || !broadcastTemplateName.trim()}
-                className="px-6 py-2.5 text-sm font-semibold text-white bg-green-500 hover:bg-green-600 rounded-xl disabled:opacity-50 flex items-center gap-2">
-                {isBroadcasting ? <><Loader2 className="h-4 w-4 animate-spin" /> Sending...</> : <><Send className="h-4 w-4" /> Send Broadcast</>}
+              <button onClick={() => { setShowCreateCampaign(!showCreateCampaign); setCampaignError(''); setAudiencePreview(null); }}
+                className="px-4 py-2 text-sm font-medium text-white bg-green-500 hover:bg-green-600 rounded-xl flex items-center gap-2">
+                <Plus className="h-4 w-4" /> New Campaign
               </button>
             </div>
 
-            {/* Results */}
-            {broadcastResults && (
-              <div className="mt-6">
-                <div className="flex items-center gap-4 mb-3 text-sm">
-                  <span className="font-semibold text-gray-700">Total: {broadcastResults.total}</span>
-                  <span className="text-green-600 font-semibold">✓ Sent: {broadcastResults.sent}</span>
-                  {broadcastResults.failed > 0 && <span className="text-red-500 font-semibold">✗ Failed: {broadcastResults.failed}</span>}
+            {/* Create Campaign Form */}
+            {showCreateCampaign && (
+              <div className="mb-6 p-4 bg-gray-50 rounded-xl border border-gray-200 space-y-4">
+                <h3 className="text-sm font-semibold text-gray-900">Create New Campaign</h3>
+
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Campaign Name *</label>
+                  <input type="text" placeholder="e.g. February Welcome Campaign" value={campName} onChange={e => setCampName(e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-green-400" />
                 </div>
-                <div className="max-h-64 overflow-y-auto border border-gray-100 rounded-xl">
-                  <table className="w-full text-xs">
-                    <thead className="bg-gray-50 sticky top-0">
-                      <tr>
-                        <th className="text-left px-3 py-2 font-medium text-gray-500">Phone</th>
-                        <th className="text-left px-3 py-2 font-medium text-gray-500">Status</th>
-                        <th className="text-left px-3 py-2 font-medium text-gray-500">Error</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100">
-                      {broadcastResults.results.map((r: any, i: number) => (
-                        <tr key={i} className={r.success ? '' : 'bg-red-50'}>
-                          <td className="px-3 py-1.5 font-mono">{r.phone}</td>
-                          <td className="px-3 py-1.5">{r.success ? <span className="text-green-600">✓ Sent</span> : <span className="text-red-500">✗ Failed</span>}</td>
-                          <td className="px-3 py-1.5 text-gray-400">{r.error || ''}</td>
-                        </tr>
+
+                {/* Template dropdown */}
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-xs font-medium text-gray-700">Template *</label>
+                    <button type="button" onClick={fetchMetaTemplates} disabled={isLoadingTemplates}
+                      className="text-xs text-green-600 hover:text-green-700 flex items-center gap-1 disabled:opacity-50">
+                      {isLoadingTemplates ? 'Loading...' : '↻ Reload'}
+                    </button>
+                  </div>
+                  <select value={campTemplate}
+                    onChange={e => {
+                      const sel = metaTemplates.find((t: any) => t.name === e.target.value);
+                      setCampTemplate(e.target.value);
+                      if (sel?.language) setCampLanguage(sel.language);
+                    }}
+                    className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-green-400 bg-white">
+                    <option value="">-- Select Template --</option>
+                    {metaTemplates.filter((t: any) => t.status === 'APPROVED').map((t: any) => (
+                      <option key={t.name} value={t.name}>{t.name} ({t.language})</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Tag filter */}
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Filter by Tags</label>
+                  <div className="flex gap-2">
+                    <input type="text" placeholder="Add tag and press Enter" value={campTagInput}
+                      onChange={e => setCampTagInput(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter' && campTagInput.trim()) { setCampFilterTags(prev => Array.from(new Set([...prev, campTagInput.trim()]))); setCampTagInput(''); e.preventDefault(); }}}
+                      className="flex-1 px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-green-400" />
+                    <button onClick={() => { if (campTagInput.trim()) { setCampFilterTags(prev => Array.from(new Set([...prev, campTagInput.trim()]))); setCampTagInput(''); }}}
+                      className="px-3 py-2 text-sm bg-white hover:bg-gray-100 text-gray-700 rounded-xl font-medium border border-gray-200">Add</button>
+                  </div>
+                  {campFilterTags.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 mt-2">
+                      {campFilterTags.map(tag => (
+                        <span key={tag} className="flex items-center gap-1 px-2 py-0.5 text-xs font-medium bg-green-100 text-green-700 rounded-full">
+                          {tag}
+                          <button onClick={() => setCampFilterTags(prev => prev.filter(t => t !== tag))}><X className="h-3 w-3" /></button>
+                        </span>
                       ))}
-                    </tbody>
-                  </table>
+                    </div>
+                  )}
                 </div>
+
+                {/* Status filter */}
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Filter by Status</label>
+                  <div className="flex flex-wrap gap-2">
+                    {['lead', 'active', 'customer', 'prospect', 'qualified', 'inactive'].map(s => (
+                      <button key={s} onClick={() => setCampFilterStatus(prev => prev.includes(s) ? prev.filter(x => x !== s) : [...prev, s])}
+                        className={`px-3 py-1 text-xs font-medium rounded-full border transition-all ${campFilterStatus.includes(s) ? 'bg-green-500 text-white border-green-500' : 'bg-white text-gray-600 border-gray-200 hover:border-green-400'}`}>
+                        {s}
+                      </button>
+                    ))}
+                  </div>
+                  {campFilterStatus.length === 0 && <p className="text-xs text-gray-400 mt-1">No filter = all contacts with a phone number</p>}
+                </div>
+
+                {/* Audience preview */}
+                <div className="flex items-center gap-3">
+                  <button onClick={previewAudience} disabled={isPreviewingAudience}
+                    className="px-4 py-2 text-sm font-medium text-gray-700 bg-white hover:bg-gray-100 rounded-xl border border-gray-200 flex items-center gap-2">
+                    {isPreviewingAudience ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <User className="h-3.5 w-3.5" />}
+                    Preview Audience
+                  </button>
+                  {audiencePreview && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-semibold text-green-600">{audiencePreview.count} contacts</span>
+                      {audiencePreview.sample.length > 0 && (
+                        <span className="text-xs text-gray-400">
+                          ({audiencePreview.sample.slice(0, 3).map(s => s.name).join(', ')}{audiencePreview.count > 3 ? '...' : ''})
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {campaignError && <p className="text-sm text-red-600">{campaignError}</p>}
+
+                <div className="flex gap-2 pt-2">
+                  <button onClick={() => setShowCreateCampaign(false)}
+                    className="px-4 py-2 text-sm font-medium text-gray-700 bg-white hover:bg-gray-100 rounded-xl border border-gray-200">
+                    Cancel
+                  </button>
+                  <button onClick={() => createAndSendCampaign(false)} disabled={isCreatingCampaign || !campName.trim() || !campTemplate.trim()}
+                    className="px-4 py-2 text-sm font-medium text-gray-700 bg-white hover:bg-gray-100 rounded-xl border border-gray-200 disabled:opacity-50">
+                    Save as Draft
+                  </button>
+                  <button onClick={() => createAndSendCampaign(true)} disabled={isCreatingCampaign || !campName.trim() || !campTemplate.trim()}
+                    className="px-5 py-2 text-sm font-semibold text-white bg-green-500 hover:bg-green-600 rounded-xl disabled:opacity-50 flex items-center gap-2">
+                    {isCreatingCampaign ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                    Create & Send Now
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Campaign History */}
+            {isLoadingCampaigns ? (
+              <div className="flex justify-center py-8"><Loader2 className="h-5 w-5 animate-spin text-gray-400" /></div>
+            ) : campaigns.length === 0 ? (
+              <div className="text-center py-8 text-gray-400">
+                <Send className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                <p className="text-sm">No campaigns yet. Create your first broadcast campaign.</p>
+              </div>
+            ) : (
+              <div className="border border-gray-100 rounded-xl overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="text-left px-4 py-2.5 font-medium text-gray-500 text-xs">Campaign</th>
+                      <th className="text-left px-4 py-2.5 font-medium text-gray-500 text-xs">Template</th>
+                      <th className="text-left px-4 py-2.5 font-medium text-gray-500 text-xs">Status</th>
+                      <th className="text-left px-4 py-2.5 font-medium text-gray-500 text-xs">Results</th>
+                      <th className="text-left px-4 py-2.5 font-medium text-gray-500 text-xs">Date</th>
+                      <th className="text-right px-4 py-2.5 font-medium text-gray-500 text-xs">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {campaigns.map((c: any) => (
+                      <tr key={c.id} className="hover:bg-gray-50">
+                        <td className="px-4 py-3 font-medium text-gray-900">{c.name}</td>
+                        <td className="px-4 py-3 text-gray-600 font-mono text-xs">{c.templateName}</td>
+                        <td className="px-4 py-3">
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
+                            c.status === 'sent' ? 'bg-green-100 text-green-700' :
+                            c.status === 'sending' ? 'bg-yellow-100 text-yellow-700' :
+                            c.status === 'failed' ? 'bg-red-100 text-red-700' :
+                            'bg-gray-100 text-gray-600'
+                          }`}>
+                            {c.status}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-xs">
+                          {c.results ? (
+                            <span className="text-gray-600">
+                              <span className="text-green-600 font-medium">{c.results.sent}</span> sent
+                              {c.results.failed > 0 && <>, <span className="text-red-500 font-medium">{c.results.failed}</span> failed</>}
+                              {' / '}{c.results.total} total
+                            </span>
+                          ) : <span className="text-gray-400">-</span>}
+                        </td>
+                        <td className="px-4 py-3 text-xs text-gray-400">
+                          {c.sentAt ? new Date(c.sentAt).toLocaleDateString() : new Date(c.createdAt).toLocaleDateString()}
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <div className="flex items-center justify-end gap-1">
+                            {c.status === 'draft' && (
+                              <button onClick={() => sendExistingCampaign(c.id)} disabled={isSendingCampaign === c.id}
+                                className="px-3 py-1 text-xs font-medium text-white bg-green-500 hover:bg-green-600 rounded-lg disabled:opacity-50 flex items-center gap-1">
+                                {isSendingCampaign === c.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />}
+                                Send
+                              </button>
+                            )}
+                            <button onClick={() => deleteCampaign(c.id)}
+                              className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg">
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             )}
           </div>
@@ -1366,17 +1550,20 @@ export default function WhatsAppPage() {
               </div>
 
               {csvSendTemplate && (
-                <div className="grid grid-cols-2 gap-3 pl-6">
-                  <div>
-                    <label className="block text-xs font-medium text-gray-700 mb-1">Template Name *</label>
-                    <input type="text" placeholder="hello_world" value={csvTemplateName} onChange={e => setCsvTemplateName(e.target.value)}
-                      className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-green-400" />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-gray-700 mb-1">Language Code</label>
-                    <input type="text" placeholder="en" value={csvTemplateLanguage} onChange={e => setCsvTemplateLanguage(e.target.value)}
-                      className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-green-400" />
-                  </div>
+                <div className="pl-6">
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Template</label>
+                  <select value={csvTemplateName}
+                    onChange={e => {
+                      const sel = metaTemplates.find((t: any) => t.name === e.target.value);
+                      setCsvTemplateName(e.target.value);
+                      if (sel?.language) setCsvTemplateLanguage(sel.language);
+                    }}
+                    className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-green-400 bg-white">
+                    <option value="">-- Select Template --</option>
+                    {metaTemplates.filter((t: any) => t.status === 'APPROVED').map((t: any) => (
+                      <option key={t.name} value={t.name}>{t.name} ({t.language})</option>
+                    ))}
+                  </select>
                 </div>
               )}
 
