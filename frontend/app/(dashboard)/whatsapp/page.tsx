@@ -460,7 +460,7 @@ export default function WhatsAppPage() {
   const [showAutoSend, setShowAutoSend] = useState(false);
   const [autoSendEnabled, setAutoSendEnabled] = useState(false);
   const [autoSendTemplate, setAutoSendTemplate] = useState('hello_world');
-  const [autoSendLanguage, setAutoSendLanguage] = useState('en');
+  const [autoSendLanguage, setAutoSendLanguage] = useState('en_US');
   const [autoSendIncludeName, setAutoSendIncludeName] = useState(false);
   const [autoSendSources, setAutoSendSources] = useState<string[]>([]);
   const [autoSendStatuses, setAutoSendStatuses] = useState<string[]>([]);

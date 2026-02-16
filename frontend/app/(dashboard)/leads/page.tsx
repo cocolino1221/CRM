@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Plus, Search, Phone, Video, Trophy, TrendingUp, TrendingDown, UserCheck, Loader2, Mail, Building, Calendar, DollarSign, MoreVertical, Edit, Trash2, X, AlertCircle, Settings, Users, Tag, FileText, Star, Clock, Briefcase, Eye, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Plus, Search, Phone, Video, Trophy, TrendingUp, TrendingDown, UserCheck, Loader2, Mail, Building, Calendar, DollarSign, MoreVertical, Edit, Trash2, X, AlertCircle, Settings, Users, Tag, FileText, Star, Clock, Briefcase, Eye, ChevronLeft, ChevronRight, MessageSquare, Send, ExternalLink } from 'lucide-react';
 import { getInitials } from '@/lib/utils';
 import api from '@/lib/api';
 
@@ -105,6 +105,15 @@ export default function LeadsPage() {
   const [isLoadingDetail, setIsLoadingDetail] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [modalError, setModalError] = useState('');
+
+  // WhatsApp quick send from lead detail
+  const [showWaDropdown, setShowWaDropdown] = useState(false);
+  const [showWaSendForm, setShowWaSendForm] = useState(false);
+  const [waTemplates, setWaTemplates] = useState<any[]>([]);
+  const [waSelectedTemplate, setWaSelectedTemplate] = useState('');
+  const [waSelectedLang, setWaSelectedLang] = useState('en_US');
+  const [waSending, setWaSending] = useState(false);
+  const [waSendResult, setWaSendResult] = useState<{ ok: boolean; msg: string } | null>(null);
 
   // Form data
   const [formData, setFormData] = useState<ContactFormData>({
@@ -610,6 +619,9 @@ export default function LeadsPage() {
     setShowDetailModal(true);
     setDetailContact(contact);
     setIsLoadingDetail(true);
+    setShowWaDropdown(false);
+    setShowWaSendForm(false);
+    setWaSendResult(null);
     try {
       const response = await api.get(`/contacts/${contact.id}`, {
         params: { relations: 'company,owner' },
@@ -619,6 +631,34 @@ export default function LeadsPage() {
       console.error('Failed to fetch contact details:', err);
     } finally {
       setIsLoadingDetail(false);
+    }
+  };
+
+  const fetchWaTemplates = async () => {
+    if (waTemplates.length > 0) return;
+    try {
+      const res = await api.get('/integrations/whatsapp/templates');
+      setWaTemplates(res.data.data || []);
+    } catch { /* silent */ }
+  };
+
+  const sendWaTemplate = async () => {
+    if (!detailContact?.phone || !waSelectedTemplate) return;
+    setWaSending(true);
+    setWaSendResult(null);
+    try {
+      const phone = detailContact.phone.replace(/[^0-9]/g, '');
+      await api.post('/integrations/whatsapp/send/template', {
+        to: phone,
+        templateName: waSelectedTemplate,
+        language: waSelectedLang,
+      });
+      setWaSendResult({ ok: true, msg: 'Template sent!' });
+      setTimeout(() => setWaSendResult(null), 3000);
+    } catch (err: any) {
+      setWaSendResult({ ok: false, msg: err.response?.data?.message || 'Failed to send' });
+    } finally {
+      setWaSending(false);
     }
   };
 
@@ -1057,7 +1097,96 @@ export default function LeadsPage() {
                   </div>
                 </div>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1">
+                {/* Email button */}
+                {detailContact.email && !detailContact.email.includes('@whatsapp.placeholder') && (
+                  <a
+                    href={`mailto:${detailContact.email}`}
+                    className="rounded-lg p-2 text-gray-500 hover:bg-blue-50 hover:text-blue-600 transition-all"
+                    title={`Email ${detailContact.email}`}
+                  >
+                    <Mail className="h-5 w-5" />
+                  </a>
+                )}
+                {/* WhatsApp button */}
+                <div className="relative">
+                  <button
+                    onClick={() => {
+                      if (!detailContact.phone) return;
+                      setShowWaDropdown(!showWaDropdown);
+                      fetchWaTemplates();
+                    }}
+                    className={`rounded-lg p-2 transition-all ${detailContact.phone ? 'text-green-600 hover:bg-green-50' : 'text-gray-300 cursor-not-allowed'}`}
+                    title={detailContact.phone ? `WhatsApp ${detailContact.phone}` : 'No phone number'}
+                  >
+                    <MessageSquare className="h-5 w-5" />
+                  </button>
+                  {showWaDropdown && detailContact.phone && (
+                    <div className="absolute right-0 top-full mt-1 w-72 bg-white border border-gray-200 rounded-xl shadow-xl z-50 overflow-hidden">
+                      <a
+                        href={`/whatsapp?phone=${encodeURIComponent(detailContact.phone)}`}
+                        className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 transition-colors border-b border-gray-100"
+                        onClick={() => setShowWaDropdown(false)}
+                      >
+                        <ExternalLink className="h-4 w-4 text-green-600" />
+                        <div>
+                          <p className="text-sm font-medium text-gray-900">Open in WhatsApp Inbox</p>
+                          <p className="text-xs text-gray-500">View full conversation</p>
+                        </div>
+                      </a>
+                      <button
+                        onClick={() => { setShowWaSendForm(!showWaSendForm); }}
+                        className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 transition-colors w-full text-left"
+                      >
+                        <Send className="h-4 w-4 text-green-600" />
+                        <div>
+                          <p className="text-sm font-medium text-gray-900">Send Template Now</p>
+                          <p className="text-xs text-gray-500">Quick send an approved template</p>
+                        </div>
+                      </button>
+                      {showWaSendForm && (
+                        <div className="px-4 py-3 bg-gray-50 border-t border-gray-100 space-y-2">
+                          <select
+                            value={waSelectedTemplate}
+                            onChange={e => {
+                              setWaSelectedTemplate(e.target.value);
+                              const t = waTemplates.find((t: any) => t.name === e.target.value);
+                              if (t?.language) setWaSelectedLang(t.language);
+                            }}
+                            className="w-full px-2 py-1.5 text-sm border border-gray-200 rounded-lg bg-white"
+                          >
+                            <option value="">Select template...</option>
+                            {waTemplates.filter((t: any) => t.status === 'APPROVED').map((t: any) => (
+                              <option key={t.name} value={t.name}>{t.name} ({t.language})</option>
+                            ))}
+                          </select>
+                          <div className="flex gap-2">
+                            <input
+                              value={waSelectedLang}
+                              onChange={e => setWaSelectedLang(e.target.value)}
+                              placeholder="Language"
+                              className="flex-1 px-2 py-1.5 text-sm border border-gray-200 rounded-lg"
+                            />
+                            <button
+                              onClick={sendWaTemplate}
+                              disabled={waSending || !waSelectedTemplate}
+                              className="px-3 py-1.5 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 disabled:opacity-50 flex items-center gap-1"
+                            >
+                              {waSending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />}
+                              Send
+                            </button>
+                          </div>
+                          {waSendResult && (
+                            <p className={`text-xs ${waSendResult.ok ? 'text-green-600' : 'text-red-600'}`}>
+                              {waSendResult.msg}
+                            </p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+                {/* Edit button */}
                 <button
                   onClick={() => { setShowDetailModal(false); setDetailContact(null); openEditModal(detailContact); }}
                   className="rounded-lg p-2 text-gray-500 hover:bg-blue-50 hover:text-blue-600 transition-all"
@@ -1066,7 +1195,7 @@ export default function LeadsPage() {
                   <Edit className="h-5 w-5" />
                 </button>
                 <button
-                  onClick={() => { setShowDetailModal(false); setDetailContact(null); }}
+                  onClick={() => { setShowDetailModal(false); setDetailContact(null); setShowWaDropdown(false); }}
                   className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-all"
                 >
                   <X className="h-6 w-6" />
