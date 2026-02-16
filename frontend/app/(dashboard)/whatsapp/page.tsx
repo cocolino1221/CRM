@@ -396,6 +396,7 @@ export default function WhatsAppPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [sendError, setSendError] = useState('');
+  const [convFilter, setConvFilter] = useState<'all' | 'unread' | 'assigned'>('all');
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Mobile layout: 'list' shows conv list, 'chat' shows selected chat
@@ -433,6 +434,10 @@ export default function WhatsAppPage() {
 
   // Emoji picker
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+
+  // "/" slash command dropdown
+  const [showSlashMenu, setShowSlashMenu] = useState(false);
+  const [slashSearch, setSlashSearch] = useState('');
 
   // Attachment
   const [showAttachmentModal, setShowAttachmentModal] = useState(false);
@@ -976,9 +981,37 @@ export default function WhatsAppPage() {
     return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
   };
 
-  const filteredConversations = conversations.filter(c =>
-    c.contactName.toLowerCase().includes(search.toLowerCase()) || c.phone.includes(search),
-  );
+  const filteredConversations = conversations.filter(c => {
+    const matchesSearch = c.contactName.toLowerCase().includes(search.toLowerCase()) || c.phone.includes(search);
+    if (!matchesSearch) return false;
+    if (convFilter === 'unread') return c.unreadCount > 0;
+    if (convFilter === 'assigned') return !!assignments[c.waId];
+    return true;
+  });
+
+  // Group conversations by date for Brevo-style display
+  const groupedConversations = (() => {
+    const groups: { label: string; convs: typeof filteredConversations }[] = [];
+    const today = new Date(); today.setHours(0,0,0,0);
+    const yesterday = new Date(today); yesterday.setDate(yesterday.getDate() - 1);
+    const weekAgo = new Date(today); weekAgo.setDate(weekAgo.getDate() - 7);
+    const todayConvs: typeof filteredConversations = [];
+    const yesterdayConvs: typeof filteredConversations = [];
+    const weekConvs: typeof filteredConversations = [];
+    const olderConvs: typeof filteredConversations = [];
+    for (const c of filteredConversations) {
+      const d = new Date(c.lastMessageTime); d.setHours(0,0,0,0);
+      if (d.getTime() >= today.getTime()) todayConvs.push(c);
+      else if (d.getTime() >= yesterday.getTime()) yesterdayConvs.push(c);
+      else if (d.getTime() >= weekAgo.getTime()) weekConvs.push(c);
+      else olderConvs.push(c);
+    }
+    if (todayConvs.length) groups.push({ label: 'Today', convs: todayConvs });
+    if (yesterdayConvs.length) groups.push({ label: 'Yesterday', convs: yesterdayConvs });
+    if (weekConvs.length) groups.push({ label: 'This Week', convs: weekConvs });
+    if (olderConvs.length) groups.push({ label: 'Older', convs: olderConvs });
+    return groups;
+  })();
 
   const sessionStatus = selectedConv ? getSessionStatus(selectedConv) : 'closed';
   const sessionOpen = sessionStatus === 'open' || sessionStatus === 'closing';
@@ -1340,34 +1373,52 @@ export default function WhatsAppPage() {
         w-full md:w-80
         ${mobilePanel === 'chat' ? 'hidden md:flex' : 'flex'}
       `}>
-        <div className="p-4 border-b border-gray-100">
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-sm font-semibold text-gray-600">Conversations</span>
-            <div className="flex gap-1">
-              <button onClick={() => { setShowNewConversation(true); if (metaTemplates.length === 0) fetchMetaTemplates(); }} className="p-1.5 rounded-lg bg-green-500 hover:bg-green-600 transition-all" title="New conversation">
-                <Plus className="h-4 w-4 text-white" />
+        <div className="p-3 border-b border-gray-100 space-y-2">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="h-7 w-7 rounded-lg bg-green-500 flex items-center justify-center">
+                <MessageCircle className="h-4 w-4 text-white" />
+              </div>
+              <span className="text-sm font-bold text-gray-900">Chats</span>
+              {conversations.length > 0 && (
+                <span className="text-xs font-medium text-gray-400">{conversations.length}</span>
+              )}
+            </div>
+            <div className="flex gap-0.5">
+              <button onClick={() => { setShowNewConversation(true); if (metaTemplates.length === 0) fetchMetaTemplates(); }} className="p-1.5 rounded-lg bg-green-500 hover:bg-green-600 transition-all shadow-sm" title="New conversation">
+                <Plus className="h-3.5 w-3.5 text-white" />
               </button>
               <button onClick={fetchInbox} className="p-1.5 rounded-lg hover:bg-gray-100 transition-all" title="Refresh">
-                <RefreshCw className="h-4 w-4 text-gray-500" />
+                <RefreshCw className="h-3.5 w-3.5 text-gray-400" />
               </button>
               <button onClick={() => { setShowAutoResponses(true); fetchAutoResponses(); }} className="p-1.5 rounded-lg hover:bg-gray-100 transition-all" title="Auto-responses">
-                <Zap className="h-4 w-4 text-gray-500" />
+                <Zap className="h-3.5 w-3.5 text-gray-400" />
               </button>
-              <button onClick={() => { setShowTemplateManager(true); fetchMetaTemplates(); }} className="p-1.5 rounded-lg hover:bg-gray-100 transition-all" title="Message templates">
-                <LayoutTemplate className="h-4 w-4 text-gray-500" />
+              <button onClick={() => { setShowTemplateManager(true); fetchMetaTemplates(); }} className="p-1.5 rounded-lg hover:bg-gray-100 transition-all" title="Templates">
+                <LayoutTemplate className="h-3.5 w-3.5 text-gray-400" />
               </button>
-              <button onClick={() => { setShowAutoSend(true); fetchAutoSend(); fetchMetaTemplates(); }} className="p-1.5 rounded-lg hover:bg-gray-100 transition-all" title="Auto-send on new contact">
-                <Timer className="h-4 w-4 text-gray-500" />
+              <button onClick={() => { setShowAutoSend(true); fetchAutoSend(); fetchMetaTemplates(); }} className="p-1.5 rounded-lg hover:bg-gray-100 transition-all" title="Auto-send">
+                <Timer className="h-3.5 w-3.5 text-gray-400" />
               </button>
-              <button onClick={() => setShowWebhookSetup(true)} className="p-1.5 rounded-lg hover:bg-gray-100 transition-all" title="Webhook setup">
-                <Settings className="h-4 w-4 text-gray-500" />
+              <button onClick={() => setShowWebhookSetup(true)} className="p-1.5 rounded-lg hover:bg-gray-100 transition-all" title="Settings">
+                <Settings className="h-3.5 w-3.5 text-gray-400" />
               </button>
             </div>
           </div>
+          {/* Search */}
           <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
             <input type="text" placeholder="Search conversations..." value={search} onChange={e => setSearch(e.target.value)}
-              className="w-full pl-9 pr-4 py-2 text-sm bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:border-green-400 focus:ring-2 focus:ring-green-100" />
+              className="w-full pl-9 pr-4 py-1.5 text-sm bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:border-green-400 focus:ring-2 focus:ring-green-100" />
+          </div>
+          {/* Filter tabs */}
+          <div className="flex gap-1">
+            {(['all', 'unread', 'assigned'] as const).map(f => (
+              <button key={f} onClick={() => setConvFilter(f)}
+                className={`px-2.5 py-1 text-xs font-medium rounded-full transition-all ${convFilter === f ? 'bg-green-100 text-green-700' : 'text-gray-500 hover:bg-gray-100'}`}>
+                {f === 'all' ? 'All' : f === 'unread' ? 'Unread' : 'Assigned'}
+              </button>
+            ))}
           </div>
         </div>
 
@@ -1376,66 +1427,81 @@ export default function WhatsAppPage() {
             <div className="flex items-center justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-gray-400" /></div>
           ) : filteredConversations.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
-              <MessageCircle className="h-10 w-10 text-gray-300 mb-3" />
-              <p className="text-sm font-medium text-gray-500">No conversations yet</p>
-              <p className="text-xs text-gray-400 mt-1">Messages from WhatsApp will appear here</p>
-              <button onClick={() => setShowNewConversation(true)} className="mt-4 text-xs text-green-600 hover:underline font-medium">
-                Start a new conversation
+              <div className="h-16 w-16 bg-gray-100 rounded-full flex items-center justify-center mb-4">
+                <MessageCircle className="h-8 w-8 text-gray-300" />
+              </div>
+              <p className="text-sm font-semibold text-gray-600">No conversations</p>
+              <p className="text-xs text-gray-400 mt-1 max-w-48">Messages from WhatsApp will appear here</p>
+              <button onClick={() => setShowNewConversation(true)} className="mt-4 px-4 py-1.5 text-xs font-medium text-white bg-green-500 rounded-full hover:bg-green-600 transition-all">
+                Start conversation
               </button>
             </div>
           ) : (
-            filteredConversations.map(conv => {
-              const ss = getSessionStatus(conv);
-              const isSelected = selectedConv?.waId === conv.waId;
-              const hasUnread = conv.unreadCount > 0;
-              const convAssignment = assignments[conv.waId];
-              return (
-                <div key={conv.waId} className={`relative group/conv border-b border-gray-50 ${isSelected ? 'bg-green-50 border-l-2 border-l-green-500' : ''}`}>
-                <button onClick={() => selectConversation(conv)}
-                  className={`w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 transition-all text-left`}>
-                  <div className="relative flex-shrink-0">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-green-400 to-emerald-600">
-                      <span className="text-white text-sm font-bold">{conv.contactName.charAt(0).toUpperCase()}</span>
-                    </div>
-                    <div className={`absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-white ${
-                      ss === 'open' ? 'bg-green-400' : ss === 'closing' ? 'bg-orange-400' : 'bg-gray-300'
-                    }`} />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between">
-                      <p className={`text-sm truncate ${hasUnread ? 'font-bold text-gray-900' : 'font-semibold text-gray-900'}`}>{conv.contactName}</p>
-                      <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
-                        {convAssignment && (
-                          <div className="h-5 w-5 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0"
-                            style={{ backgroundColor: convAssignment.color }}
-                            title={`Assigned: ${convAssignment.userName}`}>
-                            {getUserInitials(convAssignment.userName)}
-                          </div>
-                        )}
-                        <span className="text-xs text-gray-400">{formatTime(conv.lastMessageTime)}</span>
-                      </div>
-                    </div>
-                    <div className="flex items-center justify-between mt-0.5">
-                      <p className={`text-xs truncate ${hasUnread ? 'font-medium text-gray-700' : 'text-gray-500'}`}>{conv.lastMessage}</p>
-                      {hasUnread && (
-                        <span className="flex-shrink-0 ml-2 h-5 min-w-5 flex items-center justify-center rounded-full bg-green-500 text-white text-xs font-bold px-1">
-                          {conv.unreadCount}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </button>
-                {/* Delete conversation button — appears on hover */}
-                <button
-                  onClick={(e) => { e.stopPropagation(); handleDeleteConversation(conv.waId); }}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover/conv:opacity-100 transition-opacity p-1.5 bg-white rounded-lg shadow-sm border border-gray-100 hover:bg-red-50 hover:border-red-200 hover:text-red-500 text-gray-400"
-                  title="Delete conversation"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
+            groupedConversations.map(group => (
+              <div key={group.label}>
+                {/* Date group header */}
+                <div className="sticky top-0 z-10 px-4 py-1.5 bg-gray-50/90 backdrop-blur-sm border-b border-gray-100">
+                  <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">{group.label}</span>
                 </div>
-              );
-            })
+                {group.convs.map(conv => {
+                  const ss = getSessionStatus(conv);
+                  const isSelected = selectedConv?.waId === conv.waId;
+                  const hasUnread = conv.unreadCount > 0;
+                  const convAssignment = assignments[conv.waId];
+                  return (
+                    <div key={conv.waId} className={`relative group/conv ${isSelected ? 'bg-green-50 border-l-3 border-l-green-500' : 'border-l-3 border-l-transparent hover:bg-gray-50'}`}>
+                    <button onClick={() => selectConversation(conv)}
+                      className="w-full flex items-center gap-3 px-4 py-3 transition-all text-left">
+                      <div className="relative flex-shrink-0">
+                        <div className="flex h-11 w-11 items-center justify-center rounded-full bg-gradient-to-br from-green-400 to-emerald-600 shadow-sm">
+                          <span className="text-white text-sm font-bold">{conv.contactName.charAt(0).toUpperCase()}</span>
+                        </div>
+                        {/* Status dot */}
+                        <div className={`absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 rounded-full border-2 border-white ${
+                          hasUnread ? 'bg-purple-500' : ss === 'open' ? 'bg-green-400' : ss === 'closing' ? 'bg-orange-400' : 'bg-gray-300'
+                        }`} />
+                        {/* WhatsApp badge */}
+                        <div className="absolute -top-1 -left-1 h-4 w-4 bg-green-500 rounded-full flex items-center justify-center shadow-sm">
+                          <MessageCircle className="h-2.5 w-2.5 text-white" />
+                        </div>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between">
+                          <p className={`text-sm truncate ${hasUnread ? 'font-bold text-gray-900' : 'font-medium text-gray-800'}`}>{conv.contactName}</p>
+                          <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
+                            {convAssignment && (
+                              <div className="h-5 w-5 rounded-full flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0 shadow-sm"
+                                style={{ backgroundColor: convAssignment.color }}
+                                title={`Assigned: ${convAssignment.userName}`}>
+                                {getUserInitials(convAssignment.userName)}
+                              </div>
+                            )}
+                            <span className="text-[11px] text-gray-400">{formatTime(conv.lastMessageTime)}</span>
+                          </div>
+                        </div>
+                        <div className="flex items-center justify-between mt-0.5">
+                          <p className={`text-xs truncate ${hasUnread ? 'font-medium text-gray-700' : 'text-gray-500'}`}>{conv.lastMessage}</p>
+                          {hasUnread && (
+                            <span className="flex-shrink-0 ml-2 h-5 min-w-5 flex items-center justify-center rounded-full bg-green-500 text-white text-[10px] font-bold px-1.5 shadow-sm">
+                              {conv.unreadCount}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </button>
+                    {/* Delete button on hover */}
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handleDeleteConversation(conv.waId); }}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover/conv:opacity-100 transition-opacity p-1.5 bg-white rounded-lg shadow-sm border border-gray-100 hover:bg-red-50 hover:border-red-200 hover:text-red-500 text-gray-400"
+                      title="Delete conversation"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                    </div>
+                  );
+                })}
+              </div>
+            ))
           )}
         </div>
       </div>
@@ -1676,15 +1742,85 @@ export default function WhatsAppPage() {
               </div>
             </div>
 
+            {/* "/" slash command dropdown */}
+            {showSlashMenu && (
+              <div className="absolute bottom-full left-0 right-0 mb-1 mx-4 bg-white rounded-xl shadow-xl border border-gray-200 max-h-64 overflow-y-auto z-50">
+                <div className="px-3 py-2 border-b border-gray-100">
+                  <p className="text-xs font-semibold text-gray-500">Templates & Quick Replies</p>
+                </div>
+                {/* Templates */}
+                {metaTemplates.filter((t: any) => t.status === 'APPROVED').filter((t: any) =>
+                  !slashSearch || t.name.toLowerCase().includes(slashSearch.toLowerCase())
+                ).map((t: any) => {
+                  const tpl = toSendableTemplate(t);
+                  return (
+                    <button key={tpl.name} onClick={() => {
+                      setSelectedTemplate(tpl);
+                      setTemplateParams(Array(tpl.parameterCount).fill(''));
+                      setShowTemplatePanel(true);
+                      setShowSlashMenu(false);
+                      setReplyText('');
+                    }} className="w-full flex items-start gap-3 px-3 py-2 hover:bg-gray-50 text-left border-b border-gray-50">
+                      <LayoutTemplate className="h-4 w-4 text-green-500 mt-0.5 flex-shrink-0" />
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-gray-800 truncate">{tpl.displayName}</p>
+                        <p className="text-xs text-gray-400 truncate">{tpl.body}</p>
+                      </div>
+                    </button>
+                  );
+                })}
+                {/* Quick replies */}
+                {(quickReplies.length > 0 ? quickReplies : DEFAULT_QUICK_REPLIES).filter(qr =>
+                  !slashSearch || qr.title.toLowerCase().includes(slashSearch.toLowerCase()) || qr.message.toLowerCase().includes(slashSearch.toLowerCase())
+                ).map(qr => (
+                  <button key={qr.id} onClick={() => {
+                    setReplyText(qr.message);
+                    setShowSlashMenu(false);
+                  }} className="w-full flex items-start gap-3 px-3 py-2 hover:bg-gray-50 text-left border-b border-gray-50">
+                    <Zap className="h-4 w-4 text-yellow-500 mt-0.5 flex-shrink-0" />
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-gray-800">{qr.title}</p>
+                      <p className="text-xs text-gray-400 truncate">{qr.message}</p>
+                    </div>
+                  </button>
+                ))}
+                {metaTemplates.filter((t: any) => t.status === 'APPROVED').length === 0 && (quickReplies.length > 0 ? quickReplies : DEFAULT_QUICK_REPLIES).length === 0 && (
+                  <div className="px-3 py-4 text-center text-xs text-gray-400">No templates or quick replies available</div>
+                )}
+              </div>
+            )}
+
             {/* Text input + send */}
             <div className="flex items-end gap-2">
-              <textarea value={replyText} onChange={e => setReplyText(e.target.value)} onKeyDown={handleKeyDown}
-                placeholder={sessionOpen ? 'Type a message... (Enter to send)' : 'Send a template to start conversation'}
+              <textarea value={replyText}
+                onChange={e => {
+                  const val = e.target.value;
+                  setReplyText(val);
+                  // Show slash menu when typing "/"
+                  if (val === '/') {
+                    setShowSlashMenu(true);
+                    setSlashSearch('');
+                    if (metaTemplates.length === 0) fetchMetaTemplates();
+                  } else if (val.startsWith('/') && showSlashMenu) {
+                    setSlashSearch(val.slice(1));
+                  } else {
+                    setShowSlashMenu(false);
+                  }
+                }}
+                onKeyDown={(e) => {
+                  if (showSlashMenu && e.key === 'Escape') {
+                    setShowSlashMenu(false);
+                    setReplyText('');
+                    return;
+                  }
+                  handleKeyDown(e as any);
+                }}
+                placeholder={sessionOpen ? 'Type "/" for templates or a message... (Enter to send)' : 'Send a template to start conversation'}
                 disabled={!sessionOpen}
                 rows={2}
                 className="flex-1 resize-none rounded-xl border border-gray-200 px-4 py-2.5 text-sm focus:outline-none focus:border-green-400 focus:ring-2 focus:ring-green-100 disabled:bg-gray-100 disabled:cursor-not-allowed" />
               <button onClick={handleSend} disabled={isSending || !replyText.trim() || !sessionOpen}
-                className="flex h-10 w-10 items-center justify-center rounded-xl bg-green-500 hover:bg-green-600 text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0">
+                className="flex h-10 w-10 items-center justify-center rounded-full bg-green-500 hover:bg-green-600 text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0 shadow-sm">
                 {isSending ? <Loader2 className="h-5 w-5 animate-spin" /> : <Send className="h-5 w-5" />}
               </button>
             </div>
