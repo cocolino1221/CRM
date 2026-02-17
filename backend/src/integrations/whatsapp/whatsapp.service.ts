@@ -1047,7 +1047,9 @@ export class WhatsAppService {
       }
 
       // Filter by source (if any sources are specified)
-      if (conditions.sources?.length > 0 && !conditions.sources.includes(contact.source)) {
+      // Always allow "manual" and "website" since those are CRM-created contacts
+      const alwaysAllowedSources = ['manual', 'website'];
+      if (conditions.sources?.length > 0 && !conditions.sources.includes(contact.source) && !alwaysAllowedSources.includes(contact.source)) {
         this.logger.log(`Auto-send skipped for contact ${contact.id}: source "${contact.source}" not in [${conditions.sources.join(',')}]`);
         return;
       }
