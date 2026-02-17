@@ -5,6 +5,34 @@ import { Search, Filter, Plus, Mail, Phone, MoreVertical, Star, Loader2, X, Edit
 import { getInitials } from '@/lib/utils';
 import api from '@/lib/api';
 
+const PHONE_PREFIXES = [
+  { code: '+40', country: 'RO', flag: '🇷🇴' },
+  { code: '+1', country: 'US', flag: '🇺🇸' },
+  { code: '+44', country: 'UK', flag: '🇬🇧' },
+  { code: '+49', country: 'DE', flag: '🇩🇪' },
+  { code: '+33', country: 'FR', flag: '🇫🇷' },
+  { code: '+39', country: 'IT', flag: '🇮🇹' },
+  { code: '+34', country: 'ES', flag: '🇪🇸' },
+  { code: '+31', country: 'NL', flag: '🇳🇱' },
+  { code: '+32', country: 'BE', flag: '🇧🇪' },
+  { code: '+43', country: 'AT', flag: '🇦🇹' },
+  { code: '+41', country: 'CH', flag: '🇨🇭' },
+  { code: '+48', country: 'PL', flag: '🇵🇱' },
+  { code: '+36', country: 'HU', flag: '🇭🇺' },
+  { code: '+359', country: 'BG', flag: '🇧🇬' },
+  { code: '+373', country: 'MD', flag: '🇲🇩' },
+  { code: '+380', country: 'UA', flag: '🇺🇦' },
+  { code: '+90', country: 'TR', flag: '🇹🇷' },
+  { code: '+972', country: 'IL', flag: '🇮🇱' },
+  { code: '+971', country: 'AE', flag: '🇦🇪' },
+  { code: '+91', country: 'IN', flag: '🇮🇳' },
+  { code: '+55', country: 'BR', flag: '🇧🇷' },
+  { code: '+52', country: 'MX', flag: '🇲🇽' },
+  { code: '+61', country: 'AU', flag: '🇦🇺' },
+  { code: '+81', country: 'JP', flag: '🇯🇵' },
+  { code: '+86', country: 'CN', flag: '🇨🇳' },
+];
+
 interface Contact {
   id: string;
   firstName: string;
@@ -78,6 +106,7 @@ export default function ContactsPage() {
   const [waSendResult, setWaSendResult] = useState<{ ok: boolean; msg: string } | null>(null);
 
   // Form data
+  const [phonePrefix, setPhonePrefix] = useState('+40');
   const [formData, setFormData] = useState<ContactFormData>({
     firstName: '',
     lastName: '',
@@ -151,7 +180,10 @@ export default function ContactsPage() {
       };
 
       // Only add optional fields if they have values
-      if (formData.phone?.trim()) cleanedData.phone = formData.phone.trim();
+      if (formData.phone?.trim()) {
+        const rawPhone = formData.phone.trim().replace(/[^0-9]/g, '');
+        cleanedData.phone = rawPhone ? `${phonePrefix}${rawPhone}` : undefined;
+      }
       if (formData.jobTitle?.trim()) cleanedData.jobTitle = formData.jobTitle.trim();
       if (formData.notes?.trim()) cleanedData.notes = formData.notes.trim();
       if (formData.leadScore !== undefined) cleanedData.leadScore = formData.leadScore;
@@ -188,7 +220,12 @@ export default function ContactsPage() {
     setIsSubmitting(true);
 
     try {
-      await api.put(`/contacts/${selectedContact.id}`, formData);
+      const editData = { ...formData };
+      if (editData.phone?.trim()) {
+        const rawPhone = editData.phone.trim().replace(/[^0-9]/g, '');
+        editData.phone = rawPhone ? `${phonePrefix}${rawPhone}` : editData.phone.trim();
+      }
+      await api.put(`/contacts/${selectedContact.id}`, editData);
       setShowEditModal(false);
       resetForm();
       fetchContacts();
@@ -220,11 +257,20 @@ export default function ContactsPage() {
 
   const openEditModal = (contact: Contact) => {
     setSelectedContact(contact);
+    // Parse phone prefix from stored number (e.g., "+40712345678" → prefix="+40", number="712345678")
+    let parsedPhone = contact.phone || '';
+    if (parsedPhone.startsWith('+')) {
+      const match = PHONE_PREFIXES.find(p => parsedPhone.startsWith(p.code));
+      if (match) {
+        setPhonePrefix(match.code);
+        parsedPhone = parsedPhone.slice(match.code.length);
+      }
+    }
     setFormData({
       firstName: contact.firstName,
       lastName: contact.lastName,
       email: contact.email,
-      phone: contact.phone || '',
+      phone: parsedPhone,
       jobTitle: contact.jobTitle || '',
       status: contact.status,
       source: contact.source || 'website',
@@ -1021,15 +1067,26 @@ export default function ContactsPage() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-2">Phone</label>
-                  <div className="relative">
-                    <Phone className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
-                    <input
-                      type="tel"
-                      value={formData.phone}
-                      onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                      className="w-full pl-12 pr-4 py-3 rounded-xl border border-gray-300 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 transition-all outline-none"
-                      placeholder="+1 (555) 123-4567"
-                    />
+                  <div className="flex gap-2">
+                    <select
+                      value={phonePrefix}
+                      onChange={(e) => setPhonePrefix(e.target.value)}
+                      className="w-28 px-2 py-3 rounded-xl border border-gray-300 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 transition-all outline-none text-sm"
+                    >
+                      {PHONE_PREFIXES.map(p => (
+                        <option key={p.code} value={p.code}>{p.flag} {p.code}</option>
+                      ))}
+                    </select>
+                    <div className="relative flex-1">
+                      <Phone className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
+                      <input
+                        type="tel"
+                        value={formData.phone}
+                        onChange={(e) => setFormData({ ...formData, phone: e.target.value.replace(/[^0-9]/g, '') })}
+                        className="w-full pl-12 pr-4 py-3 rounded-xl border border-gray-300 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 transition-all outline-none"
+                        placeholder="712345678"
+                      />
+                    </div>
                   </div>
                 </div>
 
@@ -1188,14 +1245,26 @@ export default function ContactsPage() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-2">Phone</label>
-                  <div className="relative">
-                    <Phone className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
-                    <input
-                      type="tel"
-                      value={formData.phone}
-                      onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                      className="w-full pl-12 pr-4 py-3 rounded-xl border border-gray-300 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 transition-all outline-none"
-                    />
+                  <div className="flex gap-2">
+                    <select
+                      value={phonePrefix}
+                      onChange={(e) => setPhonePrefix(e.target.value)}
+                      className="w-28 px-2 py-3 rounded-xl border border-gray-300 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 transition-all outline-none text-sm"
+                    >
+                      {PHONE_PREFIXES.map(p => (
+                        <option key={p.code} value={p.code}>{p.flag} {p.code}</option>
+                      ))}
+                    </select>
+                    <div className="relative flex-1">
+                      <Phone className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
+                      <input
+                        type="tel"
+                        value={formData.phone}
+                        onChange={(e) => setFormData({ ...formData, phone: e.target.value.replace(/[^0-9]/g, '') })}
+                        className="w-full pl-12 pr-4 py-3 rounded-xl border border-gray-300 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 transition-all outline-none"
+                        placeholder="712345678"
+                      />
+                    </div>
                   </div>
                 </div>
 

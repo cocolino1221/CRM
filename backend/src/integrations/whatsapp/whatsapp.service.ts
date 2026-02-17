@@ -1038,11 +1038,11 @@ export class WhatsAppService {
       // Check conditions
       const conditions = autoSend.conditions || {};
 
-      // Phone is required for WhatsApp — strip all non-digits; `+40712` → `40712`
+      // Phone is required for WhatsApp — strip all non-digits; `+40712345678` → `40712345678`
       const rawPhone = contact.phone || '';
       const phone = rawPhone.replace(/[^0-9]/g, '');
-      if (!phone || phone.length < 10) {
-        this.logger.log(`Auto-send skipped for contact ${contact.id}: no phone or too short ("${rawPhone}")`);
+      if (!phone || phone.length < 7) {
+        this.logger.log(`Auto-send skipped for contact ${contact.id}: no phone or too short ("${rawPhone}" → "${phone}", len=${phone.length})`);
         return;
       }
 
@@ -1080,7 +1080,11 @@ export class WhatsAppService {
       await this.saveOutboundActivity(phone, `[Auto-send template: ${templateName}]`, 'template', workspaceId, integration.userId || '', msgId);
       this.logger.log(`Auto-send SUCCESS: template "${templateName}" sent to ${phone} for contact ${contact.id} msgId=${msgId}`);
     } catch (err) {
-      this.logger.warn(`Auto-send FAILED for contact ${payload.contact?.id}: ${err.response?.data?.error?.message || err.message}`);
+      const metaError = err.response?.data?.error;
+      this.logger.warn(`Auto-send FAILED for contact ${payload.contact?.id}: ${metaError?.message || err.message} (code=${metaError?.code}, subcode=${metaError?.error_subcode})`);
+      if (err.response?.data) {
+        this.logger.warn(`Auto-send error details: ${JSON.stringify(err.response.data)}`);
+      }
     }
   }
 

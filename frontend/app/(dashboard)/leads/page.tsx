@@ -5,6 +5,34 @@ import { Plus, Search, Phone, Video, Trophy, TrendingUp, TrendingDown, UserCheck
 import { getInitials } from '@/lib/utils';
 import api from '@/lib/api';
 
+const PHONE_PREFIXES = [
+  { code: '+40', country: 'RO', flag: '🇷🇴' },
+  { code: '+1', country: 'US', flag: '🇺🇸' },
+  { code: '+44', country: 'UK', flag: '🇬🇧' },
+  { code: '+49', country: 'DE', flag: '🇩🇪' },
+  { code: '+33', country: 'FR', flag: '🇫🇷' },
+  { code: '+39', country: 'IT', flag: '🇮🇹' },
+  { code: '+34', country: 'ES', flag: '🇪🇸' },
+  { code: '+31', country: 'NL', flag: '🇳🇱' },
+  { code: '+32', country: 'BE', flag: '🇧🇪' },
+  { code: '+43', country: 'AT', flag: '🇦🇹' },
+  { code: '+41', country: 'CH', flag: '🇨🇭' },
+  { code: '+48', country: 'PL', flag: '🇵🇱' },
+  { code: '+36', country: 'HU', flag: '🇭🇺' },
+  { code: '+359', country: 'BG', flag: '🇧🇬' },
+  { code: '+373', country: 'MD', flag: '🇲🇩' },
+  { code: '+380', country: 'UA', flag: '🇺🇦' },
+  { code: '+90', country: 'TR', flag: '🇹🇷' },
+  { code: '+972', country: 'IL', flag: '🇮🇱' },
+  { code: '+971', country: 'AE', flag: '🇦🇪' },
+  { code: '+91', country: 'IN', flag: '🇮🇳' },
+  { code: '+55', country: 'BR', flag: '🇧🇷' },
+  { code: '+52', country: 'MX', flag: '🇲🇽' },
+  { code: '+61', country: 'AU', flag: '🇦🇺' },
+  { code: '+81', country: 'JP', flag: '🇯🇵' },
+  { code: '+86', country: 'CN', flag: '🇨🇳' },
+];
+
 interface Contact {
   id: string;
   email: string;
@@ -116,6 +144,7 @@ export default function LeadsPage() {
   const [waSendResult, setWaSendResult] = useState<{ ok: boolean; msg: string } | null>(null);
 
   // Form data
+  const [phonePrefix, setPhonePrefix] = useState('+40');
   const [formData, setFormData] = useState<ContactFormData>({
     email: '',
     firstName: '',
@@ -301,7 +330,8 @@ export default function LeadsPage() {
       };
 
       if (formData.phone?.trim()) {
-        cleanedData.phone = formData.phone.trim();
+        const rawPhone = formData.phone.trim().replace(/[^0-9]/g, '');
+        cleanedData.phone = rawPhone ? `${phonePrefix}${rawPhone}` : undefined;
       }
       if (formData.notes?.trim()) {
         cleanedData.notes = formData.notes.trim();
@@ -364,7 +394,8 @@ export default function LeadsPage() {
       };
 
       if (formData.phone?.trim()) {
-        cleanedData.phone = formData.phone.trim();
+        const rawPhone = formData.phone.trim().replace(/[^0-9]/g, '');
+        cleanedData.phone = rawPhone ? `${phonePrefix}${rawPhone}` : formData.phone.trim();
       }
       if (formData.notes?.trim()) {
         cleanedData.notes = formData.notes.trim();
@@ -447,11 +478,20 @@ export default function LeadsPage() {
 
   const openEditModal = (contact: Contact) => {
     setEditingContact(contact);
+    // Parse phone prefix from stored number (e.g., "+40712345678" → prefix="+40", number="712345678")
+    let parsedPhone = contact.phone || '';
+    if (parsedPhone.startsWith('+')) {
+      const match = PHONE_PREFIXES.find(p => parsedPhone.startsWith(p.code));
+      if (match) {
+        setPhonePrefix(match.code);
+        parsedPhone = parsedPhone.slice(match.code.length);
+      }
+    }
     setFormData({
       email: contact.email,
       firstName: contact.firstName,
       lastName: contact.lastName,
-      phone: contact.phone || '',
+      phone: parsedPhone,
       status: contact.status,
       source: contact.source,
       notes: contact.notes,
@@ -1503,14 +1543,26 @@ export default function LeadsPage() {
                   <label className="block text-sm font-semibold text-gray-700 mb-2">
                     Phone
                   </label>
-                  <input
-                    type="tel"
-                    disabled={isSubmitting}
-                    value={formData.phone}
-                    onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 disabled:bg-gray-50 disabled:cursor-not-allowed transition-all"
-                    placeholder="+1 (555) 123-4567"
-                  />
+                  <div className="flex gap-2">
+                    <select
+                      disabled={isSubmitting}
+                      value={phonePrefix}
+                      onChange={(e) => setPhonePrefix(e.target.value)}
+                      className="w-28 px-2 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 disabled:bg-gray-50 disabled:cursor-not-allowed transition-all text-sm"
+                    >
+                      {PHONE_PREFIXES.map(p => (
+                        <option key={p.code} value={p.code}>{p.flag} {p.code}</option>
+                      ))}
+                    </select>
+                    <input
+                      type="tel"
+                      disabled={isSubmitting}
+                      value={formData.phone}
+                      onChange={(e) => setFormData({ ...formData, phone: e.target.value.replace(/[^0-9]/g, '') })}
+                      className="flex-1 px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 disabled:bg-gray-50 disabled:cursor-not-allowed transition-all"
+                      placeholder="712345678"
+                    />
+                  </div>
                 </div>
 
                 <div>
@@ -1772,13 +1824,26 @@ export default function LeadsPage() {
                   <label className="block text-sm font-semibold text-gray-700 mb-2">
                     Phone
                   </label>
-                  <input
-                    type="tel"
-                    disabled={isSubmitting}
-                    value={formData.phone}
-                    onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 disabled:bg-gray-50 disabled:cursor-not-allowed transition-all"
-                  />
+                  <div className="flex gap-2">
+                    <select
+                      disabled={isSubmitting}
+                      value={phonePrefix}
+                      onChange={(e) => setPhonePrefix(e.target.value)}
+                      className="w-28 px-2 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 disabled:bg-gray-50 disabled:cursor-not-allowed transition-all text-sm"
+                    >
+                      {PHONE_PREFIXES.map(p => (
+                        <option key={p.code} value={p.code}>{p.flag} {p.code}</option>
+                      ))}
+                    </select>
+                    <input
+                      type="tel"
+                      disabled={isSubmitting}
+                      value={formData.phone}
+                      onChange={(e) => setFormData({ ...formData, phone: e.target.value.replace(/[^0-9]/g, '') })}
+                      className="flex-1 px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 disabled:bg-gray-50 disabled:cursor-not-allowed transition-all"
+                      placeholder="712345678"
+                    />
+                  </div>
                 </div>
 
                 <div>
