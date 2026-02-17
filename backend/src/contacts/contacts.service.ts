@@ -145,6 +145,7 @@ export class ContactsService {
     ContactSource.FACEBOOK,
     ContactSource.INSTAGRAM,
     ContactSource.KAJABI,
+    ContactSource.MANYCHAT,
   ]);
 
   async create(workspaceId: string, dto: CreateContactDto): Promise<Contact> {

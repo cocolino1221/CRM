@@ -7,6 +7,7 @@ import { ContactsService } from '../../contacts/contacts.service';
 import { Pipeline } from '../../database/entities/pipeline.entity';
 import { PipelineStage } from '../../database/entities/pipeline-stage.entity';
 import { ContactSource, ContactStatus } from '../../database/entities/contact.entity';
+import { Integration, IntegrationType } from '../../database/entities/integration.entity';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
 
 /**
@@ -47,6 +48,8 @@ export class ManyChatIntegrationHandler {
     private pipelineRepository: Repository<Pipeline>,
     @InjectRepository(PipelineStage)
     private pipelineStageRepository: Repository<PipelineStage>,
+    @InjectRepository(Integration)
+    private integrationRepository: Repository<Integration>,
   ) {}
 
   /**
@@ -149,34 +152,53 @@ export class ManyChatIntegrationHandler {
         email: email || undefined,
         phone: phone || undefined,
         jobTitle: customFields.job_title || customFields.jobTitle || undefined,
-        status: ContactStatus.LEAD,
-        source: ContactSource.OTHER,
+        status: ContactStatus.ACTIVE,
+        source: ContactSource.MANYCHAT,
         customFields: contactCustomFields,
         tags: ['manychat', ...(integration.config?.tags || [])],
         pipelineId,
         pipelineStageId,
-        notes: `Lead created from ManyChat${subscriber.last_input_text ? ` — last message: "${subscriber.last_input_text}"` : ''}`,
+        notes: `Contact from ManyChat${subscriber.last_input_text ? ` — last message: "${subscriber.last_input_text}"` : ''}`,
       } as any);
 
       this.logger.log(`ManyChat: created contact ${contact.id} (${firstName} ${lastName} | ${email || phone})`);
 
       // Auto-send WhatsApp welcome message if enabled and phone present
+      // Uses the WhatsApp integration's credentials (not global env vars)
       let whatsAppSent = false;
       const whatsappConfig = integration.config?.whatsApp;
       if (whatsappConfig?.enabled && phone) {
         try {
           const cleanPhone = phone.replace(/[^0-9]/g, '');
-          if (cleanPhone.length >= 10) {
+          if (cleanPhone.length >= 7) {
             const templateName = whatsappConfig.templateName || 'hello_world';
+            const rawLang = whatsappConfig.language || 'en_US';
+            const language = rawLang === 'en' ? 'en_US' : rawLang;
+            // Skip name param for hello_world (it has 0 params — Meta #132000 error)
             const params: any[] = [];
-            if (whatsappConfig.includeNameParam && firstName) {
+            if (whatsappConfig.includeNameParam && firstName && templateName !== 'hello_world') {
               params.push({ type: 'body', parameters: [{ type: 'text', text: firstName }] });
             }
-            await this.whatsAppService.sendTemplateMessage(cleanPhone, templateName, whatsappConfig.language || 'en', params);
-            whatsAppSent = true;
+            // Get WhatsApp integration credentials
+            const waIntegration = await this.integrationRepository.findOne({
+              where: { type: IntegrationType.WHATSAPP, workspaceId },
+            });
+            if (waIntegration?.credentials) {
+              await this.whatsAppService.sendMessageWithCredentials(waIntegration.credentials, {
+                to: cleanPhone,
+                type: 'template',
+                content: '',
+                template: { name: templateName, language, parameters: params },
+              });
+              whatsAppSent = true;
+              this.logger.log(`ManyChat: WhatsApp auto-send SUCCESS to ${cleanPhone}`);
+            } else {
+              this.logger.warn('ManyChat: No WhatsApp integration credentials found');
+            }
           }
         } catch (err) {
-          this.logger.warn(`ManyChat: WhatsApp auto-send failed: ${err.message}`);
+          const metaError = err.response?.data?.error;
+          this.logger.warn(`ManyChat: WhatsApp auto-send failed: ${metaError?.message || err.message}`);
         }
       }
 

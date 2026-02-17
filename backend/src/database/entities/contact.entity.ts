@@ -43,6 +43,7 @@ export enum ContactSource {
   LINKEDIN = 'linkedin',
   GOOGLE_ADS = 'google-ads',
   KAJABI = 'kajabi',
+  MANYCHAT = 'manychat',
   OTHER = 'other',
 }
 
