@@ -1065,8 +1065,10 @@ export class WhatsAppService {
       // Normalize: 'en' → 'en_US' (Meta rejects the short code for hello_world and most templates)
       const rawLang = autoSend.language || 'en_US';
       const language = rawLang === 'en' ? 'en_US' : rawLang;
+      // Only add name param if the template actually accepts parameters
+      // hello_world and many basic templates have ZERO params — sending params causes #132000
       const params: any[] = [];
-      if (autoSend.includeNameParam && contact.firstName) {
+      if (autoSend.includeNameParam && contact.firstName && templateName !== 'hello_world') {
         params.push({ type: 'body', parameters: [{ type: 'text', text: contact.firstName }] });
       }
 
