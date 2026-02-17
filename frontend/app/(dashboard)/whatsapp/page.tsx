@@ -7,6 +7,7 @@ import {
   Image, FileText, Mic, Video, Info, X, Zap, LayoutTemplate,
   Building2, Tag, Star, AlertTriangle, Timer, Edit, Trash2,
   Copy, ExternalLink, Mail, Briefcase, ArrowRight, ChevronLeft, Brain,
+  GitBranch,
 } from 'lucide-react';
 import Link from 'next/link';
 import api from '@/lib/api';
@@ -550,6 +551,15 @@ export default function WhatsAppPage() {
   const [assignments, setAssignments] = useState<Record<string, ConvAssignment>>({});
   const [teamUsers, setTeamUsers] = useState<Array<{ id: string; firstName: string; lastName: string; email: string }>>([]);
   const [showAssignDropdown, setShowAssignDropdown] = useState(false);
+
+  // ─── Conversation Flows ─────────────────────────────────
+  const [showFlowEditor, setShowFlowEditor] = useState(false);
+  const [flows, setFlows] = useState<any[]>([]);
+  const [isLoadingFlows, setIsLoadingFlows] = useState(false);
+  const [isSavingFlows, setIsSavingFlows] = useState(false);
+  const [editingFlow, setEditingFlow] = useState<any | null>(null);
+  const [flowTestPhone, setFlowTestPhone] = useState('');
+  const [flowTestResult, setFlowTestResult] = useState<string | null>(null);
 
   // ─── Effects ──────────────────────────────────────────────
 
@@ -1262,6 +1272,145 @@ export default function WhatsAppPage() {
     } catch { /* silent */ }
   };
 
+  // ─── Conversation Flows ────────────────────────────────────
+
+  const fetchFlows = async () => {
+    setIsLoadingFlows(true);
+    try {
+      const res = await api.get('/integrations/whatsapp/flows');
+      setFlows(res.data || []);
+    } catch { /* silent */ }
+    finally { setIsLoadingFlows(false); }
+  };
+
+  const saveFlows = async (updatedFlows: any[]) => {
+    setIsSavingFlows(true);
+    try {
+      await api.post('/integrations/whatsapp/flows', { flows: updatedFlows });
+      setFlows(updatedFlows);
+    } catch { /* silent */ }
+    finally { setIsSavingFlows(false); }
+  };
+
+  const createNewFlow = () => {
+    const newFlow = {
+      id: `flow_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      name: 'New Flow',
+      enabled: true,
+      trigger: 'first_message' as const,
+      triggerKeyword: '',
+      steps: [
+        {
+          id: 'step_0',
+          message: 'Hello! How can we help you?',
+          buttons: [
+            { id: `btn_${Date.now()}_a`, title: 'Option 1', nextStepId: 'step_1' },
+            { id: `btn_${Date.now()}_b`, title: 'Option 2', nextStepId: 'step_2' },
+          ],
+        },
+        { id: 'step_1', message: 'You selected Option 1. Here is more info...', buttons: [] },
+        { id: 'step_2', message: 'You selected Option 2. Here is more info...', buttons: [] },
+      ],
+    };
+    setEditingFlow(newFlow);
+  };
+
+  const handleSaveFlow = async () => {
+    if (!editingFlow) return;
+    const existing = flows.findIndex(f => f.id === editingFlow.id);
+    let updated: any[];
+    if (existing >= 0) {
+      updated = flows.map(f => f.id === editingFlow.id ? editingFlow : f);
+    } else {
+      updated = [...flows, editingFlow];
+    }
+    await saveFlows(updated);
+    setEditingFlow(null);
+  };
+
+  const handleDeleteFlow = async (flowId: string) => {
+    const updated = flows.filter(f => f.id !== flowId);
+    await saveFlows(updated);
+    if (editingFlow?.id === flowId) setEditingFlow(null);
+  };
+
+  const handleToggleFlow = async (flowId: string) => {
+    const updated = flows.map(f => f.id === flowId ? { ...f, enabled: !f.enabled } : f);
+    await saveFlows(updated);
+  };
+
+  const handleTestFlow = async (flowId: string) => {
+    if (!flowTestPhone.trim()) { setFlowTestResult('Enter a phone number'); return; }
+    setFlowTestResult('Sending...');
+    try {
+      const res = await api.post(`/integrations/whatsapp/flows/${flowId}/test`, { phone: flowTestPhone });
+      setFlowTestResult(res.data?.message || 'Sent!');
+    } catch (err: any) {
+      setFlowTestResult(err.response?.data?.message || 'Failed to send');
+    }
+  };
+
+  // Flow step editing helpers
+  const updateFlowStep = (stepIndex: number, field: string, value: any) => {
+    if (!editingFlow) return;
+    const steps = [...editingFlow.steps];
+    steps[stepIndex] = { ...steps[stepIndex], [field]: value };
+    setEditingFlow({ ...editingFlow, steps });
+  };
+
+  const addFlowStep = () => {
+    if (!editingFlow) return;
+    const stepId = `step_${editingFlow.steps.length}`;
+    setEditingFlow({
+      ...editingFlow,
+      steps: [...editingFlow.steps, { id: stepId, message: '', buttons: [] }],
+    });
+  };
+
+  const removeFlowStep = (stepIndex: number) => {
+    if (!editingFlow || editingFlow.steps.length <= 1) return;
+    const removedId = editingFlow.steps[stepIndex].id;
+    const steps = editingFlow.steps.filter((_: any, i: number) => i !== stepIndex);
+    // Clean up button references to removed step
+    for (const step of steps) {
+      if (step.buttons) {
+        step.buttons = step.buttons.map((b: any) =>
+          b.nextStepId === removedId ? { ...b, nextStepId: '' } : b
+        );
+      }
+    }
+    setEditingFlow({ ...editingFlow, steps });
+  };
+
+  const addStepButton = (stepIndex: number) => {
+    if (!editingFlow) return;
+    const steps = [...editingFlow.steps];
+    const step = steps[stepIndex];
+    if ((step.buttons || []).length >= 3) return; // Meta limit
+    const buttons = [...(step.buttons || []), { id: `btn_${Date.now()}`, title: '', nextStepId: '' }];
+    steps[stepIndex] = { ...step, buttons };
+    setEditingFlow({ ...editingFlow, steps });
+  };
+
+  const removeStepButton = (stepIndex: number, btnIndex: number) => {
+    if (!editingFlow) return;
+    const steps = [...editingFlow.steps];
+    const step = steps[stepIndex];
+    const buttons = (step.buttons || []).filter((_: any, i: number) => i !== btnIndex);
+    steps[stepIndex] = { ...step, buttons };
+    setEditingFlow({ ...editingFlow, steps });
+  };
+
+  const updateStepButton = (stepIndex: number, btnIndex: number, field: string, value: string) => {
+    if (!editingFlow) return;
+    const steps = [...editingFlow.steps];
+    const step = steps[stepIndex];
+    const buttons = [...(step.buttons || [])];
+    buttons[btnIndex] = { ...buttons[btnIndex], [field]: value };
+    steps[stepIndex] = { ...step, buttons };
+    setEditingFlow({ ...editingFlow, steps });
+  };
+
   // ─── Render ───────────────────────────────────────────────
 
   return (
@@ -1650,6 +1799,9 @@ export default function WhatsAppPage() {
               </button>
               <button onClick={() => { setShowAISettings(true); fetchAIConfig(); }} className="p-1.5 rounded-lg hover:bg-gray-100 transition-all" title="AI Auto-Reply">
                 <Brain className="h-3.5 w-3.5 text-gray-400" />
+              </button>
+              <button onClick={() => { setShowFlowEditor(true); fetchFlows(); }} className="p-1.5 rounded-lg hover:bg-gray-100 transition-all" title="Conversation Flows">
+                <GitBranch className="h-3.5 w-3.5 text-gray-400" />
               </button>
               <button onClick={() => setShowWebhookSetup(true)} className="p-1.5 rounded-lg hover:bg-gray-100 transition-all" title="Settings">
                 <Settings className="h-3.5 w-3.5 text-gray-400" />
@@ -3024,6 +3176,200 @@ export default function WhatsAppPage() {
                 className="flex-1 px-4 py-2 text-sm font-medium text-white bg-green-500 hover:bg-green-600 rounded-xl disabled:opacity-50">
                 Save
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Conversation Flows Modal ── */}
+      {showFlowEditor && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={() => { setShowFlowEditor(false); setEditingFlow(null); }}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
+            {/* Header */}
+            <div className="flex items-center justify-between p-4 border-b border-gray-100">
+              <div className="flex items-center gap-2">
+                <GitBranch className="h-5 w-5 text-green-600" />
+                <h2 className="text-lg font-bold text-gray-900">{editingFlow ? 'Edit Flow' : 'Conversation Flows'}</h2>
+              </div>
+              <button onClick={() => { if (editingFlow) { setEditingFlow(null); } else { setShowFlowEditor(false); } }}>
+                <X className="h-5 w-5 text-gray-400" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4">
+              {editingFlow ? (
+                /* ── Flow Editor ── */
+                <div className="space-y-4">
+                  {/* Flow name + trigger */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs font-medium text-gray-500 mb-1 block">Flow Name</label>
+                      <input type="text" value={editingFlow.name} onChange={e => setEditingFlow({ ...editingFlow, name: e.target.value })}
+                        className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-green-400" />
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium text-gray-500 mb-1 block">Trigger</label>
+                      <select value={editingFlow.trigger} onChange={e => setEditingFlow({ ...editingFlow, trigger: e.target.value })}
+                        className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-green-400 bg-white">
+                        <option value="first_message">First Message (new contacts)</option>
+                        <option value="keyword">Keyword</option>
+                      </select>
+                    </div>
+                  </div>
+                  {editingFlow.trigger === 'keyword' && (
+                    <div>
+                      <label className="text-xs font-medium text-gray-500 mb-1 block">Keywords (comma-separated)</label>
+                      <input type="text" value={editingFlow.triggerKeyword || ''} onChange={e => setEditingFlow({ ...editingFlow, triggerKeyword: e.target.value })}
+                        placeholder="menu, start, info" className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-green-400" />
+                    </div>
+                  )}
+
+                  {/* Steps */}
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-sm font-bold text-gray-700">Steps</h3>
+                      <button onClick={addFlowStep} className="text-xs text-green-600 hover:text-green-700 font-medium flex items-center gap-1">
+                        <Plus className="h-3 w-3" /> Add Step
+                      </button>
+                    </div>
+
+                    {editingFlow.steps.map((step: any, si: number) => (
+                      <div key={step.id} className="border border-gray-200 rounded-xl p-3 space-y-2 bg-gray-50">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-bold text-white bg-green-500 rounded-full w-5 h-5 flex items-center justify-center">{si + 1}</span>
+                            <span className="text-xs font-medium text-gray-500">Step: {step.id}</span>
+                          </div>
+                          {editingFlow.steps.length > 1 && (
+                            <button onClick={() => removeFlowStep(si)} className="text-gray-400 hover:text-red-500">
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                        </div>
+
+                        {/* Step ID */}
+                        <input type="text" value={step.id} onChange={e => updateFlowStep(si, 'id', e.target.value)}
+                          placeholder="step_id" className="w-full px-3 py-1.5 text-xs font-mono border border-gray-200 rounded-lg focus:outline-none focus:border-green-400" />
+
+                        {/* Message */}
+                        <textarea value={step.message} onChange={e => updateFlowStep(si, 'message', e.target.value)}
+                          placeholder="Message text..." rows={2}
+                          className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:border-green-400 resize-none" />
+
+                        {/* Buttons */}
+                        <div className="space-y-1.5">
+                          {(step.buttons || []).map((btn: any, bi: number) => (
+                            <div key={bi} className="flex items-center gap-2">
+                              <input type="text" value={btn.title} onChange={e => updateStepButton(si, bi, 'title', e.target.value)}
+                                placeholder="Button title (max 20)" maxLength={20}
+                                className="flex-1 px-2 py-1 text-xs border border-gray-200 rounded-lg focus:outline-none focus:border-green-400" />
+                              <ArrowRight className="h-3 w-3 text-gray-400 flex-shrink-0" />
+                              <select value={btn.nextStepId} onChange={e => updateStepButton(si, bi, 'nextStepId', e.target.value)}
+                                className="flex-1 px-2 py-1 text-xs border border-gray-200 rounded-lg focus:outline-none focus:border-green-400 bg-white">
+                                <option value="">-- Select step --</option>
+                                {editingFlow.steps.filter((s: any) => s.id !== step.id).map((s: any) => (
+                                  <option key={s.id} value={s.id}>{s.id}</option>
+                                ))}
+                              </select>
+                              <button onClick={() => removeStepButton(si, bi)} className="text-gray-400 hover:text-red-500">
+                                <X className="h-3 w-3" />
+                              </button>
+                            </div>
+                          ))}
+                          {(step.buttons || []).length < 3 && (
+                            <button onClick={() => addStepButton(si)} className="text-xs text-green-600 hover:text-green-700 flex items-center gap-1">
+                              <Plus className="h-3 w-3" /> Add Button
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Save / Cancel */}
+                  <div className="flex gap-2 pt-2">
+                    <button onClick={() => setEditingFlow(null)} className="flex-1 px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-xl">
+                      Cancel
+                    </button>
+                    <button onClick={handleSaveFlow} disabled={isSavingFlows || !editingFlow.name.trim()}
+                      className="flex-1 px-4 py-2 text-sm font-medium text-white bg-green-500 hover:bg-green-600 rounded-xl disabled:opacity-50 flex items-center justify-center gap-2">
+                      {isSavingFlows ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                      Save Flow
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                /* ── Flow List ── */
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm text-gray-500">Automated multi-step conversations with interactive buttons.</p>
+                    <button onClick={createNewFlow} className="px-3 py-1.5 text-xs font-medium text-white bg-green-500 hover:bg-green-600 rounded-lg flex items-center gap-1">
+                      <Plus className="h-3 w-3" /> New Flow
+                    </button>
+                  </div>
+
+                  {isLoadingFlows ? (
+                    <div className="flex items-center justify-center py-8"><Loader2 className="h-6 w-6 animate-spin text-gray-400" /></div>
+                  ) : flows.length === 0 ? (
+                    <div className="text-center py-8">
+                      <GitBranch className="h-10 w-10 text-gray-300 mx-auto mb-2" />
+                      <p className="text-sm text-gray-500">No flows yet. Create your first conversation flow!</p>
+                      <p className="text-xs text-gray-400 mt-1">Flows let you build chatbot conversations with buttons.</p>
+                    </div>
+                  ) : (
+                    flows.map(flow => (
+                      <div key={flow.id} className="border border-gray-200 rounded-xl p-3 flex items-center justify-between bg-white hover:bg-gray-50 transition-colors">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <h4 className="text-sm font-semibold text-gray-900 truncate">{flow.name}</h4>
+                            <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium ${flow.enabled ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                              {flow.enabled ? 'Active' : 'Off'}
+                            </span>
+                          </div>
+                          <p className="text-xs text-gray-400 mt-0.5">
+                            {flow.trigger === 'first_message' ? 'Triggers on first message' : `Keyword: "${flow.triggerKeyword}"`}
+                            {' '}&middot; {flow.steps?.length || 0} steps
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-1 ml-2">
+                          <button onClick={() => handleToggleFlow(flow.id)} className={`p-1.5 rounded-lg transition-all ${flow.enabled ? 'bg-green-100 text-green-600 hover:bg-green-200' : 'bg-gray-100 text-gray-400 hover:bg-gray-200'}`} title={flow.enabled ? 'Disable' : 'Enable'}>
+                            <Zap className="h-3.5 w-3.5" />
+                          </button>
+                          <button onClick={() => setEditingFlow({ ...flow })} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600" title="Edit">
+                            <Edit className="h-3.5 w-3.5" />
+                          </button>
+                          <button onClick={() => handleDeleteFlow(flow.id)} className="p-1.5 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-500" title="Delete">
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+
+                  {/* Test Flow */}
+                  {flows.length > 0 && (
+                    <div className="border-t border-gray-100 pt-3 mt-3">
+                      <h4 className="text-xs font-bold text-gray-500 mb-2">Test a Flow</h4>
+                      <div className="flex gap-2">
+                        <input type="text" value={flowTestPhone} onChange={e => setFlowTestPhone(e.target.value)}
+                          placeholder="Phone number (e.g. 40712345678)"
+                          className="flex-1 px-3 py-1.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:border-green-400" />
+                        <select onChange={e => { if (e.target.value) handleTestFlow(e.target.value); }}
+                          className="px-2 py-1.5 text-xs border border-gray-200 rounded-lg bg-white focus:outline-none focus:border-green-400"
+                          defaultValue="">
+                          <option value="" disabled>Send flow...</option>
+                          {flows.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
+                        </select>
+                      </div>
+                      {flowTestResult && (
+                        <p className={`text-xs mt-1.5 ${flowTestResult.includes('Fail') || flowTestResult.includes('Enter') ? 'text-red-500' : 'text-green-600'}`}>
+                          {flowTestResult}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </div>

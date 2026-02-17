@@ -678,9 +678,13 @@ export default function IntegrationsPage() {
         setIntegrations(prev => prev.map(staticInt => {
           const backendInt = available.find((b: any) => b.type.toLowerCase() === staticInt.id);
           if (!backendInt) return staticInt;
+          // Webhook-only integrations (typeform, manychat, calendly) work without active API key test — treat pending as connected
+          const isConnected = connectedMap[staticInt.id]
+            ? connectedMap[staticInt.id].status !== 'disabled' && connectedMap[staticInt.id].status !== 'expired' && connectedMap[staticInt.id].status !== 'suspended'
+            : false;
           return {
             ...staticInt,
-            connected: connectedMap[staticInt.id]?.status === 'active',
+            connected: isConnected,
             status: connectedMap[staticInt.id]?.status,
           };
         }));

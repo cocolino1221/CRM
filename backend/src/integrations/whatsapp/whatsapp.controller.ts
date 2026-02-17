@@ -614,4 +614,42 @@ export class WhatsAppController {
     await this.whatsappService.deleteCampaign(workspaceId, campaignId);
     return { success: true };
   }
+
+  // ─── Conversation Flows (Chatbot) ─────────────────────────────────────────
+
+  @UseGuards(JwtAuthGuard)
+  @Get('flows')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get conversation flows for this workspace' })
+  async getFlows(@Req() req: any) {
+    const workspaceId = req.user?.workspaceId;
+    if (!workspaceId) throw new BadRequestException('Workspace ID required');
+    return this.whatsappService.getFlows(workspaceId);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('flows')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Save conversation flows for this workspace' })
+  async saveFlows(@Req() req: any, @Body() body: { flows: any[] }) {
+    const workspaceId = req.user?.workspaceId;
+    if (!workspaceId) throw new BadRequestException('Workspace ID required');
+    await this.whatsappService.saveFlows(workspaceId, body.flows || []);
+    return { success: true };
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('flows/:flowId/test')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Test a flow by sending step 1 to a phone number' })
+  async testFlow(
+    @Req() req: any,
+    @Param('flowId') flowId: string,
+    @Body() body: { phone: string },
+  ) {
+    const workspaceId = req.user?.workspaceId;
+    if (!workspaceId) throw new BadRequestException('Workspace ID required');
+    if (!body.phone?.trim()) throw new BadRequestException('Phone number required');
+    return this.whatsappService.testFlow(workspaceId, flowId, body.phone.trim());
+  }
 }

@@ -172,6 +172,15 @@ export class IntegrationsController {
     const appUrl = this.configService.get('APP_URL') || 'http://localhost:3000';
     webhookUrl = `${appUrl}/api/v1/integrations/webhooks/${integration.id}`;
 
+    // Webhook-only integrations (ManyChat, Calendly, etc.) should always be activated
+    // because the webhook receiver works independently of an API key connection test.
+    const webhookOnlyTypes: string[] = [IntegrationType.MANYCHAT, IntegrationType.CALENDLY];
+    if (webhookOnlyTypes.includes(integration.type as any)) {
+      integration.status = IntegrationStatus.ACTIVE;
+      await this.integrationRepository.save(integration);
+      this.logger.log(`Webhook-only integration ${integration.id} (${integration.type}) auto-activated`);
+    }
+
     // For API key integrations, auto-test connection and activate if valid
     if (dto.authType === IntegrationAuthType.API_KEY && (dto.credentials && Object.keys(dto.credentials).length > 0)) {
       try {

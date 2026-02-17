@@ -402,7 +402,12 @@ export class WhatsAppService {
 
             await this.saveMessageActivity(contact, message, integration.workspaceId, ownerId);
             await this.markMessageAsRead(message.id, integration.credentials);
-            await this.autoRespond(message, profileName, integration);
+
+            // Conversation flows take priority over auto-responses
+            const flowHandled = await this.checkFlowTrigger(message, message.from, integration);
+            if (!flowHandled) {
+              await this.autoRespond(message, profileName, integration);
+            }
 
             // Notify all workspace users about the new inbound message
             const senderName = profileName || contact.firstName || `+${message.from}`;
@@ -1392,5 +1397,276 @@ export class WhatsAppService {
     return this.integrationRepository.findOne({
       where: { workspaceId, type: IntegrationType.WHATSAPP },
     });
+  }
+
+  // ─── Conversation Flows (Chatbot) ──────────────────────────────────────────
+
+  /**
+   * Get all conversation flows for a workspace
+   */
+  async getFlows(workspaceId: string): Promise<any[]> {
+    const integration = await this.findIntegrationForWorkspace(workspaceId);
+    return integration?.config?.conversationFlows || [];
+  }
+
+  /**
+   * Save conversation flows for a workspace
+   */
+  async saveFlows(workspaceId: string, flows: any[]): Promise<void> {
+    const integration = await this.findIntegrationForWorkspace(workspaceId);
+    if (!integration) throw new BadRequestException('No WhatsApp integration found for this workspace');
+    integration.config = {
+      ...(integration.config || {}),
+      conversationFlows: flows,
+    };
+    await this.integrationRepository.save(integration);
+    this.logger.log(`Saved ${flows.length} conversation flows for workspace ${workspaceId}`);
+  }
+
+  /**
+   * Send a flow step message (with interactive buttons if the step has them)
+   */
+  private async sendFlowStep(
+    step: { id: string; message: string; buttons?: Array<{ id: string; title: string; nextStepId: string }> },
+    waId: string,
+    credentials: Record<string, any>,
+    workspaceId: string,
+  ): Promise<void> {
+    if (step.buttons?.length) {
+      // Send interactive button message
+      const buttons = step.buttons.slice(0, 3).map(b => ({
+        id: b.id,
+        title: b.title.slice(0, 20),
+      }));
+      await this.sendMessageWithCredentials(credentials, {
+        to: waId,
+        type: 'interactive',
+        content: '',
+        interactive: {
+          type: 'button',
+          body: { text: step.message },
+          action: {
+            buttons: buttons.map(b => ({ type: 'reply' as const, reply: { id: b.id, title: b.title } })),
+          },
+        },
+      });
+      const btnLabels = buttons.map(b => b.title).join(', ');
+      await this.saveOutboundActivity(waId, `[Flow buttons: ${btnLabels}] ${step.message}`, 'interactive', workspaceId, '', undefined);
+    } else {
+      // Send plain text (end of flow)
+      await this.sendTextMessage(waId, step.message, credentials);
+      await this.saveOutboundActivity(waId, step.message, 'text', workspaceId, '', undefined);
+    }
+    this.logger.log(`Flow step "${step.id}" sent to ${waId}`);
+  }
+
+  /**
+   * Start a conversation flow for a contact
+   */
+  async startFlow(workspaceId: string, waId: string, flowId: string, integration: Integration): Promise<boolean> {
+    const flows: any[] = integration.config?.conversationFlows || [];
+    const flow = flows.find((f: any) => f.id === flowId && f.enabled);
+    if (!flow || !flow.steps?.length) return false;
+
+    const firstStep = flow.steps[0];
+    const credentials = integration.credentials || {};
+
+    try {
+      await this.sendFlowStep(firstStep, waId, credentials, workspaceId);
+
+      // Save flow state for this contact
+      const flowStates = integration.config?.flowStates || {};
+      flowStates[waId] = {
+        flowId: flow.id,
+        currentStepId: firstStep.id,
+        startedAt: new Date().toISOString(),
+        lastInteractionAt: new Date().toISOString(),
+      };
+      integration.config = { ...(integration.config || {}), flowStates };
+      await this.integrationRepository.save(integration);
+
+      this.logger.log(`Flow "${flow.name}" started for ${waId} at step ${firstStep.id}`);
+      return true;
+    } catch (err) {
+      this.logger.warn(`Failed to start flow "${flow.name}" for ${waId}: ${err.message}`);
+      return false;
+    }
+  }
+
+  /**
+   * Handle a button reply within a conversation flow.
+   * Looks up the current flow state, finds the next step, sends it.
+   * Returns true if handled (caller should skip auto-respond).
+   */
+  async handleButtonReply(workspaceId: string, waId: string, buttonId: string, integration: Integration): Promise<boolean> {
+    const flowStates = integration.config?.flowStates || {};
+    const state = flowStates[waId];
+    if (!state) return false;
+
+    const flows: any[] = integration.config?.conversationFlows || [];
+    const flow = flows.find((f: any) => f.id === state.flowId);
+    if (!flow) {
+      // Flow was deleted — clean up state
+      delete flowStates[waId];
+      integration.config = { ...(integration.config || {}), flowStates };
+      await this.integrationRepository.save(integration);
+      return false;
+    }
+
+    // Find the current step and the button that was pressed
+    const currentStep = flow.steps.find((s: any) => s.id === state.currentStepId);
+    if (!currentStep?.buttons?.length) {
+      // Current step has no buttons — flow is over, clean up
+      delete flowStates[waId];
+      integration.config = { ...(integration.config || {}), flowStates };
+      await this.integrationRepository.save(integration);
+      return false;
+    }
+
+    const button = currentStep.buttons.find((b: any) => b.id === buttonId);
+    if (!button) {
+      this.logger.warn(`Flow: button "${buttonId}" not found in step "${state.currentStepId}" for ${waId}`);
+      return false;
+    }
+
+    // Find the next step
+    const nextStep = flow.steps.find((s: any) => s.id === button.nextStepId);
+    if (!nextStep) {
+      this.logger.warn(`Flow: nextStepId "${button.nextStepId}" not found in flow "${flow.id}"`);
+      return false;
+    }
+
+    const credentials = integration.credentials || {};
+    try {
+      await this.sendFlowStep(nextStep, waId, credentials, workspaceId);
+
+      // Update flow state
+      if (nextStep.buttons?.length) {
+        // More steps to go
+        flowStates[waId] = {
+          ...state,
+          currentStepId: nextStep.id,
+          lastInteractionAt: new Date().toISOString(),
+        };
+      } else {
+        // End of flow — clean up state
+        delete flowStates[waId];
+      }
+      integration.config = { ...(integration.config || {}), flowStates };
+      await this.integrationRepository.save(integration);
+
+      this.logger.log(`Flow "${flow.name}": ${waId} → button "${button.title}" → step "${nextStep.id}"`);
+      return true;
+    } catch (err) {
+      this.logger.warn(`Flow step send failed for ${waId}: ${err.message}`);
+      return false;
+    }
+  }
+
+  /**
+   * Check if an inbound message should trigger a conversation flow.
+   * Called BEFORE autoRespond — if a flow handles the message, skip auto-respond.
+   */
+  async checkFlowTrigger(message: any, waId: string, integration: Integration): Promise<boolean> {
+    const flows: any[] = integration.config?.conversationFlows || [];
+    const enabledFlows = flows.filter((f: any) => f.enabled && f.steps?.length > 0);
+    if (!enabledFlows.length) return false;
+
+    const workspaceId = integration.workspaceId;
+
+    // 1. Button reply — always check first (active flow interaction)
+    if (message.type === 'interactive' && message.interactive?.button_reply) {
+      const buttonId = message.interactive.button_reply.id;
+      return this.handleButtonReply(workspaceId, waId, buttonId, integration);
+    }
+
+    // 2. Check if user already has an active flow — don't start a new one
+    const flowStates = integration.config?.flowStates || {};
+    if (flowStates[waId]) {
+      // User is in an active flow but sent a text instead of pressing a button.
+      // Expire stale flows (>24h — outside session window anyway)
+      const state = flowStates[waId];
+      const lastInteraction = new Date(state.lastInteractionAt || state.startedAt).getTime();
+      if (Date.now() - lastInteraction > 24 * 60 * 60 * 1000) {
+        delete flowStates[waId];
+        integration.config = { ...(integration.config || {}), flowStates };
+        await this.integrationRepository.save(integration);
+      } else {
+        // Still in flow — let auto-respond handle the text (user deviated)
+        return false;
+      }
+    }
+
+    // 3. Text message triggers
+    if (message.type !== 'text' || !message.text?.body) return false;
+    const text = message.text.body.toLowerCase().trim();
+
+    // Check 'first_message' trigger — only if contact has no prior messages
+    const firstMsgFlow = enabledFlows.find((f: any) => f.trigger === 'first_message');
+    if (firstMsgFlow) {
+      const phone = `+${waId}`;
+      const priorMessages = await this.activityRepository.count({
+        where: { workspaceId, type: ActivityType.WHATSAPP_MESSAGE },
+      });
+      // If this is the very first message from this waId (approximate: check if they have <=1 activity which is the one we just saved)
+      const contactActivities = await this.activityRepository
+        .createQueryBuilder('a')
+        .where('a.workspaceId = :workspaceId', { workspaceId })
+        .andWhere('a.type = :type', { type: ActivityType.WHATSAPP_MESSAGE })
+        .andWhere("a.metadata->>'waId' = :waId", { waId })
+        .andWhere('a.direction = :direction', { direction: ActivityDirection.INBOUND })
+        .getCount();
+
+      if (contactActivities <= 1) {
+        return this.startFlow(workspaceId, waId, firstMsgFlow.id, integration);
+      }
+    }
+
+    // Check 'keyword' triggers
+    for (const flow of enabledFlows) {
+      if (flow.trigger === 'keyword' && flow.triggerKeyword) {
+        const keywords = flow.triggerKeyword.split(',').map((k: string) => k.trim().toLowerCase());
+        if (keywords.some((kw: string) => text.includes(kw))) {
+          return this.startFlow(workspaceId, waId, flow.id, integration);
+        }
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * Test a flow by sending step_0 to a test phone number
+   */
+  async testFlow(workspaceId: string, flowId: string, testPhone: string): Promise<{ success: boolean; message: string }> {
+    const integration = await this.findIntegrationForWorkspace(workspaceId);
+    if (!integration) return { success: false, message: 'No WhatsApp integration found' };
+
+    const flows: any[] = integration.config?.conversationFlows || [];
+    const flow = flows.find((f: any) => f.id === flowId);
+    if (!flow) return { success: false, message: 'Flow not found' };
+    if (!flow.steps?.length) return { success: false, message: 'Flow has no steps' };
+
+    const cleanPhone = testPhone.replace(/[^0-9]/g, '');
+    if (cleanPhone.length < 7) return { success: false, message: 'Invalid phone number' };
+
+    try {
+      await this.sendFlowStep(flow.steps[0], cleanPhone, integration.credentials || {}, workspaceId);
+
+      // Set flow state so button replies work
+      const flowStates = integration.config?.flowStates || {};
+      flowStates[cleanPhone] = {
+        flowId: flow.id,
+        currentStepId: flow.steps[0].id,
+        startedAt: new Date().toISOString(),
+        lastInteractionAt: new Date().toISOString(),
+      };
+      integration.config = { ...(integration.config || {}), flowStates };
+      await this.integrationRepository.save(integration);
+
+      return { success: true, message: `Flow "${flow.name}" step 1 sent to +${cleanPhone}` };
+    } catch (err) {
+      return { success: false, message: `Failed: ${err.response?.data?.error?.message || err.message}` };
+    }
   }
 }
