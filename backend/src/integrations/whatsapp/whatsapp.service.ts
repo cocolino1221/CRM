@@ -1610,10 +1610,19 @@ export class WhatsAppService {
    * Looks up the current flow state, finds the next step, sends it.
    * Returns true if handled (caller should skip auto-respond).
    */
-  async handleButtonReply(workspaceId: string, waId: string, buttonId: string, integration: Integration): Promise<boolean> {
+  async handleButtonReply(
+    workspaceId: string,
+    waId: string,
+    buttonId: string,
+    integration: Integration,
+    buttonTitle?: string,
+  ): Promise<boolean> {
     const flowStates = integration.config?.flowStates || {};
     const state = flowStates[waId];
-    if (!state) return false;
+    if (!state) {
+      this.logger.warn(`Flow: no active state for ${waId} on button id="${buttonId}" title="${buttonTitle || ''}"`);
+      return false;
+    }
 
     const flows: any[] = integration.config?.conversationFlows || [];
     const flow = flows.find((f: any) => f.id === state.flowId);
@@ -1635,9 +1644,18 @@ export class WhatsAppService {
       return false;
     }
 
-    const button = currentStep.buttons.find((b: any) => b.id === buttonId);
+    const normalize = (value?: string) => (value || '').trim().toLowerCase();
+    const idCandidate = normalize(buttonId);
+    const titleCandidate = normalize(buttonTitle);
+    const button = currentStep.buttons.find((b: any) => {
+      const id = normalize(b.id);
+      const title = normalize(b.title);
+      return id === idCandidate || (titleCandidate && title === titleCandidate);
+    });
     if (!button) {
-      this.logger.warn(`Flow: button "${buttonId}" not found in step "${state.currentStepId}" for ${waId}`);
+      this.logger.warn(
+        `Flow: button id="${buttonId}" title="${buttonTitle || ''}" not found in step "${state.currentStepId}" for ${waId}`,
+      );
       return false;
     }
 
@@ -1761,8 +1779,12 @@ export class WhatsAppService {
     // 1. Button reply — always check first (active flow interaction)
     // Interactive reply buttons (from interactive messages, steps 2+)
     if (message.type === 'interactive' && message.interactive?.button_reply) {
-      const buttonId = message.interactive.button_reply.id;
-      return this.handleButtonReply(workspaceId, waId, buttonId, integration);
+      const buttonId = message.interactive.button_reply.id || '';
+      const buttonTitle = message.interactive.button_reply.title || '';
+      const handled = await this.handleButtonReply(workspaceId, waId, buttonId, integration, buttonTitle);
+      if (handled) return true;
+      // Some template button replies may arrive as interactive payloads.
+      return this.handleTemplateButtonReply(workspaceId, waId, buttonId || buttonTitle, integration, buttonTitle);
     }
     // Template quick reply buttons (from template messages, step 1)
     if (message.type === 'button' && message.button) {
