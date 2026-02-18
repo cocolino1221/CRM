@@ -5,7 +5,7 @@ const config: CapacitorConfig = {
   appName: 'EasyTeam CRM',
   webDir: 'out',
   server: {
-    url: 'https://easyteamcrm.netlify.app',
+    url: 'http://etcrm.primafisoft.com',
     cleartext: false,
   },
   ios: {

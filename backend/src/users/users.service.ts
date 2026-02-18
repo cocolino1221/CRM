@@ -248,7 +248,7 @@ export class UsersService {
     const workspace = await this.workspaceRepository.findOne({ where: { id: workspaceId } });
     const inviteCode = workspace?.inviteCode || '';
 
-    const frontendUrl = this.configService.get('FRONTEND_URL') || process.env.FRONTEND_URL || 'https://easyteamcrm.netlify.app';
+    const frontendUrl = this.configService.get('FRONTEND_URL') || process.env.FRONTEND_URL || 'http://etcrm.primafisoft.com';
     const inviteUrl = `${frontendUrl}/register?code=${inviteCode}`;
 
     // Send invitation email
