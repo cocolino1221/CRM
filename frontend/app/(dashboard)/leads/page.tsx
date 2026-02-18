@@ -958,9 +958,9 @@ export default function LeadsPage() {
                   </div>
 
                   {/* Stage Cards */}
-                  <div className="flex-1 p-3 space-y-3 overflow-y-auto max-h-[calc(100vh-280px)]">
+                  <div className="flex-1 p-2 space-y-2 overflow-y-auto max-h-[calc(100vh-280px)]">
                     {stageLeads.length === 0 ? (
-                      <div className="text-center py-8 text-gray-400 text-sm">
+                      <div className="text-center py-6 text-gray-400 text-xs">
                         No leads in this stage
                       </div>
                     ) : (
@@ -968,35 +968,35 @@ export default function LeadsPage() {
                         <div
                           key={contact.id}
                           onClick={() => openDetailModal(contact)}
-                          className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm hover:shadow-md transition-all cursor-pointer group"
+                          className="bg-white rounded-lg border border-gray-200 p-2.5 shadow-sm hover:shadow-md transition-all cursor-pointer group"
                         >
                           {/* Lead Name + delete button */}
-                          <div className="mb-3">
-                            <div className="flex items-start justify-between gap-1 mb-1">
-                              <h4 className="font-semibold text-gray-900 text-sm">
+                          <div className="mb-1.5">
+                            <div className="flex items-start justify-between gap-1">
+                              <h4 className="font-semibold text-gray-900 text-xs leading-tight">
                                 {contact.firstName} {contact.lastName}
                               </h4>
                               <button
                                 onClick={(e) => handleDeleteLead(contact, e)}
-                                className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-red-50 hover:text-red-500 text-gray-300 flex-shrink-0 -mt-0.5 -mr-1"
+                                className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-red-50 hover:text-red-500 text-gray-300 flex-shrink-0"
                                 title="Delete lead"
                               >
-                                <Trash2 className="h-3.5 w-3.5" />
+                                <Trash2 className="h-3 w-3" />
                               </button>
                             </div>
-                            <div className="flex items-center gap-1.5 text-xs text-gray-600 mb-1">
-                              <Mail className="h-3 w-3" />
+                            <div className="flex items-center gap-1 text-[10px] text-gray-500 mt-0.5">
+                              <Mail className="h-2.5 w-2.5 flex-shrink-0" />
                               <span className="truncate">{contact.email}</span>
                             </div>
                             {contact.phone && (
-                              <div className="flex items-center gap-1.5 text-xs text-gray-600 mb-1">
-                                <Phone className="h-3 w-3" />
+                              <div className="flex items-center gap-1 text-[10px] text-gray-500 mt-0.5">
+                                <Phone className="h-2.5 w-2.5 flex-shrink-0" />
                                 <span>{contact.phone}</span>
                               </div>
                             )}
                             {contact.company && (
-                              <div className="flex items-center gap-1.5 text-xs text-gray-600">
-                                <Building className="h-3 w-3" />
+                              <div className="flex items-center gap-1 text-[10px] text-gray-500 mt-0.5">
+                                <Building className="h-2.5 w-2.5 flex-shrink-0" />
                                 <span>{contact.company.name}</span>
                               </div>
                             )}
@@ -1004,25 +1004,25 @@ export default function LeadsPage() {
 
                           {/* Team Assignments */}
                           {(contact.setter || contact.caller || contact.closer) && (
-                            <div className="mb-3 p-2 bg-gray-50 rounded text-xs space-y-1">
+                            <div className="mb-1.5 p-1.5 bg-gray-50 rounded text-[10px] space-y-0.5">
                               {contact.setter && (
                                 <div className="flex items-center gap-1">
-                                  <Users className="h-3 w-3 text-blue-600" />
-                                  <span className="text-gray-600">Setter:</span>
+                                  <Users className="h-2.5 w-2.5 text-blue-600" />
+                                  <span className="text-gray-500">S:</span>
                                   <span className="font-medium">{contact.setter.firstName}</span>
                                 </div>
                               )}
                               {contact.caller && (
                                 <div className="flex items-center gap-1">
-                                  <Phone className="h-3 w-3 text-purple-600" />
-                                  <span className="text-gray-600">Caller:</span>
+                                  <Phone className="h-2.5 w-2.5 text-purple-600" />
+                                  <span className="text-gray-500">C:</span>
                                   <span className="font-medium">{contact.caller.firstName}</span>
                                 </div>
                               )}
                               {contact.closer && (
                                 <div className="flex items-center gap-1">
-                                  <Trophy className="h-3 w-3 text-green-600" />
-                                  <span className="text-gray-600">Closer:</span>
+                                  <Trophy className="h-2.5 w-2.5 text-green-600" />
+                                  <span className="text-gray-500">Cl:</span>
                                   <span className="font-medium">{contact.closer.firstName}</span>
                                 </div>
                               )}
@@ -1030,22 +1030,22 @@ export default function LeadsPage() {
                           )}
 
                           {/* Lead Score */}
-                          <div className="mb-3">
-                            <div className="flex items-center justify-between mb-1.5">
-                              <span className="text-xs font-medium text-gray-600">Lead Score</span>
-                              <span className="text-xs font-bold text-gray-900">{contact.leadScore}/100</span>
+                          <div className="mb-1.5">
+                            <div className="flex items-center justify-between mb-0.5">
+                              <span className="text-[10px] text-gray-500">Score</span>
+                              <span className="text-[10px] font-bold text-gray-900">{contact.leadScore}</span>
                             </div>
-                            <div className="w-full bg-gray-200 rounded-full h-1.5">
+                            <div className="w-full bg-gray-200 rounded-full h-1">
                               <div
-                                className={`h-1.5 rounded-full transition-all ${getLeadScoreColor(contact.leadScore)}`}
+                                className={`h-1 rounded-full transition-all ${getLeadScoreColor(contact.leadScore)}`}
                                 style={{ width: `${contact.leadScore}%` }}
                               />
                             </div>
                           </div>
 
-                          {/* Date and Time */}
-                          <div className="text-xs text-gray-400 mb-3">
-                            Added {new Date(contact.createdAt).toLocaleDateString()} at {new Date(contact.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          {/* Date */}
+                          <div className="text-[10px] text-gray-400 mb-1.5">
+                            {new Date(contact.createdAt).toLocaleDateString()}
                           </div>
 
                           {/* Quick Stage Controls */}
@@ -1056,21 +1056,21 @@ export default function LeadsPage() {
                             const nextStage = currentIdx < sortedStages.length - 1 ? sortedStages[currentIdx + 1] : null;
                             return (
                               <div
-                                className="flex items-center gap-1.5 pt-3 border-t border-gray-100"
+                                className="flex items-center gap-1 pt-1.5 border-t border-gray-100"
                                 onClick={(e) => e.stopPropagation()}
                               >
                                 <button
                                   onClick={() => prevStage && handleQuickStageChange(contact, prevStage.id)}
                                   disabled={!prevStage}
                                   title={prevStage ? `← ${prevStage.name}` : 'Already at first stage'}
-                                  className="p-1.5 rounded-lg hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-all flex-shrink-0"
+                                  className="p-1 rounded hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-all flex-shrink-0"
                                 >
-                                  <ChevronLeft className="h-3.5 w-3.5 text-gray-600" />
+                                  <ChevronLeft className="h-3 w-3 text-gray-600" />
                                 </button>
                                 <select
                                   value={contact.pipelineStageId || ''}
                                   onChange={(e) => handleQuickStageChange(contact, e.target.value)}
-                                  className="flex-1 text-xs rounded-lg border border-gray-200 px-2 py-1.5 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 bg-white text-gray-700 cursor-pointer"
+                                  className="flex-1 text-[10px] rounded border border-gray-200 px-1.5 py-1 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 bg-white text-gray-700 cursor-pointer"
                                 >
                                   {sortedStages.map(s => (
                                     <option key={s.id} value={s.id}>{s.name}</option>
@@ -1080,9 +1080,9 @@ export default function LeadsPage() {
                                   onClick={() => nextStage && handleQuickStageChange(contact, nextStage.id)}
                                   disabled={!nextStage}
                                   title={nextStage ? `${nextStage.name} →` : 'Already at last stage'}
-                                  className="p-1.5 rounded-lg hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-all flex-shrink-0"
+                                  className="p-1 rounded hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-all flex-shrink-0"
                                 >
-                                  <ChevronRight className="h-3.5 w-3.5 text-gray-600" />
+                                  <ChevronRight className="h-3 w-3 text-gray-600" />
                                 </button>
                               </div>
                             );

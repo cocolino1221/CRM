@@ -497,79 +497,80 @@ export default function ContactsPage() {
         </div>
       ) : viewMode === 'grid' ? (
         /* Grid View */
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {contacts.map((contact) => (
             <div
               key={contact.id}
               onClick={() => openDetailModal(contact)}
-              className="group relative rounded-xl border border-gray-200 bg-white p-6 transition-all hover:border-blue-200 hover:shadow-md cursor-pointer"
+              className="group relative rounded-xl border border-gray-200 bg-white p-3 transition-all hover:border-blue-200 hover:shadow-md cursor-pointer"
             >
               {/* Dropdown Menu */}
-              <div className="absolute right-4 top-4 opacity-0 group-hover:opacity-100 transition-opacity">
+              <div className="absolute right-2 top-2 opacity-0 group-hover:opacity-100 transition-opacity">
                 <div className="relative">
-                  <button className="rounded-lg p-1.5 hover:bg-gray-100 transition-colors">
-                    <MoreVertical className="h-4 w-4 text-gray-600" />
+                  <button className="rounded-lg p-1 hover:bg-gray-100 transition-colors">
+                    <MoreVertical className="h-3.5 w-3.5 text-gray-600" />
                   </button>
-                  <div className="absolute right-0 mt-1 w-32 rounded-lg bg-white shadow-lg border border-gray-200 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-10">
+                  <div className="absolute right-0 mt-1 w-28 rounded-lg bg-white shadow-lg border border-gray-200 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-10">
                     <button
                       onClick={(e) => { e.stopPropagation(); openEditModal(contact); }}
-                      className="flex w-full items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                      className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
                     >
-                      <Edit className="h-4 w-4" />
+                      <Edit className="h-3 w-3" />
                       Edit
                     </button>
                     <button
                       onClick={(e) => { e.stopPropagation(); openDeleteModal(contact); }}
-                      className="flex w-full items-center gap-2 px-4 py-2 text-sm text-red-600 hover:bg-red-50"
+                      className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-red-600 hover:bg-red-50"
                     >
-                      <Trash2 className="h-4 w-4" />
+                      <Trash2 className="h-3 w-3" />
                       Delete
                     </button>
                   </div>
                 </div>
               </div>
 
-              {/* Avatar */}
-              <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 text-xl font-bold text-white">
-                {getInitials(`${contact.firstName} ${contact.lastName}`)}
+              <div className="flex items-center gap-3 mb-2">
+                {/* Avatar */}
+                <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 text-xs font-bold text-white flex-shrink-0">
+                  {getInitials(`${contact.firstName} ${contact.lastName}`)}
+                </div>
+                <div className="min-w-0">
+                  {/* Name */}
+                  <h3 className="text-sm font-semibold text-gray-900 truncate">
+                    {contact.firstName} {contact.lastName}
+                  </h3>
+                  {/* Job Title & Company */}
+                  {(contact.jobTitle || contact.company) && (
+                    <p className="text-xs text-gray-500 truncate">
+                      {contact.jobTitle}{contact.jobTitle && contact.company ? ' · ' : ''}{contact.company?.name}
+                    </p>
+                  )}
+                </div>
               </div>
 
-              {/* Name */}
-              <h3 className="mb-1 text-lg font-semibold text-gray-900">
-                {contact.firstName} {contact.lastName}
-              </h3>
-
-              {/* Job Title & Company */}
-              {contact.jobTitle && (
-                <p className="text-sm text-gray-600">{contact.jobTitle}</p>
-              )}
-              {contact.company && (
-                <p className="text-sm text-gray-500">{contact.company.name}</p>
-              )}
-
               {/* Contact Info */}
-              <div className="mt-4 space-y-2">
-                <div className="flex items-center gap-2 text-sm text-gray-600">
-                  <Mail className="h-4 w-4" />
+              <div className="space-y-1">
+                <div className="flex items-center gap-1.5 text-xs text-gray-500">
+                  <Mail className="h-3 w-3 flex-shrink-0" />
                   <span className="truncate">{contact.email}</span>
                 </div>
                 {contact.phone && (
-                  <div className="flex items-center gap-2 text-sm text-gray-600">
-                    <Phone className="h-4 w-4" />
+                  <div className="flex items-center gap-1.5 text-xs text-gray-500">
+                    <Phone className="h-3 w-3 flex-shrink-0" />
                     <span>{contact.phone}</span>
                   </div>
                 )}
               </div>
 
               {/* Status Badge */}
-              <div className="mt-4 flex items-center justify-between">
-                <span className={`rounded-full px-3 py-1 text-xs font-semibold ${statusColors[contact.status] || 'bg-gray-100 text-gray-700'}`}>
+              <div className="mt-2 flex items-center justify-between">
+                <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${statusColors[contact.status] || 'bg-gray-100 text-gray-700'}`}>
                   {contact.status}
                 </span>
                 {contact.score !== undefined && (
-                  <div className="flex items-center gap-1">
-                    <Star className="h-4 w-4 text-yellow-500 fill-yellow-500" />
-                    <span className="text-sm font-semibold text-gray-900">{contact.score}</span>
+                  <div className="flex items-center gap-0.5">
+                    <Star className="h-3 w-3 text-yellow-500 fill-yellow-500" />
+                    <span className="text-xs font-semibold text-gray-900">{contact.score}</span>
                   </div>
                 )}
               </div>
