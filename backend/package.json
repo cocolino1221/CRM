@@ -55,6 +55,7 @@
     "class-validator": "^0.14.2",
     "compression": "^1.8.1",
     "cookie-parser": "^1.4.7",
+    "firebase-admin": "^13.6.1",
     "form-data": "^4.0.5",
     "googleapis": "^164.0.0",
     "helmet": "^8.1.0",

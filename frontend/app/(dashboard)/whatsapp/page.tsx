@@ -444,7 +444,10 @@ export default function WhatsAppPage() {
   const [showAttachmentModal, setShowAttachmentModal] = useState(false);
   const [attachmentType, setAttachmentType] = useState<'image' | 'document' | 'video'>('image');
   const [attachmentUrl, setAttachmentUrl] = useState('');
+  const [attachmentMediaId, setAttachmentMediaId] = useState('');
+  const [attachmentFileName, setAttachmentFileName] = useState('');
   const [attachmentCaption, setAttachmentCaption] = useState('');
+  const [isUploadingAttachment, setIsUploadingAttachment] = useState(false);
 
   // Message search
   const [messageSearch, setMessageSearch] = useState('');
@@ -871,7 +874,9 @@ export default function WhatsAppPage() {
   const assignConversation = async (waId: string, user: { id: string; firstName: string; lastName: string } | null) => {
     try {
       const color = user ? getUserColor(user.id) : '#6b7280';
-      const body = user ? { userId: user.id, userName: `${user.firstName} ${user.lastName}`.trim(), color } : null;
+      const body = user
+        ? { userId: user.id, userName: `${user.firstName} ${user.lastName}`.trim(), color }
+        : { userId: null };
       await api.post(`/integrations/whatsapp/conversations/${waId}/assign`, body);
       if (user) {
         setAssignments(prev => ({ ...prev, [waId]: { userId: user.id, userName: `${user.firstName} ${user.lastName}`.trim(), color, assignedAt: new Date().toISOString() } }));
@@ -1005,8 +1010,41 @@ export default function WhatsAppPage() {
     }
   };
 
+  const resetAttachmentState = () => {
+    setShowAttachmentModal(false);
+    setAttachmentUrl('');
+    setAttachmentMediaId('');
+    setAttachmentFileName('');
+    setAttachmentCaption('');
+    setIsUploadingAttachment(false);
+  };
+
+  const getAttachmentAccept = () => {
+    if (attachmentType === 'image') return 'image/*';
+    if (attachmentType === 'video') return 'video/*';
+    return '.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt';
+  };
+
+  const handleUploadAttachment = async (file: File) => {
+    setIsUploadingAttachment(true);
+    setSendError('');
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const res = await api.post('/integrations/whatsapp/media/upload', formData);
+      setAttachmentMediaId(res.data.id || '');
+      setAttachmentFileName(file.name);
+    } catch (err: any) {
+      setAttachmentMediaId('');
+      setAttachmentFileName('');
+      setSendError(`Upload failed: ${err.response?.data?.message || err.message}`);
+    } finally {
+      setIsUploadingAttachment(false);
+    }
+  };
+
   const handleSendAttachment = async () => {
-    if (!attachmentUrl.trim() || !selectedConv) return;
+    if ((!attachmentUrl.trim() && !attachmentMediaId) || !selectedConv) return;
     setIsSending(true);
     setSendError('');
     try {
@@ -1014,18 +1052,27 @@ export default function WhatsAppPage() {
       let body: any;
       if (attachmentType === 'image') {
         endpoint = '/integrations/whatsapp/send/image';
-        body = { to: selectedConv.waId, imageUrl: attachmentUrl.trim(), caption: attachmentCaption.trim() || undefined };
+        body = attachmentMediaId
+          ? { to: selectedConv.waId, imageId: attachmentMediaId, caption: attachmentCaption.trim() || undefined }
+          : { to: selectedConv.waId, imageUrl: attachmentUrl.trim(), caption: attachmentCaption.trim() || undefined };
       } else if (attachmentType === 'video') {
         endpoint = '/integrations/whatsapp/send/video';
-        body = { to: selectedConv.waId, videoUrl: attachmentUrl.trim(), caption: attachmentCaption.trim() || undefined };
+        body = attachmentMediaId
+          ? { to: selectedConv.waId, videoId: attachmentMediaId, caption: attachmentCaption.trim() || undefined }
+          : { to: selectedConv.waId, videoUrl: attachmentUrl.trim(), caption: attachmentCaption.trim() || undefined };
       } else {
         endpoint = '/integrations/whatsapp/send/document';
-        body = { to: selectedConv.waId, documentUrl: attachmentUrl.trim(), caption: attachmentCaption.trim() || undefined };
+        body = attachmentMediaId
+          ? {
+              to: selectedConv.waId,
+              documentId: attachmentMediaId,
+              filename: attachmentFileName || undefined,
+              caption: attachmentCaption.trim() || undefined,
+            }
+          : { to: selectedConv.waId, documentUrl: attachmentUrl.trim(), caption: attachmentCaption.trim() || undefined };
       }
       await api.post(endpoint, body);
-      setShowAttachmentModal(false);
-      setAttachmentUrl('');
-      setAttachmentCaption('');
+      resetAttachmentState();
       await fetchInbox();
     } catch (err: any) {
       setSendError(err.response?.data?.message || 'Failed to send attachment');
@@ -2406,45 +2453,85 @@ export default function WhatsAppPage() {
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm mx-4">
             <div className="flex items-center justify-between p-4 border-b border-gray-100">
               <h3 className="font-semibold text-gray-900">Send Attachment</h3>
-              <button onClick={() => { setShowAttachmentModal(false); setAttachmentUrl(''); setAttachmentCaption(''); }}>
+              <button onClick={resetAttachmentState}>
                 <X className="h-5 w-5 text-gray-400" />
               </button>
             </div>
             <div className="p-4 space-y-3">
               <div className="flex gap-2">
-                <button onClick={() => setAttachmentType('image')}
+                <button onClick={() => { setAttachmentType('image'); setAttachmentUrl(''); setAttachmentMediaId(''); setAttachmentFileName(''); }}
                   className={`flex-1 py-2 text-sm font-medium rounded-xl flex items-center justify-center gap-2 transition-all ${
                     attachmentType === 'image' ? 'bg-green-100 text-green-700 border border-green-300' : 'bg-gray-50 text-gray-600 border border-gray-200'
                   }`}>
                   <Image className="h-4 w-4" /> Image
                 </button>
-                <button onClick={() => setAttachmentType('video')}
+                <button onClick={() => { setAttachmentType('video'); setAttachmentUrl(''); setAttachmentMediaId(''); setAttachmentFileName(''); }}
                   className={`flex-1 py-2 text-sm font-medium rounded-xl flex items-center justify-center gap-2 transition-all ${
                     attachmentType === 'video' ? 'bg-green-100 text-green-700 border border-green-300' : 'bg-gray-50 text-gray-600 border border-gray-200'
                   }`}>
                   <Video className="h-4 w-4" /> Video
                 </button>
-                <button onClick={() => setAttachmentType('document')}
+                <button onClick={() => { setAttachmentType('document'); setAttachmentUrl(''); setAttachmentMediaId(''); setAttachmentFileName(''); }}
                   className={`flex-1 py-2 text-sm font-medium rounded-xl flex items-center justify-center gap-2 transition-all ${
                     attachmentType === 'document' ? 'bg-green-100 text-green-700 border border-green-300' : 'bg-gray-50 text-gray-600 border border-gray-200'
                   }`}>
                   <FileText className="h-4 w-4" /> Document
                 </button>
               </div>
-              <input type="url" placeholder={
-                attachmentType === 'image' ? 'Image URL (JPEG/PNG, max 5MB)' :
-                attachmentType === 'video' ? 'Video URL (MP4/3GPP, max 16MB)' :
-                'Document URL (PDF/DOC/XLS, max 100MB)'
-              }
-                value={attachmentUrl} onChange={e => setAttachmentUrl(e.target.value)}
-                className="w-full px-4 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-green-400" />
+              <div className="flex items-center gap-2">
+                <label className="flex-1 cursor-pointer rounded-xl border border-green-200 bg-green-50 px-4 py-2 text-sm font-medium text-green-700 hover:bg-green-100 text-center">
+                  Upload file
+                  <input
+                    type="file"
+                    className="hidden"
+                    accept={getAttachmentAccept()}
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      await handleUploadAttachment(file);
+                      e.target.value = '';
+                    }}
+                  />
+                </label>
+                {isUploadingAttachment && <Loader2 className="h-4 w-4 animate-spin text-green-600" />}
+              </div>
+
+              {attachmentMediaId && (
+                <div className="flex items-center gap-2 rounded-xl border border-green-200 bg-green-50 px-3 py-2">
+                  <Check className="h-4 w-4 text-green-600" />
+                  <span className="flex-1 truncate text-xs text-green-700">{attachmentFileName || 'Uploaded file'}</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAttachmentMediaId('');
+                      setAttachmentFileName('');
+                    }}
+                    className="text-red-500 hover:text-red-600"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              )}
+
+              <div className="text-xs text-gray-500">or paste a direct URL</div>
+              <input
+                type="url"
+                placeholder={
+                  attachmentType === 'image' ? 'Image URL (JPEG/PNG, max 5MB)' :
+                  attachmentType === 'video' ? 'Video URL (MP4/3GPP, max 16MB)' :
+                  'Document URL (PDF/DOC/XLS, max 100MB)'
+                }
+                value={attachmentUrl}
+                onChange={e => setAttachmentUrl(e.target.value)}
+                className="w-full px-4 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-green-400"
+              />
               <input type="text" placeholder="Caption (optional)" value={attachmentCaption} onChange={e => setAttachmentCaption(e.target.value)}
                 className="w-full px-4 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-green-400" />
             </div>
             <div className="p-4 border-t border-gray-100 flex gap-2">
-              <button onClick={() => { setShowAttachmentModal(false); setAttachmentUrl(''); setAttachmentCaption(''); }}
+              <button onClick={resetAttachmentState}
                 className="flex-1 px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-xl">Cancel</button>
-              <button onClick={handleSendAttachment} disabled={!attachmentUrl.trim() || isSending}
+              <button onClick={handleSendAttachment} disabled={(!attachmentUrl.trim() && !attachmentMediaId) || isSending || isUploadingAttachment}
                 className="flex-1 px-4 py-2 text-sm font-medium text-white bg-green-500 hover:bg-green-600 rounded-xl disabled:opacity-50 flex items-center justify-center gap-2">
                 {isSending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
                 Send

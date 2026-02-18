@@ -5,6 +5,7 @@ import {
   Delete,
   Patch,
   Param,
+  Body,
   UseGuards,
   ParseUUIDPipe,
 } from '@nestjs/common';
@@ -70,5 +71,30 @@ export class NotificationsController {
   ) {
     await this.notificationsService.delete(workspaceId, userId, id);
     return { message: 'Notification deleted' };
+  }
+
+  @Post('device-token')
+  @ApiOperation({ summary: 'Register a device token for push notifications' })
+  async registerDeviceToken(
+    @CurrentWorkspace('id') workspaceId: string,
+    @CurrentUser('id') userId: string,
+    @Body() body: { token: string; platform: string },
+  ) {
+    return this.notificationsService.registerDeviceToken(
+      workspaceId,
+      userId,
+      body.token,
+      body.platform,
+    );
+  }
+
+  @Delete('device-token')
+  @ApiOperation({ summary: 'Remove a device token (on logout)' })
+  async removeDeviceToken(
+    @CurrentUser('id') userId: string,
+    @Body() body: { token: string },
+  ) {
+    await this.notificationsService.removeDeviceToken(userId, body.token);
+    return { message: 'Device token removed' };
   }
 }

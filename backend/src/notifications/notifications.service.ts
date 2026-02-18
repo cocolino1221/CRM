@@ -1,7 +1,9 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Notification, NotificationType } from '../database/entities/notification.entity';
+import { DeviceToken, DevicePlatform } from '../database/entities/device-token.entity';
+import { PushNotificationService } from './push-notification.service';
 
 export interface CreateNotificationDto {
   type: NotificationType;
@@ -14,9 +16,14 @@ export interface CreateNotificationDto {
 
 @Injectable()
 export class NotificationsService {
+  private readonly logger = new Logger(NotificationsService.name);
+
   constructor(
     @InjectRepository(Notification)
     private notificationRepository: Repository<Notification>,
+    @InjectRepository(DeviceToken)
+    private deviceTokenRepository: Repository<DeviceToken>,
+    private pushNotificationService: PushNotificationService,
   ) {}
 
   async create(workspaceId: string, dto: CreateNotificationDto): Promise<Notification> {
@@ -25,7 +32,20 @@ export class NotificationsService {
       workspaceId,
     });
 
-    return this.notificationRepository.save(notification);
+    const saved = await this.notificationRepository.save(notification);
+
+    // Fire-and-forget push notification
+    this.pushNotificationService
+      .sendPushToUser(dto.userId, {
+        type: dto.type,
+        title: dto.title,
+        message: dto.message,
+        link: dto.link,
+        notificationId: saved.id,
+      })
+      .catch((err) => this.logger.error(`Push error: ${err.message}`));
+
+    return saved;
   }
 
   async findAll(workspaceId: string, userId: string): Promise<Notification[]> {
@@ -91,6 +111,36 @@ export class NotificationsService {
     if (result.affected === 0) {
       throw new NotFoundException('Notification not found');
     }
+  }
+
+  // Device token management
+  async registerDeviceToken(
+    workspaceId: string,
+    userId: string,
+    token: string,
+    platform: string,
+  ): Promise<DeviceToken> {
+    // Upsert: if token exists, update userId/workspace
+    let existing = await this.deviceTokenRepository.findOne({ where: { token } });
+    if (existing) {
+      existing.userId = userId;
+      existing.workspaceId = workspaceId;
+      existing.isActive = true;
+      return this.deviceTokenRepository.save(existing);
+    }
+    return this.deviceTokenRepository.save(
+      this.deviceTokenRepository.create({
+        workspaceId,
+        userId,
+        token,
+        platform: platform as DevicePlatform,
+        isActive: true,
+      }),
+    );
+  }
+
+  async removeDeviceToken(userId: string, token: string): Promise<void> {
+    await this.deviceTokenRepository.delete({ userId, token });
   }
 
   // Helper method to create a lead assignment notification

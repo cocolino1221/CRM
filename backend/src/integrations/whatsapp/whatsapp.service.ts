@@ -237,7 +237,7 @@ export class WhatsAppService {
     messageBody: string,
     messageType: string,
     workspaceId: string,
-    userId: string,
+    userId?: string,
     whatsappMessageId?: string,
   ): Promise<void> {
     try {
@@ -245,11 +245,12 @@ export class WhatsAppService {
       const contact = await this.contactRepository.findOne({ where: { workspaceId, phone } });
       // Also try without +
       const contact2 = contact || await this.contactRepository.findOne({ where: { workspaceId, phone: to } });
+      const normalizedUserId = userId?.trim() || undefined;
 
       const activity = this.activityRepository.create({
         workspaceId,
         contactId: contact2?.id || undefined,
-        userId,
+        userId: normalizedUserId,
         type: ActivityType.WHATSAPP_MESSAGE,
         title: `WhatsApp to ${contact2 ? `${contact2.firstName} ${contact2.lastName}` : phone}`,
         description: messageBody,
@@ -1606,6 +1607,36 @@ export class WhatsAppService {
   }
 
   /**
+   * Resolve flow state by exact waId or loose phone match.
+   * This handles test numbers entered without country code.
+   */
+  private resolveFlowState(
+    flowStates: Record<string, any>,
+    waId: string,
+  ): { stateKey: string; state: any } | null {
+    if (flowStates[waId]) {
+      return { stateKey: waId, state: flowStates[waId] };
+    }
+
+    const normalize = (value: string) => (value || '').replace(/\D/g, '');
+    const normalizedWaId = normalize(waId);
+    if (!normalizedWaId) return null;
+
+    const matchedKey = Object.keys(flowStates).find((key) => {
+      const normalizedKey = normalize(key);
+      if (!normalizedKey) return false;
+      return (
+        normalizedWaId === normalizedKey ||
+        normalizedWaId.endsWith(normalizedKey) ||
+        normalizedKey.endsWith(normalizedWaId)
+      );
+    });
+
+    if (!matchedKey) return null;
+    return { stateKey: matchedKey, state: flowStates[matchedKey] };
+  }
+
+  /**
    * Handle a button reply within a conversation flow.
    * Looks up the current flow state, finds the next step, sends it.
    * Returns true if handled (caller should skip auto-respond).
@@ -1618,17 +1649,18 @@ export class WhatsAppService {
     buttonTitle?: string,
   ): Promise<boolean> {
     const flowStates = integration.config?.flowStates || {};
-    const state = flowStates[waId];
-    if (!state) {
+    const resolved = this.resolveFlowState(flowStates, waId);
+    if (!resolved) {
       this.logger.warn(`Flow: no active state for ${waId} on button id="${buttonId}" title="${buttonTitle || ''}"`);
       return false;
     }
+    const { stateKey, state } = resolved;
 
     const flows: any[] = integration.config?.conversationFlows || [];
     const flow = flows.find((f: any) => f.id === state.flowId);
     if (!flow) {
       // Flow was deleted — clean up state
-      delete flowStates[waId];
+      delete flowStates[stateKey];
       integration.config = { ...(integration.config || {}), flowStates };
       await this.integrationRepository.save(integration);
       return false;
@@ -1638,7 +1670,7 @@ export class WhatsAppService {
     const currentStep = flow.steps.find((s: any) => s.id === state.currentStepId);
     if (!currentStep?.buttons?.length) {
       // Current step has no buttons — flow is over, clean up
-      delete flowStates[waId];
+      delete flowStates[stateKey];
       integration.config = { ...(integration.config || {}), flowStates };
       await this.integrationRepository.save(integration);
       return false;
@@ -1678,9 +1710,15 @@ export class WhatsAppService {
           currentStepId: nextStep.id,
           lastInteractionAt: new Date().toISOString(),
         };
+        if (stateKey !== waId) {
+          delete flowStates[stateKey];
+        }
       } else {
         // End of flow — clean up state
-        delete flowStates[waId];
+        delete flowStates[stateKey];
+        if (stateKey !== waId) {
+          delete flowStates[waId];
+        }
       }
       integration.config = { ...(integration.config || {}), flowStates };
       await this.integrationRepository.save(integration);
@@ -1706,13 +1744,14 @@ export class WhatsAppService {
     buttonText?: string,
   ): Promise<boolean> {
     const flowStates = integration.config?.flowStates || {};
-    const state = flowStates[waId];
-    if (!state) return false;
+    const resolved = this.resolveFlowState(flowStates, waId);
+    if (!resolved) return false;
+    const { stateKey, state } = resolved;
 
     const flows: any[] = integration.config?.conversationFlows || [];
     const flow = flows.find((f: any) => f.id === state.flowId);
     if (!flow) {
-      delete flowStates[waId];
+      delete flowStates[stateKey];
       integration.config = { ...(integration.config || {}), flowStates };
       await this.integrationRepository.save(integration);
       return false;
@@ -1720,7 +1759,7 @@ export class WhatsAppService {
 
     const currentStep = flow.steps.find((s: any) => s.id === state.currentStepId);
     if (!currentStep?.buttons?.length) {
-      delete flowStates[waId];
+      delete flowStates[stateKey];
       integration.config = { ...(integration.config || {}), flowStates };
       await this.integrationRepository.save(integration);
       return false;
@@ -1750,8 +1789,14 @@ export class WhatsAppService {
       await this.sendFlowStep(nextStep, waId, credentials, workspaceId);
       if (nextStep.buttons?.length) {
         flowStates[waId] = { ...state, currentStepId: nextStep.id, lastInteractionAt: new Date().toISOString() };
+        if (stateKey !== waId) {
+          delete flowStates[stateKey];
+        }
       } else {
-        delete flowStates[waId];
+        delete flowStates[stateKey];
+        if (stateKey !== waId) {
+          delete flowStates[waId];
+        }
       }
       integration.config = { ...(integration.config || {}), flowStates };
       await this.integrationRepository.save(integration);
@@ -1777,10 +1822,14 @@ export class WhatsAppService {
     const workspaceId = integration.workspaceId;
 
     // 1. Button reply — always check first (active flow interaction)
-    // Interactive reply buttons (from interactive messages, steps 2+)
-    if (message.type === 'interactive' && message.interactive?.button_reply) {
-      const buttonId = message.interactive.button_reply.id || '';
-      const buttonTitle = message.interactive.button_reply.title || '';
+    // Interactive replies (buttons/lists)
+    if (message.type === 'interactive') {
+      const interactiveReply =
+        message.interactive?.button_reply || message.interactive?.list_reply;
+      if (!interactiveReply) return false;
+
+      const buttonId = interactiveReply.id || '';
+      const buttonTitle = interactiveReply.title || '';
       const handled = await this.handleButtonReply(workspaceId, waId, buttonId, integration, buttonTitle);
       if (handled) return true;
       // Some template button replies may arrive as interactive payloads.
@@ -1795,17 +1844,40 @@ export class WhatsAppService {
 
     // 2. Check if user already has an active flow — don't start a new one
     const flowStates = integration.config?.flowStates || {};
-    if (flowStates[waId]) {
+    const resolvedState = this.resolveFlowState(flowStates, waId);
+    if (resolvedState) {
       // User is in an active flow but sent a text instead of pressing a button.
       // Expire stale flows (>24h — outside session window anyway)
-      const state = flowStates[waId];
+      const { stateKey, state } = resolvedState;
       const lastInteraction = new Date(state.lastInteractionAt || state.startedAt).getTime();
       if (Date.now() - lastInteraction > 24 * 60 * 60 * 1000) {
-        delete flowStates[waId];
+        delete flowStates[stateKey];
         integration.config = { ...(integration.config || {}), flowStates };
         await this.integrationRepository.save(integration);
       } else {
-        // Still in flow — let auto-respond handle the text (user deviated)
+        // Some clients may send button presses as plain text. Try matching by text.
+        if (message.type === 'text' && message.text?.body) {
+          const replyText = message.text.body.trim();
+          const handledByButton = await this.handleButtonReply(
+            workspaceId,
+            waId,
+            replyText,
+            integration,
+            replyText,
+          );
+          if (handledByButton) return true;
+
+          const handledByTemplate = await this.handleTemplateButtonReply(
+            workspaceId,
+            waId,
+            replyText,
+            integration,
+            replyText,
+          );
+          if (handledByTemplate) return true;
+        }
+
+        // Still in flow but message does not map to a button.
         return false;
       }
     }

@@ -122,10 +122,22 @@ export class WhatsAppController {
   @Post('send/image')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Send an image message' })
+  @ApiOperation({ summary: 'Send an image message (by URL or uploaded media_id)' })
   @ApiResponse({ status: 200, description: 'Image sent successfully' })
-  async sendImageMessage(@Req() req: any, @Body() body: { to: string; imageUrl: string; caption?: string }) {
-    const result = await this.whatsappService.sendImageMessage(body.to, body.imageUrl, body.caption);
+  async sendImageMessage(@Req() req: any, @Body() body: { to: string; imageUrl?: string; imageId?: string; caption?: string }) {
+    if (!body.imageUrl && !body.imageId) {
+      throw new BadRequestException('imageUrl or imageId is required');
+    }
+    const result = await this.whatsappService.sendMessage({
+      to: body.to,
+      type: 'image',
+      content: '',
+      media: {
+        url: body.imageUrl,
+        id: body.imageId,
+        caption: body.caption,
+      },
+    });
     const workspaceId = req.user?.workspaceId;
     const userId = req.user?.id;
     if (workspaceId && userId) {
@@ -140,13 +152,26 @@ export class WhatsAppController {
   @Post('send/document')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Send a document message' })
+  @ApiOperation({ summary: 'Send a document message (by URL or uploaded media_id)' })
   @ApiResponse({ status: 200, description: 'Document sent successfully' })
   async sendDocumentMessage(
     @Req() req: any,
-    @Body() body: { to: string; documentUrl: string; caption?: string; filename?: string },
+    @Body() body: { to: string; documentUrl?: string; documentId?: string; caption?: string; filename?: string },
   ) {
-    const result = await this.whatsappService.sendDocumentMessage(body.to, body.documentUrl, body.caption, body.filename);
+    if (!body.documentUrl && !body.documentId) {
+      throw new BadRequestException('documentUrl or documentId is required');
+    }
+    const result = await this.whatsappService.sendMessage({
+      to: body.to,
+      type: 'document',
+      content: '',
+      media: {
+        url: body.documentUrl,
+        id: body.documentId,
+        caption: body.caption,
+        filename: body.filename,
+      },
+    });
     const workspaceId = req.user?.workspaceId;
     const userId = req.user?.id;
     if (workspaceId && userId) {
@@ -161,10 +186,22 @@ export class WhatsAppController {
   @Post('send/video')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Send a video message (MP4/3GPP, max 16MB)' })
+  @ApiOperation({ summary: 'Send a video message (URL or uploaded media_id)' })
   @ApiResponse({ status: 200, description: 'Video sent successfully' })
-  async sendVideoMessage(@Req() req: any, @Body() body: { to: string; videoUrl: string; caption?: string }) {
-    const result = await this.whatsappService.sendVideoMessage(body.to, body.videoUrl, body.caption);
+  async sendVideoMessage(@Req() req: any, @Body() body: { to: string; videoUrl?: string; videoId?: string; caption?: string }) {
+    if (!body.videoUrl && !body.videoId) {
+      throw new BadRequestException('videoUrl or videoId is required');
+    }
+    const result = await this.whatsappService.sendMessage({
+      to: body.to,
+      type: 'video',
+      content: '',
+      media: {
+        url: body.videoUrl,
+        id: body.videoId,
+        caption: body.caption,
+      },
+    });
     const workspaceId = req.user?.workspaceId;
     const userId = req.user?.id;
     if (workspaceId && userId) {
@@ -510,11 +547,20 @@ export class WhatsAppController {
   async assignConversation(
     @Req() req: any,
     @Param('waId') waId: string,
-    @Body() body: { userId: string | null; userName: string; color: string } | null,
+    @Body() body: { userId?: string | null; userName?: string; color?: string } | null,
   ) {
     const workspaceId = req.user?.workspaceId;
     if (!workspaceId) throw new BadRequestException('Workspace ID required');
-    await this.whatsappService.assignConversation(workspaceId, waId, body);
+
+    const normalizedAssignment = body?.userId
+      ? {
+          userId: body.userId,
+          userName: body.userName?.trim() || 'Unknown User',
+          color: body.color || '#6b7280',
+        }
+      : null;
+
+    await this.whatsappService.assignConversation(workspaceId, waId, normalizedAssignment);
     return { success: true };
   }
 

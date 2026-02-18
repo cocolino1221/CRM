@@ -34,8 +34,9 @@ api.interceptors.request.use(
     // Let browser set multipart boundaries for FormData uploads.
     if (typeof FormData !== 'undefined' && config.data instanceof FormData) {
       const headers = config.headers as any;
-      if (headers?.set) {
-        headers.set('Content-Type', undefined);
+      if (headers?.delete) {
+        headers.delete('Content-Type');
+        headers.delete('content-type');
       } else if (headers) {
         delete headers['Content-Type'];
         delete headers['content-type'];

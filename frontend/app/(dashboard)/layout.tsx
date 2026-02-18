@@ -7,6 +7,7 @@ import { MessageSquare, Users, LayoutDashboard, MoreHorizontal } from 'lucide-re
 import Sidebar from '@/components/layout/Sidebar';
 import Header from '@/components/layout/Header';
 import QuickActionsWrapper from '@/components/layout/quick-actions-wrapper';
+import { initPushNotifications } from '@/lib/push-notifications';
 
 const mobileNavItems = [
   { href: '/whatsapp', icon: MessageSquare, label: 'WhatsApp' },
@@ -52,6 +53,11 @@ export default function DashboardLayout({
   useEffect(() => {
     setShowMobileMore(false);
   }, [pathname]);
+
+  // Initialize push notifications on mobile
+  useEffect(() => {
+    initPushNotifications();
+  }, []);
 
   return (
     <div className="flex h-screen overflow-hidden bg-gray-50 dark:bg-gray-900">

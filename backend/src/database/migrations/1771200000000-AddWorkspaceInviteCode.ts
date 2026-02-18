@@ -4,8 +4,13 @@ export class AddWorkspaceInviteCode1771200000000 implements MigrationInterface {
     name = 'AddWorkspaceInviteCode1771200000000'
 
     public async up(queryRunner: QueryRunner): Promise<void> {
-        await queryRunner.query(`ALTER TABLE "workspaces" ADD "inviteCode" character varying(20)`);
-        await queryRunner.query(`ALTER TABLE "workspaces" ADD CONSTRAINT "UQ_workspaces_inviteCode" UNIQUE ("inviteCode")`);
+        await queryRunner.query(`ALTER TABLE "workspaces" ADD COLUMN IF NOT EXISTS "inviteCode" character varying(20)`);
+        await queryRunner.query(`
+            DO $$ BEGIN
+                ALTER TABLE "workspaces" ADD CONSTRAINT "UQ_workspaces_inviteCode" UNIQUE ("inviteCode");
+            EXCEPTION WHEN duplicate_object THEN null;
+            END $$;
+        `);
 
         // Generate invite codes for existing workspaces
         const workspaces = await queryRunner.query(`SELECT id FROM "workspaces" WHERE "inviteCode" IS NULL`);
