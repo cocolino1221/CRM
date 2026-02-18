@@ -53,20 +53,26 @@ export class ManyChatIntegrationHandler {
   ) {}
 
   /**
-   * Test connection by calling the ManyChat /fb/page endpoint
+   * Test connection to ManyChat.
+   * ManyChat is primarily webhook-based (External Request block sends data to CRM).
+   * The /fb/page endpoint only works for FB Messenger bots, not WhatsApp/IG bots.
+   * If no API key configured, treat as webhook-only mode (still valid).
    */
   async testConnection(integration: any): Promise<{ success: boolean; message?: string; data?: any }> {
-    try {
-      const apiKey = this.getApiKey(integration);
-      if (!apiKey) {
-        return { success: false, message: 'API key not configured. Add your ManyChat API key in the integration settings.' };
-      }
+    const apiKey = this.getApiKey(integration);
 
+    if (!apiKey) {
+      return {
+        success: true,
+        message: 'Connected in webhook-only mode. Add an API key to enable outbound messaging.',
+      };
+    }
+
+    try {
       const response = await axios.get(`${this.MANYCHAT_API_URL}/fb/page`, {
         headers: { Authorization: `Bearer ${apiKey}` },
         timeout: 10000,
       });
-
       const pageName = response.data?.data?.name;
       return {
         success: true,
@@ -74,8 +80,17 @@ export class ManyChatIntegrationHandler {
         data: response.data?.data,
       };
     } catch (error) {
+      if (error.response?.status === 404) {
+        return {
+          success: true,
+          message: 'Connected (API key valid). No Facebook page linked — using webhook mode.',
+        };
+      }
+      if (error.response?.status === 401 || error.response?.status === 403) {
+        return { success: false, message: 'Invalid API key. Check your ManyChat API key.' };
+      }
       const msg = error.response?.data?.message || error.message;
-      return { success: false, message: `Connection failed: ${msg}` };
+      return { success: false, message: `Connection test failed: ${msg}` };
     }
   }
 

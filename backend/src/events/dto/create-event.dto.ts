@@ -165,4 +165,14 @@ export class CreateEventDto {
   @IsObject()
   @IsOptional()
   customFields?: Record<string, any>;
+
+  @ApiPropertyOptional({ description: 'Send meeting invite email to the contact', default: false })
+  @IsBoolean()
+  @IsOptional()
+  sendEmail?: boolean;
+
+  @ApiPropertyOptional({ description: 'Auto-generate a real Zoom/Google Meet link', default: false })
+  @IsBoolean()
+  @IsOptional()
+  autoGenerateMeetingLink?: boolean;
 }

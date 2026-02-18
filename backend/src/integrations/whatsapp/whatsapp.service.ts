@@ -703,7 +703,9 @@ export class WhatsAppService {
     name: string;
     language: string;
     category: 'MARKETING' | 'UTILITY' | 'AUTHENTICATION';
+    headerType?: 'NONE' | 'TEXT' | 'IMAGE' | 'VIDEO' | 'DOCUMENT';
     headerText?: string;
+    headerMediaUrl?: string;
     bodyText: string;
     footerText?: string;
     buttons?: Array<{ type: 'QUICK_REPLY' | 'URL' | 'PHONE_NUMBER'; text: string; url?: string; phoneNumber?: string }>;
@@ -718,9 +720,18 @@ export class WhatsAppService {
     if (!accessToken) throw new BadRequestException('WhatsApp access token not configured');
 
     const components: any[] = [];
-    if (template.headerText) {
+    const headerType = template.headerType || (template.headerText ? 'TEXT' : 'NONE');
+
+    if (headerType === 'TEXT' && template.headerText) {
       components.push({ type: 'HEADER', format: 'TEXT', text: template.headerText });
+    } else if (['IMAGE', 'VIDEO', 'DOCUMENT'].includes(headerType)) {
+      const headerComp: any = { type: 'HEADER', format: headerType };
+      if (template.headerMediaUrl) {
+        headerComp.example = { header_handle: [template.headerMediaUrl] };
+      }
+      components.push(headerComp);
     }
+
     components.push({ type: 'BODY', text: template.bodyText });
     if (template.footerText) {
       components.push({ type: 'FOOTER', text: template.footerText });
@@ -1424,20 +1435,47 @@ export class WhatsAppService {
   }
 
   /**
-   * Send a flow step message (with interactive buttons if the step has them)
+   * Send a flow step message.
+   * - type "template": sends an approved Meta template (for initiating conversations)
+   * - default: sends interactive buttons or plain text (within 24h session)
    */
   private async sendFlowStep(
-    step: { id: string; message: string; buttons?: Array<{ id: string; title: string; nextStepId: string }> },
+    step: {
+      id: string;
+      message: string;
+      type?: 'template' | 'interactive';
+      templateName?: string;
+      templateLanguage?: string;
+      templateParams?: string[];
+      headerMediaUrl?: string;
+      headerMediaType?: string;
+      buttons?: Array<{ id: string; title: string; nextStepId: string }>;
+    },
     waId: string,
     credentials: Record<string, any>,
     workspaceId: string,
   ): Promise<void> {
-    if (step.buttons?.length) {
-      // Send interactive button message
-      const buttons = step.buttons.slice(0, 3).map(b => ({
-        id: b.id,
-        title: b.title.slice(0, 20),
-      }));
+    if (step.type === 'template' && step.templateName) {
+      // Send approved template (can initiate conversations outside 24h window)
+      const components: any[] = [];
+      if (step.headerMediaUrl && step.headerMediaType) {
+        const mt = step.headerMediaType.toLowerCase();
+        components.push({ type: 'header', parameters: [{ type: mt, [mt]: { link: step.headerMediaUrl } }] });
+      }
+      if (step.templateParams?.length) {
+        components.push({ type: 'body', parameters: step.templateParams.map(p => ({ type: 'text', text: p })) });
+      }
+      await this.sendMessageWithCredentials(credentials, {
+        to: waId,
+        type: 'template',
+        content: '',
+        template: { name: step.templateName, language: step.templateLanguage || 'en_US', parameters: components },
+      });
+      const btnLabels = step.buttons?.map(b => b.title).join(', ') || '';
+      await this.saveOutboundActivity(waId, `[Flow template: ${step.templateName}]${btnLabels ? ` [${btnLabels}]` : ''}`, 'template', workspaceId, '', undefined);
+    } else if (step.buttons?.length) {
+      // Send interactive button message (within 24h session window)
+      const buttons = step.buttons.slice(0, 3).map(b => ({ id: b.id, title: b.title.slice(0, 20) }));
       await this.sendMessageWithCredentials(credentials, {
         to: waId,
         type: 'interactive',
@@ -1445,9 +1483,7 @@ export class WhatsAppService {
         interactive: {
           type: 'button',
           body: { text: step.message },
-          action: {
-            buttons: buttons.map(b => ({ type: 'reply' as const, reply: { id: b.id, title: b.title } })),
-          },
+          action: { buttons: buttons.map(b => ({ type: 'reply' as const, reply: { id: b.id, title: b.title } })) },
         },
       });
       const btnLabels = buttons.map(b => b.title).join(', ');
@@ -1564,6 +1600,64 @@ export class WhatsAppService {
   }
 
   /**
+   * Handle a template quick reply button press.
+   * Template QUICK_REPLY buttons send payload/text (not button IDs).
+   * We match by button title text to find the nextStepId.
+   */
+  async handleTemplateButtonReply(workspaceId: string, waId: string, buttonPayload: string, integration: Integration): Promise<boolean> {
+    const flowStates = integration.config?.flowStates || {};
+    const state = flowStates[waId];
+    if (!state) return false;
+
+    const flows: any[] = integration.config?.conversationFlows || [];
+    const flow = flows.find((f: any) => f.id === state.flowId);
+    if (!flow) {
+      delete flowStates[waId];
+      integration.config = { ...(integration.config || {}), flowStates };
+      await this.integrationRepository.save(integration);
+      return false;
+    }
+
+    const currentStep = flow.steps.find((s: any) => s.id === state.currentStepId);
+    if (!currentStep?.buttons?.length) {
+      delete flowStates[waId];
+      integration.config = { ...(integration.config || {}), flowStates };
+      await this.integrationRepository.save(integration);
+      return false;
+    }
+
+    // Match by title (template quick reply buttons send back button text as payload)
+    const normalized = buttonPayload.trim().toLowerCase();
+    const button = currentStep.buttons.find((b: any) =>
+      b.title?.trim().toLowerCase() === normalized || b.id === buttonPayload,
+    );
+    if (!button) {
+      this.logger.warn(`Flow: template button "${buttonPayload}" not matched in step "${state.currentStepId}"`);
+      return false;
+    }
+
+    const nextStep = flow.steps.find((s: any) => s.id === button.nextStepId);
+    if (!nextStep) return false;
+
+    const credentials = integration.credentials || {};
+    try {
+      await this.sendFlowStep(nextStep, waId, credentials, workspaceId);
+      if (nextStep.buttons?.length) {
+        flowStates[waId] = { ...state, currentStepId: nextStep.id, lastInteractionAt: new Date().toISOString() };
+      } else {
+        delete flowStates[waId];
+      }
+      integration.config = { ...(integration.config || {}), flowStates };
+      await this.integrationRepository.save(integration);
+      this.logger.log(`Flow "${flow.name}": ${waId} → template button "${buttonPayload}" → step "${nextStep.id}"`);
+      return true;
+    } catch (err) {
+      this.logger.warn(`Flow template button failed for ${waId}: ${err.message}`);
+      return false;
+    }
+  }
+
+  /**
    * Check if an inbound message should trigger a conversation flow.
    * Called BEFORE autoRespond — if a flow handles the message, skip auto-respond.
    */
@@ -1575,9 +1669,15 @@ export class WhatsAppService {
     const workspaceId = integration.workspaceId;
 
     // 1. Button reply — always check first (active flow interaction)
+    // Interactive reply buttons (from interactive messages, steps 2+)
     if (message.type === 'interactive' && message.interactive?.button_reply) {
       const buttonId = message.interactive.button_reply.id;
       return this.handleButtonReply(workspaceId, waId, buttonId, integration);
+    }
+    // Template quick reply buttons (from template messages, step 1)
+    if (message.type === 'button' && message.button) {
+      const payload = message.button.payload || message.button.text;
+      return this.handleTemplateButtonReply(workspaceId, waId, payload, integration);
     }
 
     // 2. Check if user already has an active flow — don't start a new one

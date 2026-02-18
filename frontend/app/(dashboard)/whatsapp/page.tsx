@@ -501,7 +501,9 @@ export default function WhatsAppPage() {
   const [showCreateTemplate, setShowCreateTemplate] = useState(false);
   const [newTemplate, setNewTemplate] = useState({
     name: '', language: 'en_US', category: 'UTILITY' as 'MARKETING' | 'UTILITY' | 'AUTHENTICATION',
-    headerText: '', bodyText: '', footerText: '',
+    headerType: 'NONE' as 'NONE' | 'TEXT' | 'IMAGE' | 'VIDEO' | 'DOCUMENT',
+    headerText: '', headerMediaUrl: '', bodyText: '', footerText: '',
+    buttons: [] as Array<{ type: 'QUICK_REPLY' | 'URL' | 'PHONE_NUMBER'; text: string; url?: string; phoneNumber?: string }>,
   });
   const [isCreatingTemplate, setIsCreatingTemplate] = useState(false);
   const [templateError, setTemplateError] = useState('');
@@ -900,12 +902,15 @@ export default function WhatsAppPage() {
         name: newTemplate.name.trim().toLowerCase().replace(/\s+/g, '_'),
         language: newTemplate.language,
         category: newTemplate.category,
-        headerText: newTemplate.headerText.trim() || undefined,
+        headerType: newTemplate.headerType,
+        headerText: newTemplate.headerType === 'TEXT' ? (newTemplate.headerText.trim() || undefined) : undefined,
+        headerMediaUrl: ['IMAGE', 'VIDEO', 'DOCUMENT'].includes(newTemplate.headerType) ? (newTemplate.headerMediaUrl.trim() || undefined) : undefined,
         bodyText: newTemplate.bodyText.trim(),
         footerText: newTemplate.footerText.trim() || undefined,
+        buttons: newTemplate.buttons.length > 0 ? newTemplate.buttons : undefined,
       });
       setShowCreateTemplate(false);
-      setNewTemplate({ name: '', language: 'en_US', category: 'UTILITY', headerText: '', bodyText: '', footerText: '' });
+      setNewTemplate({ name: '', language: 'en_US', category: 'UTILITY', headerType: 'NONE', headerText: '', headerMediaUrl: '', bodyText: '', footerText: '', buttons: [] });
       await fetchMetaTemplates();
     } catch (err: any) {
       setTemplateError(err.response?.data?.message || 'Failed to create template. Check WABA ID is configured in integration settings.');
@@ -1302,7 +1307,10 @@ export default function WhatsAppPage() {
       steps: [
         {
           id: 'step_0',
-          message: 'Hello! How can we help you?',
+          type: 'template' as const,
+          templateName: '',
+          templateLanguage: 'en_US',
+          message: '',
           buttons: [
             { id: `btn_${Date.now()}_a`, title: 'Option 1', nextStepId: 'step_1' },
             { id: `btn_${Date.now()}_b`, title: 'Option 2', nextStepId: 'step_2' },
@@ -2527,8 +2535,23 @@ export default function WhatsAppPage() {
                   </div>
                   <div>
                     <label className="text-xs font-medium text-gray-700 mb-1 block">Header (optional)</label>
-                    <input type="text" value={newTemplate.headerText} placeholder="e.g. Order Confirmation" onChange={e => setNewTemplate(p => ({ ...p, headerText: e.target.value }))}
-                      className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-green-400" />
+                    <select value={newTemplate.headerType} onChange={e => setNewTemplate(p => ({ ...p, headerType: e.target.value as any }))}
+                      className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-green-400 mb-2">
+                      <option value="NONE">None</option>
+                      <option value="TEXT">Text</option>
+                      <option value="IMAGE">Image</option>
+                      <option value="VIDEO">Video</option>
+                      <option value="DOCUMENT">Document</option>
+                    </select>
+                    {newTemplate.headerType === 'TEXT' && (
+                      <input type="text" value={newTemplate.headerText} placeholder="Header text" onChange={e => setNewTemplate(p => ({ ...p, headerText: e.target.value }))}
+                        className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-green-400" />
+                    )}
+                    {['IMAGE', 'VIDEO', 'DOCUMENT'].includes(newTemplate.headerType) && (
+                      <input type="text" value={newTemplate.headerMediaUrl} placeholder={`${newTemplate.headerType.toLowerCase()} URL (example for Meta review)`}
+                        onChange={e => setNewTemplate(p => ({ ...p, headerMediaUrl: e.target.value }))}
+                        className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-green-400" />
+                    )}
                   </div>
                   <div>
                     <label className="text-xs font-medium text-gray-700 mb-1 block">Body *</label>
@@ -2541,6 +2564,47 @@ export default function WhatsAppPage() {
                     <label className="text-xs font-medium text-gray-700 mb-1 block">Footer (optional)</label>
                     <input type="text" value={newTemplate.footerText} placeholder="e.g. Reply STOP to unsubscribe" onChange={e => setNewTemplate(p => ({ ...p, footerText: e.target.value }))}
                       className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-green-400" />
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-gray-700 mb-1 block">Buttons (optional, max 3)</label>
+                    {newTemplate.buttons.map((btn, idx) => (
+                      <div key={idx} className="flex items-center gap-2 mb-2">
+                        <select value={btn.type} onChange={e => {
+                          const updated = [...newTemplate.buttons];
+                          updated[idx] = { ...updated[idx], type: e.target.value as any };
+                          setNewTemplate(p => ({ ...p, buttons: updated }));
+                        }} className="px-2 py-1.5 text-xs border border-gray-200 rounded-lg">
+                          <option value="QUICK_REPLY">Quick Reply</option>
+                          <option value="URL">URL Button</option>
+                          <option value="PHONE_NUMBER">Phone</option>
+                        </select>
+                        <input value={btn.text} placeholder="Button text" onChange={e => {
+                          const updated = [...newTemplate.buttons];
+                          updated[idx] = { ...updated[idx], text: e.target.value };
+                          setNewTemplate(p => ({ ...p, buttons: updated }));
+                        }} className="flex-1 px-2 py-1.5 text-sm border border-gray-200 rounded-lg" />
+                        {btn.type === 'URL' && (
+                          <input value={btn.url || ''} placeholder="https://..." onChange={e => {
+                            const updated = [...newTemplate.buttons];
+                            updated[idx] = { ...updated[idx], url: e.target.value };
+                            setNewTemplate(p => ({ ...p, buttons: updated }));
+                          }} className="flex-1 px-2 py-1.5 text-sm border border-gray-200 rounded-lg" />
+                        )}
+                        {btn.type === 'PHONE_NUMBER' && (
+                          <input value={btn.phoneNumber || ''} placeholder="+40..." onChange={e => {
+                            const updated = [...newTemplate.buttons];
+                            updated[idx] = { ...updated[idx], phoneNumber: e.target.value };
+                            setNewTemplate(p => ({ ...p, buttons: updated }));
+                          }} className="flex-1 px-2 py-1.5 text-sm border border-gray-200 rounded-lg" />
+                        )}
+                        <button onClick={() => setNewTemplate(p => ({ ...p, buttons: p.buttons.filter((_, i) => i !== idx) }))}
+                          className="text-red-400 hover:text-red-600"><X className="h-3.5 w-3.5" /></button>
+                      </div>
+                    ))}
+                    {newTemplate.buttons.length < 3 && (
+                      <button onClick={() => setNewTemplate(p => ({ ...p, buttons: [...p.buttons, { type: 'QUICK_REPLY', text: '' }] }))}
+                        className="text-xs text-green-600 hover:text-green-700 font-medium">+ Add Button</button>
+                    )}
                   </div>
                   <div className="flex gap-2 pt-2">
                     <button onClick={() => setShowCreateTemplate(false)}
@@ -3251,10 +3315,37 @@ export default function WhatsAppPage() {
                         <input type="text" value={step.id} onChange={e => updateFlowStep(si, 'id', e.target.value)}
                           placeholder="step_id" className="w-full px-3 py-1.5 text-xs font-mono border border-gray-200 rounded-lg focus:outline-none focus:border-green-400" />
 
-                        {/* Message */}
-                        <textarea value={step.message} onChange={e => updateFlowStep(si, 'message', e.target.value)}
-                          placeholder="Message text..." rows={2}
-                          className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:border-green-400 resize-none" />
+                        {si === 0 ? (
+                          /* Step 1: Template-based (required to initiate conversations) */
+                          <div className="space-y-2">
+                            <div className="text-xs text-green-700 bg-green-50 border border-green-200 rounded-lg p-2">
+                              First step must use an approved template to initiate conversations outside 24h.
+                            </div>
+                            <select value={step.templateName || ''} onChange={e => {
+                              const t = metaTemplates.find((t: any) => t.name === e.target.value);
+                              updateFlowStep(si, 'templateName', e.target.value);
+                              updateFlowStep(si, 'type', 'template');
+                              updateFlowStep(si, 'templateLanguage', t?.language || 'en_US');
+                              updateFlowStep(si, 'message', t?.components?.find((c: any) => c.type === 'BODY')?.text || '');
+                            }} className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:border-green-400 bg-white">
+                              <option value="">Select an approved template...</option>
+                              {metaTemplates.filter((t: any) => t.status === 'APPROVED').map((t: any) => (
+                                <option key={t.name} value={t.name}>{t.name} ({t.language})</option>
+                              ))}
+                            </select>
+                            {step.templateName && (
+                              <div className="text-xs text-gray-500 bg-white border border-gray-200 rounded-lg p-2">
+                                <strong>{step.templateName}</strong> ({step.templateLanguage || 'en_US'})
+                                {step.message && <p className="mt-1 text-gray-400">{step.message}</p>}
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          /* Steps 2+: Interactive message (within 24h session window) */
+                          <textarea value={step.message} onChange={e => updateFlowStep(si, 'message', e.target.value)}
+                            placeholder="Message text..." rows={2}
+                            className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:border-green-400 resize-none" />
+                        )}
 
                         {/* Buttons */}
                         <div className="space-y-1.5">
