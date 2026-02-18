@@ -4,8 +4,10 @@ import {
   OneToMany,
   Index,
   Unique,
+  BeforeInsert,
 } from 'typeorm';
 import { BaseEntity } from './base.entity';
+import { randomBytes } from 'crypto';
 
 export interface WorkspaceSettings {
   timezone: string;
@@ -51,8 +53,29 @@ export class Workspace extends BaseEntity {
   isActive: boolean;
 
   @Column({
+    type: 'varchar',
+    length: 20,
+    nullable: true,
+    unique: true,
+    comment: 'Short invite code for joining this workspace',
+  })
+  inviteCode: string;
+
+  @Column({
     type: 'jsonb',
     default: () => "'{}'",
   })
   settings: WorkspaceSettings;
+
+  @BeforeInsert()
+  generateInviteCode() {
+    if (!this.inviteCode) {
+      this.inviteCode = randomBytes(4).toString('hex').toUpperCase().slice(0, 8);
+    }
+  }
+
+  regenerateInviteCode(): string {
+    this.inviteCode = randomBytes(4).toString('hex').toUpperCase().slice(0, 8);
+    return this.inviteCode;
+  }
 }

@@ -10,6 +10,7 @@ import { Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
 import { User, UserRole, UserStatus } from '../database/entities/user.entity';
+import { Workspace } from '../database/entities/workspace.entity';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto, UpdateUserRoleDto, UpdateUserStatusDto } from './dto/update-user.dto';
 import { InviteUserDto } from './dto/invite-user.dto';
@@ -22,6 +23,8 @@ export class UsersService {
   constructor(
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
+    @InjectRepository(Workspace)
+    private readonly workspaceRepository: Repository<Workspace>,
     private readonly emailService: EmailService,
     private readonly configService: ConfigService,
   ) {}
@@ -241,12 +244,12 @@ export class UsersService {
       throw new ConflictException('User already exists in this workspace');
     }
 
-    // Generate invitation token (in production, store this in database with expiry)
-    const invitationToken = Buffer.from(
-      `${workspaceId}:${inviteDto.email}:${Date.now()}`,
-    ).toString('base64');
+    // Get workspace invite code for the registration link
+    const workspace = await this.workspaceRepository.findOne({ where: { id: workspaceId } });
+    const inviteCode = workspace?.inviteCode || '';
 
-    const inviteUrl = `${process.env.FRONTEND_URL}/accept-invitation?token=${invitationToken}`;
+    const frontendUrl = this.configService.get('FRONTEND_URL') || process.env.FRONTEND_URL || 'https://easyteamcrm.netlify.app';
+    const inviteUrl = `${frontendUrl}/register?code=${inviteCode}`;
 
     // Send invitation email
     await this.emailService.sendInviteEmail(
@@ -258,8 +261,25 @@ export class UsersService {
 
     return {
       message: `Invitation sent to ${inviteDto.email}`,
-      invitationId: invitationToken,
+      invitationId: inviteCode,
     };
+  }
+
+  async getWorkspaceInviteCode(workspaceId: string): Promise<{ inviteCode: string }> {
+    const workspace = await this.workspaceRepository.findOne({ where: { id: workspaceId } });
+    if (!workspace) throw new NotFoundException('Workspace not found');
+    return { inviteCode: workspace.inviteCode || '' };
+  }
+
+  async regenerateWorkspaceInviteCode(workspaceId: string, currentUserRole: UserRole): Promise<{ inviteCode: string }> {
+    if (currentUserRole !== UserRole.ADMIN) {
+      throw new ForbiddenException('Only administrators can regenerate invite codes');
+    }
+    const workspace = await this.workspaceRepository.findOne({ where: { id: workspaceId } });
+    if (!workspace) throw new NotFoundException('Workspace not found');
+    workspace.regenerateInviteCode();
+    await this.workspaceRepository.save(workspace);
+    return { inviteCode: workspace.inviteCode };
   }
 
   /**

@@ -11,17 +11,20 @@ export interface RegisterData {
   firstName: string;
   lastName: string;
   workspaceName?: string;
+  inviteCode?: string;
 }
 
 export interface AuthResponse {
   // accessToken returned in body as Bearer fallback for iOS Safari (also set as httpOnly cookie)
   accessToken?: string;
+  pendingApproval?: boolean;
   user: {
     id: string;
     email: string;
     firstName: string;
     lastName: string;
     role: string;
+    status: string;
     workspaceId: string;
   };
 }
@@ -32,6 +35,7 @@ export interface User {
   firstName: string;
   lastName: string;
   role: string;
+  status?: string;
   workspaceId: string;
   avatar?: string;
 }

@@ -250,6 +250,7 @@ export class AuthController {
         firstName: user?.firstName || null,
         lastName: user?.lastName || null,
         role: user?.role || null,
+        status: (user as any)?.status || null,
         workspaceId: user?.workspaceId || null,
         preferences: user?.preferences || {},
       };
@@ -262,6 +263,7 @@ export class AuthController {
         firstName: req.user?.firstName || null,
         lastName: req.user?.lastName || null,
         role: req.user?.role || null,
+        status: req.user?.status || null,
         workspaceId: req.user?.workspaceId || null,
         preferences: {},
       };

@@ -1,4 +1,4 @@
-import { UserRole } from '../../database/entities/user.entity';
+import { UserRole, UserStatus } from '../../database/entities/user.entity';
 
 /**
  * Authentication response interface
@@ -10,8 +10,10 @@ export interface AuthResponse {
     firstName: string;
     lastName: string;
     role: UserRole;
+    status: UserStatus;
     workspaceId: string;
   };
   accessToken: string;
   refreshToken: string;
+  pendingApproval?: boolean;
 }

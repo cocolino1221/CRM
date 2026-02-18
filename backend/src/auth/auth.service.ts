@@ -53,11 +53,15 @@ export class AuthService {
    */
   async validateUser(email: string, password: string, workspaceId?: string): Promise<User | null> {
     try {
-      const user = await this.userRepository.findOne({
-        where: workspaceId
-          ? { email, workspaceId, status: UserStatus.ACTIVE }
-          : { email, status: UserStatus.ACTIVE },
-      });
+      const where: any = workspaceId
+        ? { email, workspaceId }
+        : { email };
+      const user = await this.userRepository.findOne({ where });
+
+      // Block suspended/inactive users but allow PENDING (they see approval screen)
+      if (user && (user.status === UserStatus.SUSPENDED || user.status === UserStatus.INACTIVE)) {
+        throw new UnauthorizedException('Account is suspended or inactive');
+      }
 
       if (!user) {
         return null;
@@ -110,9 +114,11 @@ export class AuthService {
           firstName: user.firstName,
           lastName: user.lastName,
           role: user.role,
+          status: user.status as UserStatus,
           workspaceId: user.workspaceId,
         },
         ...tokens,
+        pendingApproval: user.status === UserStatus.PENDING,
       };
     } catch (error) {
       this.logger.error(`Login failed (correlation: ${Buffer.from(loginDto.email).toString('base64').substring(0, 12)}):`, error.message);
@@ -137,16 +143,29 @@ export class AuthService {
       // Handle workspace creation or joining
       let workspace: Workspace;
       let userRole = UserRole.SALES_REP;
+      let userStatus = UserStatus.ACTIVE;
+      let pendingApproval = false;
 
-      if (registerDto.workspaceDomain) {
-        // Join existing workspace
+      if (registerDto.inviteCode) {
+        // Join workspace via invite code (trusted — instant access)
+        workspace = await this.workspaceRepository.findOne({
+          where: { inviteCode: registerDto.inviteCode },
+        });
+        if (!workspace) {
+          throw new NotFoundException('Invalid invite code');
+        }
+        // Invited user gets ACTIVE status immediately
+        userStatus = UserStatus.ACTIVE;
+      } else if (registerDto.workspaceDomain) {
+        // Join existing workspace without invite code — requires approval
         workspace = await this.workspaceRepository.findOne({
           where: { domain: registerDto.workspaceDomain },
         });
-
         if (!workspace) {
           throw new NotFoundException('Workspace not found');
         }
+        userStatus = UserStatus.PENDING;
+        pendingApproval = true;
       } else {
         // Create new workspace (first user becomes admin)
         workspace = this.workspaceRepository.create({
@@ -181,7 +200,7 @@ export class AuthService {
         lastName: registerDto.lastName,
         password: hashedPassword,
         role: userRole,
-        status: UserStatus.ACTIVE,
+        status: userStatus,
         workspaceId: workspace.id,
       });
 
@@ -190,7 +209,7 @@ export class AuthService {
       // Generate tokens
       const tokens = await this.generateTokens(savedUser);
 
-      this.logger.log(`User ${savedUser.id} registered successfully`);
+      this.logger.log(`User ${savedUser.id} registered (status: ${userStatus})`);
 
       return {
         user: {
@@ -199,9 +218,11 @@ export class AuthService {
           firstName: savedUser.firstName,
           lastName: savedUser.lastName,
           role: savedUser.role,
+          status: savedUser.status as UserStatus,
           workspaceId: savedUser.workspaceId,
         },
         ...tokens,
+        pendingApproval,
       };
     } catch (error) {
       this.logger.error(`Registration failed (correlation: ${Buffer.from(registerDto.email).toString('base64').substring(0, 12)}):`, error.message);
@@ -763,6 +784,7 @@ export class AuthService {
           firstName: user.firstName,
           lastName: user.lastName,
           role: user.role,
+          status: user.status as UserStatus,
           workspaceId: user.workspaceId,
         },
         accessToken: tokens.accessToken,
@@ -846,6 +868,7 @@ export class AuthService {
           firstName: user.firstName,
           lastName: user.lastName,
           role: user.role,
+          status: user.status as UserStatus,
           workspaceId: user.workspaceId,
         },
         accessToken: tokens.accessToken,

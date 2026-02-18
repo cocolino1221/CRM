@@ -78,4 +78,13 @@ export class RegisterDto {
   @IsString({ message: 'Workspace domain must be a string' })
   @Transform(({ value }) => value?.toLowerCase().trim())
   workspaceDomain?: string;
+
+  @ApiPropertyOptional({
+    description: 'Workspace invite code for direct join (skips approval)',
+    example: 'A1B2C3D4',
+  })
+  @IsOptional()
+  @IsString({ message: 'Invite code must be a string' })
+  @Transform(({ value }) => value?.toUpperCase().trim())
+  inviteCode?: string;
 }

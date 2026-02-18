@@ -22,7 +22,24 @@ export class EmailService {
   private initializeTransporter() {
     const emailProvider = this.configService.get<string>('EMAIL_PROVIDER', 'smtp');
 
-    if (emailProvider === 'sendgrid') {
+    if (emailProvider === 'resend') {
+      // Resend SMTP configuration
+      const resendApiKey = this.configService.get<string>('RESEND_API_KEY');
+      if (resendApiKey) {
+        this.transporter = nodemailer.createTransport({
+          host: 'smtp.resend.com',
+          port: 465,
+          secure: true,
+          auth: {
+            user: 'resend',
+            pass: resendApiKey,
+          },
+        });
+        this.logger.log('Email service initialized with Resend');
+      } else {
+        this.logger.warn('Resend API key not found, email service disabled');
+      }
+    } else if (emailProvider === 'sendgrid') {
       // SendGrid configuration
       const sendgridApiKey = this.configService.get<string>('SENDGRID_API_KEY');
       if (sendgridApiKey) {
@@ -177,30 +194,28 @@ export class EmailService {
     });
   }
 
-  async sendInviteEmail(to: string, inviterName: string, workspaceName: string, inviteToken: string): Promise<boolean> {
-    const frontendUrl = this.configService.get<string>('FRONTEND_URL', 'http://localhost:3001');
-    const inviteUrl = `${frontendUrl}/auth/accept-invite?token=${inviteToken}`;
-
+  async sendInviteEmail(to: string, inviterName: string, inviteUrl: string, customMessage?: string): Promise<boolean> {
     const html = `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <h2>You've Been Invited to Join ${workspaceName}</h2>
-        <p>${inviterName} has invited you to join their team on SlackCRM.</p>
+        <h2>You've Been Invited to Join EasyTeam CRM</h2>
+        <p>${inviterName} has invited you to join their team.</p>
+        ${customMessage ? `<p style="margin: 20px 0; padding: 16px; background-color: #F3F4F6; border-radius: 8px; color: #374151;">"${customMessage}"</p>` : ''}
         <p style="margin: 30px 0;">
-          <a href="${inviteUrl}" style="background-color: #10B981; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">
-            Accept Invite
+          <a href="${inviteUrl}" style="background-color: #4F46E5; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">
+            Join the Team
           </a>
         </p>
-        <p>This invitation will expire in 7 days.</p>
+        <p style="color: #6B7280; font-size: 14px;">Click the button above or paste this link in your browser:<br>${inviteUrl}</p>
         <hr style="margin: 30px 0; border: none; border-top: 1px solid #E5E7EB;">
-        <p style="color: #6B7280; font-size: 14px;">SlackCRM - AI-Powered Team CRM</p>
+        <p style="color: #6B7280; font-size: 14px;">EasyTeam CRM</p>
       </div>
     `;
 
     return this.sendEmail({
       to,
-      subject: `You've been invited to join ${workspaceName} on SlackCRM`,
+      subject: `${inviterName} invited you to join EasyTeam CRM`,
       html,
-      text: `${inviterName} has invited you to join ${workspaceName}. Accept your invite at: ${inviteUrl}`,
+      text: `${inviterName} has invited you to join their team. Join here: ${inviteUrl}`,
     });
   }
 }

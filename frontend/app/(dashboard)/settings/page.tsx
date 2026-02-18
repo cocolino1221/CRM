@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { User, Bell, Lock, Building2, Palette, Loader2, Check, AlertCircle } from 'lucide-react';
+import { User, Bell, Lock, Building2, Palette, Loader2, Check, AlertCircle, Copy, RefreshCw, Link } from 'lucide-react';
 import api from '@/lib/api';
 import ThemeSettings from '@/components/settings/ThemeSettings';
 import NotificationSettings from '@/components/settings/NotificationSettings';
@@ -13,6 +13,98 @@ interface UserProfile {
   lastName: string;
   role: string;
   workspaceId: string;
+}
+
+function WorkspaceTab({
+  workspaceId, userRole, inviteCode, inviteCodeLoading, codeCopied, linkCopied,
+  fetchInviteCode, regenerateInviteCode, copyInviteCode, copyInviteLink,
+}: {
+  workspaceId: string; userRole: string; inviteCode: string; inviteCodeLoading: boolean;
+  codeCopied: boolean; linkCopied: boolean;
+  fetchInviteCode: () => void; regenerateInviteCode: () => void;
+  copyInviteCode: () => void; copyInviteLink: () => void;
+}) {
+  useEffect(() => { fetchInviteCode(); }, []);
+  const isAdmin = userRole === 'admin';
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-lg font-semibold text-gray-900 mb-4">Workspace Settings</h2>
+        <p className="text-sm text-gray-600 mb-6">
+          Manage your workspace settings and preferences.
+        </p>
+      </div>
+
+      <div className="space-y-4">
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">Workspace ID</label>
+          <input
+            type="text"
+            value={workspaceId}
+            disabled
+            className="w-full px-4 py-2.5 rounded-lg border border-gray-300 bg-gray-50 text-gray-500 cursor-not-allowed font-mono text-sm"
+          />
+        </div>
+      </div>
+
+      {/* Invite Code Section */}
+      <div className="border-t border-gray-200 pt-6">
+        <h3 className="text-md font-semibold text-gray-900 mb-2">Workspace Invite Code</h3>
+        <p className="text-sm text-gray-600 mb-4">
+          Share this code or link with team members so they can register and join your workspace instantly (no approval needed).
+        </p>
+
+        {inviteCodeLoading ? (
+          <div className="flex items-center gap-2 text-gray-500">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Loading...
+          </div>
+        ) : inviteCode ? (
+          <div className="space-y-3">
+            <div className="flex items-center gap-3">
+              <div className="flex-1 px-4 py-3 rounded-lg bg-indigo-50 border border-indigo-200 font-mono text-lg font-bold text-indigo-700 tracking-widest text-center">
+                {inviteCode}
+              </div>
+              <button
+                onClick={copyInviteCode}
+                className="px-4 py-3 rounded-lg border border-gray-300 hover:bg-gray-50 transition-colors flex items-center gap-2 text-sm"
+              >
+                {codeCopied ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4" />}
+                {codeCopied ? 'Copied!' : 'Copy'}
+              </button>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <div className="flex-1 px-3 py-2 rounded-lg bg-gray-50 border border-gray-200 text-sm text-gray-600 truncate">
+                https://easyteamcrm.netlify.app/register?code={inviteCode}
+              </div>
+              <button
+                onClick={copyInviteLink}
+                className="px-4 py-2 rounded-lg border border-gray-300 hover:bg-gray-50 transition-colors flex items-center gap-2 text-sm"
+              >
+                {linkCopied ? <Check className="h-4 w-4 text-green-600" /> : <Link className="h-4 w-4" />}
+                {linkCopied ? 'Copied!' : 'Copy Link'}
+              </button>
+            </div>
+
+            {isAdmin && (
+              <button
+                onClick={regenerateInviteCode}
+                disabled={inviteCodeLoading}
+                className="mt-2 flex items-center gap-2 px-4 py-2 text-sm text-red-600 border border-red-200 rounded-lg hover:bg-red-50 transition-colors disabled:opacity-50"
+              >
+                <RefreshCw className="h-4 w-4" />
+                Regenerate Code
+              </button>
+            )}
+          </div>
+        ) : (
+          <p className="text-sm text-gray-500">No invite code found for this workspace.</p>
+        )}
+      </div>
+    </div>
+  );
 }
 
 export default function SettingsPage() {
@@ -34,6 +126,11 @@ export default function SettingsPage() {
     newPassword: '',
     confirmPassword: '',
   });
+
+  const [inviteCode, setInviteCode] = useState('');
+  const [inviteCodeLoading, setInviteCodeLoading] = useState(false);
+  const [codeCopied, setCodeCopied] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
 
   useEffect(() => {
     fetchProfile();
@@ -73,6 +170,44 @@ export default function SettingsPage() {
     } finally {
       setIsSaving(false);
     }
+  };
+
+  const fetchInviteCode = async () => {
+    try {
+      setInviteCodeLoading(true);
+      const response = await api.get<{ inviteCode: string }>('/users/workspace/invite-code');
+      setInviteCode(response.data.inviteCode || '');
+    } catch (err) {
+      console.error('Failed to fetch invite code:', err);
+    } finally {
+      setInviteCodeLoading(false);
+    }
+  };
+
+  const regenerateInviteCode = async () => {
+    if (!confirm('Are you sure? The old invite code will stop working.')) return;
+    try {
+      setInviteCodeLoading(true);
+      const response = await api.post<{ inviteCode: string }>('/users/workspace/invite-code/regenerate');
+      setInviteCode(response.data.inviteCode);
+    } catch (err: any) {
+      setError(err.response?.data?.message || 'Failed to regenerate invite code');
+    } finally {
+      setInviteCodeLoading(false);
+    }
+  };
+
+  const copyInviteCode = () => {
+    navigator.clipboard.writeText(inviteCode);
+    setCodeCopied(true);
+    setTimeout(() => setCodeCopied(false), 2000);
+  };
+
+  const copyInviteLink = () => {
+    const link = `https://easyteamcrm.netlify.app/register?code=${inviteCode}`;
+    navigator.clipboard.writeText(link);
+    setLinkCopied(true);
+    setTimeout(() => setLinkCopied(false), 2000);
   };
 
   const handleChangePassword = async (e: React.FormEvent) => {
@@ -308,28 +443,18 @@ export default function SettingsPage() {
         )}
 
         {activeTab === 'workspace' && (
-          <div className="space-y-6">
-            <div>
-              <h2 className="text-lg font-semibold text-gray-900 mb-4">Workspace Settings</h2>
-              <p className="text-sm text-gray-600 mb-6">
-                Manage your workspace settings and preferences.
-              </p>
-            </div>
-
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Workspace ID
-                </label>
-                <input
-                  type="text"
-                  value={profile?.workspaceId || ''}
-                  disabled
-                  className="w-full px-4 py-2.5 rounded-lg border border-gray-300 bg-gray-50 text-gray-500 cursor-not-allowed font-mono text-sm"
-                />
-              </div>
-            </div>
-          </div>
+          <WorkspaceTab
+            workspaceId={profile?.workspaceId || ''}
+            userRole={profile?.role || ''}
+            inviteCode={inviteCode}
+            inviteCodeLoading={inviteCodeLoading}
+            codeCopied={codeCopied}
+            linkCopied={linkCopied}
+            fetchInviteCode={fetchInviteCode}
+            regenerateInviteCode={regenerateInviteCode}
+            copyInviteCode={copyInviteCode}
+            copyInviteLink={copyInviteLink}
+          />
         )}
       </div>
     </div>

@@ -183,4 +183,16 @@ export class UsersController {
       req.user.fullName || `${req.user.firstName} ${req.user.lastName}`,
     );
   }
+
+  @Get('workspace/invite-code')
+  @ApiOperation({ summary: 'Get workspace invite code' })
+  async getInviteCode(@Req() req: any) {
+    return this.usersService.getWorkspaceInviteCode(req.user.workspaceId);
+  }
+
+  @Post('workspace/invite-code/regenerate')
+  @ApiOperation({ summary: 'Regenerate workspace invite code (admin only)' })
+  async regenerateInviteCode(@Req() req: any) {
+    return this.usersService.regenerateWorkspaceInviteCode(req.user.workspaceId, req.user.role);
+  }
 }

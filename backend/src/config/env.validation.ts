@@ -79,8 +79,15 @@ export const validationSchema = Joi.object({
   THROTTLE_LIMIT: Joi.number().default(60), // Reduced from 100 to 60 req/min for better security
 
   // Email Configuration
-  EMAIL_PROVIDER: Joi.string().valid('sendgrid', 'smtp').default('smtp'),
+  EMAIL_PROVIDER: Joi.string().valid('sendgrid', 'smtp', 'resend').default('smtp'),
   FROM_EMAIL: Joi.string().email().default('noreply@slackcrm.com'),
+
+  // Resend
+  RESEND_API_KEY: Joi.string().when('EMAIL_PROVIDER', {
+    is: 'resend',
+    then: Joi.required(),
+    otherwise: Joi.optional(),
+  }),
 
   // SendGrid
   SENDGRID_API_KEY: Joi.string().when('EMAIL_PROVIDER', {

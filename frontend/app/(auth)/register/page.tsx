@@ -1,24 +1,37 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { Building2, Mail, Lock, User, Eye, EyeOff, ArrowRight, Check, AlertCircle, Loader2 } from 'lucide-react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { Building2, Mail, Lock, User, Eye, EyeOff, ArrowRight, Check, AlertCircle, Loader2, KeyRound, Clock } from 'lucide-react';
 import { authService } from '@/lib/auth';
 
 export default function RegisterPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [step, setStep] = useState(1);
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
+  const [pendingApproval, setPendingApproval] = useState(false);
+  const [hasInviteCode, setHasInviteCode] = useState(false);
   const [formData, setFormData] = useState({
     workspaceName: '',
     firstName: '',
     lastName: '',
     email: '',
     password: '',
+    inviteCode: '',
   });
+
+  // Read invite code from URL params
+  useEffect(() => {
+    const code = searchParams.get('code');
+    if (code) {
+      setFormData(prev => ({ ...prev, inviteCode: code.toUpperCase() }));
+      setHasInviteCode(true);
+    }
+  }, [searchParams]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -29,8 +42,23 @@ export default function RegisterPage() {
     } else {
       setIsLoading(true);
       try {
-        await authService.register(formData);
-        router.push('/dashboard');
+        const payload: any = {
+          firstName: formData.firstName,
+          lastName: formData.lastName,
+          email: formData.email,
+          password: formData.password,
+        };
+        if (formData.inviteCode) {
+          payload.inviteCode = formData.inviteCode;
+        } else if (formData.workspaceName) {
+          payload.workspaceName = formData.workspaceName;
+        }
+        const response = await authService.register(payload);
+        if (response.pendingApproval) {
+          setPendingApproval(true);
+        } else {
+          router.push('/dashboard');
+        }
       } catch (err: any) {
         console.error('Registration error:', err);
         const errorMessage = err.response?.data?.message || 'Registration failed. Please try again.';
@@ -41,14 +69,38 @@ export default function RegisterPage() {
     }
   };
 
+  // Pending approval screen
+  if (pendingApproval) {
+    return (
+      <div className="animate-fade-in text-center py-8">
+        <div className="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-4">
+          <Clock className="h-8 w-8 text-amber-600" />
+        </div>
+        <h2 className="text-2xl font-bold text-gray-900 mb-2">Account Created!</h2>
+        <p className="text-gray-600 mb-6">
+          Your account has been created and is waiting for approval by a workspace administrator.
+        </p>
+        <p className="text-sm text-gray-500 mb-6">
+          You will be able to log in once your account is approved.
+        </p>
+        <Link
+          href="/login"
+          className="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl font-semibold hover:from-blue-700 hover:to-indigo-700 transition-all"
+        >
+          Go to Login
+        </Link>
+      </div>
+    );
+  }
+
   return (
     <div className="animate-fade-in">
       <div className="mb-8">
         <h2 className="text-3xl font-bold text-gray-900 mb-2">
-          {step === 1 ? 'Create your company' : 'Set up your account'}
+          {step === 1 ? (hasInviteCode ? 'Join a workspace' : 'Create your company') : 'Set up your account'}
         </h2>
         <p className="text-gray-600">
-          {step === 1 ? 'Start managing your team effectively' : 'Complete your profile to get started'}
+          {step === 1 ? (hasInviteCode ? 'You have an invite code — you\'ll get instant access' : 'Start managing your team effectively') : 'Complete your profile to get started'}
         </p>
       </div>
 
@@ -80,26 +132,73 @@ export default function RegisterPage() {
 
         {step === 1 ? (
           <>
-            {/* Workspace Name */}
-            <div>
-              <label htmlFor="workspaceName" className="block text-sm font-semibold text-gray-700 mb-2">
-                Workspace Name
-              </label>
-              <div className="relative">
-                <Building2 className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
-                <input
-                  id="workspaceName"
-                  type="text"
-                  value={formData.workspaceName}
-                  onChange={(e) => setFormData({ ...formData, workspaceName: e.target.value })}
-                  className="w-full pl-12 pr-4 py-3 rounded-xl border border-gray-300 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 transition-all outline-none"
-                  placeholder="Acme Corporation (optional)"
-                />
+            {/* Invite Code Toggle */}
+            {!hasInviteCode && (
+              <div className="flex items-center gap-3 p-4 rounded-xl bg-indigo-50 border border-indigo-200">
+                <KeyRound className="h-5 w-5 text-indigo-600 flex-shrink-0" />
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-indigo-900">Have an invite code?</p>
+                  <p className="text-xs text-indigo-600">Enter it to join an existing workspace instantly</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setHasInviteCode(true)}
+                  className="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors"
+                >
+                  Enter Code
+                </button>
               </div>
-              <p className="mt-2 text-xs text-gray-500">
-                Optional: Create a workspace for your team
-              </p>
-            </div>
+            )}
+
+            {hasInviteCode ? (
+              <div>
+                <label htmlFor="inviteCode" className="block text-sm font-semibold text-gray-700 mb-2">
+                  Invite Code
+                </label>
+                <div className="relative">
+                  <KeyRound className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
+                  <input
+                    id="inviteCode"
+                    type="text"
+                    value={formData.inviteCode}
+                    onChange={(e) => setFormData({ ...formData, inviteCode: e.target.value.toUpperCase() })}
+                    className="w-full pl-12 pr-4 py-3 rounded-xl border border-gray-300 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 transition-all outline-none font-mono tracking-widest text-lg uppercase"
+                    placeholder="ABCD1234"
+                    maxLength={20}
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setHasInviteCode(false);
+                    setFormData(prev => ({ ...prev, inviteCode: '' }));
+                  }}
+                  className="mt-2 text-xs text-indigo-600 hover:text-indigo-700"
+                >
+                  Create a new workspace instead
+                </button>
+              </div>
+            ) : (
+              <div>
+                <label htmlFor="workspaceName" className="block text-sm font-semibold text-gray-700 mb-2">
+                  Workspace Name
+                </label>
+                <div className="relative">
+                  <Building2 className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
+                  <input
+                    id="workspaceName"
+                    type="text"
+                    value={formData.workspaceName}
+                    onChange={(e) => setFormData({ ...formData, workspaceName: e.target.value })}
+                    className="w-full pl-12 pr-4 py-3 rounded-xl border border-gray-300 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 transition-all outline-none"
+                    placeholder="Acme Corporation (optional)"
+                  />
+                </div>
+                <p className="mt-2 text-xs text-gray-500">
+                  Optional: Create a workspace for your team
+                </p>
+              </div>
+            )}
           </>
         ) : (
           <>

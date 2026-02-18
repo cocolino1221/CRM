@@ -24,7 +24,13 @@ import {
   Target,
   PhoneCall,
   UserPlus,
-  Headphones
+  Headphones,
+  Clock,
+  CheckCircle,
+  XCircle,
+  Send,
+  Copy,
+  Check
 } from 'lucide-react';
 import api from '@/lib/api';
 
@@ -35,6 +41,7 @@ interface User {
   lastName: string;
   phone?: string;
   role: string;
+  status?: string;
   isActive: boolean;
   lastLoginAt?: string;
   createdAt: string;
@@ -110,6 +117,11 @@ export default function UsersPage() {
   const [modalError, setModalError] = useState('');
 
   const [showPassword, setShowPassword] = useState(false);
+  const [showInviteModal, setShowInviteModal] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [inviteRole, setInviteRole] = useState<UserRole>('sales_rep');
+  const [inviteMessage, setInviteMessage] = useState('');
+  const [inviteSuccess, setInviteSuccess] = useState('');
   const [formData, setFormData] = useState({
     email: '',
     firstName: '',
@@ -239,6 +251,49 @@ export default function UsersPage() {
     }
   };
 
+  const handleApproveUser = async (userId: string) => {
+    try {
+      await api.patch(`/users/${userId}/status`, { status: 'active' });
+      setUsers(users.map(u => u.id === userId ? { ...u, status: 'active', isActive: true } : u));
+    } catch (err: any) {
+      alert(err.response?.data?.message || 'Failed to approve user');
+    }
+  };
+
+  const handleRejectUser = async (userId: string) => {
+    if (!confirm('Are you sure you want to reject this user? They will be removed.')) return;
+    try {
+      await api.delete(`/users/${userId}`);
+      setUsers(users.filter(u => u.id !== userId));
+    } catch (err: any) {
+      alert(err.response?.data?.message || 'Failed to reject user');
+    }
+  };
+
+  const handleSendInvite = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setModalError('');
+    setInviteSuccess('');
+    setIsSubmitting(true);
+    try {
+      const response = await api.post('/users/invite', {
+        email: inviteEmail,
+        role: inviteRole,
+        customMessage: inviteMessage || undefined,
+      });
+      setInviteSuccess(response.data.message || 'Invitation sent!');
+      setInviteEmail('');
+      setInviteMessage('');
+    } catch (err: any) {
+      setModalError(err.response?.data?.message || 'Failed to send invitation');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const pendingUsers = users.filter(u => u.status === 'pending');
+  const activeUsers = filteredUsers.filter(u => u.status !== 'pending');
+
   const openEditModal = (user: User) => {
     setEditingUser(user);
     setFormData({
@@ -300,16 +355,32 @@ export default function UsersPage() {
           <h1 className="text-3xl font-bold text-gray-900">Team Members</h1>
           <p className="text-gray-600 mt-1">Manage your team and assign roles</p>
         </div>
-        <button
-          onClick={() => {
-            resetForm();
-            setShowAddModal(true);
-          }}
-          className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-lg hover:from-blue-700 hover:to-indigo-700 transition-all shadow-lg hover:shadow-xl"
-        >
-          <Plus className="h-5 w-5" />
-          Add User
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => {
+              setInviteEmail('');
+              setInviteMessage('');
+              setInviteRole('sales_rep');
+              setModalError('');
+              setInviteSuccess('');
+              setShowInviteModal(true);
+            }}
+            className="flex items-center gap-2 px-4 py-2 bg-white border border-indigo-300 text-indigo-700 rounded-lg hover:bg-indigo-50 transition-all"
+          >
+            <Send className="h-4 w-4" />
+            Invite
+          </button>
+          <button
+            onClick={() => {
+              resetForm();
+              setShowAddModal(true);
+            }}
+            className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-lg hover:from-blue-700 hover:to-indigo-700 transition-all shadow-lg hover:shadow-xl"
+          >
+            <Plus className="h-5 w-5" />
+            Add User
+          </button>
+        </div>
       </div>
 
       {/* Role Stats */}
@@ -361,6 +432,50 @@ export default function UsersPage() {
         </select>
       </div>
 
+      {/* Pending Approval Section */}
+      {pendingUsers.length > 0 && (
+        <div className="bg-amber-50 rounded-xl border-2 border-amber-200 overflow-hidden">
+          <div className="px-6 py-4 border-b border-amber-200 flex items-center gap-3">
+            <Clock className="h-5 w-5 text-amber-600" />
+            <h2 className="font-bold text-amber-900">Pending Approval ({pendingUsers.length})</h2>
+          </div>
+          <div className="divide-y divide-amber-100">
+            {pendingUsers.map(user => (
+              <div key={user.id} className="px-6 py-4 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="h-10 w-10 rounded-full bg-amber-200 flex items-center justify-center text-amber-800 font-bold text-sm">
+                    {user.firstName[0]}{user.lastName[0]}
+                  </div>
+                  <div>
+                    <p className="font-semibold text-gray-900">{user.firstName} {user.lastName}</p>
+                    <p className="text-sm text-gray-500">{user.email}</p>
+                  </div>
+                  <span className="text-xs text-gray-400 ml-2">
+                    Signed up {new Date(user.createdAt).toLocaleDateString()}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => handleApproveUser(user.id)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium"
+                  >
+                    <CheckCircle className="h-4 w-4" />
+                    Approve
+                  </button>
+                  <button
+                    onClick={() => handleRejectUser(user.id)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition-colors text-sm font-medium"
+                  >
+                    <XCircle className="h-4 w-4" />
+                    Reject
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Users List */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
         <div className="overflow-x-auto">
@@ -388,7 +503,7 @@ export default function UsersPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200">
-              {filteredUsers.length === 0 ? (
+              {activeUsers.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="px-6 py-12 text-center">
                     <Users className="h-12 w-12 text-gray-300 mx-auto mb-3" />
@@ -396,7 +511,7 @@ export default function UsersPage() {
                   </td>
                 </tr>
               ) : (
-                filteredUsers.map((user) => {
+                activeUsers.map((user) => {
                   const roleInfo = getRoleInfo(user.role);
                   return (
                     <tr key={user.id} className="hover:bg-gray-50 transition-colors">
@@ -561,13 +676,12 @@ export default function UsersPage() {
                   <input
                     type={showPassword ? 'text' : 'password'}
                     required
-                    minLength={8}
-                    pattern="^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)[a-zA-Z\d@$!%*?&]{8,}$"
-                    title="Password must be at least 8 characters and contain at least one uppercase letter, one lowercase letter, and one number"
+                    minLength={12}
+                    title="Password must be at least 12 characters with 1 uppercase, 1 lowercase, 1 number, and 1 special character (@$!%*?&)"
                     value={formData.password}
                     onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                     className="w-full px-4 py-3 pr-12 rounded-xl border border-gray-300 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 transition-all outline-none"
-                    placeholder="Min 8 chars, 1 uppercase, 1 lowercase, 1 number"
+                    placeholder="Min 12 chars, Aa1@..."
                   />
                   <button
                     type="button"
@@ -578,7 +692,7 @@ export default function UsersPage() {
                   </button>
                 </div>
                 <p className="mt-1 text-xs text-gray-500">
-                  Must contain at least 8 characters with 1 uppercase, 1 lowercase, and 1 number
+                  Min 12 characters with 1 uppercase, 1 lowercase, 1 number, and 1 special character (@$!%*?&)
                 </p>
               </div>
 
@@ -633,6 +747,93 @@ export default function UsersPage() {
                       <Plus className="h-5 w-5" />
                       Create User
                     </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Invite User Modal */}
+      {showInviteModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full">
+            <div className="border-b border-gray-200 px-6 py-4 flex items-center justify-between">
+              <h2 className="text-xl font-bold text-gray-900">Invite Team Member</h2>
+              <button
+                onClick={() => setShowInviteModal(false)}
+                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <form onSubmit={handleSendInvite} className="p-6 space-y-4">
+              {modalError && (
+                <div className="flex items-center gap-2 p-3 rounded-xl bg-red-50 border border-red-200">
+                  <AlertCircle className="h-4 w-4 text-red-600 flex-shrink-0" />
+                  <p className="text-sm text-red-700">{modalError}</p>
+                </div>
+              )}
+              {inviteSuccess && (
+                <div className="flex items-center gap-2 p-3 rounded-xl bg-green-50 border border-green-200">
+                  <CheckCircle className="h-4 w-4 text-green-600 flex-shrink-0" />
+                  <p className="text-sm text-green-700">{inviteSuccess}</p>
+                </div>
+              )}
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">Email Address</label>
+                <input
+                  type="email"
+                  required
+                  value={inviteEmail}
+                  onChange={e => setInviteEmail(e.target.value)}
+                  className="w-full px-4 py-2.5 rounded-xl border border-gray-300 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 transition-all outline-none"
+                  placeholder="colleague@company.com"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">Role</label>
+                <select
+                  value={inviteRole}
+                  onChange={e => setInviteRole(e.target.value as UserRole)}
+                  className="w-full px-4 py-2.5 rounded-xl border border-gray-300 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 transition-all outline-none"
+                >
+                  {ROLES.map(r => (
+                    <option key={r.value} value={r.value}>{r.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">Personal Message (Optional)</label>
+                <textarea
+                  value={inviteMessage}
+                  onChange={e => setInviteMessage(e.target.value)}
+                  rows={3}
+                  className="w-full px-4 py-2.5 rounded-xl border border-gray-300 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 transition-all outline-none resize-none"
+                  placeholder="Hey, join our team on EasyTeam CRM!"
+                />
+              </div>
+              <p className="text-xs text-gray-500">
+                The invited person will receive an email with a registration link. Using the link, they will be added to your workspace instantly (no approval needed).
+              </p>
+              <div className="flex gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowInviteModal(false)}
+                  className="flex-1 px-4 py-2.5 rounded-xl font-semibold border border-gray-300 hover:bg-gray-50 transition-colors"
+                >
+                  Close
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="flex-1 bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-4 py-2.5 rounded-xl font-semibold shadow-lg hover:shadow-xl transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  {isSubmitting ? (
+                    <><Loader2 className="h-4 w-4 animate-spin" /> Sending...</>
+                  ) : (
+                    <><Send className="h-4 w-4" /> Send Invite</>
                   )}
                 </button>
               </div>
@@ -726,9 +927,8 @@ export default function UsersPage() {
                 <div className="relative">
                   <input
                     type={showPassword ? 'text' : 'password'}
-                    minLength={8}
-                    pattern="^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)[a-zA-Z\d@$!%*?&]{8,}$"
-                    title="Password must be at least 8 characters and contain at least one uppercase letter, one lowercase letter, and one number"
+                    minLength={12}
+                    title="Password must be at least 12 characters with 1 uppercase, 1 lowercase, 1 number, and 1 special character (@$!%*?&)"
                     value={formData.password}
                     onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                     className="w-full px-4 py-3 pr-12 rounded-xl border border-gray-300 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 transition-all outline-none"
