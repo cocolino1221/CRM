@@ -1382,63 +1382,76 @@ export default function WhatsAppPage() {
 
   // Flow step editing helpers
   const updateFlowStep = (stepIndex: number, field: string, value: any) => {
-    if (!editingFlow) return;
-    const steps = [...editingFlow.steps];
-    steps[stepIndex] = { ...steps[stepIndex], [field]: value };
-    setEditingFlow({ ...editingFlow, steps });
+    setEditingFlow((prev: any) => {
+      if (!prev) return prev;
+      const steps = [...prev.steps];
+      if (!steps[stepIndex]) return prev;
+      steps[stepIndex] = { ...steps[stepIndex], [field]: value };
+      return { ...prev, steps };
+    });
   };
 
   const addFlowStep = () => {
-    if (!editingFlow) return;
-    const stepId = `step_${editingFlow.steps.length}`;
-    setEditingFlow({
-      ...editingFlow,
-      steps: [...editingFlow.steps, { id: stepId, message: '', buttons: [] }],
+    setEditingFlow((prev: any) => {
+      if (!prev) return prev;
+      const stepId = `step_${prev.steps.length}`;
+      return {
+        ...prev,
+        steps: [...prev.steps, { id: stepId, message: '', buttons: [] }],
+      };
     });
   };
 
   const removeFlowStep = (stepIndex: number) => {
-    if (!editingFlow || editingFlow.steps.length <= 1) return;
-    const removedId = editingFlow.steps[stepIndex].id;
-    const steps = editingFlow.steps.filter((_: any, i: number) => i !== stepIndex);
-    // Clean up button references to removed step
-    for (const step of steps) {
-      if (step.buttons) {
-        step.buttons = step.buttons.map((b: any) =>
-          b.nextStepId === removedId ? { ...b, nextStepId: '' } : b
-        );
-      }
-    }
-    setEditingFlow({ ...editingFlow, steps });
+    setEditingFlow((prev: any) => {
+      if (!prev || prev.steps.length <= 1 || !prev.steps[stepIndex]) return prev;
+      const removedId = prev.steps[stepIndex].id;
+      const steps = prev.steps
+        .filter((_: any, i: number) => i !== stepIndex)
+        .map((step: any) => ({
+          ...step,
+          buttons: (step.buttons || []).map((b: any) =>
+            b.nextStepId === removedId ? { ...b, nextStepId: '' } : b
+          ),
+        }));
+      return { ...prev, steps };
+    });
   };
 
   const addStepButton = (stepIndex: number) => {
-    if (!editingFlow) return;
-    const steps = [...editingFlow.steps];
-    const step = steps[stepIndex];
-    if ((step.buttons || []).length >= 3) return; // Meta limit
-    const buttons = [...(step.buttons || []), { id: `btn_${Date.now()}`, title: '', nextStepId: '' }];
-    steps[stepIndex] = { ...step, buttons };
-    setEditingFlow({ ...editingFlow, steps });
+    setEditingFlow((prev: any) => {
+      if (!prev || !prev.steps[stepIndex]) return prev;
+      const steps = [...prev.steps];
+      const step = steps[stepIndex];
+      if ((step.buttons || []).length >= 3) return prev; // Meta limit
+      const buttons = [...(step.buttons || []), { id: `btn_${Date.now()}`, title: '', nextStepId: '' }];
+      steps[stepIndex] = { ...step, buttons };
+      return { ...prev, steps };
+    });
   };
 
   const removeStepButton = (stepIndex: number, btnIndex: number) => {
-    if (!editingFlow) return;
-    const steps = [...editingFlow.steps];
-    const step = steps[stepIndex];
-    const buttons = (step.buttons || []).filter((_: any, i: number) => i !== btnIndex);
-    steps[stepIndex] = { ...step, buttons };
-    setEditingFlow({ ...editingFlow, steps });
+    setEditingFlow((prev: any) => {
+      if (!prev || !prev.steps[stepIndex]) return prev;
+      const steps = [...prev.steps];
+      const step = steps[stepIndex];
+      const buttons = (step.buttons || []).filter((_: any, i: number) => i !== btnIndex);
+      steps[stepIndex] = { ...step, buttons };
+      return { ...prev, steps };
+    });
   };
 
   const updateStepButton = (stepIndex: number, btnIndex: number, field: string, value: string) => {
-    if (!editingFlow) return;
-    const steps = [...editingFlow.steps];
-    const step = steps[stepIndex];
-    const buttons = [...(step.buttons || [])];
-    buttons[btnIndex] = { ...buttons[btnIndex], [field]: value };
-    steps[stepIndex] = { ...step, buttons };
-    setEditingFlow({ ...editingFlow, steps });
+    setEditingFlow((prev: any) => {
+      if (!prev || !prev.steps[stepIndex]) return prev;
+      const steps = [...prev.steps];
+      const step = steps[stepIndex];
+      const buttons = [...(step.buttons || [])];
+      if (!buttons[btnIndex]) return prev;
+      buttons[btnIndex] = { ...buttons[btnIndex], [field]: value };
+      steps[stepIndex] = { ...step, buttons };
+      return { ...prev, steps };
+    });
   };
 
   // ─── Render ───────────────────────────────────────────────
@@ -3428,7 +3441,7 @@ export default function WhatsAppPage() {
                                           try {
                                             const formData = new FormData();
                                             formData.append('file', file);
-                                            const res = await api.post('/integrations/whatsapp/media/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
+                                            const res = await api.post('/integrations/whatsapp/media/upload', formData);
                                             updateFlowStep(si, 'mediaId', res.data.id);
                                             updateFlowStep(si, 'mediaUrl', undefined);
                                             updateFlowStep(si, 'mediaFileName', file.name);
