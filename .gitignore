@@ -79,3 +79,8 @@ Thumbs.db
 *.sqlite3
 # Local Netlify folder
 .netlify
+
+# Capacitor native projects (generated with `npx cap add`)
+frontend/ios/
+frontend/android/
+frontend/out/

@@ -1,11 +1,25 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import './globals.css';
 import AuthGuard from '@/components/AuthGuard';
 import { ThemeProvider } from '@/contexts/ThemeContext';
 
 export const metadata: Metadata = {
-  title: 'SlackCRM - AI-Powered Team CRM',
+  title: 'EasyTeam CRM',
   description: 'AI-powered CRM platform for team collaboration',
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'default',
+    title: 'EasyTeam CRM',
+  },
+};
+
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+  viewportFit: 'cover',
+  themeColor: '#16a34a',
 };
 
 export default function RootLayout({
@@ -15,7 +29,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body>
+      <body className="safe-area-inset">
         <ThemeProvider>
           <AuthGuard>{children}</AuthGuard>
         </ThemeProvider>

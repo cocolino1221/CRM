@@ -1,5 +1,23 @@
 @import "tailwindcss";
 
+/* Safe area insets for mobile devices with notches */
+.safe-area-inset {
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
+}
+
+/* Mobile app touch optimizations */
+@media (max-width: 1023px) {
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  input, textarea, select {
+    font-size: 16px !important; /* Prevent iOS zoom on input focus */
+  }
+}
+
 :root {
   /* Theme colors - defaults (Light mode) */
   --color-primary: #3B82F6;
