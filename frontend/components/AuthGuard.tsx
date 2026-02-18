@@ -16,15 +16,19 @@ export default function AuthGuard({ children }: AuthGuardProps) {
   const [isPending, setIsPending] = useState(false);
 
   // Public routes that don't require authentication
-  const publicRoutes = [
+  const publicRoutes = new Set([
     '/',
     '/login',
     '/signin',
     '/register',
     '/signup',
+    '/privacy',
+    '/terms',
     '/auth/callback', // OAuth callback must stay public so tokens can be exchanged
-  ];
-  const isPublicRoute = publicRoutes.includes(pathname);
+  ]);
+  const isPublicRoute =
+    publicRoutes.has(pathname) ||
+    Array.from(publicRoutes).some(route => route !== '/' && pathname.startsWith(`${route}/`));
 
   useEffect(() => {
     const checkAuth = async () => {

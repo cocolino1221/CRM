@@ -75,12 +75,26 @@ async function bootstrap() {
   app.use(cookieParser());
 
   // Enable CORS with proper configuration
-  const allowedOrigins = nodeEnv === 'production'
-    ? [frontendUrl, 'http://etcrm.primafisoft.com', 'https://easyteamcrm.netlify.app', 'http://localhost:4001', 'http://localhost:4000'].filter(Boolean)
+  const allowList = nodeEnv === 'production'
+    ? [
+      frontendUrl,
+      'https://etcrm.primafisoft.com',
+      'http://etcrm.primafisoft.com',
+      'https://easyteamcrm.netlify.app',
+      'http://easyteamcrm.netlify.app',
+      'http://localhost:4001',
+      'http://localhost:4000',
+    ].filter(Boolean)
     : ['http://localhost:4001', 'http://localhost:4000', 'http://localhost:3001'];
 
   app.enableCors({
-    origin: allowedOrigins,
+    origin: (origin, callback) => {
+      // Allow server-to-server (no origin) and any origin in our allow list
+      if (!origin || allowList.includes(origin)) {
+        return callback(null, true);
+      }
+      return callback(new Error(`Not allowed by CORS: ${origin}`), false);
+    },
     credentials: true, // Required for httpOnly cookies
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Correlation-ID', 'X-CSRF-Token'],

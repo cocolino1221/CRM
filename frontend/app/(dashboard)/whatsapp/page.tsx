@@ -1325,6 +1325,28 @@ export default function WhatsAppPage() {
 
   const handleSaveFlow = async () => {
     if (!editingFlow) return;
+
+    // Basic validation: template selected for step 0 and all buttons mapped
+    const stepIds = new Set(editingFlow.steps.map((s: any) => s.id));
+    if (!editingFlow.steps[0]?.templateName) {
+      alert('Step 1 must have an approved template selected.');
+      return;
+    }
+    for (const step of editingFlow.steps) {
+      if (step.buttons?.length) {
+        for (const btn of step.buttons) {
+          if (!btn.nextStepId) {
+            alert('All buttons must point to a next step.');
+            return;
+          }
+          if (!stepIds.has(btn.nextStepId)) {
+            alert(`Button "${btn.title || btn.id}" points to missing step "${btn.nextStepId}".`);
+            return;
+          }
+        }
+      }
+    }
+
     const existing = flows.findIndex(f => f.id === editingFlow.id);
     let updated: any[];
     if (existing >= 0) {
@@ -3330,7 +3352,11 @@ export default function WhatsAppPage() {
                               const tplButtons = t?.components?.find((c: any) => c.type === 'BUTTONS')?.buttons || [];
                               const quickReplyBtns = tplButtons
                                 .filter((b: any) => b.type === 'QUICK_REPLY')
-                                .map((b: any, i: number) => ({ id: `btn_${Date.now()}_${i}`, title: b.text, nextStepId: '' }));
+                                .map((b: any, i: number) => ({
+                                  id: b.payload || b.text || `btn_${Date.now()}_${i}`,
+                                  title: b.text,
+                                  nextStepId: '',
+                                }));
                               steps[si] = {
                                 ...steps[si],
                                 templateName: e.target.value,
