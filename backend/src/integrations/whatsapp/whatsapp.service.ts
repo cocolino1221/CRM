@@ -23,7 +23,8 @@ export interface WhatsAppMessage {
     parameters?: any[];
   };
   media?: {
-    url: string;
+    url?: string;
+    id?: string;  // Meta media_id from upload
     caption?: string;
     filename?: string;
   };
@@ -638,13 +639,26 @@ export class WhatsAppService {
         ...base, type: 'template',
         template: { name: message.template!.name, language: { code: message.template!.language }, components: message.template!.parameters || [] },
       };
-      case 'image': return { ...base, type: 'image', image: { link: message.media!.url, caption: message.media!.caption } };
-      case 'document': return {
-        ...base, type: 'document',
-        document: { link: message.media!.url, caption: message.media!.caption, filename: message.media!.filename },
-      };
-      case 'video': return { ...base, type: 'video', video: { link: message.media!.url, caption: message.media!.caption } };
-      case 'audio': return { ...base, type: 'audio', audio: { link: message.media!.url } };
+      case 'image': {
+        const img: any = { caption: message.media!.caption };
+        if (message.media!.id) img.id = message.media!.id; else img.link = message.media!.url;
+        return { ...base, type: 'image', image: img };
+      }
+      case 'document': {
+        const doc: any = { caption: message.media!.caption, filename: message.media!.filename };
+        if (message.media!.id) doc.id = message.media!.id; else doc.link = message.media!.url;
+        return { ...base, type: 'document', document: doc };
+      }
+      case 'video': {
+        const vid: any = { caption: message.media!.caption };
+        if (message.media!.id) vid.id = message.media!.id; else vid.link = message.media!.url;
+        return { ...base, type: 'video', video: vid };
+      }
+      case 'audio': {
+        const aud: any = {};
+        if (message.media!.id) aud.id = message.media!.id; else aud.link = message.media!.url;
+        return { ...base, type: 'audio', audio: aud };
+      }
       case 'interactive': return { ...base, type: 'interactive', interactive: message.interactive };
       default: throw new BadRequestException(`Unsupported message type: ${message.type}`);
     }
@@ -670,6 +684,47 @@ export class WhatsAppService {
       this.httpService.get(`${this.apiUrl}/${mediaId}`, { headers: { 'Authorization': `Bearer ${accessToken}` } }),
     );
     return response.data.url;
+  }
+
+  /**
+   * Upload media to Meta WhatsApp Media API
+   * Returns { id: media_id } which can be used in messages
+   */
+  async uploadMedia(
+    workspaceId: string,
+    file: Buffer,
+    mimeType: string,
+    filename: string,
+  ): Promise<{ id: string }> {
+    const integration = await this.integrationRepository.findOne({
+      where: { type: IntegrationType.WHATSAPP, workspaceId },
+    });
+    const { accessToken, phoneNumberId } = this.getCredentials(integration?.credentials);
+
+    // Build FormData for Meta upload
+    const FormData = require('form-data');
+    const form = new FormData();
+    form.append('messaging_product', 'whatsapp');
+    form.append('file', file, { filename, contentType: mimeType });
+    form.append('type', mimeType);
+
+    const response = await firstValueFrom(
+      this.httpService.post(
+        `${this.apiUrl}/${phoneNumberId}/media`,
+        form,
+        {
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            ...form.getHeaders(),
+          },
+          maxContentLength: 64 * 1024 * 1024, // 64MB
+          maxBodyLength: 64 * 1024 * 1024,
+        },
+      ),
+    );
+
+    this.logger.log(`Media uploaded: ${response.data.id} (${mimeType}, ${filename})`);
+    return { id: response.data.id };
   }
 
   /**
@@ -1450,6 +1505,7 @@ export class WhatsAppService {
       headerMediaUrl?: string;
       headerMediaType?: string;
       mediaUrl?: string;
+      mediaId?: string;
       mediaType?: 'image' | 'video' | 'document' | 'audio';
       buttons?: Array<{ id: string; title: string; nextStepId: string }>;
     },
@@ -1477,12 +1533,13 @@ export class WhatsAppService {
       await this.saveOutboundActivity(waId, `[Flow template: ${step.templateName}]${btnLabels ? ` [${btnLabels}]` : ''}`, 'template', workspaceId, '', undefined);
     } else if (step.buttons?.length) {
       // Send media first if attached, then interactive buttons
-      if (step.mediaUrl && step.mediaType) {
+      const hasMedia = (step.mediaUrl || step.mediaId) && step.mediaType;
+      if (hasMedia) {
         await this.sendMessageWithCredentials(credentials, {
           to: waId,
-          type: step.mediaType,
+          type: step.mediaType!,
           content: '',
-          media: { url: step.mediaUrl, caption: step.message },
+          media: { url: step.mediaUrl, id: step.mediaId, caption: step.message },
         });
       }
       const buttons = step.buttons.slice(0, 3).map(b => ({ id: b.id, title: b.title.slice(0, 20) }));
@@ -1492,21 +1549,21 @@ export class WhatsAppService {
         content: '',
         interactive: {
           type: 'button',
-          body: { text: step.mediaUrl ? '👆 Please choose an option:' : step.message },
+          body: { text: hasMedia ? '👆 Please choose an option:' : step.message },
           action: { buttons: buttons.map(b => ({ type: 'reply' as const, reply: { id: b.id, title: b.title } })) },
         },
       });
       const btnLabels = buttons.map(b => b.title).join(', ');
       await this.saveOutboundActivity(waId, `[Flow buttons: ${btnLabels}] ${step.message}`, 'interactive', workspaceId, '', undefined);
-    } else if (step.mediaUrl && step.mediaType) {
+    } else if ((step.mediaUrl || step.mediaId) && step.mediaType) {
       // Send media message (end of flow or media-only step)
       await this.sendMessageWithCredentials(credentials, {
         to: waId,
         type: step.mediaType,
         content: '',
-        media: { url: step.mediaUrl, caption: step.message || undefined },
+        media: { url: step.mediaUrl, id: step.mediaId, caption: step.message || undefined },
       });
-      await this.saveOutboundActivity(waId, `[${step.mediaType}] ${step.message || step.mediaUrl}`, step.mediaType, workspaceId, '', undefined);
+      await this.saveOutboundActivity(waId, `[${step.mediaType}] ${step.message || step.mediaUrl || 'uploaded media'}`, step.mediaType, workspaceId, '', undefined);
     } else {
       // Send plain text (end of flow)
       await this.sendTextMessage(waId, step.message, credentials);

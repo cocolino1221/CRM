@@ -7,7 +7,7 @@ import {
   Image, FileText, Mic, Video, Info, X, Zap, LayoutTemplate,
   Building2, Tag, Star, AlertTriangle, Timer, Edit, Trash2,
   Copy, ExternalLink, Mail, Briefcase, ArrowRight, ChevronLeft, Brain,
-  GitBranch,
+  GitBranch, Upload,
 } from 'lucide-react';
 import Link from 'next/link';
 import api from '@/lib/api';
@@ -3375,19 +3375,61 @@ export default function WhatsAppPage() {
                               placeholder="Message text..." rows={2}
                               className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:border-green-400 resize-none" />
                             {/* Media attachment */}
-                            <div className="flex items-center gap-1.5">
-                              <select value={step.mediaType || ''} onChange={e => updateFlowStep(si, 'mediaType', e.target.value || undefined)}
-                                className="px-2 py-1 text-xs border border-gray-200 rounded-lg focus:outline-none focus:border-green-400 bg-white">
-                                <option value="">No media</option>
-                                <option value="image">Image</option>
-                                <option value="video">Video</option>
-                                <option value="document">Document</option>
-                                <option value="audio">Audio</option>
-                              </select>
-                              {step.mediaType && (
-                                <input type="text" value={step.mediaUrl || ''} onChange={e => updateFlowStep(si, 'mediaUrl', e.target.value)}
-                                  placeholder={`${step.mediaType === 'image' ? 'https://example.com/photo.jpg' : step.mediaType === 'video' ? 'https://example.com/video.mp4' : step.mediaType === 'document' ? 'https://example.com/file.pdf' : 'https://example.com/audio.mp3'}`}
-                                  className="flex-1 px-2 py-1 text-xs border border-gray-200 rounded-lg focus:outline-none focus:border-green-400" />
+                            <div className="space-y-1.5">
+                              <div className="flex items-center gap-1.5">
+                                <select value={step.mediaType || ''} onChange={e => {
+                                  updateFlowStep(si, 'mediaType', e.target.value || undefined);
+                                  if (!e.target.value) { updateFlowStep(si, 'mediaUrl', undefined); updateFlowStep(si, 'mediaId', undefined); updateFlowStep(si, 'mediaFileName', undefined); }
+                                }}
+                                  className="px-2 py-1 text-xs border border-gray-200 rounded-lg focus:outline-none focus:border-green-400 bg-white">
+                                  <option value="">No media</option>
+                                  <option value="image">Image</option>
+                                  <option value="video">Video</option>
+                                  <option value="document">Document</option>
+                                  <option value="audio">Audio</option>
+                                </select>
+                                {step.mediaType && !step.mediaId && (
+                                  <>
+                                    <label className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-green-700 bg-green-50 border border-green-200 rounded-lg cursor-pointer hover:bg-green-100 transition-colors">
+                                      <Upload className="h-3 w-3" />
+                                      Upload
+                                      <input type="file" className="hidden"
+                                        accept={step.mediaType === 'image' ? 'image/*' : step.mediaType === 'video' ? 'video/*' : step.mediaType === 'document' ? '.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt' : 'audio/*'}
+                                        onChange={async (e) => {
+                                          const file = e.target.files?.[0];
+                                          if (!file) return;
+                                          updateFlowStep(si, 'mediaFileName', `Uploading ${file.name}...`);
+                                          try {
+                                            const formData = new FormData();
+                                            formData.append('file', file);
+                                            const res = await api.post('/integrations/whatsapp/media/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
+                                            updateFlowStep(si, 'mediaId', res.data.id);
+                                            updateFlowStep(si, 'mediaUrl', undefined);
+                                            updateFlowStep(si, 'mediaFileName', file.name);
+                                          } catch (err: any) {
+                                            updateFlowStep(si, 'mediaFileName', undefined);
+                                            alert('Upload failed: ' + (err.response?.data?.message || err.message));
+                                          }
+                                          e.target.value = '';
+                                        }}
+                                      />
+                                    </label>
+                                  </>
+                                )}
+                              </div>
+                              {step.mediaType && step.mediaId && (
+                                <div className="flex items-center gap-1.5 px-2 py-1.5 bg-green-50 border border-green-200 rounded-lg">
+                                  <Check className="h-3 w-3 text-green-600 flex-shrink-0" />
+                                  <span className="text-xs text-green-700 truncate flex-1">{step.mediaFileName || 'File uploaded'}</span>
+                                  <button type="button" onClick={() => { updateFlowStep(si, 'mediaId', undefined); updateFlowStep(si, 'mediaFileName', undefined); }}
+                                    className="text-red-400 hover:text-red-600 flex-shrink-0"><X className="h-3 w-3" /></button>
+                                </div>
+                              )}
+                              {step.mediaType && !step.mediaId && step.mediaFileName?.startsWith('Uploading') && (
+                                <div className="flex items-center gap-1.5 px-2 py-1.5 bg-blue-50 border border-blue-200 rounded-lg">
+                                  <Loader2 className="h-3 w-3 text-blue-500 animate-spin flex-shrink-0" />
+                                  <span className="text-xs text-blue-600 truncate">{step.mediaFileName}</span>
+                                </div>
                               )}
                             </div>
                           </div>
