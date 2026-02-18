@@ -3370,9 +3370,27 @@ export default function WhatsAppPage() {
                           </div>
                         ) : (
                           /* Steps 2+: Interactive message (within 24h session window) */
-                          <textarea value={step.message} onChange={e => updateFlowStep(si, 'message', e.target.value)}
-                            placeholder="Message text..." rows={2}
-                            className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:border-green-400 resize-none" />
+                          <div className="space-y-2">
+                            <textarea value={step.message} onChange={e => updateFlowStep(si, 'message', e.target.value)}
+                              placeholder="Message text..." rows={2}
+                              className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:border-green-400 resize-none" />
+                            {/* Media attachment */}
+                            <div className="flex items-center gap-1.5">
+                              <select value={step.mediaType || ''} onChange={e => updateFlowStep(si, 'mediaType', e.target.value || undefined)}
+                                className="px-2 py-1 text-xs border border-gray-200 rounded-lg focus:outline-none focus:border-green-400 bg-white">
+                                <option value="">No media</option>
+                                <option value="image">Image</option>
+                                <option value="video">Video</option>
+                                <option value="document">Document</option>
+                                <option value="audio">Audio</option>
+                              </select>
+                              {step.mediaType && (
+                                <input type="text" value={step.mediaUrl || ''} onChange={e => updateFlowStep(si, 'mediaUrl', e.target.value)}
+                                  placeholder={`${step.mediaType === 'image' ? 'https://example.com/photo.jpg' : step.mediaType === 'video' ? 'https://example.com/video.mp4' : step.mediaType === 'document' ? 'https://example.com/file.pdf' : 'https://example.com/audio.mp3'}`}
+                                  className="flex-1 px-2 py-1 text-xs border border-gray-200 rounded-lg focus:outline-none focus:border-green-400" />
+                              )}
+                            </div>
+                          </div>
                         )}
 
                         {/* Buttons */}

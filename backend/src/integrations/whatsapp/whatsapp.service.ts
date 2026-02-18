@@ -1449,6 +1449,8 @@ export class WhatsAppService {
       templateParams?: string[];
       headerMediaUrl?: string;
       headerMediaType?: string;
+      mediaUrl?: string;
+      mediaType?: 'image' | 'video' | 'document' | 'audio';
       buttons?: Array<{ id: string; title: string; nextStepId: string }>;
     },
     waId: string,
@@ -1474,7 +1476,15 @@ export class WhatsAppService {
       const btnLabels = step.buttons?.map(b => b.title).join(', ') || '';
       await this.saveOutboundActivity(waId, `[Flow template: ${step.templateName}]${btnLabels ? ` [${btnLabels}]` : ''}`, 'template', workspaceId, '', undefined);
     } else if (step.buttons?.length) {
-      // Send interactive button message (within 24h session window)
+      // Send media first if attached, then interactive buttons
+      if (step.mediaUrl && step.mediaType) {
+        await this.sendMessageWithCredentials(credentials, {
+          to: waId,
+          type: step.mediaType,
+          content: '',
+          media: { url: step.mediaUrl, caption: step.message },
+        });
+      }
       const buttons = step.buttons.slice(0, 3).map(b => ({ id: b.id, title: b.title.slice(0, 20) }));
       await this.sendMessageWithCredentials(credentials, {
         to: waId,
@@ -1482,12 +1492,21 @@ export class WhatsAppService {
         content: '',
         interactive: {
           type: 'button',
-          body: { text: step.message },
+          body: { text: step.mediaUrl ? '👆 Please choose an option:' : step.message },
           action: { buttons: buttons.map(b => ({ type: 'reply' as const, reply: { id: b.id, title: b.title } })) },
         },
       });
       const btnLabels = buttons.map(b => b.title).join(', ');
       await this.saveOutboundActivity(waId, `[Flow buttons: ${btnLabels}] ${step.message}`, 'interactive', workspaceId, '', undefined);
+    } else if (step.mediaUrl && step.mediaType) {
+      // Send media message (end of flow or media-only step)
+      await this.sendMessageWithCredentials(credentials, {
+        to: waId,
+        type: step.mediaType,
+        content: '',
+        media: { url: step.mediaUrl, caption: step.message || undefined },
+      });
+      await this.saveOutboundActivity(waId, `[${step.mediaType}] ${step.message || step.mediaUrl}`, step.mediaType, workspaceId, '', undefined);
     } else {
       // Send plain text (end of flow)
       await this.sendTextMessage(waId, step.message, credentials);
