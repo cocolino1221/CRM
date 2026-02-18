@@ -12,9 +12,9 @@ import {
   BadRequestException,
   UseGuards,
   UseInterceptors,
-  UploadedFile,
+  UploadedFiles,
 } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { AnyFilesInterceptor } from '@nestjs/platform-express';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { WhatsAppService, WhatsAppMessage, WhatsAppWebhook } from './whatsapp.service';
 import { WhatsAppAIService } from './whatsapp-ai.service';
@@ -659,15 +659,16 @@ export class WhatsAppController {
   @UseGuards(JwtAuthGuard)
   @Post('media/upload')
   @ApiBearerAuth()
-  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 64 * 1024 * 1024 } }))
+  @UseInterceptors(AnyFilesInterceptor({ limits: { fileSize: 64 * 1024 * 1024 } }))
   @ApiOperation({ summary: 'Upload media to WhatsApp (returns media_id for use in messages)' })
   @ApiResponse({ status: 200, description: 'Media uploaded, returns { id: media_id }' })
   async uploadMedia(
     @Req() req: any,
-    @UploadedFile() file: Express.Multer.File,
+    @UploadedFiles() files: Express.Multer.File[],
   ) {
     const workspaceId = req.user?.workspaceId;
     if (!workspaceId) throw new BadRequestException('Workspace ID required');
+    const file = files?.[0];
     if (!file) throw new BadRequestException('File is required');
     return this.whatsappService.uploadMedia(
       workspaceId,
