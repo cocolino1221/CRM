@@ -4,12 +4,12 @@ import AuthGuard from '@/components/AuthGuard';
 import { ThemeProvider } from '@/contexts/ThemeContext';
 
 export const metadata: Metadata = {
-  title: 'EasyTeam CRM',
+  title: 'easyTeamCRM',
   description: 'AI-powered CRM platform for team collaboration',
   appleWebApp: {
     capable: true,
     statusBarStyle: 'default',
-    title: 'EasyTeam CRM',
+    title: 'easyTeamCRM',
   },
 };
 

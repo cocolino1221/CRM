@@ -105,7 +105,7 @@ export default function Sidebar({ isOpen = true, onClose, isCollapsed = false, o
             {!isCollapsed && (
               <div className="min-w-0">
                 <span className="text-xl font-bold bg-gradient-to-r from-white to-blue-200 bg-clip-text text-transparent">
-                  SlackCRM
+                  easyTeamCRM
                 </span>
                 <div className="flex items-center gap-1 text-xs text-blue-300">
                   <Sparkles className="h-3 w-3" />
