@@ -31,6 +31,17 @@ const processQueue = (error: AxiosError | null, token: string | null = null) => 
 // fallback for iOS Safari (ITP blocks cross-site httpOnly cookies)
 api.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {
+    // Let browser set multipart boundaries for FormData uploads.
+    if (typeof FormData !== 'undefined' && config.data instanceof FormData) {
+      const headers = config.headers as any;
+      if (headers?.set) {
+        headers.set('Content-Type', undefined);
+      } else if (headers) {
+        delete headers['Content-Type'];
+        delete headers['content-type'];
+      }
+    }
+
     if (typeof window !== 'undefined') {
       const token = localStorage.getItem('accessToken');
       if (token) {
