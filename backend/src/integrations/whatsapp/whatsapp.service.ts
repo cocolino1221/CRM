@@ -1680,7 +1680,13 @@ export class WhatsAppService {
    * Template QUICK_REPLY buttons send payload/text (not button IDs).
    * We match by button title text to find the nextStepId.
    */
-  async handleTemplateButtonReply(workspaceId: string, waId: string, buttonPayload: string, integration: Integration): Promise<boolean> {
+  async handleTemplateButtonReply(
+    workspaceId: string,
+    waId: string,
+    buttonPayload: string,
+    integration: Integration,
+    buttonText?: string,
+  ): Promise<boolean> {
     const flowStates = integration.config?.flowStates || {};
     const state = flowStates[waId];
     if (!state) return false;
@@ -1702,13 +1708,19 @@ export class WhatsAppService {
       return false;
     }
 
-    // Match by title (template quick reply buttons send back button text as payload)
-    const normalized = buttonPayload.trim().toLowerCase();
-    const button = currentStep.buttons.find((b: any) =>
-      b.title?.trim().toLowerCase() === normalized || b.id === buttonPayload,
-    );
+    // Match template button by payload, text, or legacy/random id.
+    // This keeps older saved flows compatible even if ids were not payload-based.
+    const normalize = (value?: string) => (value || '').trim().toLowerCase();
+    const candidates = [normalize(buttonPayload), normalize(buttonText)].filter(Boolean);
+    const button = currentStep.buttons.find((b: any) => {
+      const title = normalize(b.title);
+      const id = normalize(b.id);
+      return candidates.includes(title) || candidates.includes(id);
+    });
     if (!button) {
-      this.logger.warn(`Flow: template button "${buttonPayload}" not matched in step "${state.currentStepId}"`);
+      this.logger.warn(
+        `Flow: template button payload="${buttonPayload}" text="${buttonText || ''}" not matched in step "${state.currentStepId}"`,
+      );
       return false;
     }
 
@@ -1725,7 +1737,9 @@ export class WhatsAppService {
       }
       integration.config = { ...(integration.config || {}), flowStates };
       await this.integrationRepository.save(integration);
-      this.logger.log(`Flow "${flow.name}": ${waId} → template button "${buttonPayload}" → step "${nextStep.id}"`);
+      this.logger.log(
+        `Flow "${flow.name}": ${waId} → template button payload="${buttonPayload}" text="${buttonText || ''}" → step "${nextStep.id}"`,
+      );
       return true;
     } catch (err) {
       this.logger.warn(`Flow template button failed for ${waId}: ${err.message}`);
@@ -1752,8 +1766,9 @@ export class WhatsAppService {
     }
     // Template quick reply buttons (from template messages, step 1)
     if (message.type === 'button' && message.button) {
-      const payload = message.button.payload || message.button.text;
-      return this.handleTemplateButtonReply(workspaceId, waId, payload, integration);
+      const payload = message.button.payload || message.button.text || '';
+      const text = message.button.text || '';
+      return this.handleTemplateButtonReply(workspaceId, waId, payload, integration, text);
     }
 
     // 2. Check if user already has an active flow — don't start a new one
