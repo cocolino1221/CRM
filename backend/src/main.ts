@@ -82,6 +82,7 @@ async function bootstrap() {
       'http://etcrm.primafisoft.com',
       'https://easyteamcrm.netlify.app',
       'http://easyteamcrm.netlify.app',
+      process.env.MOBILE_URL,
       'http://localhost:4001',
       'http://localhost:4000',
     ].filter(Boolean)
@@ -89,8 +90,8 @@ async function bootstrap() {
 
   app.enableCors({
     origin: (origin, callback) => {
-      // Allow server-to-server (no origin) and any origin in our allow list
-      if (!origin || allowList.includes(origin)) {
+      // Allow server-to-server (no origin), our allow list, and any *.netlify.app subdomain
+      if (!origin || allowList.includes(origin) || /\.netlify\.app$/.test(origin)) {
         return callback(null, true);
       }
       return callback(new Error(`Not allowed by CORS: ${origin}`), false);
