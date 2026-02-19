@@ -39,7 +39,7 @@ async function bootstrap() {
         scriptSrc: ["'self'"],
         styleSrc: ["'self'", "'unsafe-inline'"], // unsafe-inline needed for Tailwind CSS
         imgSrc: ["'self'", 'data:', 'https:'],
-        connectSrc: ["'self'", frontendUrl || 'http://localhost:4001'],
+        connectSrc: ["'self'", frontendUrl || 'https://etcrm.primafisoft.com'],
         fontSrc: ["'self'"],
         objectSrc: ["'none'"],
         mediaSrc: ["'self'"],
@@ -79,10 +79,10 @@ async function bootstrap() {
     ? [
       frontendUrl,
       'https://etcrm.primafisoft.com',
-      'http://etcrm.primafisoft.com',
-      'https://easyteamcrm.netlify.app',
-      'http://easyteamcrm.netlify.app',
       process.env.MOBILE_URL,
+      'capacitor://localhost',
+      'ionic://localhost',
+      'http://localhost',
       'http://localhost:4001',
       'http://localhost:4000',
     ].filter(Boolean)

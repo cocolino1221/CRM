@@ -1,11 +1,11 @@
 import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
-  appId: 'com.easyteamcrm.app',
+  appId: 'com.primafisoft.etcrm',
   appName: 'EasyTeam CRM',
   webDir: 'out',
   server: {
-    url: 'http://etcrm.primafisoft.com',
+    url: 'https://etcrm.primafisoft.com',
     cleartext: false,
   },
   ios: {

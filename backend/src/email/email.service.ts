@@ -87,7 +87,7 @@ export class EmailService {
     }
 
     try {
-      const fromEmail = options.from || this.configService.get<string>('FROM_EMAIL', 'noreply@slackcrm.com');
+      const fromEmail = options.from || 'onboarding@etcrm.primafisoft.com';
 
       const mailOptions = {
         from: fromEmail,
@@ -107,7 +107,7 @@ export class EmailService {
   }
 
   async sendPasswordResetEmail(to: string, resetToken: string): Promise<boolean> {
-    const frontendUrl = this.configService.get<string>('FRONTEND_URL', 'http://localhost:3001');
+    const frontendUrl = this.configService.get<string>('FRONTEND_URL', 'https://etcrm.primafisoft.com');
     const resetUrl = `${frontendUrl}/auth/reset-password?token=${resetToken}`;
 
     const html = `
@@ -135,7 +135,7 @@ export class EmailService {
   }
 
   async sendEmailVerification(to: string, verificationToken: string): Promise<boolean> {
-    const frontendUrl = this.configService.get<string>('FRONTEND_URL', 'http://localhost:3001');
+    const frontendUrl = this.configService.get<string>('FRONTEND_URL', 'https://etcrm.primafisoft.com');
     const verifyUrl = `${frontendUrl}/auth/verify-email?token=${verificationToken}`;
 
     const html = `
@@ -163,7 +163,7 @@ export class EmailService {
   }
 
   async sendWelcomeEmail(to: string, firstName: string): Promise<boolean> {
-    const frontendUrl = this.configService.get<string>('FRONTEND_URL', 'http://localhost:3001');
+    const frontendUrl = this.configService.get<string>('FRONTEND_URL', 'https://etcrm.primafisoft.com');
 
     const html = `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
@@ -194,7 +194,15 @@ export class EmailService {
     });
   }
 
-  async sendInviteEmail(to: string, inviterName: string, inviteUrl: string, customMessage?: string): Promise<boolean> {
+  async sendInviteEmail(
+    to: string,
+    inviterName: string,
+    inviteUrl: string,
+    customMessage?: string,
+    inviteCode?: string,
+  ): Promise<boolean> {
+    const safeInviteCode = (inviteCode || '').trim().toUpperCase();
+
     const html = `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
         <h2>You've Been Invited to Join EasyTeam CRM</h2>
@@ -206,6 +214,13 @@ export class EmailService {
           </a>
         </p>
         <p style="color: #6B7280; font-size: 14px;">Click the button above or paste this link in your browser:<br>${inviteUrl}</p>
+        ${safeInviteCode ? `
+        <div style="margin-top: 16px; padding: 12px 16px; background-color: #EEF2FF; border-radius: 8px;">
+          <p style="margin: 0; color: #3730A3; font-size: 14px;">Invite code (backup):</p>
+          <p style="margin: 6px 0 0 0; font-size: 20px; font-weight: 700; letter-spacing: 1px; color: #1E1B4B;">${safeInviteCode}</p>
+        </div>
+        <p style="color: #6B7280; font-size: 13px;">If the link doesn't auto-fill the code, copy this code manually in the registration form.</p>
+        ` : ''}
         <hr style="margin: 30px 0; border: none; border-top: 1px solid #E5E7EB;">
         <p style="color: #6B7280; font-size: 14px;">EasyTeam CRM</p>
       </div>
@@ -215,7 +230,7 @@ export class EmailService {
       to,
       subject: `${inviterName} invited you to join EasyTeam CRM`,
       html,
-      text: `${inviterName} has invited you to join their team. Join here: ${inviteUrl}`,
+      text: `${inviterName} has invited you to join their team. Join here: ${inviteUrl}${safeInviteCode ? `\nInvite code: ${safeInviteCode}` : ''}`,
     });
   }
 }

@@ -54,7 +54,7 @@ export class PushNotificationService implements OnModuleInit {
     this.apnsTeamId = teamId;
     // Support both raw key and base64-encoded key
     this.apnsKey = key.includes('BEGIN PRIVATE KEY') ? key : Buffer.from(key, 'base64').toString('utf8');
-    this.apnsBundleId = this.configService.get<string>('APNS_BUNDLE_ID') || 'com.easyteamcrm.app';
+    this.apnsBundleId = this.configService.get<string>('APNS_BUNDLE_ID') || 'com.primafisoft.etcrm';
     this.apnsProduction = this.configService.get<string>('APNS_PRODUCTION') !== 'false';
     this.apnsEnabled = true;
     this.logger.log('APNs push notifications enabled (iOS)');

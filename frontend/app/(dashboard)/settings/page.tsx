@@ -77,7 +77,7 @@ function WorkspaceTab({
 
             <div className="flex items-center gap-3">
               <div className="flex-1 px-3 py-2 rounded-lg bg-gray-50 border border-gray-200 text-sm text-gray-600 truncate">
-                http://etcrm.primafisoft.com/register?code={inviteCode}
+                https://etcrm.primafisoft.com/register?code={inviteCode}
               </div>
               <button
                 onClick={copyInviteLink}
@@ -204,7 +204,7 @@ export default function SettingsPage() {
   };
 
   const copyInviteLink = () => {
-    const link = `http://etcrm.primafisoft.com/register?code=${inviteCode}`;
+    const link = `https://etcrm.primafisoft.com/register?code=${inviteCode}`;
     navigator.clipboard.writeText(link);
     setLinkCopied(true);
     setTimeout(() => setLinkCopied(false), 2000);

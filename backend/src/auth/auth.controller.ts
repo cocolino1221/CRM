@@ -47,7 +47,7 @@ export class AuthController {
    */
   private getCookieOptions(isRefreshToken: boolean = false) {
     const nodeEnv = this.configService.get('NODE_ENV', 'development');
-    const frontendUrl = this.configService.get('FRONTEND_URL', 'http://localhost:4001');
+    const frontendUrl = this.configService.get('FRONTEND_URL', 'https://etcrm.primafisoft.com');
 
     // In production the frontend (netlify.app) and backend (fly.dev) are on different
     // root domains, so SameSite must be 'none' (requires Secure=true) to allow
@@ -409,7 +409,7 @@ export class AuthController {
     @Query('state') state: string,
     @Res() res: Response,
   ): Promise<void> {
-    const frontendUrl = this.configService.get('FRONTEND_URL') || 'http://localhost:3001';
+    const frontendUrl = this.configService.get('FRONTEND_URL') || 'https://etcrm.primafisoft.com';
 
     if (error) {
       res.redirect(`${frontendUrl}/login?error=${encodeURIComponent(error)}`);
@@ -468,7 +468,7 @@ export class AuthController {
     @Query('state') state: string,
     @Res() res: Response,
   ): Promise<void> {
-    const frontendUrl = this.configService.get('FRONTEND_URL') || 'http://localhost:3001';
+    const frontendUrl = this.configService.get('FRONTEND_URL') || 'https://etcrm.primafisoft.com';
 
     if (error) {
       res.redirect(`${frontendUrl}/login?error=${encodeURIComponent(error)}`);

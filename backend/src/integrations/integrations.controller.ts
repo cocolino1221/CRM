@@ -325,7 +325,7 @@ export class IntegrationsController {
     @Query('state') state: string,
     @Query('error') error?: string,
   ): Promise<void> {
-    const frontendUrl = this.configService.get('FRONTEND_URL') || 'http://localhost:3001';
+    const frontendUrl = this.configService.get('FRONTEND_URL') || 'https://etcrm.primafisoft.com';
 
     if (error) {
       this.logger.error(`OAuth error: ${error}`);
@@ -369,7 +369,7 @@ export class IntegrationsController {
     @Query('workspace_id') workspaceId?: string,
     @Query('user_id') userId?: string,
   ): Promise<void> {
-    const frontendUrl = this.configService.get('FRONTEND_URL') || 'http://localhost:3001';
+    const frontendUrl = this.configService.get('FRONTEND_URL') || 'https://etcrm.primafisoft.com';
 
     try {
       this.logger.log(`OAuth request received - Provider: ${provider}, WorkspaceId: ${workspaceId}, UserId: ${userId}`);
