@@ -1,4 +1,5 @@
 import { MessageSquare } from 'lucide-react';
+import Link from 'next/link';
 
 export default function AuthLayout({
   children,
@@ -44,10 +45,20 @@ export default function AuthLayout({
       </div>
 
       {/* Right Side - Auth Forms */}
-      <div className="flex-1 flex items-center justify-center p-8">
-        <div className="w-full max-w-md">
-          {children}
+      <div className="flex-1 flex flex-col p-8">
+        <div className="flex-1 flex items-center justify-center">
+          <div className="w-full max-w-md">
+            {children}
+          </div>
         </div>
+        <footer className="mt-8 flex items-center justify-center gap-6 text-sm text-gray-500">
+          <Link href="/privacy" className="hover:text-gray-700 transition-colors">
+            Privacy
+          </Link>
+          <Link href="/terms" className="hover:text-gray-700 transition-colors">
+            Terms
+          </Link>
+        </footer>
       </div>
     </div>
   );
