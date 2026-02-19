@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Plus, Search, Phone, Video, Trophy, TrendingUp, TrendingDown, UserCheck, Loader2, Mail, Building, Calendar, DollarSign, MoreVertical, Edit, Trash2, X, AlertCircle, Settings, Users, Tag, FileText, Star, Clock, Briefcase, Eye, ChevronLeft, ChevronRight, MessageSquare, Send, ExternalLink, RefreshCw } from 'lucide-react';
+import { Plus, Search, Phone, Video, Trophy, TrendingUp, TrendingDown, UserCheck, Loader2, Mail, Building, Calendar, DollarSign, MoreVertical, Edit, Trash2, X, AlertCircle, Settings, Users, Tag, FileText, Star, Clock, Briefcase, Eye, ChevronLeft, ChevronRight, MessageSquare, Send, ExternalLink, RefreshCw, Upload } from 'lucide-react';
 import { getInitials } from '@/lib/utils';
 import api from '@/lib/api';
 
@@ -107,8 +107,18 @@ interface ContactFormData {
   closerId?: string;
 }
 
+const getTemplateHeaderMediaType = (template: any): '' | 'image' | 'video' | 'document' => {
+  const headerComponent = template?.components?.find((c: any) => c.type === 'HEADER');
+  const format = String(headerComponent?.format || '').toUpperCase();
+  if (format === 'IMAGE') return 'image';
+  if (format === 'VIDEO') return 'video';
+  if (format === 'DOCUMENT') return 'document';
+  return '';
+};
+
 export default function LeadsPage() {
   const [searchQuery, setSearchQuery] = useState('');
+  const [searchInput, setSearchInput] = useState('');
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [pipelines, setPipelines] = useState<Pipeline[]>([]);
   const [selectedPipeline, setSelectedPipeline] = useState<Pipeline | null>(null);
@@ -140,6 +150,10 @@ export default function LeadsPage() {
   const [waTemplates, setWaTemplates] = useState<any[]>([]);
   const [waSelectedTemplate, setWaSelectedTemplate] = useState('');
   const [waSelectedLang, setWaSelectedLang] = useState('en_US');
+  const [waHeaderMediaType, setWaHeaderMediaType] = useState<'' | 'image' | 'video' | 'document'>('');
+  const [waHeaderMediaId, setWaHeaderMediaId] = useState('');
+  const [waHeaderMediaUrl, setWaHeaderMediaUrl] = useState('');
+  const [waUploadingHeader, setWaUploadingHeader] = useState(false);
   const [waSending, setWaSending] = useState(false);
   const [waSendResult, setWaSendResult] = useState<{ ok: boolean; msg: string } | null>(null);
 
@@ -286,6 +300,10 @@ export default function LeadsPage() {
       fetchContacts();
     }
   }, [searchQuery, selectedPipeline]);
+
+  const applySearch = () => {
+    setSearchQuery(searchInput.trim());
+  };
 
   const resetForm = () => {
     const firstStage = selectedPipeline?.stages?.find(s => s && s.id);
@@ -662,6 +680,9 @@ export default function LeadsPage() {
     setShowWaDropdown(false);
     setShowWaSendForm(false);
     setWaSendResult(null);
+    setWaHeaderMediaType('');
+    setWaHeaderMediaId('');
+    setWaHeaderMediaUrl('');
     try {
       const response = await api.get(`/contacts/${contact.id}`, {
         params: { relations: 'company,owner' },
@@ -684,6 +705,11 @@ export default function LeadsPage() {
 
   const sendWaTemplate = async () => {
     if (!detailContact?.phone || !waSelectedTemplate) return;
+    if (waHeaderMediaType && !waHeaderMediaId.trim() && !waHeaderMediaUrl.trim()) {
+      setWaSendResult({ ok: false, msg: `Template needs ${waHeaderMediaType} header media. Upload video/image/file first.` });
+      return;
+    }
+
     setWaSending(true);
     setWaSendResult(null);
     try {
@@ -692,6 +718,9 @@ export default function LeadsPage() {
         to: phone,
         templateName: waSelectedTemplate,
         language: waSelectedLang,
+        headerMediaType: waHeaderMediaType || undefined,
+        headerMediaId: waHeaderMediaId.trim() || undefined,
+        headerMediaUrl: waHeaderMediaUrl.trim() || undefined,
       });
       setWaSendResult({ ok: true, msg: 'Template sent!' });
       setTimeout(() => setWaSendResult(null), 3000);
@@ -699,6 +728,21 @@ export default function LeadsPage() {
       setWaSendResult({ ok: false, msg: err.response?.data?.message || 'Failed to send' });
     } finally {
       setWaSending(false);
+    }
+  };
+
+  const uploadWaHeaderMedia = async (file: File) => {
+    setWaUploadingHeader(true);
+    setWaSendResult(null);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const res = await api.post('/integrations/whatsapp/media/upload', formData);
+      setWaHeaderMediaId(res.data.id || '');
+    } catch (err: any) {
+      setWaSendResult({ ok: false, msg: err.response?.data?.message || 'Upload failed' });
+    } finally {
+      setWaUploadingHeader(false);
     }
   };
 
@@ -918,12 +962,24 @@ export default function LeadsPage() {
           <Search className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-indigo-400" />
           <input
             type="text"
-            placeholder="Search leads by name, email, or company..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search leads by name, email, company, or phone..."
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                applySearch();
+              }
+            }}
             className="w-full rounded-xl border border-indigo-200/50 bg-white/50 py-3 pl-11 pr-4 text-sm placeholder:text-gray-500 focus:border-indigo-400 focus:bg-white focus:outline-none focus:ring-4 focus:ring-indigo-100 transition-all shadow-sm"
           />
         </div>
+        <button
+          onClick={applySearch}
+          className="flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700 transition-all"
+        >
+          Search
+        </button>
       </div>
 
       {/* Pipeline Board */}
@@ -1208,6 +1264,10 @@ export default function LeadsPage() {
                               setWaSelectedTemplate(e.target.value);
                               const t = waTemplates.find((t: any) => t.name === e.target.value);
                               if (t?.language) setWaSelectedLang(t.language);
+                              const headerType = getTemplateHeaderMediaType(t);
+                              setWaHeaderMediaType(headerType);
+                              setWaHeaderMediaId('');
+                              setWaHeaderMediaUrl('');
                             }}
                             className="w-full px-2 py-1.5 text-sm border border-gray-200 rounded-lg bg-white"
                           >
@@ -1225,13 +1285,43 @@ export default function LeadsPage() {
                             />
                             <button
                               onClick={sendWaTemplate}
-                              disabled={waSending || !waSelectedTemplate}
+                              disabled={waSending || !waSelectedTemplate || (!!waHeaderMediaType && !waHeaderMediaId.trim() && !waHeaderMediaUrl.trim())}
                               className="px-3 py-1.5 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 disabled:opacity-50 flex items-center gap-1"
                             >
                               {waSending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />}
                               Send
                             </button>
                           </div>
+                          {waHeaderMediaType && (
+                            <div className="p-2 rounded-lg border border-amber-200 bg-amber-50 space-y-2">
+                              <p className="text-xs text-amber-800 font-medium">
+                                Header media required ({waHeaderMediaType})
+                              </p>
+                              <div className="flex gap-2">
+                                <input
+                                  value={waHeaderMediaId}
+                                  onChange={(e) => setWaHeaderMediaId(e.target.value)}
+                                  placeholder="Meta media_id"
+                                  className="flex-1 px-2 py-1.5 text-xs border border-amber-200 rounded-lg"
+                                />
+                                <label className="px-2 py-1.5 text-xs border border-amber-300 rounded-lg cursor-pointer text-amber-800 hover:bg-amber-100 flex items-center gap-1">
+                                  {waUploadingHeader ? <Loader2 className="h-3 w-3 animate-spin" /> : <Upload className="h-3 w-3" />}
+                                  Upload
+                                  <input
+                                    type="file"
+                                    className="hidden"
+                                    accept={waHeaderMediaType === 'image' ? 'image/*' : waHeaderMediaType === 'video' ? 'video/*' : '.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt'}
+                                    onChange={async (e) => {
+                                      const file = e.target.files?.[0];
+                                      if (!file) return;
+                                      await uploadWaHeaderMedia(file);
+                                      e.target.value = '';
+                                    }}
+                                  />
+                                </label>
+                              </div>
+                            </div>
+                          )}
                           {waSendResult && (
                             <p className={`text-xs ${waSendResult.ok ? 'text-green-600' : 'text-red-600'}`}>
                               {waSendResult.msg}

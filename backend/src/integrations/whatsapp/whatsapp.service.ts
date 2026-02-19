@@ -276,12 +276,23 @@ export class WhatsAppService {
     if (!accessToken || !phoneNumberId) throw new BadRequestException('WhatsApp credentials not configured');
 
     const payload = this.buildMessagePayload(message);
-    const response = await firstValueFrom(
-      this.httpService.post(`${this.apiUrl}/${phoneNumberId}/messages`, payload, {
-        headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-      }),
-    );
-    return response.data;
+    try {
+      const response = await firstValueFrom(
+        this.httpService.post(`${this.apiUrl}/${phoneNumberId}/messages`, payload, {
+          headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+        }),
+      );
+      return response.data;
+    } catch (error: any) {
+      const metaError = error?.response?.data?.error;
+      if (metaError) {
+        const details = metaError.error_data?.details ? ` (${metaError.error_data.details})` : '';
+        throw new BadRequestException(
+          `WhatsApp API error ${metaError.code || ''}: ${metaError.message || 'Unknown error'}${details}`.trim(),
+        );
+      }
+      throw error;
+    }
   }
 
   async sendMessage(message: WhatsAppMessage): Promise<any> {
@@ -294,7 +305,30 @@ export class WhatsAppService {
   }
 
   async sendTemplateMessage(to: string, templateName: string, language = 'en', parameters: any[] = []): Promise<any> {
-    return this.sendMessage({ to, type: 'template', content: '', template: { name: templateName, language, parameters } });
+    return this.sendMessage({
+      to,
+      type: 'template',
+      content: '',
+      template: { name: templateName, language, parameters: this.normalizeTemplateComponents(parameters) },
+    });
+  }
+
+  async sendTemplateMessageForWorkspace(
+    workspaceId: string,
+    to: string,
+    templateName: string,
+    language = 'en',
+    parameters: any[] = [],
+  ): Promise<any> {
+    const integration = await this.integrationRepository.findOne({
+      where: { type: IntegrationType.WHATSAPP, workspaceId },
+    });
+    return this.sendMessageWithCredentials(integration?.credentials || {}, {
+      to,
+      type: 'template',
+      content: '',
+      template: { name: templateName, language, parameters: this.normalizeTemplateComponents(parameters) },
+    });
   }
 
   async sendTextMessage(to: string, text: string, credentials?: Record<string, any>): Promise<any> {
@@ -665,6 +699,40 @@ export class WhatsAppService {
     }
   }
 
+  private normalizeTemplateComponents(parameters: any[] = []): any[] {
+    if (!Array.isArray(parameters) || parameters.length === 0) return [];
+
+    const components: any[] = [];
+    const bodyParams: any[] = [];
+
+    for (const item of parameters) {
+      const componentType = String(item?.type || '').toLowerCase();
+      const isComponent = ['header', 'body', 'button'].includes(componentType) && Array.isArray(item?.parameters);
+
+      if (isComponent) {
+        components.push({ ...item, type: componentType });
+        continue;
+      }
+
+      if (typeof item === 'string') {
+        bodyParams.push({ type: 'text', text: item });
+      } else if (item && typeof item === 'object') {
+        bodyParams.push(item);
+      }
+    }
+
+    if (bodyParams.length > 0) {
+      const existingBody = components.find((c) => c.type === 'body');
+      if (existingBody) {
+        existingBody.parameters = [...(existingBody.parameters || []), ...bodyParams];
+      } else {
+        components.push({ type: 'body', parameters: bodyParams });
+      }
+    }
+
+    return components;
+  }
+
   async sendBulkMessages(recipients: string[], message: Omit<WhatsAppMessage, 'to'>): Promise<any[]> {
     const results = [];
     for (const recipient of recipients) {
@@ -924,7 +992,10 @@ export class WhatsAppService {
       enabled: false,
       templateName: 'hello_world',
       language: 'en_US',
-      includeNameParam: true,
+      includeNameParam: false,
+      headerMediaType: undefined,
+      headerMediaId: undefined,
+      headerMediaUrl: undefined,
       conditions: { sources: [], statuses: [], requirePhone: true },
     };
   }
@@ -1135,11 +1206,29 @@ export class WhatsAppService {
       // Send template — use integration's stored credentials (not global env vars)
       const templateName = autoSend.templateName || 'hello_world';
       // Normalize: 'en' → 'en_US' (Meta rejects the short code for hello_world and most templates)
-      const rawLang = autoSend.language || 'en_US';
-      const language = rawLang === 'en' ? 'en_US' : rawLang;
-      // Only add name param if the template actually accepts parameters
-      // hello_world and many basic templates have ZERO params — sending params causes #132000
+      const rawLang = autoSend.language || 'en';
+      // Meta hello_world is en_US; custom templates may exist only in en.
+      const language = rawLang === 'en' && templateName === 'hello_world' ? 'en_US' : rawLang;
+      // Build template components dynamically (header/body).
+      // Media header templates require runtime header params.
       const params: any[] = [];
+      const headerMediaType = String(autoSend.headerMediaType || '').toLowerCase();
+      const headerMediaId = String(autoSend.headerMediaId || '').trim();
+      const headerMediaUrl = String(autoSend.headerMediaUrl || '').trim();
+
+      if (['image', 'video', 'document'].includes(headerMediaType) && !headerMediaId && !headerMediaUrl) {
+        this.logger.warn(`Auto-send skipped for contact ${contact.id}: template header media is required but not configured`);
+        return;
+      }
+
+      if (['image', 'video', 'document'].includes(headerMediaType) && (headerMediaId || headerMediaUrl)) {
+        const headerParam: any = { type: headerMediaType };
+        headerParam[headerMediaType] = headerMediaId ? { id: headerMediaId } : { link: headerMediaUrl };
+        params.push({ type: 'header', parameters: [headerParam] });
+      }
+
+      // Only add name param if the template actually accepts body parameters.
+      // hello_world and many basic templates have ZERO params — sending params causes #132000
       if (autoSend.includeNameParam && contact.firstName && templateName !== 'hello_world') {
         params.push({ type: 'body', parameters: [{ type: 'text', text: contact.firstName }] });
       }
@@ -1514,6 +1603,7 @@ export class WhatsAppService {
     credentials: Record<string, any>,
     workspaceId: string,
   ): Promise<void> {
+    const stepMessage = (step.message || '').trim();
     if (step.type === 'template' && step.templateName) {
       // Send approved template (can initiate conversations outside 24h window)
       const components: any[] = [];
@@ -1540,35 +1630,37 @@ export class WhatsAppService {
           to: waId,
           type: step.mediaType!,
           content: '',
-          media: { url: step.mediaUrl, id: step.mediaId, caption: step.message },
+          media: { url: step.mediaUrl, id: step.mediaId, caption: stepMessage || undefined },
         });
       }
       const buttons = step.buttons.slice(0, 3).map(b => ({ id: b.id, title: b.title.slice(0, 20) }));
+      const prompt = stepMessage || 'Please choose an option:';
       await this.sendMessageWithCredentials(credentials, {
         to: waId,
         type: 'interactive',
         content: '',
         interactive: {
           type: 'button',
-          body: { text: hasMedia ? '👆 Please choose an option:' : step.message },
+          body: { text: hasMedia ? 'Please choose an option:' : prompt },
           action: { buttons: buttons.map(b => ({ type: 'reply' as const, reply: { id: b.id, title: b.title } })) },
         },
       });
       const btnLabels = buttons.map(b => b.title).join(', ');
-      await this.saveOutboundActivity(waId, `[Flow buttons: ${btnLabels}] ${step.message}`, 'interactive', workspaceId, '', undefined);
+      await this.saveOutboundActivity(waId, `[Flow buttons: ${btnLabels}] ${prompt}`, 'interactive', workspaceId, '', undefined);
     } else if ((step.mediaUrl || step.mediaId) && step.mediaType) {
       // Send media message (end of flow or media-only step)
       await this.sendMessageWithCredentials(credentials, {
         to: waId,
         type: step.mediaType,
         content: '',
-        media: { url: step.mediaUrl, id: step.mediaId, caption: step.message || undefined },
+        media: { url: step.mediaUrl, id: step.mediaId, caption: stepMessage || undefined },
       });
-      await this.saveOutboundActivity(waId, `[${step.mediaType}] ${step.message || step.mediaUrl || 'uploaded media'}`, step.mediaType, workspaceId, '', undefined);
+      await this.saveOutboundActivity(waId, `[${step.mediaType}] ${stepMessage || step.mediaUrl || 'uploaded media'}`, step.mediaType, workspaceId, '', undefined);
     } else {
       // Send plain text (end of flow)
-      await this.sendTextMessage(waId, step.message, credentials);
-      await this.saveOutboundActivity(waId, step.message, 'text', workspaceId, '', undefined);
+      const text = stepMessage || 'Thank you!';
+      await this.sendTextMessage(waId, text, credentials);
+      await this.saveOutboundActivity(waId, text, 'text', workspaceId, '', undefined);
     }
     this.logger.log(`Flow step "${step.id}" sent to ${waId}`);
   }
@@ -1637,6 +1729,29 @@ export class WhatsAppService {
   }
 
   /**
+   * Normalize button payload/title text so matching is resilient to
+   * punctuation, casing, spacing, and diacritics.
+   */
+  private normalizeReplyToken(value?: string): string {
+    return (value || '')
+      .normalize('NFKD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, '');
+  }
+
+  private tokensMatch(a?: string, b?: string): boolean {
+    const na = this.normalizeReplyToken(a);
+    const nb = this.normalizeReplyToken(b);
+    if (!na || !nb) return false;
+    return na === nb || na.includes(nb) || nb.includes(na);
+  }
+
+  private getErrorMessage(err: any): string {
+    return err?.response?.data?.error?.message || err?.response?.data?.message || err?.message || 'Unknown error';
+  }
+
+  /**
    * Handle a button reply within a conversation flow.
    * Looks up the current flow state, finds the next step, sends it.
    * Returns true if handled (caller should skip auto-respond).
@@ -1676,13 +1791,15 @@ export class WhatsAppService {
       return false;
     }
 
-    const normalize = (value?: string) => (value || '').trim().toLowerCase();
-    const idCandidate = normalize(buttonId);
-    const titleCandidate = normalize(buttonTitle);
+    const idCandidate = this.normalizeReplyToken(buttonId);
+    const titleCandidate = this.normalizeReplyToken(buttonTitle);
     const button = currentStep.buttons.find((b: any) => {
-      const id = normalize(b.id);
-      const title = normalize(b.title);
-      return id === idCandidate || (titleCandidate && title === titleCandidate);
+      const id = this.normalizeReplyToken(b.id);
+      const title = this.normalizeReplyToken(b.title);
+      return (
+        (idCandidate && (id === idCandidate || id.includes(idCandidate) || idCandidate.includes(id))) ||
+        (titleCandidate && (title === titleCandidate || title.includes(titleCandidate) || titleCandidate.includes(title)))
+      );
     });
     if (!button) {
       this.logger.warn(
@@ -1726,7 +1843,7 @@ export class WhatsAppService {
       this.logger.log(`Flow "${flow.name}": ${waId} → button "${button.title}" → step "${nextStep.id}"`);
       return true;
     } catch (err) {
-      this.logger.warn(`Flow step send failed for ${waId}: ${err.message}`);
+      this.logger.warn(`Flow step send failed for ${waId}: ${this.getErrorMessage(err)}`);
       return false;
     }
   }
@@ -1767,12 +1884,13 @@ export class WhatsAppService {
 
     // Match template button by payload, text, or legacy/random id.
     // This keeps older saved flows compatible even if ids were not payload-based.
-    const normalize = (value?: string) => (value || '').trim().toLowerCase();
-    const candidates = [normalize(buttonPayload), normalize(buttonText)].filter(Boolean);
+    const candidates = [buttonPayload, buttonText]
+      .map((v) => this.normalizeReplyToken(v))
+      .filter(Boolean);
     const button = currentStep.buttons.find((b: any) => {
-      const title = normalize(b.title);
-      const id = normalize(b.id);
-      return candidates.includes(title) || candidates.includes(id);
+      const title = this.normalizeReplyToken(b.title);
+      const id = this.normalizeReplyToken(b.id);
+      return candidates.some((candidate) => this.tokensMatch(candidate, title) || this.tokensMatch(candidate, id));
     });
     if (!button) {
       this.logger.warn(
@@ -1805,7 +1923,7 @@ export class WhatsAppService {
       );
       return true;
     } catch (err) {
-      this.logger.warn(`Flow template button failed for ${waId}: ${err.message}`);
+      this.logger.warn(`Flow template button failed for ${waId}: ${this.getErrorMessage(err)}`);
       return false;
     }
   }
@@ -1826,14 +1944,47 @@ export class WhatsAppService {
     if (message.type === 'interactive') {
       const interactiveReply =
         message.interactive?.button_reply || message.interactive?.list_reply;
-      if (!interactiveReply) return false;
+      if (interactiveReply) {
+        const buttonId = interactiveReply.id || '';
+        const buttonTitle = interactiveReply.title || '';
+        const handled = await this.handleButtonReply(workspaceId, waId, buttonId, integration, buttonTitle);
+        if (handled) return true;
+        // Some template button replies may arrive as interactive payloads.
+        return this.handleTemplateButtonReply(workspaceId, waId, buttonId || buttonTitle, integration, buttonTitle);
+      }
 
-      const buttonId = interactiveReply.id || '';
-      const buttonTitle = interactiveReply.title || '';
-      const handled = await this.handleButtonReply(workspaceId, waId, buttonId, integration, buttonTitle);
-      if (handled) return true;
-      // Some template button replies may arrive as interactive payloads.
-      return this.handleTemplateButtonReply(workspaceId, waId, buttonId || buttonTitle, integration, buttonTitle);
+      // WhatsApp Flows (nfm_reply) or other interactive payloads can arrive
+      // without button_reply/list_reply; try to recover a text candidate.
+      const nfmBody = message.interactive?.nfm_reply?.body;
+      const nfmResponse = message.interactive?.nfm_reply?.response_json;
+      const candidates: string[] = [];
+      if (typeof nfmBody === 'string' && nfmBody.trim()) candidates.push(nfmBody.trim());
+      if (nfmResponse && typeof nfmResponse === 'object') {
+        const flattened = Object.values(nfmResponse)
+          .map((v) => String(v || '').trim())
+          .filter(Boolean);
+        candidates.push(...flattened);
+      }
+      for (const candidate of candidates) {
+        const handledByButton = await this.handleButtonReply(
+          workspaceId,
+          waId,
+          candidate,
+          integration,
+          candidate,
+        );
+        if (handledByButton) return true;
+        const handledByTemplate = await this.handleTemplateButtonReply(
+          workspaceId,
+          waId,
+          candidate,
+          integration,
+          candidate,
+        );
+        if (handledByTemplate) return true;
+      }
+      this.logger.warn(`Flow: interactive reply for ${waId} has no usable payload`);
+      return false;
     }
     // Template quick reply buttons (from template messages, step 1)
     if (message.type === 'button' && message.button) {
@@ -1878,6 +2029,7 @@ export class WhatsAppService {
         }
 
         // Still in flow but message does not map to a button.
+        this.logger.warn(`Flow: active state for ${waId} at step "${state.currentStepId}" but message did not match any button`);
         return false;
       }
     }

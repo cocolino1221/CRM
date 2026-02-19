@@ -100,16 +100,39 @@ export class WhatsAppController {
       templateName: string;
       language?: string;
       parameters?: any[];
+      headerMediaType?: 'image' | 'video' | 'document';
+      headerMediaId?: string;
+      headerMediaUrl?: string;
     },
   ) {
-    const result = await this.whatsappService.sendTemplateMessage(
-      body.to,
-      body.templateName,
-      body.language || 'en',
-      body.parameters || [],
-    );
     const workspaceId = req.user?.workspaceId;
     const userId = req.user?.id;
+    const components: any[] = [...(body.parameters || [])];
+
+    const headerType = String(body.headerMediaType || '').toLowerCase();
+    const headerMediaId = String(body.headerMediaId || '').trim();
+    const headerMediaUrl = String(body.headerMediaUrl || '').trim();
+    if (['image', 'video', 'document'].includes(headerType) && (headerMediaId || headerMediaUrl)) {
+      const headerParam: any = { type: headerType };
+      headerParam[headerType] = headerMediaId ? { id: headerMediaId } : { link: headerMediaUrl };
+      components.unshift({ type: 'header', parameters: [headerParam] });
+    }
+
+    const result = workspaceId
+      ? await this.whatsappService.sendTemplateMessageForWorkspace(
+        workspaceId,
+        body.to,
+        body.templateName,
+        body.language || 'en',
+        components,
+      )
+      : await this.whatsappService.sendTemplateMessage(
+        body.to,
+        body.templateName,
+        body.language || 'en',
+        components,
+      );
+
     if (workspaceId && userId) {
       const msgId = result?.messages?.[0]?.id;
       await this.whatsappService.saveOutboundActivity(
@@ -396,6 +419,9 @@ export class WhatsAppController {
       templateName: string;
       language?: string;
       includeNameParam?: boolean;
+      headerMediaType?: 'image' | 'video' | 'document';
+      headerMediaId?: string;
+      headerMediaUrl?: string;
       conditions?: { sources?: string[]; statuses?: string[]; requirePhone?: boolean };
     },
   ) {

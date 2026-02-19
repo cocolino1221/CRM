@@ -84,6 +84,7 @@ interface WhatsAppTemplate {
   body: string;
   parameterCount: number;
   category: 'marketing' | 'utility' | 'authentication';
+  headerMediaType?: '' | 'image' | 'video' | 'document';
 }
 
 interface QuickReply {
@@ -103,6 +104,7 @@ function toSendableTemplate(t: any): WhatsAppTemplate {
   const bodyComponent = t.components?.find((c: any) => c.type === 'BODY');
   const bodyText = bodyComponent?.text || t.name;
   const paramCount = (bodyText.match(/\{\{\d+\}\}/g) || []).length;
+  const headerMediaType = getTemplateHeaderMediaType(t);
   return {
     id: t.id || t.name,
     name: t.name,
@@ -111,7 +113,17 @@ function toSendableTemplate(t: any): WhatsAppTemplate {
     body: bodyText,
     parameterCount: paramCount,
     category: (t.category || 'utility').toLowerCase() as any,
+    headerMediaType,
   };
+}
+
+function getTemplateHeaderMediaType(template: any): '' | 'image' | 'video' | 'document' {
+  const headerComponent = template?.components?.find((c: any) => c.type === 'HEADER');
+  const format = String(headerComponent?.format || '').toUpperCase();
+  if (format === 'IMAGE') return 'image';
+  if (format === 'VIDEO') return 'video';
+  if (format === 'DOCUMENT') return 'document';
+  return '';
 }
 
 const DEFAULT_QUICK_REPLIES: QuickReply[] = [
@@ -415,6 +427,9 @@ export default function WhatsAppPage() {
   const [showTemplatePanel, setShowTemplatePanel] = useState(false);
   const [templateParams, setTemplateParams] = useState<string[]>([]);
   const [selectedTemplate, setSelectedTemplate] = useState<WhatsAppTemplate | null>(null);
+  const [templateHeaderMediaId, setTemplateHeaderMediaId] = useState('');
+  const [templateHeaderMediaUrl, setTemplateHeaderMediaUrl] = useState('');
+  const [isUploadingTemplateHeader, setIsUploadingTemplateHeader] = useState(false);
 
   // New conversation modal
   const [showNewConversation, setShowNewConversation] = useState(false);
@@ -471,6 +486,10 @@ export default function WhatsAppPage() {
   const [autoSendTemplate, setAutoSendTemplate] = useState('hello_world');
   const [autoSendLanguage, setAutoSendLanguage] = useState('en_US');
   const [autoSendIncludeName, setAutoSendIncludeName] = useState(false);
+  const [autoSendHeaderMediaType, setAutoSendHeaderMediaType] = useState<'' | 'image' | 'video' | 'document'>('');
+  const [autoSendHeaderMediaId, setAutoSendHeaderMediaId] = useState('');
+  const [autoSendHeaderMediaUrl, setAutoSendHeaderMediaUrl] = useState('');
+  const [isUploadingAutoSendHeader, setIsUploadingAutoSendHeader] = useState(false);
   const [autoSendSources, setAutoSendSources] = useState<string[]>([]);
   const [autoSendStatuses, setAutoSendStatuses] = useState<string[]>([]);
   const [autoSendRequirePhone, setAutoSendRequirePhone] = useState(true);
@@ -728,10 +747,14 @@ export default function WhatsAppPage() {
     try {
       const res = await api.get('/integrations/whatsapp/auto-send');
       const cfg = res.data;
+      const headerType = String(cfg.headerMediaType || '').toLowerCase();
       setAutoSendEnabled(cfg.enabled ?? false);
       setAutoSendTemplate(cfg.templateName || 'hello_world');
       setAutoSendLanguage(cfg.language || 'en_US');
       setAutoSendIncludeName(cfg.includeNameParam ?? false);
+      setAutoSendHeaderMediaType((['image', 'video', 'document'].includes(headerType) ? headerType : '') as '' | 'image' | 'video' | 'document');
+      setAutoSendHeaderMediaId(cfg.headerMediaId || '');
+      setAutoSendHeaderMediaUrl(cfg.headerMediaUrl || '');
       setAutoSendSources(cfg.conditions?.sources || []);
       setAutoSendStatuses(cfg.conditions?.statuses || []);
       setAutoSendRequirePhone(cfg.conditions?.requirePhone ?? true);
@@ -747,6 +770,9 @@ export default function WhatsAppPage() {
         templateName: autoSendTemplate.trim(),
         language: autoSendLanguage.trim() || 'en',
         includeNameParam: autoSendIncludeName,
+        headerMediaType: autoSendHeaderMediaType || undefined,
+        headerMediaId: autoSendHeaderMediaId.trim() || undefined,
+        headerMediaUrl: autoSendHeaderMediaUrl.trim() || undefined,
         conditions: {
           sources: autoSendSources.length > 0 ? autoSendSources : undefined,
           statuses: autoSendStatuses.length > 0 ? autoSendStatuses : undefined,
@@ -986,6 +1012,11 @@ export default function WhatsAppPage() {
   };
 
   const handleSendTemplate = async (to: string, template: WhatsAppTemplate, params: string[]) => {
+    if (template.headerMediaType && !templateHeaderMediaId.trim() && !templateHeaderMediaUrl.trim()) {
+      setSendError(`Template "${template.displayName}" needs ${template.headerMediaType} in header (media_id or URL).`);
+      return;
+    }
+
     setIsSending(true);
     setSendError('');
     try {
@@ -994,10 +1025,15 @@ export default function WhatsAppPage() {
         templateName: template.name,
         language: template.language,
         parameters: params.length > 0 ? params.map(p => ({ type: 'text', text: p })) : [],
+        headerMediaType: template.headerMediaType || undefined,
+        headerMediaId: templateHeaderMediaId.trim() || undefined,
+        headerMediaUrl: templateHeaderMediaUrl.trim() || undefined,
       });
       setShowTemplatePanel(false);
       setSelectedTemplate(null);
       setTemplateParams([]);
+      setTemplateHeaderMediaId('');
+      setTemplateHeaderMediaUrl('');
       setShowNewConversation(false);
       setNewConvPhone('');
       setNewConvTemplate(null);
@@ -1007,6 +1043,21 @@ export default function WhatsAppPage() {
       setSendError(err.response?.data?.message || 'Failed to send template');
     } finally {
       setIsSending(false);
+    }
+  };
+
+  const handleUploadTemplateHeader = async (file: File) => {
+    setIsUploadingTemplateHeader(true);
+    setSendError('');
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const res = await api.post('/integrations/whatsapp/media/upload', formData);
+      setTemplateHeaderMediaId(res.data.id || '');
+    } catch (err: any) {
+      setSendError(`Upload failed: ${err.response?.data?.message || err.message}`);
+    } finally {
+      setIsUploadingTemplateHeader(false);
     }
   };
 
@@ -2131,7 +2182,13 @@ export default function WhatsAppPage() {
                 <h3 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
                   <LayoutTemplate className="h-4 w-4" /> Message Templates
                 </h3>
-                <button onClick={() => { setShowTemplatePanel(false); setSelectedTemplate(null); setTemplateParams([]); }}>
+                <button onClick={() => {
+                  setShowTemplatePanel(false);
+                  setSelectedTemplate(null);
+                  setTemplateParams([]);
+                  setTemplateHeaderMediaId('');
+                  setTemplateHeaderMediaUrl('');
+                }}>
                   <X className="h-4 w-4 text-gray-400" />
                 </button>
               </div>
@@ -2144,7 +2201,12 @@ export default function WhatsAppPage() {
                     ? metaTemplates.filter((t: any) => t.status === 'APPROVED').map(toSendableTemplate)
                     : WHATSAPP_TEMPLATES
                   ).map(t => (
-                    <button key={t.id} onClick={() => { setSelectedTemplate(t); setTemplateParams(Array(t.parameterCount).fill('')); }}
+                    <button key={t.id} onClick={() => {
+                      setSelectedTemplate(t);
+                      setTemplateParams(Array(t.parameterCount).fill(''));
+                      setTemplateHeaderMediaId('');
+                      setTemplateHeaderMediaUrl('');
+                    }}
                       className="p-3 text-left bg-gray-50 hover:bg-green-50 rounded-xl border border-gray-200 hover:border-green-300 transition-all">
                       <div className="flex items-center gap-2 mb-1">
                         <span className="text-xs font-semibold text-gray-900">{t.displayName}</span>
@@ -2169,9 +2231,53 @@ export default function WhatsAppPage() {
                       ))}
                     </div>
                   )}
+                  {selectedTemplate.headerMediaType && (
+                    <div className="mb-3 space-y-2 p-3 rounded-lg border border-amber-200 bg-amber-50">
+                      <p className="text-xs text-amber-800 font-medium">
+                        Header media required ({selectedTemplate.headerMediaType})
+                      </p>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          value={templateHeaderMediaId}
+                          onChange={(e) => setTemplateHeaderMediaId(e.target.value)}
+                          placeholder="Meta media_id"
+                          className="flex-1 px-3 py-1.5 text-sm border border-amber-200 rounded-lg focus:outline-none focus:border-amber-400"
+                        />
+                        <label className="px-3 py-1.5 text-xs font-medium text-amber-800 border border-amber-300 rounded-lg cursor-pointer hover:bg-amber-100">
+                          {isUploadingTemplateHeader ? 'Uploading…' : 'Upload'}
+                          <input
+                            type="file"
+                            className="hidden"
+                            accept={selectedTemplate.headerMediaType === 'image' ? 'image/*' : selectedTemplate.headerMediaType === 'video' ? 'video/*' : '.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt'}
+                            onChange={async (e) => {
+                              const file = e.target.files?.[0];
+                              if (!file) return;
+                              await handleUploadTemplateHeader(file);
+                              e.target.value = '';
+                            }}
+                          />
+                        </label>
+                      </div>
+                      <input
+                        type="text"
+                        value={templateHeaderMediaUrl}
+                        onChange={(e) => setTemplateHeaderMediaUrl(e.target.value)}
+                        placeholder={`${selectedTemplate.headerMediaType} URL (optional)`}
+                        className="w-full px-3 py-1.5 text-sm border border-amber-200 rounded-lg focus:outline-none focus:border-amber-400"
+                      />
+                    </div>
+                  )}
                   <div className="flex gap-2">
-                    <button onClick={() => { setSelectedTemplate(null); setTemplateParams([]); }} className="px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">Back</button>
-                    <button onClick={() => handleSendTemplate(selectedConv.waId, selectedTemplate, templateParams)} disabled={isSending}
+                    <button onClick={() => {
+                      setSelectedTemplate(null);
+                      setTemplateParams([]);
+                      setTemplateHeaderMediaId('');
+                      setTemplateHeaderMediaUrl('');
+                    }} className="px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">Back</button>
+                    <button
+                      onClick={() => handleSendTemplate(selectedConv.waId, selectedTemplate, templateParams)}
+                      disabled={isSending || (!!selectedTemplate.headerMediaType && !templateHeaderMediaId.trim() && !templateHeaderMediaUrl.trim())}
                       className="px-4 py-1.5 text-sm font-medium text-white bg-green-500 hover:bg-green-600 rounded-lg disabled:opacity-50 flex items-center gap-2">
                       {isSending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
                       Send Template
@@ -2250,6 +2356,8 @@ export default function WhatsAppPage() {
                     <button key={tpl.name} onClick={() => {
                       setSelectedTemplate(tpl);
                       setTemplateParams(Array(tpl.parameterCount).fill(''));
+                      setTemplateHeaderMediaId('');
+                      setTemplateHeaderMediaUrl('');
                       setShowTemplatePanel(true);
                       setShowSlashMenu(false);
                       setReplyText('');
@@ -2360,7 +2468,16 @@ export default function WhatsAppPage() {
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden">
             <div className="flex items-center justify-between p-4 border-b border-gray-100">
               <h3 className="font-semibold text-gray-900 flex items-center gap-2"><MessageCircle className="h-5 w-5 text-green-600" /> New Conversation</h3>
-              <button onClick={() => { setShowNewConversation(false); setNewConvPhone(''); setNewConvTemplate(null); setNewConvTemplateParams([]); setContactSearchQuery(''); setContactSearchResults([]); }}>
+              <button onClick={() => {
+                setShowNewConversation(false);
+                setNewConvPhone('');
+                setNewConvTemplate(null);
+                setNewConvTemplateParams([]);
+                setContactSearchQuery('');
+                setContactSearchResults([]);
+                setTemplateHeaderMediaId('');
+                setTemplateHeaderMediaUrl('');
+              }}>
                 <X className="h-5 w-5 text-gray-400" />
               </button>
             </div>
@@ -2413,7 +2530,12 @@ export default function WhatsAppPage() {
                     ? metaTemplates.filter((t: any) => t.status === 'APPROVED').map(toSendableTemplate)
                     : WHATSAPP_TEMPLATES
                   ).map(t => (
-                    <button key={t.id} onClick={() => { setNewConvTemplate(t); setNewConvTemplateParams(Array(t.parameterCount).fill('')); }}
+                    <button key={t.id} onClick={() => {
+                      setNewConvTemplate(t);
+                      setNewConvTemplateParams(Array(t.parameterCount).fill(''));
+                      setTemplateHeaderMediaId('');
+                      setTemplateHeaderMediaUrl('');
+                    }}
                       className={`w-full p-3 text-left rounded-xl border transition-all ${
                         newConvTemplate?.id === t.id ? 'border-green-400 bg-green-50' : 'border-gray-200 hover:border-green-300 hover:bg-gray-50'
                       }`}>
@@ -2431,13 +2553,56 @@ export default function WhatsAppPage() {
                     ))}
                   </div>
                 )}
+                {newConvTemplate?.headerMediaType && (
+                  <div className="mt-2 space-y-2 p-3 rounded-lg border border-amber-200 bg-amber-50">
+                    <p className="text-xs text-amber-800 font-medium">
+                      Header media required ({newConvTemplate.headerMediaType})
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={templateHeaderMediaId}
+                        onChange={(e) => setTemplateHeaderMediaId(e.target.value)}
+                        placeholder="Meta media_id"
+                        className="flex-1 px-3 py-1.5 text-sm border border-amber-200 rounded-lg focus:outline-none focus:border-amber-400"
+                      />
+                      <label className="px-3 py-1.5 text-xs font-medium text-amber-800 border border-amber-300 rounded-lg cursor-pointer hover:bg-amber-100">
+                        {isUploadingTemplateHeader ? 'Uploading…' : 'Upload'}
+                        <input
+                          type="file"
+                          className="hidden"
+                          accept={newConvTemplate.headerMediaType === 'image' ? 'image/*' : newConvTemplate.headerMediaType === 'video' ? 'video/*' : '.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt'}
+                          onChange={async (e) => {
+                            const file = e.target.files?.[0];
+                            if (!file) return;
+                            await handleUploadTemplateHeader(file);
+                            e.target.value = '';
+                          }}
+                        />
+                      </label>
+                    </div>
+                    <input
+                      type="text"
+                      value={templateHeaderMediaUrl}
+                      onChange={(e) => setTemplateHeaderMediaUrl(e.target.value)}
+                      placeholder={`${newConvTemplate.headerMediaType} URL (optional)`}
+                      className="w-full px-3 py-1.5 text-sm border border-amber-200 rounded-lg focus:outline-none focus:border-amber-400"
+                    />
+                  </div>
+                )}
               </div>
             </div>
             <div className="p-4 border-t border-gray-100 flex gap-2">
-              <button onClick={() => { setShowNewConversation(false); setNewConvPhone(''); setNewConvTemplate(null); }}
+              <button onClick={() => {
+                setShowNewConversation(false);
+                setNewConvPhone('');
+                setNewConvTemplate(null);
+                setTemplateHeaderMediaId('');
+                setTemplateHeaderMediaUrl('');
+              }}
                 className="flex-1 px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-xl transition-all">Cancel</button>
               <button onClick={() => { if (newConvPhone && newConvTemplate) handleSendTemplate(newConvPhone, newConvTemplate, newConvTemplateParams); }}
-                disabled={!newConvPhone || !newConvTemplate || isSending}
+                disabled={!newConvPhone || !newConvTemplate || isSending || (!!newConvTemplate?.headerMediaType && !templateHeaderMediaId.trim() && !templateHeaderMediaUrl.trim())}
                 className="flex-1 px-4 py-2 text-sm font-medium text-white bg-green-500 hover:bg-green-600 rounded-xl transition-all disabled:opacity-50 flex items-center justify-center gap-2">
                 {isSending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
                 Send
@@ -3108,8 +3273,17 @@ export default function WhatsAppPage() {
                       value={autoSendTemplate}
                       onChange={e => {
                         const selected = metaTemplates.find((t: any) => t.name === e.target.value);
+                        const headerType = getTemplateHeaderMediaType(selected);
+                        const bodyText = selected?.components?.find((c: any) => c.type === 'BODY')?.text || '';
+                        const hasBodyParams = /\{\{\d+\}\}/.test(bodyText);
                         setAutoSendTemplate(e.target.value);
                         if (selected?.language) setAutoSendLanguage(selected.language);
+                        setAutoSendHeaderMediaType(headerType);
+                        if (!hasBodyParams) setAutoSendIncludeName(false);
+                        if (!headerType) {
+                          setAutoSendHeaderMediaId('');
+                          setAutoSendHeaderMediaUrl('');
+                        }
                       }}
                       className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-green-400 focus:ring-2 focus:ring-green-100 bg-white">
                       <option value="">— choose a template —</option>
@@ -3143,6 +3317,58 @@ export default function WhatsAppPage() {
                     <p className="text-xs text-gray-400">Passes {`{{1}}`} = first name to the template</p>
                   </div>
                 </label>
+
+                {autoSendHeaderMediaType && (
+                  <div className="space-y-2 rounded-xl border border-amber-200 bg-amber-50 p-3">
+                    <p className="text-xs font-semibold text-amber-800 uppercase tracking-wide">
+                      Header media required ({autoSendHeaderMediaType})
+                    </p>
+                    <p className="text-xs text-amber-700">
+                      This template has a media header. Set a media_id (recommended) or a public URL.
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={autoSendHeaderMediaId}
+                        onChange={e => setAutoSendHeaderMediaId(e.target.value)}
+                        placeholder="Meta media_id (recommended)"
+                        className="flex-1 px-3 py-2 text-sm border border-amber-200 rounded-xl focus:outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-100 bg-white"
+                      />
+                      <label className="px-3 py-2 text-xs font-medium text-amber-800 border border-amber-300 rounded-xl cursor-pointer hover:bg-amber-100 transition-colors">
+                        {isUploadingAutoSendHeader ? 'Uploading…' : 'Upload'}
+                        <input
+                          type="file"
+                          className="hidden"
+                          accept={autoSendHeaderMediaType === 'image' ? 'image/*' : autoSendHeaderMediaType === 'video' ? 'video/*' : '.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt'}
+                          onChange={async (e) => {
+                            const file = e.target.files?.[0];
+                            if (!file) return;
+                            setIsUploadingAutoSendHeader(true);
+                            setAutoSendSaveError('');
+                            try {
+                              const formData = new FormData();
+                              formData.append('file', file);
+                              const res = await api.post('/integrations/whatsapp/media/upload', formData);
+                              setAutoSendHeaderMediaId(res.data.id || '');
+                            } catch (err: any) {
+                              setAutoSendSaveError(`Upload failed: ${err?.response?.data?.message || err.message}`);
+                            } finally {
+                              setIsUploadingAutoSendHeader(false);
+                              e.target.value = '';
+                            }
+                          }}
+                        />
+                      </label>
+                    </div>
+                    <input
+                      type="text"
+                      value={autoSendHeaderMediaUrl}
+                      onChange={e => setAutoSendHeaderMediaUrl(e.target.value)}
+                      placeholder={`${autoSendHeaderMediaType} URL (fallback if no media_id)`}
+                      className="w-full px-3 py-2 text-sm border border-amber-200 rounded-xl focus:outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-100 bg-white"
+                    />
+                  </div>
+                )}
               </div>
 
               {/* Source filter */}
@@ -3199,7 +3425,13 @@ export default function WhatsAppPage() {
                 className="flex-1 px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-xl">
                 Cancel
               </button>
-              <button onClick={saveAutoSendConfig} disabled={isSavingAutoSend || !autoSendTemplate.trim()}
+              <button
+                onClick={saveAutoSendConfig}
+                disabled={
+                  isSavingAutoSend
+                  || !autoSendTemplate.trim()
+                  || (autoSendHeaderMediaType !== '' && !autoSendHeaderMediaId.trim() && !autoSendHeaderMediaUrl.trim())
+                }
                 className="flex-1 px-4 py-2 text-sm font-medium text-white bg-green-500 hover:bg-green-600 rounded-xl disabled:opacity-50 flex items-center justify-center gap-2">
                 {isSavingAutoSend ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
                 Save

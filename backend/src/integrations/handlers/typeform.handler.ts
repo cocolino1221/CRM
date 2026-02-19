@@ -169,14 +169,39 @@ export class TypeformIntegrationHandler {
       };
     }
 
-    // Default first name if missing
-    if (!contactData.firstName) {
-      contactData.firstName = 'Lead';
+    // Normalize name values from Typeform and avoid generic "Lead from Typeform"
+    contactData.firstName = (contactData.firstName || '').trim();
+    contactData.lastName = (contactData.lastName || '').trim();
+
+    // If firstName contains full name, split it
+    if (contactData.firstName && !contactData.lastName && contactData.firstName.includes(' ')) {
+      const parts = contactData.firstName.split(/\s+/);
+      contactData.firstName = parts[0] || '';
+      contactData.lastName = parts.slice(1).join(' ');
     }
 
-    // Default last name if missing
+    // If still missing, infer a readable name from email local-part
+    if (!contactData.firstName && contactData.email) {
+      const localPart = String(contactData.email).split('@')[0] || '';
+      const tokens = localPart
+        .split(/[._-]+/)
+        .map((token: string) => token.trim())
+        .filter(Boolean);
+      if (tokens.length > 0) {
+        const [first, ...rest] = tokens;
+        const toTitle = (value: string) => value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
+        contactData.firstName = toTitle(first);
+        if (!contactData.lastName && rest.length > 0) {
+          contactData.lastName = rest.map(toTitle).join(' ');
+        }
+      }
+    }
+
+    if (!contactData.firstName) {
+      contactData.firstName = 'Contact';
+    }
     if (!contactData.lastName) {
-      contactData.lastName = 'from Typeform';
+      contactData.lastName = '';
     }
 
     try {
@@ -331,8 +356,7 @@ export class TypeformIntegrationHandler {
         fieldTitle.includes('firstname') ||
         fieldTitle.includes('prénom') ||
         fieldTitle.includes('prenume') ||
-        fieldTitle === 'first' ||
-        fieldTitle === 'name'
+        fieldTitle === 'first'
       ) {
         contactData.firstName = answer.text || value;
       } else if (
@@ -348,7 +372,8 @@ export class TypeformIntegrationHandler {
       } else if (
         fieldTitle.includes('full name') ||
         fieldTitle.includes('your name') ||
-        fieldTitle.includes('nume complet')
+        fieldTitle.includes('nume complet') ||
+        fieldTitle === 'name'
       ) {
         // Handle full name field - split into first/last
         const fullName = (answer.text || value || '').trim();
