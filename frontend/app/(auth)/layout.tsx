@@ -16,7 +16,7 @@ export default function AuthLayout({
             <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-white/20 backdrop-blur-sm">
               <MessageSquare className="h-7 w-7 text-white" />
             </div>
-            <span className="text-2xl font-bold text-white">SlackCRM</span>
+            <span className="text-2xl font-bold text-white">easyteamcrm</span>
           </div>
           <h1 className="text-5xl font-bold text-white mb-4">
             Manage Your Team
