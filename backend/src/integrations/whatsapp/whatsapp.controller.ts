@@ -423,6 +423,32 @@ export class WhatsAppController {
       headerMediaId?: string;
       headerMediaUrl?: string;
       conditions?: { sources?: string[]; statuses?: string[]; requirePhone?: boolean };
+      autoSendRules?: Array<{
+        id?: string;
+        name?: string;
+        enabled: boolean;
+        templateName: string;
+        language?: string;
+        includeNameParam?: boolean;
+        headerMediaType?: 'image' | 'video' | 'document';
+        headerMediaId?: string;
+        headerMediaUrl?: string;
+        priority?: number;
+        conditions?: { sources?: string[]; statuses?: string[]; requirePhone?: boolean };
+      }>;
+      rules?: Array<{
+        id?: string;
+        name?: string;
+        enabled: boolean;
+        templateName: string;
+        language?: string;
+        includeNameParam?: boolean;
+        headerMediaType?: 'image' | 'video' | 'document';
+        headerMediaId?: string;
+        headerMediaUrl?: string;
+        priority?: number;
+        conditions?: { sources?: string[]; statuses?: string[]; requirePhone?: boolean };
+      }>;
     },
   ) {
     const workspaceId = req.user?.workspaceId;

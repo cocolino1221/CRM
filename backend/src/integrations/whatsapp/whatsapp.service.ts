@@ -1,5 +1,5 @@
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
-import { OnEvent } from '@nestjs/event-emitter';
+import { OnEvent, EventEmitter2 } from '@nestjs/event-emitter';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -12,6 +12,7 @@ import { User, UserStatus } from '../../database/entities/user.entity';
 import { NotificationsService, CreateNotificationDto } from '../../notifications/notifications.service';
 import { NotificationType } from '../../database/entities/notification.entity';
 import { WhatsAppAIService } from './whatsapp-ai.service';
+import { normalizePhoneDigits, normalizePhoneE164 } from '../../common/utils/phone.util';
 
 export interface WhatsAppMessage {
   to: string;
@@ -80,6 +81,31 @@ export interface WhatsAppWebhook {
   }>;
 }
 
+type AutoSendHeaderMediaType = 'image' | 'video' | 'document';
+
+interface AutoSendConditions {
+  sources?: string[];
+  statuses?: string[];
+  requirePhone?: boolean;
+}
+
+interface AutoSendConfig {
+  enabled: boolean;
+  templateName: string;
+  language: string;
+  includeNameParam: boolean;
+  headerMediaType?: AutoSendHeaderMediaType;
+  headerMediaId?: string;
+  headerMediaUrl?: string;
+  conditions: AutoSendConditions;
+}
+
+interface AutoSendRule extends AutoSendConfig {
+  id: string;
+  name: string;
+  priority: number;
+}
+
 @Injectable()
 export class WhatsAppService {
   private readonly logger = new Logger(WhatsAppService.name);
@@ -98,6 +124,7 @@ export class WhatsAppService {
     private readonly userRepository: Repository<User>,
     private readonly notificationsService: NotificationsService,
     private readonly whatsAppAIService: WhatsAppAIService,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   /**
@@ -122,6 +149,133 @@ export class WhatsAppService {
       accessToken: credentials?.accessToken || this.configService.get<string>('WHATSAPP_ACCESS_TOKEN') || '',
       phoneNumberId: credentials?.phoneNumberId || this.configService.get<string>('WHATSAPP_PHONE_NUMBER_ID') || '',
     };
+  }
+
+  private getDefaultAutoSendConfig(): AutoSendConfig {
+    return {
+      enabled: false,
+      templateName: 'hello_world',
+      language: 'en_US',
+      includeNameParam: false,
+      headerMediaType: undefined,
+      headerMediaId: undefined,
+      headerMediaUrl: undefined,
+      conditions: { sources: [], statuses: [], requirePhone: true },
+    };
+  }
+
+  private sanitizeStringArray(value: any): string[] {
+    if (!Array.isArray(value)) return [];
+    return value
+      .map((entry: any) => String(entry || '').trim())
+      .filter((entry: string) => entry.length > 0);
+  }
+
+  private sanitizeAutoSendConfig(config: any): AutoSendConfig {
+    const defaults = this.getDefaultAutoSendConfig();
+    const headerMediaType = String(config?.headerMediaType || '').trim().toLowerCase();
+    const isValidHeaderMediaType = ['image', 'video', 'document'].includes(headerMediaType);
+
+    return {
+      enabled: Boolean(config?.enabled),
+      templateName: String(config?.templateName || defaults.templateName).trim() || defaults.templateName,
+      language: String(config?.language || defaults.language).trim() || defaults.language,
+      includeNameParam: Boolean(config?.includeNameParam),
+      headerMediaType: isValidHeaderMediaType ? (headerMediaType as AutoSendHeaderMediaType) : undefined,
+      headerMediaId: String(config?.headerMediaId || '').trim() || undefined,
+      headerMediaUrl: String(config?.headerMediaUrl || '').trim() || undefined,
+      conditions: {
+        sources: this.sanitizeStringArray(config?.conditions?.sources),
+        statuses: this.sanitizeStringArray(config?.conditions?.statuses),
+        requirePhone: config?.conditions?.requirePhone !== false,
+      },
+    };
+  }
+
+  private ruleToAutoSendConfig(rule: AutoSendRule): AutoSendConfig {
+    return this.sanitizeAutoSendConfig(rule);
+  }
+
+  private sanitizeAutoSendRule(rule: any, index = 0): AutoSendRule {
+    const fallbackName = String(rule?.templateName || 'Auto-send').trim() || 'Auto-send';
+    const baseConfig = this.sanitizeAutoSendConfig(rule);
+
+    return {
+      ...baseConfig,
+      id: String(rule?.id || `rule_${Date.now()}_${index}`).trim() || `rule_${Date.now()}_${index}`,
+      name: String(rule?.name || fallbackName).trim() || fallbackName,
+      priority: Number.isFinite(Number(rule?.priority)) ? Number(rule.priority) : index,
+    };
+  }
+
+  private getAutoSendRulesFromConfig(config: any): AutoSendRule[] {
+    const rawRules = Array.isArray(config?.autoSendRules) ? config.autoSendRules : [];
+    if (rawRules.length > 0) {
+      return rawRules
+        .map((rule: any, index: number) => this.sanitizeAutoSendRule(rule, index))
+        .sort((a, b) => a.priority - b.priority);
+    }
+
+    if (config?.autoSend) {
+      return [this.sanitizeAutoSendRule({ ...config.autoSend, id: 'legacy', name: 'Default rule', priority: 0 }, 0)];
+    }
+
+    return [];
+  }
+
+  private matchesAutoSendRule(contact: any, rule: AutoSendRule): boolean {
+    const conditions = rule.conditions || {};
+    const contactSource = String(contact?.source || '').trim();
+    const contactStatus = String(contact?.status || '').trim();
+
+    if (conditions.sources?.length && !conditions.sources.includes(contactSource)) {
+      return false;
+    }
+
+    if (conditions.statuses?.length && !conditions.statuses.includes(contactStatus)) {
+      return false;
+    }
+
+    return true;
+  }
+
+  private selectAutoSendRule(contact: any, config: any): AutoSendRule | null {
+    const rules = this.getAutoSendRulesFromConfig(config).filter(rule => rule.enabled);
+    if (!rules.length) return null;
+    return rules.find(rule => this.matchesAutoSendRule(contact, rule)) || null;
+  }
+
+  private isValidUuid(value?: string): boolean {
+    if (!value) return false;
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+  }
+
+  private async notifyAutoSendSuccess(
+    workspaceId: string,
+    contact: any,
+    templateName: string,
+    targetUserId?: string,
+  ): Promise<void> {
+    try {
+      const fullName = `${contact?.firstName || ''} ${contact?.lastName || ''}`.trim() || 'Unknown contact';
+      const contactPhone = contact?.phone || 'unknown';
+      const notification = {
+        type: NotificationType.WHATSAPP,
+        title: 'Auto-send delivered',
+        message: `Template "${templateName}" sent to ${fullName} (${contactPhone})`,
+        link: '/whatsapp',
+        metadata: { contactId: contact?.id, templateName },
+      };
+
+      if (this.isValidUuid(targetUserId)) {
+        await this.notificationsService.create(workspaceId, { ...notification, userId: targetUserId! });
+        return;
+      }
+
+      await this.notifyWorkspace(workspaceId, notification);
+    } catch (err) {
+      this.logger.warn(`Auto-send success notification failed: ${err.message}`);
+    }
   }
 
   private async findIntegrationForPhone(phoneNumberId: string): Promise<Integration | null> {
@@ -149,19 +303,34 @@ export class WhatsAppService {
     return integrations[0] || null;
   }
 
+  private async findContactByPhone(workspaceId: string, phone?: string): Promise<Contact | null> {
+    const normalized = normalizePhoneE164(phone);
+    const digits = normalizePhoneDigits(phone);
+    if (!normalized || !digits) return null;
+
+    return this.contactRepository
+      .createQueryBuilder('contact')
+      .where('contact.workspaceId = :workspaceId', { workspaceId })
+      .andWhere(
+        `(
+          contact.phoneNormalized = :normalized
+          OR regexp_replace(COALESCE(contact.phone, ''), '[^0-9]', '', 'g') = :digits
+        )`,
+        { normalized, digits },
+      )
+      .orderBy('contact.createdAt', 'DESC')
+      .getOne();
+  }
+
   private async findOrCreateContact(
     waId: string,
     profileName: string | undefined,
     workspaceId: string,
     ownerId: string,
   ): Promise<Contact> {
-    const phone = `+${waId}`;
-    let contact = await this.contactRepository.findOne({ where: { workspaceId, phone } });
-
-    if (!contact) {
-      // Also try without + prefix
-      contact = await this.contactRepository.findOne({ where: { workspaceId, phone: waId } });
-    }
+    const phone = normalizePhoneE164(waId) || `+${waId}`;
+    let contact = await this.findContactByPhone(workspaceId, phone);
+    if (!contact) contact = await this.findContactByPhone(workspaceId, waId);
 
     if (!contact) {
       const nameParts = (profileName || '').trim().split(' ');
@@ -172,6 +341,7 @@ export class WhatsAppService {
         firstName: nameParts[0] || 'WhatsApp',
         lastName: nameParts.slice(1).join(' ') || 'Contact',
         phone,
+        phoneNormalized: normalizePhoneE164(phone) || undefined,
         email: `${waId}@whatsapp.placeholder.invalid`,
         status: ContactStatus.LEAD,
         source: ContactSource.WHATSAPP,
@@ -241,10 +411,8 @@ export class WhatsAppService {
     whatsappMessageId?: string,
   ): Promise<void> {
     try {
-      const phone = to.startsWith('+') ? to : `+${to}`;
-      const contact = await this.contactRepository.findOne({ where: { workspaceId, phone } });
-      // Also try without +
-      const contact2 = contact || await this.contactRepository.findOne({ where: { workspaceId, phone: to } });
+      const phone = normalizePhoneE164(to) || (to.startsWith('+') ? to : `+${to}`);
+      const contact2 = await this.findContactByPhone(workspaceId, phone) || await this.findContactByPhone(workspaceId, to);
       const normalizedUserId = userId?.trim() || undefined;
 
       const activity = this.activityRepository.create({
@@ -438,6 +606,29 @@ export class WhatsAppService {
 
             await this.saveMessageActivity(contact, message, integration.workspaceId, ownerId);
             await this.markMessageAsRead(message.id, integration.credentials);
+
+            const messageEventPayload = {
+              workspaceId: integration.workspaceId,
+              integrationId: integration.id,
+              contactId: contact.id,
+              waId: message.from,
+              messageId: message.id,
+              messageType: message.type,
+              occurredAt: new Date().toISOString(),
+            };
+            this.eventEmitter.emit('message_received', messageEventPayload);
+            this.eventEmitter.emit('whatsapp.message.received', messageEventPayload);
+
+            const interactiveReply = message.interactive?.button_reply || message.interactive?.list_reply;
+            if (message.type === 'interactive' && interactiveReply) {
+              const buttonEventPayload = {
+                ...messageEventPayload,
+                buttonId: interactiveReply.id,
+                buttonTitle: interactiveReply.title,
+              };
+              this.eventEmitter.emit('button_clicked', buttonEventPayload);
+              this.eventEmitter.emit('whatsapp.button.clicked', buttonEventPayload);
+            }
 
             // Conversation flows take priority over auto-responses
             const flowHandled = await this.checkFlowTrigger(message, message.from, integration);
@@ -988,15 +1179,13 @@ export class WhatsAppService {
     const integration = await this.integrationRepository.findOne({
       where: { type: IntegrationType.WHATSAPP, workspaceId },
     });
-    return integration?.config?.autoSend || {
-      enabled: false,
-      templateName: 'hello_world',
-      language: 'en_US',
-      includeNameParam: false,
-      headerMediaType: undefined,
-      headerMediaId: undefined,
-      headerMediaUrl: undefined,
-      conditions: { sources: [], statuses: [], requirePhone: true },
+    const config = integration?.config || {};
+    const legacyConfig = this.sanitizeAutoSendConfig(config.autoSend || this.getDefaultAutoSendConfig());
+    const rules = this.getAutoSendRulesFromConfig(config);
+
+    return {
+      ...legacyConfig,
+      autoSendRules: rules,
     };
   }
 
@@ -1008,7 +1197,27 @@ export class WhatsAppService {
       where: { type: IntegrationType.WHATSAPP, workspaceId },
     });
     if (!integration) throw new BadRequestException('No WhatsApp integration found for this workspace');
-    integration.config = { ...(integration.config || {}), autoSend: config };
+
+    const rawRules = Array.isArray(config?.autoSendRules)
+      ? config.autoSendRules
+      : (Array.isArray(config?.rules) ? config.rules : null);
+
+    const normalizedConfig = { ...(integration.config || {}) } as any;
+    if (rawRules) {
+      const rules = rawRules
+        .map((rule: any, index: number) => this.sanitizeAutoSendRule(rule, index))
+        .sort((a: AutoSendRule, b: AutoSendRule) => a.priority - b.priority);
+      normalizedConfig.autoSendRules = rules;
+      normalizedConfig.autoSend = rules.length
+        ? this.ruleToAutoSendConfig(rules[0])
+        : this.getDefaultAutoSendConfig();
+    } else {
+      const legacyConfig = this.sanitizeAutoSendConfig(config);
+      normalizedConfig.autoSend = legacyConfig;
+      normalizedConfig.autoSendRules = [this.sanitizeAutoSendRule({ ...legacyConfig, id: 'legacy', name: 'Default rule', priority: 0 }, 0)];
+    }
+
+    integration.config = normalizedConfig;
     await this.integrationRepository.save(integration);
     this.logger.log(`Auto-send config updated for workspace ${workspaceId}`);
   }
@@ -1048,7 +1257,7 @@ export class WhatsAppService {
     let failed = 0;
 
     for (const contact of contacts) {
-      const phone = contact.phone!.replace(/[^0-9+]/g, '');
+      const phone = normalizePhoneE164(contact.phone) || contact.phone!.replace(/[^0-9+]/g, '');
       try {
         const msgResult = await this.sendTemplateMessage(phone, template.name, template.language, template.params || []);
         const msgId = msgResult?.messages?.[0]?.id;
@@ -1088,11 +1297,14 @@ export class WhatsAppService {
       const rawPhone = (row.phone || '').trim();
       if (!rawPhone) { results.push({ phone: rawPhone, status: 'skipped', reason: 'empty phone' }); continue; }
 
-      // Normalise: ensure + prefix
-      const phone = rawPhone.startsWith('+') ? rawPhone : `+${rawPhone.replace(/[^0-9]/g, '')}`;
+      const phone = normalizePhoneE164(rawPhone);
+      if (!phone) {
+        results.push({ phone: rawPhone, status: 'skipped', reason: 'invalid phone' });
+        continue;
+      }
 
-      let contact = await this.contactRepository.findOne({ where: { workspaceId, phone } });
-      if (!contact) contact = await this.contactRepository.findOne({ where: { workspaceId, phone: rawPhone } });
+      let contact = await this.findContactByPhone(workspaceId, phone);
+      if (!contact) contact = await this.findContactByPhone(workspaceId, rawPhone);
 
       let isNew = false;
       if (!contact) {
@@ -1103,6 +1315,7 @@ export class WhatsAppService {
           firstName: row.firstName || 'Contact',
           lastName: row.lastName || '',
           phone,
+          phoneNormalized: normalizePhoneE164(phone) || undefined,
           email: `${rawPhone.replace(/[^0-9]/g, '')}@whatsapp.placeholder.invalid`,
           status: ContactStatus.LEAD,
           source: ContactSource.WHATSAPP,
@@ -1151,6 +1364,10 @@ export class WhatsAppService {
    */
   @OnEvent('contact.created')
   async handleContactCreated(payload: { contact: any; workspaceId: string }): Promise<void> {
+    return this.handleContactCreatedEvent(payload);
+  }
+
+  private async handleContactCreatedEvent(payload: { contact: any; workspaceId: string }): Promise<void> {
     const { contact, workspaceId } = payload;
     this.logger.log(`handleContactCreated: contact=${contact.id} phone="${contact.phone}" source=${contact.source} workspace=${workspaceId}`);
     try {
@@ -1171,50 +1388,34 @@ export class WhatsAppService {
         return;
       }
 
-      const autoSend = integration.config?.autoSend;
-      this.logger.log(`Auto-send config: ${JSON.stringify(autoSend)}`);
-      if (!autoSend?.enabled) {
-        this.logger.log(`Auto-send skipped: enabled=${autoSend?.enabled}`);
+      const matchedRule = this.selectAutoSendRule(contact, integration.config || {});
+      if (!matchedRule) {
+        this.logger.log(`Auto-send skipped for contact ${contact.id}: no matching enabled rule`);
         return;
       }
 
-      // Check conditions
-      const conditions = autoSend.conditions || {};
-
-      // Phone is required for WhatsApp — strip all non-digits; `+40712345678` → `40712345678`
+      const conditions = matchedRule.conditions || {};
       const rawPhone = contact.phone || '';
       const phone = rawPhone.replace(/[^0-9]/g, '');
       if (!phone || phone.length < 7) {
-        this.logger.log(`Auto-send skipped for contact ${contact.id}: no phone or too short ("${rawPhone}" → "${phone}", len=${phone.length})`);
-        return;
-      }
-
-      // Filter by source (if any sources are specified)
-      // Always allow "manual" and "website" since those are CRM-created contacts
-      const alwaysAllowedSources = ['manual', 'website'];
-      if (conditions.sources?.length > 0 && !conditions.sources.includes(contact.source) && !alwaysAllowedSources.includes(contact.source)) {
-        this.logger.log(`Auto-send skipped for contact ${contact.id}: source "${contact.source}" not in [${conditions.sources.join(',')}]`);
-        return;
-      }
-
-      // Filter by status (if any statuses are specified)
-      if (conditions.statuses?.length > 0 && !conditions.statuses.includes(contact.status)) {
-        this.logger.log(`Auto-send skipped for contact ${contact.id}: status "${contact.status}" not in [${conditions.statuses.join(',')}]`);
+        this.logger.log(
+          `Auto-send skipped for contact ${contact.id}: invalid phone ("${rawPhone}" → "${phone}", len=${phone.length}, requirePhone=${conditions.requirePhone !== false})`,
+        );
         return;
       }
 
       // Send template — use integration's stored credentials (not global env vars)
-      const templateName = autoSend.templateName || 'hello_world';
+      const templateName = matchedRule.templateName || 'hello_world';
       // Normalize: 'en' → 'en_US' (Meta rejects the short code for hello_world and most templates)
-      const rawLang = autoSend.language || 'en';
+      const rawLang = matchedRule.language || 'en';
       // Meta hello_world is en_US; custom templates may exist only in en.
       const language = rawLang === 'en' && templateName === 'hello_world' ? 'en_US' : rawLang;
       // Build template components dynamically (header/body).
       // Media header templates require runtime header params.
       const params: any[] = [];
-      const headerMediaType = String(autoSend.headerMediaType || '').toLowerCase();
-      const headerMediaId = String(autoSend.headerMediaId || '').trim();
-      const headerMediaUrl = String(autoSend.headerMediaUrl || '').trim();
+      const headerMediaType = String(matchedRule.headerMediaType || '').toLowerCase();
+      const headerMediaId = String(matchedRule.headerMediaId || '').trim();
+      const headerMediaUrl = String(matchedRule.headerMediaUrl || '').trim();
 
       if (['image', 'video', 'document'].includes(headerMediaType) && !headerMediaId && !headerMediaUrl) {
         this.logger.warn(`Auto-send skipped for contact ${contact.id}: template header media is required but not configured`);
@@ -1229,11 +1430,13 @@ export class WhatsAppService {
 
       // Only add name param if the template actually accepts body parameters.
       // hello_world and many basic templates have ZERO params — sending params causes #132000
-      if (autoSend.includeNameParam && contact.firstName && templateName !== 'hello_world') {
+      if (matchedRule.includeNameParam && contact.firstName && templateName !== 'hello_world') {
         params.push({ type: 'body', parameters: [{ type: 'text', text: contact.firstName }] });
       }
 
-      this.logger.log(`Auto-send: template="${templateName}" lang="${language}" to phone="${phone}" (raw="${rawPhone}") contact=${contact.id} source=${contact.source}`);
+      this.logger.log(
+        `Auto-send: rule="${matchedRule.name}" template="${templateName}" lang="${language}" to phone="${phone}" (raw="${rawPhone}") contact=${contact.id} source=${contact.source}`,
+      );
       const msgResult = await this.sendMessageWithCredentials(integration.credentials || {}, {
         to: phone,
         type: 'template',
@@ -1242,7 +1445,11 @@ export class WhatsAppService {
       });
       const msgId = msgResult?.messages?.[0]?.id;
       // Save as outbound activity so it appears in the WhatsApp inbox
-      await this.saveOutboundActivity(phone, `[Auto-send template: ${templateName}]`, 'template', workspaceId, integration.userId || '', msgId);
+      const ownerId = this.isValidUuid(String(contact.ownerId || '')) ? String(contact.ownerId) : undefined;
+      const fallbackUserId = this.isValidUuid(String(integration.userId || '')) ? String(integration.userId) : undefined;
+      await this.saveOutboundActivity(phone, `[Auto-send template: ${templateName}]`, 'template', workspaceId, ownerId || fallbackUserId, msgId);
+      await this.armAfterAutoSendFlow(workspaceId, phone, integration);
+      await this.notifyAutoSendSuccess(workspaceId, contact, templateName, ownerId || fallbackUserId);
       this.logger.log(`Auto-send SUCCESS: template "${templateName}" sent to ${phone} for contact ${contact.id} msgId=${msgId}`);
     } catch (err) {
       const metaError = err.response?.data?.error;
@@ -1674,19 +1881,38 @@ export class WhatsAppService {
     if (!flow || !flow.steps?.length) return false;
 
     const firstStep = flow.steps[0];
+    const delayMs = this.getFlowStepDelayMs(firstStep);
     const credentials = integration.credentials || {};
 
     try {
-      await this.sendFlowStep(firstStep, waId, credentials, workspaceId);
-
       // Save flow state for this contact
+      const nowIso = new Date().toISOString();
       const flowStates = integration.config?.flowStates || {};
       flowStates[waId] = {
         flowId: flow.id,
         currentStepId: firstStep.id,
-        startedAt: new Date().toISOString(),
-        lastInteractionAt: new Date().toISOString(),
+        startedAt: nowIso,
+        lastInteractionAt: nowIso,
       };
+
+      if (delayMs > 0) {
+        flowStates[waId] = {
+          ...flowStates[waId],
+          pendingDelay: {
+            flowId: flow.id,
+            nextStepId: firstStep.id,
+            dueAt: new Date(Date.now() + delayMs).toISOString(),
+          },
+        };
+        integration.config = { ...(integration.config || {}), flowStates };
+        await this.integrationRepository.save(integration);
+        this.scheduleDelayedFlowStep(workspaceId, waId, flow.id, firstStep.id, delayMs);
+        this.logger.log(`Flow "${flow.name}" scheduled for ${waId} in ${delayMs}ms`);
+        return true;
+      }
+
+      await this.sendFlowStep(firstStep, waId, credentials, workspaceId);
+
       integration.config = { ...(integration.config || {}), flowStates };
       await this.integrationRepository.save(integration);
 
@@ -1751,6 +1977,97 @@ export class WhatsAppService {
     return err?.response?.data?.error?.message || err?.response?.data?.message || err?.message || 'Unknown error';
   }
 
+  private getFlowStepDelayMs(step: any): number {
+    const raw = Number(step?.delayMs ?? 0);
+    if (!Number.isFinite(raw) || raw <= 0) return 0;
+    // Keep runtime timers bounded and safe for Node setTimeout.
+    return Math.min(Math.floor(raw), 6 * 60 * 60 * 1000);
+  }
+
+  private async armAfterAutoSendFlow(workspaceId: string, waId: string, integration: Integration): Promise<void> {
+    const flows: any[] = integration.config?.conversationFlows || [];
+    const flow = flows.find((f: any) => f.enabled && f.trigger === 'after_auto_send' && f.steps?.length > 0);
+    if (!flow) return;
+
+    const firstStep = flow.steps[0];
+    const nowIso = new Date().toISOString();
+    const flowStates = integration.config?.flowStates || {};
+
+    flowStates[waId] = {
+      flowId: flow.id,
+      currentStepId: firstStep.id,
+      startedAt: nowIso,
+      lastInteractionAt: nowIso,
+      armedAfterAutoSend: true,
+    };
+
+    integration.config = { ...(integration.config || {}), flowStates };
+    await this.integrationRepository.save(integration);
+    this.logger.log(`Flow "${flow.name}" armed after auto-send for ${waId}`);
+  }
+
+  private scheduleDelayedFlowStep(
+    workspaceId: string,
+    waId: string,
+    flowId: string,
+    stepId: string,
+    delayMs: number,
+  ): void {
+    setTimeout(async () => {
+      try {
+        const integration = await this.findIntegrationForWorkspace(workspaceId);
+        if (!integration) return;
+
+        const flowStates = integration.config?.flowStates || {};
+        const resolved = this.resolveFlowState(flowStates, waId);
+        if (!resolved) return;
+        const { stateKey, state } = resolved;
+
+        const pending = state?.pendingDelay;
+        if (!pending || pending.flowId !== flowId || pending.nextStepId !== stepId) {
+          return;
+        }
+
+        const flows: any[] = integration.config?.conversationFlows || [];
+        const flow = flows.find((f: any) => f.id === flowId && f.enabled);
+        const nextStep = flow?.steps?.find((s: any) => s.id === stepId);
+        if (!flow || !nextStep) {
+          const clearedState = { ...state };
+          delete clearedState.pendingDelay;
+          flowStates[waId] = clearedState;
+          if (stateKey !== waId) delete flowStates[stateKey];
+          integration.config = { ...(integration.config || {}), flowStates };
+          await this.integrationRepository.save(integration);
+          return;
+        }
+
+        await this.sendFlowStep(nextStep, waId, integration.credentials || {}, workspaceId);
+
+        if (nextStep.buttons?.length) {
+          const nowIso = new Date().toISOString();
+          const nextState = {
+            ...state,
+            currentStepId: nextStep.id,
+            lastInteractionAt: nowIso,
+            armedAfterAutoSend: false,
+          };
+          delete nextState.pendingDelay;
+          flowStates[waId] = nextState;
+          if (stateKey !== waId) delete flowStates[stateKey];
+        } else {
+          delete flowStates[stateKey];
+          if (stateKey !== waId) delete flowStates[waId];
+        }
+
+        integration.config = { ...(integration.config || {}), flowStates };
+        await this.integrationRepository.save(integration);
+        this.logger.log(`Flow "${flow.name}": delayed step "${stepId}" sent to ${waId}`);
+      } catch (err) {
+        this.logger.warn(`Flow delayed step failed for ${waId}: ${this.getErrorMessage(err)}`);
+      }
+    }, delayMs);
+  }
+
   /**
    * Handle a button reply within a conversation flow.
    * Looks up the current flow state, finds the next step, sends it.
@@ -1770,6 +2087,10 @@ export class WhatsAppService {
       return false;
     }
     const { stateKey, state } = resolved;
+    if (state?.pendingDelay?.nextStepId) {
+      this.logger.log(`Flow: delayed step pending for ${waId}, button reply ignored`);
+      return true;
+    }
 
     const flows: any[] = integration.config?.conversationFlows || [];
     const flow = flows.find((f: any) => f.id === state.flowId);
@@ -1817,16 +2138,41 @@ export class WhatsAppService {
 
     const credentials = integration.credentials || {};
     try {
+      const delayMs = this.getFlowStepDelayMs(nextStep);
+      if (delayMs > 0) {
+        flowStates[waId] = {
+          ...state,
+          pendingDelay: {
+            flowId: flow.id,
+            nextStepId: nextStep.id,
+            dueAt: new Date(Date.now() + delayMs).toISOString(),
+          },
+          lastInteractionAt: new Date().toISOString(),
+          armedAfterAutoSend: false,
+        };
+        if (stateKey !== waId) {
+          delete flowStates[stateKey];
+        }
+        integration.config = { ...(integration.config || {}), flowStates };
+        await this.integrationRepository.save(integration);
+        this.scheduleDelayedFlowStep(workspaceId, waId, flow.id, nextStep.id, delayMs);
+        this.logger.log(`Flow "${flow.name}": scheduled step "${nextStep.id}" for ${waId} in ${delayMs}ms`);
+        return true;
+      }
+
       await this.sendFlowStep(nextStep, waId, credentials, workspaceId);
 
       // Update flow state
       if (nextStep.buttons?.length) {
         // More steps to go
-        flowStates[waId] = {
+        const nextState = {
           ...state,
           currentStepId: nextStep.id,
           lastInteractionAt: new Date().toISOString(),
+          armedAfterAutoSend: false,
         };
+        delete nextState.pendingDelay;
+        flowStates[waId] = nextState;
         if (stateKey !== waId) {
           delete flowStates[stateKey];
         }
@@ -1864,6 +2210,7 @@ export class WhatsAppService {
     const resolved = this.resolveFlowState(flowStates, waId);
     if (!resolved) return false;
     const { stateKey, state } = resolved;
+    if (state?.pendingDelay?.nextStepId) return true;
 
     const flows: any[] = integration.config?.conversationFlows || [];
     const flow = flows.find((f: any) => f.id === state.flowId);
@@ -1904,9 +2251,38 @@ export class WhatsAppService {
 
     const credentials = integration.credentials || {};
     try {
+      const delayMs = this.getFlowStepDelayMs(nextStep);
+      if (delayMs > 0) {
+        flowStates[waId] = {
+          ...state,
+          pendingDelay: {
+            flowId: flow.id,
+            nextStepId: nextStep.id,
+            dueAt: new Date(Date.now() + delayMs).toISOString(),
+          },
+          lastInteractionAt: new Date().toISOString(),
+          armedAfterAutoSend: false,
+        };
+        if (stateKey !== waId) {
+          delete flowStates[stateKey];
+        }
+        integration.config = { ...(integration.config || {}), flowStates };
+        await this.integrationRepository.save(integration);
+        this.scheduleDelayedFlowStep(workspaceId, waId, flow.id, nextStep.id, delayMs);
+        this.logger.log(`Flow "${flow.name}": scheduled step "${nextStep.id}" for ${waId} in ${delayMs}ms`);
+        return true;
+      }
+
       await this.sendFlowStep(nextStep, waId, credentials, workspaceId);
       if (nextStep.buttons?.length) {
-        flowStates[waId] = { ...state, currentStepId: nextStep.id, lastInteractionAt: new Date().toISOString() };
+        const nextState = {
+          ...state,
+          currentStepId: nextStep.id,
+          lastInteractionAt: new Date().toISOString(),
+          armedAfterAutoSend: false,
+        };
+        delete nextState.pendingDelay;
+        flowStates[waId] = nextState;
         if (stateKey !== waId) {
           delete flowStates[stateKey];
         }
@@ -2000,6 +2376,10 @@ export class WhatsAppService {
       // User is in an active flow but sent a text instead of pressing a button.
       // Expire stale flows (>24h — outside session window anyway)
       const { stateKey, state } = resolvedState;
+      if (state?.pendingDelay?.nextStepId) {
+        this.logger.log(`Flow: delayed step "${state.pendingDelay.nextStepId}" is pending for ${waId}`);
+        return true;
+      }
       const lastInteraction = new Date(state.lastInteractionAt || state.startedAt).getTime();
       if (Date.now() - lastInteraction > 24 * 60 * 60 * 1000) {
         delete flowStates[stateKey];
@@ -2009,6 +2389,24 @@ export class WhatsAppService {
         // Some clients may send button presses as plain text. Try matching by text.
         if (message.type === 'text' && message.text?.body) {
           const replyText = message.text.body.trim();
+          if (state.armedAfterAutoSend) {
+            const flows: any[] = integration.config?.conversationFlows || [];
+            const flow = flows.find((f: any) => f.id === state.flowId && f.enabled);
+            const currentStep = flow?.steps?.find((s: any) => s.id === state.currentStepId);
+            if (currentStep?.buttons?.length) {
+              const fallbackButton = currentStep.buttons[0];
+              if (fallbackButton?.id || fallbackButton?.title) {
+                const handledFallback = await this.handleButtonReply(
+                  workspaceId,
+                  waId,
+                  fallbackButton.id || fallbackButton.title,
+                  integration,
+                  fallbackButton.title,
+                );
+                if (handledFallback) return true;
+              }
+            }
+          }
           const handledByButton = await this.handleButtonReply(
             workspaceId,
             waId,
@@ -2088,16 +2486,34 @@ export class WhatsAppService {
     if (cleanPhone.length < 7) return { success: false, message: 'Invalid phone number' };
 
     try {
-      await this.sendFlowStep(flow.steps[0], cleanPhone, integration.credentials || {}, workspaceId);
+      const firstStep = flow.steps[0];
+      const delayMs = this.getFlowStepDelayMs(firstStep);
 
       // Set flow state so button replies work
       const flowStates = integration.config?.flowStates || {};
       flowStates[cleanPhone] = {
         flowId: flow.id,
-        currentStepId: flow.steps[0].id,
+        currentStepId: firstStep.id,
         startedAt: new Date().toISOString(),
         lastInteractionAt: new Date().toISOString(),
       };
+      if (delayMs > 0) {
+        flowStates[cleanPhone] = {
+          ...flowStates[cleanPhone],
+          pendingDelay: {
+            flowId: flow.id,
+            nextStepId: firstStep.id,
+            dueAt: new Date(Date.now() + delayMs).toISOString(),
+          },
+        };
+        integration.config = { ...(integration.config || {}), flowStates };
+        await this.integrationRepository.save(integration);
+        this.scheduleDelayedFlowStep(workspaceId, cleanPhone, flow.id, firstStep.id, delayMs);
+        return { success: true, message: `Flow "${flow.name}" scheduled in ${Math.ceil(delayMs / 1000)}s to +${cleanPhone}` };
+      }
+
+      await this.sendFlowStep(firstStep, cleanPhone, integration.credentials || {}, workspaceId);
+
       integration.config = { ...(integration.config || {}), flowStates };
       await this.integrationRepository.save(integration);
 

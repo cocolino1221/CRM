@@ -1489,14 +1489,15 @@ export default function WhatsAppPage() {
           type: 'template' as const,
           templateName: '',
           templateLanguage: 'en_US',
+          delayMs: 0,
           message: '',
           buttons: [
             { id: `btn_${Date.now()}_a`, title: 'Option 1', nextStepId: 'step_1' },
             { id: `btn_${Date.now()}_b`, title: 'Option 2', nextStepId: 'step_2' },
           ],
         },
-        { id: 'step_1', message: 'You selected Option 1. Here is more info...', buttons: [] },
-        { id: 'step_2', message: 'You selected Option 2. Here is more info...', buttons: [] },
+        { id: 'step_1', message: 'You selected Option 1. Here is more info...', delayMs: 0, buttons: [] },
+        { id: 'step_2', message: 'You selected Option 2. Here is more info...', delayMs: 0, buttons: [] },
       ],
     };
     setEditingFlow(newFlow);
@@ -1507,6 +1508,10 @@ export default function WhatsAppPage() {
 
     // Basic validation: template selected for step 0 and all buttons mapped
     const stepIds = new Set(editingFlow.steps.map((s: any) => s.id));
+    if (editingFlow.trigger === 'keyword' && !editingFlow.triggerKeyword?.trim()) {
+      alert('Keyword trigger requires at least one keyword.');
+      return;
+    }
     if (!editingFlow.steps[0]?.templateName) {
       alert('Step 1 must have an approved template selected.');
       return;
@@ -1576,7 +1581,7 @@ export default function WhatsAppPage() {
       const stepId = `step_${prev.steps.length}`;
       return {
         ...prev,
-        steps: [...prev.steps, { id: stepId, message: '', buttons: [] }],
+        steps: [...prev.steps, { id: stepId, message: '', delayMs: 0, buttons: [] }],
       };
     });
   };
@@ -3847,6 +3852,7 @@ export default function WhatsAppPage() {
                         className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-green-400 bg-white">
                         <option value="first_message">First Message (new contacts)</option>
                         <option value="keyword">Keyword</option>
+                        <option value="after_auto_send">After Auto-Send Reply</option>
                       </select>
                     </div>
                   </div>
@@ -3882,8 +3888,24 @@ export default function WhatsAppPage() {
                         </div>
 
                         {/* Step ID */}
-                        <input type="text" value={step.id} onChange={e => updateFlowStep(si, 'id', e.target.value)}
-                          placeholder="step_id" className="w-full px-3 py-1.5 text-xs font-mono border border-gray-200 rounded-lg focus:outline-none focus:border-green-400" />
+                        <div className="grid grid-cols-2 gap-2">
+                          <input type="text" value={step.id} onChange={e => updateFlowStep(si, 'id', e.target.value)}
+                            placeholder="step_id" className="w-full px-3 py-1.5 text-xs font-mono border border-gray-200 rounded-lg focus:outline-none focus:border-green-400" />
+                          <div className="flex items-center gap-1.5">
+                            <input
+                              type="number"
+                              min={0}
+                              value={Math.max(0, Math.floor(Number(step.delayMs || 0) / 1000))}
+                              onChange={e => {
+                                const seconds = Math.max(0, Number(e.target.value) || 0);
+                                updateFlowStep(si, 'delayMs', Math.floor(seconds * 1000));
+                              }}
+                              className="w-full px-3 py-1.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:border-green-400"
+                              placeholder="Delay seconds"
+                            />
+                            <span className="text-[10px] text-gray-400 whitespace-nowrap">sec delay</span>
+                          </div>
+                        </div>
 
                         {si === 0 ? (
                           /* Step 1: Template-based (required to initiate conversations) */
@@ -4112,7 +4134,11 @@ export default function WhatsAppPage() {
                             </span>
                           </div>
                           <p className="text-xs text-gray-400 mt-0.5">
-                            {flow.trigger === 'first_message' ? 'Triggers on first message' : `Keyword: "${flow.triggerKeyword}"`}
+                            {flow.trigger === 'first_message'
+                              ? 'Triggers on first message'
+                              : flow.trigger === 'after_auto_send'
+                                ? 'Triggers after auto-send contact reply'
+                                : `Keyword: "${flow.triggerKeyword}"`}
                             {' '}&middot; {flow.steps?.length || 0} steps
                           </p>
                         </div>
