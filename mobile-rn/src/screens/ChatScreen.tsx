@@ -100,7 +100,7 @@ export default function ChatScreen() {
   const route = useRoute<ChatRoute>();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
-  const { selectedConv, isSending, sendError, sendMessage, sendMediaMessage, fetchInbox } = useWhatsAppStore();
+  const { selectedConv, isSending, sendError, sendMessage, sendMediaMessage, fetchInbox, openConversation } = useWhatsAppStore();
   const showToast = useToastStore(s => s.show);
   const [text, setText] = useState('');
   const [accessToken, setAccessToken] = useState('');
@@ -119,11 +119,27 @@ export default function ChatScreen() {
   }, []);
 
   useEffect(() => {
+    openConversation({
+      waId: route.params.waId,
+      phone: route.params.phone,
+      contactName: route.params.contactName,
+    });
+  }, [route.params.waId, route.params.phone, route.params.contactName, openConversation]);
+
+  useEffect(() => {
     if (sendError) showToast(sendError, 'error');
   }, [sendError]);
 
-  const conv = selectedConv;
-  if (!conv) return null;
+  const conv = selectedConv && selectedConv.waId === route.params.waId
+    ? selectedConv
+    : null;
+  if (!conv) {
+    return (
+      <View className="flex-1 items-center justify-center bg-slate-50">
+        <ActivityIndicator size="small" color="#0c4a6e" />
+      </View>
+    );
+  }
 
   const session = getSessionStatus(conv.lastInboundTime);
   const messages = conv.messages;

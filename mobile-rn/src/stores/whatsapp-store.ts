@@ -22,6 +22,7 @@ interface WhatsAppState {
   sendError: string;
   fetchInbox: () => Promise<void>;
   selectConversation: (conv: Conversation | null) => void;
+  openConversation: (input: { waId?: string; phone?: string; contactName?: string; contactId?: string | null }) => Promise<Conversation | null>;
   sendMessage: (to: string, message: string) => Promise<boolean>;
   sendMediaMessage: (to: string, media: WhatsAppAttachmentPayload) => Promise<boolean>;
   markRead: (waId: string) => void;
@@ -85,6 +86,17 @@ function buildMediaSendRequest(to: string, mediaId: string, payload: WhatsAppAtt
         },
       };
   }
+}
+
+function normalizeWaId(value?: string): string {
+  return String(value || '').replace(/[^0-9]/g, '');
+}
+
+function normalizePhone(value?: string, waId?: string): string {
+  const raw = String(value || '').trim();
+  if (raw.startsWith('+')) return raw;
+  const digits = normalizeWaId(raw || waId);
+  return digits ? `+${digits}` : '';
 }
 
 export const useWhatsAppStore = create<WhatsAppState>((set, get) => ({
@@ -158,6 +170,49 @@ export const useWhatsAppStore = create<WhatsAppState>((set, get) => ({
       conv.unreadCount = 0;
     }
     set({ selectedConv: conv });
+  },
+
+  openConversation: async ({ waId, phone, contactName, contactId }) => {
+    const normalizedWaId = normalizeWaId(waId || phone);
+    if (!normalizedWaId) return null;
+
+    const normalizedPhone = normalizePhone(phone, normalizedWaId);
+    const now = new Date().toISOString();
+    const existing = get().conversations.find(
+      (conv) => conv.waId === normalizedWaId || normalizeWaId(conv.phone) === normalizedWaId,
+    );
+
+    const conversation: Conversation = existing
+      ? {
+          ...existing,
+          phone: existing.phone || normalizedPhone,
+          contactName: existing.contactName || contactName || normalizedPhone || normalizedWaId,
+          contactId: existing.contactId || contactId || null,
+          unreadCount: 0,
+        }
+      : {
+          waId: normalizedWaId,
+          contactName: contactName || normalizedPhone || normalizedWaId,
+          contactId: contactId || null,
+          phone: normalizedPhone || `+${normalizedWaId}`,
+          lastMessage: '',
+          lastMessageTime: now,
+          messageCount: 0,
+          messages: [],
+          unreadCount: 0,
+          lastInboundTime: null,
+        };
+
+    const nextConversations = existing
+      ? get().conversations.map((conv) => (conv.waId === existing.waId ? conversation : conv))
+      : [conversation, ...get().conversations];
+
+    const ts = await getReadTimestamps();
+    ts[conversation.waId] = now;
+    await setReadTimestamps(ts);
+    set({ selectedConv: conversation, conversations: nextConversations });
+
+    return conversation;
   },
 
   sendMessage: async (to, message) => {
