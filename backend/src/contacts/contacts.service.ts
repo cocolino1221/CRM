@@ -10,6 +10,7 @@ import { Deal } from '../database/entities/deal.entity';
 import { CreateContactDto } from './dto/create-contact.dto';
 import { UpdateContactDto } from './dto/update-contact.dto';
 import { QueryContactsDto, SortField } from './dto/query-contacts.dto';
+import { normalizePhoneDigits, normalizePhoneE164 } from '../common/utils/phone.util';
 
 export interface ContactsListResult {
   contacts: Contact[];
@@ -148,32 +149,100 @@ export class ContactsService {
     ContactSource.MANYCHAT,
   ]);
 
-  async create(workspaceId: string, dto: CreateContactDto): Promise<Contact> {
-    const isExternal = dto.source && this.externalSources.has(dto.source);
+  private async findDuplicateByPhone(
+    workspaceId: string,
+    rawPhone?: string,
+    excludeContactId?: string,
+  ): Promise<Contact | null> {
+    const normalizedPhone = normalizePhoneE164(rawPhone);
+    const normalizedDigits = normalizePhoneDigits(rawPhone);
+    if (!normalizedPhone || !normalizedDigits) return null;
 
-    // Check for duplicate by email
-    const existingByEmail = await this.contactRepository.findOne({
-      where: { workspaceId, email: dto.email },
-    });
+    const queryBuilder = this.contactRepository
+      .createQueryBuilder('contact')
+      .where('contact.workspaceId = :workspaceId', { workspaceId })
+      .andWhere(
+        `(
+          contact.phoneNormalized = :normalizedPhone
+          OR regexp_replace(COALESCE(contact.phone, ''), '[^0-9]', '', 'g') = :normalizedDigits
+        )`,
+        { normalizedPhone, normalizedDigits },
+      )
+      .orderBy('contact.createdAt', 'DESC');
 
-    if (existingByEmail) {
-      if (isExternal) {
-        this.logger.log(`Duplicate contact (email=${dto.email}) skipped silently for source=${dto.source}`);
-        return existingByEmail;
-      }
-      throw new ConflictException(`A contact with email "${dto.email}" already exists`);
+    if (excludeContactId) {
+      queryBuilder.andWhere('contact.id != :excludeContactId', { excludeContactId });
     }
 
-    // Check for duplicate by phone (only when phone is provided)
-    if (dto.phone) {
-      const existingByPhone = await this.contactRepository.findOne({
-        where: { workspaceId, phone: dto.phone },
-      });
+    return queryBuilder.getOne();
+  }
+
+  private applyExternalDuplicateUpdates(contact: Contact, dto: CreateContactDto, normalizedPhone?: string): Contact {
+    const next = contact;
+    const hasValue = (value: unknown) => value !== undefined && value !== null && String(value).trim().length > 0;
+
+    if (normalizedPhone) {
+      next.phone = normalizedPhone;
+      next.phoneNormalized = normalizedPhone;
+    }
+    if (hasValue(dto.firstName)) next.firstName = String(dto.firstName).trim();
+    if (hasValue(dto.lastName)) next.lastName = String(dto.lastName).trim();
+    if (hasValue(dto.email)) next.email = String(dto.email).trim();
+    if (hasValue(dto.jobTitle)) next.jobTitle = String(dto.jobTitle).trim();
+    if (hasValue(dto.notes)) next.notes = String(dto.notes).trim();
+    if (hasValue(dto.status)) next.status = dto.status as ContactStatus;
+    if (hasValue(dto.source)) next.source = dto.source as ContactSource;
+    if (hasValue(dto.ownerId)) next.ownerId = String(dto.ownerId);
+    if (hasValue(dto.companyId)) next.companyId = String(dto.companyId);
+    if (hasValue(dto.pipelineId)) next.pipelineId = String(dto.pipelineId);
+    if (hasValue(dto.pipelineStageId)) next.pipelineStageId = String(dto.pipelineStageId);
+    if (typeof dto.leadScore === 'number') next.leadScore = dto.leadScore;
+    if (typeof dto.emailOptIn === 'boolean') next.emailOptIn = dto.emailOptIn;
+
+    const incomingTags = Array.isArray(dto.tags) ? dto.tags.filter(Boolean).map(tag => String(tag).trim()) : [];
+    if (incomingTags.length > 0) {
+      const existingTags = Array.isArray(next.tags) ? next.tags.filter(Boolean).map(tag => String(tag).trim()) : [];
+      next.tags = Array.from(new Set([...existingTags, ...incomingTags]));
+    }
+
+    if (dto.leadScore === undefined) {
+      next.updateLeadScore();
+    }
+
+    return next;
+  }
+
+  async create(workspaceId: string, dto: CreateContactDto): Promise<Contact> {
+    const isExternal = dto.source && this.externalSources.has(dto.source);
+    const normalizedPhone = normalizePhoneE164(dto.phone);
+
+    // Check duplicates only by phone (email duplicates are allowed)
+    if (normalizedPhone) {
+      const existingByPhone = await this.findDuplicateByPhone(workspaceId, dto.phone);
 
       if (existingByPhone) {
         if (isExternal) {
-          this.logger.log(`Duplicate contact (phone=${dto.phone}) skipped silently for source=${dto.source}`);
-          return existingByPhone;
+          const updatedExisting = this.applyExternalDuplicateUpdates(existingByPhone, dto, normalizedPhone || undefined);
+          const savedExisting = await this.contactRepository.save(updatedExisting);
+          this.eventEmitter.emit('contact.updated', {
+            contact: savedExisting,
+            workspaceId,
+            changes: dto,
+          });
+          this.eventEmitter.emit('contact_updated', {
+            contact: savedExisting,
+            workspaceId,
+            changes: dto,
+            occurredAt: new Date().toISOString(),
+          });
+          this.eventEmitter.emit('contact.external_duplicate', {
+            contact: savedExisting,
+            workspaceId,
+            source: dto.source,
+            occurredAt: new Date().toISOString(),
+          });
+          this.logger.log(`Duplicate contact (phoneNormalized=${normalizedPhone}) updated + external_duplicate emitted for source=${dto.source}`);
+          return this.findOne(workspaceId, savedExisting.id, ['owner', 'company']);
         }
         throw new ConflictException(`A contact with phone "${dto.phone}" already exists`);
       }
@@ -239,6 +308,7 @@ export class ContactsService {
     // Create contact
     const contact = this.contactRepository.create({
       ...dto,
+      phoneNormalized: normalizedPhone || undefined,
       workspaceId,
       pipelineId: pipelineId || dto.pipelineId,
       pipelineStageId: pipelineStageId || dto.pipelineStageId,
@@ -259,6 +329,11 @@ export class ContactsService {
       contact: savedContact,
       workspaceId,
     });
+    this.eventEmitter.emit('contact_created', {
+      contact: savedContact,
+      workspaceId,
+      occurredAt: new Date().toISOString(),
+    });
     this.logger.log(`Contact created event emitted for contact ${savedContact.id}`);
 
     // Return contact with relations
@@ -268,13 +343,11 @@ export class ContactsService {
   async update(workspaceId: string, id: string, dto: UpdateContactDto): Promise<Contact> {
     const contact = await this.findOne(workspaceId, id);
 
-    // Check email uniqueness if email is being updated
-    if (dto.email && dto.email !== contact.email) {
-      const existingContact = await this.contactRepository.findOne({
-        where: { workspaceId, email: dto.email },
-      });
+    // Check duplicates only by phone (email duplicates are allowed)
+    if (dto.phone && dto.phone !== contact.phone) {
+      const existingContact = await this.findDuplicateByPhone(workspaceId, dto.phone, id);
       if (existingContact && existingContact.id !== id) {
-        throw new ConflictException(`Contact with email ${dto.email} already exists`);
+        throw new ConflictException(`Contact with phone ${dto.phone} already exists`);
       }
     }
 
@@ -313,6 +386,12 @@ export class ContactsService {
       contact: updatedContact,
       workspaceId,
       changes: dto,
+    });
+    this.eventEmitter.emit('contact_updated', {
+      contact: updatedContact,
+      workspaceId,
+      changes: dto,
+      occurredAt: new Date().toISOString(),
     });
     this.logger.log(`Contact updated event emitted for contact ${updatedContact.id}`);
 
@@ -445,10 +524,31 @@ export class ContactsService {
     } = filters;
 
     if (search) {
-      queryBuilder.andWhere(
-        '(contact.firstName ILIKE :search OR contact.lastName ILIKE :search OR contact.email ILIKE :search)',
-        { search: `%${search}%` }
-      );
+      const trimmedSearch = search.trim();
+      const normalizedPhoneSearch = trimmedSearch.replace(/\D/g, '');
+      const searchParams: Record<string, string> = {
+        search: `%${trimmedSearch}%`,
+      };
+      let searchCondition = `
+        (
+          contact.firstName ILIKE :search
+          OR contact.lastName ILIKE :search
+          OR contact.email ILIKE :search
+          OR contact.phone ILIKE :search
+          OR contact.phoneNormalized ILIKE :search
+        )
+      `;
+
+      // Match phone searches regardless of separators/spaces, e.g. +40 726-027-645.
+      if (normalizedPhoneSearch.length > 0) {
+        searchParams.phoneDigits = `%${normalizedPhoneSearch}%`;
+        searchCondition = `
+          ${searchCondition}
+          OR regexp_replace(COALESCE(contact.phone, ''), '[^0-9]', '', 'g') LIKE :phoneDigits
+        `;
+      }
+
+      queryBuilder.andWhere(`(${searchCondition})`, searchParams);
     }
 
     if (status) {
@@ -1050,6 +1150,11 @@ export class ContactsService {
               contact,
               workspaceId,
             });
+            this.eventEmitter.emit('contact_created', {
+              contact,
+              workspaceId,
+              occurredAt: new Date().toISOString(),
+            });
           });
         }
 
@@ -1063,6 +1168,11 @@ export class ContactsService {
             this.eventEmitter.emit('contact.updated', {
               contact,
               workspaceId,
+            });
+            this.eventEmitter.emit('contact_updated', {
+              contact,
+              workspaceId,
+              occurredAt: new Date().toISOString(),
             });
           });
         }

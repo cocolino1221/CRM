@@ -1447,6 +1447,11 @@ export class WhatsAppService {
     return this.handleContactCreatedEvent(payload);
   }
 
+  @OnEvent('contact.external_duplicate')
+  async handleExternalDuplicateContact(payload: { contact: any; workspaceId: string; source?: string }): Promise<void> {
+    return this.handleContactCreatedEvent(payload);
+  }
+
   private async handleContactCreatedEvent(payload: { contact: any; workspaceId: string }): Promise<void> {
     const { contact, workspaceId } = payload;
     this.logger.log(`handleContactCreated: contact=${contact.id} phone="${contact.phone}" source=${contact.source} workspace=${workspaceId}`);
