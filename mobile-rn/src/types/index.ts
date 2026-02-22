@@ -29,9 +29,12 @@ export interface WhatsAppActivity {
     messageStatus?: 'sent' | 'delivered' | 'read' | 'failed';
     mediaId?: string;
     mediaUrl?: string;
+    mediaType?: 'image' | 'video' | 'audio' | 'document' | 'template';
     mediaMimeType?: string;
     mediaCaption?: string;
     fileName?: string;
+    reactionEmoji?: string;
+    reactionMessageId?: string;
   };
   contact: {
     id: string;
@@ -40,6 +43,13 @@ export interface WhatsAppActivity {
     phone: string;
     status: string;
   } | null;
+}
+
+export interface ConversationAssignment {
+  userId: string;
+  userName: string;
+  color?: string;
+  assignedAt?: string;
 }
 
 export interface Conversation {
@@ -53,6 +63,7 @@ export interface Conversation {
   messages: WhatsAppActivity[];
   unreadCount: number;
   lastInboundTime: string | null;
+  assignment?: ConversationAssignment | null;
 }
 
 export interface Contact {

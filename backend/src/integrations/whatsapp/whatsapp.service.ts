@@ -67,6 +67,7 @@ export interface WhatsAppWebhook {
           document?: { id: string; filename: string; mime_type: string; sha256: string; caption?: string };
           audio?: { id: string; mime_type: string };
           video?: { id: string; mime_type: string; sha256: string; caption?: string };
+          reaction?: { message_id: string; emoji: string };
           interactive?: { type: string; button_reply?: { id: string; title: string }; list_reply?: { id: string; title: string } };
         }>;
         statuses?: Array<{
@@ -386,6 +387,11 @@ export class WhatsAppService {
     } else if (message.type === 'interactive') {
       const reply = message.interactive?.button_reply?.title || message.interactive?.list_reply?.title || '';
       messageBody = `[Button reply: ${reply}]`;
+    } else if (message.type === 'reaction') {
+      const emoji = String(message.reaction?.emoji || '').trim();
+      messageBody = emoji ? `[Reaction] ${emoji}` : '[Reaction]';
+      mediaMetadata.reactionEmoji = emoji || undefined;
+      mediaMetadata.reactionMessageId = message.reaction?.message_id || undefined;
     } else {
       messageBody = `[${message.type}]`;
     }
@@ -1532,7 +1538,19 @@ export class WhatsAppService {
       // Save as outbound activity so it appears in the WhatsApp inbox
       const ownerId = this.isValidUuid(String(contact.ownerId || '')) ? String(contact.ownerId) : undefined;
       const fallbackUserId = this.isValidUuid(String(integration.userId || '')) ? String(integration.userId) : undefined;
-      await this.saveOutboundActivity(phone, `[Auto-send template: ${templateName}]`, 'template', workspaceId, ownerId || fallbackUserId, msgId);
+      await this.saveOutboundActivity(
+        phone,
+        `[Auto-send template: ${templateName}]`,
+        'template',
+        workspaceId,
+        ownerId || fallbackUserId,
+        msgId,
+        {
+          mediaType: ['image', 'video', 'document'].includes(headerMediaType) ? headerMediaType : undefined,
+          mediaId: headerMediaId || undefined,
+          mediaUrl: headerMediaUrl || undefined,
+        },
+      );
       await this.armAfterAutoSendFlow(workspaceId, phone, integration);
       await this.notifyAutoSendSuccess(workspaceId, contact, templateName, ownerId || fallbackUserId);
       this.logger.log(`Auto-send SUCCESS: template "${templateName}" sent to ${phone} for contact ${contact.id} msgId=${msgId}`);

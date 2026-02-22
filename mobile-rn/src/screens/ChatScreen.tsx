@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, FlatList,
-  KeyboardAvoidingView, Platform, ActivityIndicator, Image, Linking,
+  KeyboardAvoidingView, Platform, ActivityIndicator, Image, Linking, Modal,
 } from 'react-native';
 import {
   ArrowLeft, Send, Paperclip, X, Image as ImageIcon, FileText, Mic, Video,
-  Check, CheckCheck, AlertTriangle, Clock,
+  Check, CheckCheck, AlertTriangle, Clock, Users, Smile,
 } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
@@ -34,8 +34,23 @@ function getDateLabel(dateStr: string): string {
 function parseMessage(msg: WhatsAppActivity) {
   const desc = msg.description || '';
   const t = msg.metadata?.messageType || 'text';
+  const reactionEmoji = String(msg.metadata?.reactionEmoji || '').trim();
+  const templateMediaType = String(msg.metadata?.mediaType || '').trim().toLowerCase();
   const mediaId = msg.metadata?.mediaId;
   const mediaUrl = msg.metadata?.mediaUrl;
+  if (reactionEmoji || t === 'reaction' || desc.startsWith('[Reaction]')) {
+    return { type: 'reaction', text: reactionEmoji || desc.replace('[Reaction]', '').trim() || 'Reaction', emoji: reactionEmoji || '👍' };
+  }
+  if (t === 'template' && ['image', 'video', 'audio', 'document'].includes(templateMediaType)) {
+    return {
+      type: templateMediaType,
+      text: desc,
+      mediaId,
+      mediaUrl,
+      fileName: msg.metadata?.fileName,
+      isTemplateMedia: true,
+    };
+  }
   if (t === 'image' || desc.startsWith('[Image]')) {
     return { type: 'image', text: desc.replace('[Image]', '').trim() || msg.metadata?.mediaCaption || 'Photo', mediaId, mediaUrl };
   }
@@ -54,6 +69,9 @@ function parseMessage(msg: WhatsAppActivity) {
   }
   if (t === 'video' || desc.startsWith('[Video]')) {
     return { type: 'video', text: desc.replace('[Video]', '').trim() || msg.metadata?.mediaCaption || 'Video', mediaId, mediaUrl };
+  }
+  if (t === 'template') {
+    return { type: 'template', text: desc || '[Template message]' };
   }
   return { type: 'text', text: desc };
 }
@@ -78,6 +96,8 @@ function MediaIcon({ type }: { type: string }) {
   if (type === 'document') return <FileText size={size} color={color} />;
   if (type === 'audio') return <Mic size={size} color={color} />;
   if (type === 'video') return <Video size={size} color={color} />;
+  if (type === 'reaction') return <Smile size={size} color={color} />;
+  if (type === 'template') return <FileText size={size} color={color} />;
   return null;
 }
 
@@ -96,21 +116,47 @@ function buildMediaSource(
   return source;
 }
 
+function getNameInitials(name?: string): string {
+  const tokens = String(name || '').trim().split(/\s+/).filter(Boolean);
+  if (!tokens.length) return '??';
+  if (tokens.length === 1) return tokens[0].slice(0, 2).toUpperCase();
+  return `${tokens[0][0] || ''}${tokens[1][0] || ''}`.toUpperCase();
+}
+
 export default function ChatScreen() {
   const route = useRoute<ChatRoute>();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
-  const { selectedConv, isSending, sendError, sendMessage, sendMediaMessage, fetchInbox, openConversation } = useWhatsAppStore();
+  const {
+    selectedConv,
+    teamUsers,
+    isSending,
+    sendError,
+    sendMessage,
+    sendMediaMessage,
+    fetchInbox,
+    fetchAssignments,
+    fetchTeamUsers,
+    assignConversation,
+    openConversation,
+  } = useWhatsAppStore();
   const showToast = useToastStore(s => s.show);
   const [text, setText] = useState('');
   const [accessToken, setAccessToken] = useState('');
   const [pendingAttachment, setPendingAttachment] = useState<WhatsAppAttachmentPayload | null>(null);
+  const [showAssignModal, setShowAssignModal] = useState(false);
+  const [isAssigning, setIsAssigning] = useState(false);
   const flatListRef = useRef<FlatList>(null);
 
   useEffect(() => {
     const iv = setInterval(fetchInbox, 5000);
     return () => clearInterval(iv);
   }, []);
+
+  useEffect(() => {
+    fetchAssignments();
+    fetchTeamUsers();
+  }, [fetchAssignments, fetchTeamUsers]);
 
   useEffect(() => {
     AsyncStorage.getItem('accessToken')
@@ -216,6 +262,22 @@ export default function ChatScreen() {
       ? { bg: 'bg-amber-100', text: 'text-amber-700', label: 'Closing' }
       : { bg: 'bg-rose-100', text: 'text-rose-700', label: 'Expired' };
 
+  const assigned = conv.assignment;
+
+  const handleAssign = async (userId: string | null) => {
+    if (isAssigning) return;
+    setIsAssigning(true);
+    const user = userId ? teamUsers.find((candidate) => candidate.id === userId) || null : null;
+    const error = await assignConversation(conv.waId, user);
+    setIsAssigning(false);
+    if (error) {
+      showToast(error, 'error');
+      return;
+    }
+    setShowAssignModal(false);
+    showToast(user ? `Assigned to ${user.firstName || user.email}` : 'Conversation unassigned', 'success');
+  };
+
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -235,6 +297,17 @@ export default function ChatScreen() {
           <Text className="text-sm font-semibold text-white" numberOfLines={1}>{route.params.contactName}</Text>
           <Text className="text-[11px] text-sky-200" numberOfLines={1}>{route.params.phone}</Text>
         </View>
+        <TouchableOpacity
+          onPress={() => setShowAssignModal(true)}
+          className="mr-1 h-8 w-8 rounded-full items-center justify-center border border-white/30"
+          style={{ backgroundColor: assigned?.color || 'rgba(255,255,255,0.15)' }}
+        >
+          {assigned ? (
+            <Text className="text-[11px] font-bold text-white">{getNameInitials(assigned.userName)}</Text>
+          ) : (
+            <Users size={15} color="#fff" />
+          )}
+        </TouchableOpacity>
         <View className={`${sessionBadge.bg} px-2 py-1 rounded-full`}>
           <Text className={`text-[10px] font-bold ${sessionBadge.text}`}>{sessionBadge.label}</Text>
         </View>
@@ -321,6 +394,12 @@ export default function ChatScreen() {
                     <Text className="text-xs text-blue-600 underline">{parsed.fileName || 'Open document'}</Text>
                   </TouchableOpacity>
                 )}
+                {parsed.type === 'reaction' && (
+                  <View className="flex-row items-center gap-1 mb-1">
+                    <Text className="text-lg">{parsed.emoji || '👍'}</Text>
+                    <Text className="text-xs text-slate-500">reaction</Text>
+                  </View>
+                )}
                 {!!parsed.text && <Text className="text-sm leading-5 text-slate-900">{parsed.text}</Text>}
                 <View className="flex-row items-center justify-end gap-1 mt-1">
                   <Text className="text-[10px] text-slate-400">{time}</Text>
@@ -394,6 +473,64 @@ export default function ChatScreen() {
           </TouchableOpacity>
         </View>
       </View>
+
+      <Modal visible={showAssignModal} animationType="slide" transparent onRequestClose={() => setShowAssignModal(false)}>
+        <View className="flex-1 bg-black/40 justify-end">
+          <View className="bg-white rounded-t-3xl" style={{ paddingBottom: insets.bottom > 0 ? insets.bottom : 16 }}>
+            <View className="px-4 py-3 border-b border-slate-100 flex-row items-center justify-between">
+              <View>
+                <Text className="text-base font-bold text-slate-900">Assign conversation</Text>
+                <Text className="text-xs text-slate-500 mt-0.5" numberOfLines={1}>{conv.contactName}</Text>
+              </View>
+              <TouchableOpacity onPress={() => setShowAssignModal(false)} className="h-8 w-8 rounded-full bg-slate-100 items-center justify-center">
+                <X size={14} color="#64748b" />
+              </TouchableOpacity>
+            </View>
+
+            <FlatList
+              data={teamUsers}
+              keyExtractor={(item) => item.id}
+              style={{ maxHeight: 340 }}
+              contentContainerStyle={{ paddingHorizontal: 16, paddingVertical: 10 }}
+              renderItem={({ item }) => {
+                const fullName = `${item.firstName || ''} ${item.lastName || ''}`.trim() || item.email;
+                const isCurrent = assigned?.userId === item.id;
+                return (
+                  <TouchableOpacity
+                    onPress={() => handleAssign(item.id)}
+                    disabled={isAssigning}
+                    className={`py-2.5 px-1 rounded-xl flex-row items-center gap-2 mb-1 ${isCurrent ? 'bg-sky-50' : ''}`}
+                  >
+                    <View className="h-8 w-8 rounded-full items-center justify-center" style={{ backgroundColor: assigned?.userId === item.id ? (assigned?.color || '#0ea5e9') : '#0f766e' }}>
+                      <Text className="text-[11px] font-semibold text-white">{getNameInitials(fullName)}</Text>
+                    </View>
+                    <View className="flex-1 min-w-0">
+                      <Text className="text-sm font-medium text-slate-800" numberOfLines={1}>{fullName}</Text>
+                      <Text className="text-xs text-slate-500" numberOfLines={1}>{item.email}</Text>
+                    </View>
+                    {isCurrent && <Check size={16} color="#0284c7" />}
+                  </TouchableOpacity>
+                );
+              }}
+              ListEmptyComponent={
+                <Text className="text-xs text-slate-400 py-4">No team users available</Text>
+              }
+            />
+
+            {assigned && (
+              <View className="px-4 pt-1">
+                <TouchableOpacity
+                  onPress={() => handleAssign(null)}
+                  disabled={isAssigning}
+                  className="px-4 py-2.5 rounded-xl border border-rose-200 bg-rose-50 items-center"
+                >
+                  <Text className="text-xs font-semibold text-rose-600">Unassign</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </View>
+        </View>
+      </Modal>
     </KeyboardAvoidingView>
   );
 }

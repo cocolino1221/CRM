@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { View, Text, TextInput, TouchableOpacity, FlatList, RefreshControl, Modal } from 'react-native';
-import { Search, Plus, X, WifiOff, RefreshCw } from 'lucide-react-native';
+import { Search, Plus, X, WifiOff, RefreshCw, Users, Check } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -28,11 +28,30 @@ function sessionOpen(conv: Conversation): boolean {
   return (Date.now() - new Date(conv.lastInboundTime).getTime()) < 24 * 60 * 60 * 1000;
 }
 
+function getInitials(name?: string): string {
+  const tokens = String(name || '').trim().split(/\s+/).filter(Boolean);
+  if (!tokens.length) return '??';
+  if (tokens.length === 1) return tokens[0].slice(0, 2).toUpperCase();
+  return `${tokens[0][0] || ''}${tokens[1][0] || ''}`.toUpperCase();
+}
+
 export default function WhatsAppInboxScreen() {
-  const { conversations, isLoading, fetchError, fetchInbox, openConversation } = useWhatsAppStore();
+  const {
+    conversations,
+    teamUsers,
+    isLoading,
+    fetchError,
+    fetchInbox,
+    fetchAssignments,
+    fetchTeamUsers,
+    assignConversation,
+    openConversation,
+  } = useWhatsAppStore();
   const [search, setSearch] = useState('');
   const [showSearch, setShowSearch] = useState(false);
   const [showNewModal, setShowNewModal] = useState(false);
+  const [assignTarget, setAssignTarget] = useState<Conversation | null>(null);
+  const [isAssigning, setIsAssigning] = useState(false);
   const [contactQuery, setContactQuery] = useState('');
   const [contactResults, setContactResults] = useState<any[]>([]);
   const [manualPhone, setManualPhone] = useState('');
@@ -43,6 +62,8 @@ export default function WhatsAppInboxScreen() {
 
   useEffect(() => {
     fetchInbox();
+    fetchAssignments();
+    fetchTeamUsers();
     intervalRef.current = setInterval(fetchInbox, 5000);
     return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
   }, []);
@@ -57,7 +78,19 @@ export default function WhatsAppInboxScreen() {
   const totalUnread = conversations.reduce((sum, c) => sum + c.unreadCount, 0);
   const activeSessions = conversations.filter(sessionOpen).length;
 
-  const onRefresh = useCallback(() => { fetchInbox(); }, []);
+  const onRefresh = useCallback(() => {
+    fetchInbox();
+    fetchAssignments();
+  }, [fetchInbox, fetchAssignments]);
+
+  const handleAssign = async (userId: string | null) => {
+    if (!assignTarget || isAssigning) return;
+    setIsAssigning(true);
+    const user = userId ? teamUsers.find((candidate) => candidate.id === userId) || null : null;
+    await assignConversation(assignTarget.waId, user);
+    setIsAssigning(false);
+    setAssignTarget(null);
+  };
 
   const openChat = (conv: Conversation) => {
     openConversation({
@@ -122,6 +155,7 @@ export default function WhatsAppInboxScreen() {
 
   const renderItem = ({ item: conv }: { item: Conversation }) => {
     const isActive = sessionOpen(conv);
+    const assigned = conv.assignment;
     return (
       <TouchableOpacity
         onPress={() => openChat(conv)}
@@ -145,11 +179,24 @@ export default function WhatsAppInboxScreen() {
             {conv.lastMessage}
           </Text>
         </View>
-        {conv.unreadCount > 0 && (
-          <View className="bg-teal-500 rounded-full min-w-[20px] h-5 items-center justify-center px-1.5">
-            <Text className="text-white text-[10px] font-bold">{conv.unreadCount}</Text>
-          </View>
-        )}
+        <View className="items-end gap-1.5">
+          <TouchableOpacity
+            onPress={() => setAssignTarget(conv)}
+            className="h-8 w-8 rounded-full items-center justify-center border border-slate-200"
+            style={{ backgroundColor: assigned?.color || '#e2e8f0' }}
+          >
+            {assigned ? (
+              <Text className="text-[10px] font-bold text-white">{getInitials(assigned.userName)}</Text>
+            ) : (
+              <Users size={14} color="#64748b" />
+            )}
+          </TouchableOpacity>
+          {conv.unreadCount > 0 && (
+            <View className="bg-teal-500 rounded-full min-w-[20px] h-5 items-center justify-center px-1.5">
+              <Text className="text-white text-[10px] font-bold">{conv.unreadCount}</Text>
+            </View>
+          )}
+        </View>
       </TouchableOpacity>
     );
   };
@@ -316,6 +363,60 @@ export default function WhatsAppInboxScreen() {
                 </TouchableOpacity>
               </View>
             </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={!!assignTarget} animationType="slide" transparent onRequestClose={() => setAssignTarget(null)}>
+        <View className="flex-1 bg-black/40 justify-end">
+          <View className="bg-white rounded-t-3xl" style={{ paddingBottom: insets.bottom > 0 ? insets.bottom : 16 }}>
+            <View className="px-4 py-3 border-b border-slate-100 flex-row items-center justify-between">
+              <View className="flex-1 pr-3">
+                <Text className="text-base font-bold text-slate-900">Assign conversation</Text>
+                <Text className="text-xs text-slate-500 mt-0.5" numberOfLines={1}>{assignTarget?.contactName}</Text>
+              </View>
+              <TouchableOpacity onPress={() => setAssignTarget(null)} className="h-8 w-8 rounded-full bg-slate-100 items-center justify-center">
+                <X size={14} color="#64748b" />
+              </TouchableOpacity>
+            </View>
+            <FlatList
+              data={teamUsers}
+              keyExtractor={(item) => item.id}
+              style={{ maxHeight: 340 }}
+              contentContainerStyle={{ paddingHorizontal: 16, paddingVertical: 10 }}
+              renderItem={({ item }) => {
+                const fullName = `${item.firstName || ''} ${item.lastName || ''}`.trim() || item.email;
+                const isCurrent = assignTarget?.assignment?.userId === item.id;
+                return (
+                  <TouchableOpacity
+                    onPress={() => handleAssign(item.id)}
+                    disabled={isAssigning}
+                    className={`py-2.5 px-1 rounded-xl flex-row items-center gap-2 mb-1 ${isCurrent ? 'bg-sky-50' : ''}`}
+                  >
+                    <View className="h-8 w-8 rounded-full bg-teal-700 items-center justify-center">
+                      <Text className="text-[11px] font-semibold text-white">{getInitials(fullName)}</Text>
+                    </View>
+                    <View className="flex-1 min-w-0">
+                      <Text className="text-sm font-medium text-slate-800" numberOfLines={1}>{fullName}</Text>
+                      <Text className="text-xs text-slate-500" numberOfLines={1}>{item.email}</Text>
+                    </View>
+                    {isCurrent && <Check size={16} color="#0284c7" />}
+                  </TouchableOpacity>
+                );
+              }}
+              ListEmptyComponent={<Text className="text-xs text-slate-400 py-4">No team users available</Text>}
+            />
+            {assignTarget?.assignment && (
+              <View className="px-4 pt-1">
+                <TouchableOpacity
+                  onPress={() => handleAssign(null)}
+                  disabled={isAssigning}
+                  className="px-4 py-2.5 rounded-xl border border-rose-200 bg-rose-50 items-center"
+                >
+                  <Text className="text-xs font-semibold text-rose-600">Unassign</Text>
+                </TouchableOpacity>
+              </View>
+            )}
           </View>
         </View>
       </Modal>

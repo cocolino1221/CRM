@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import api from '../lib/api';
-import type { Conversation, WhatsAppActivity } from '../types';
+import type { Conversation, ConversationAssignment, User, WhatsAppActivity } from '../types';
 
 export type WhatsAppAttachmentType = 'image' | 'video' | 'audio' | 'document';
 
@@ -16,16 +16,28 @@ export interface WhatsAppAttachmentPayload {
 interface WhatsAppState {
   conversations: Conversation[];
   selectedConv: Conversation | null;
+  assignments: Record<string, ConversationAssignment>;
+  teamUsers: User[];
   isLoading: boolean;
   fetchError: string;
   isSending: boolean;
   sendError: string;
   fetchInbox: () => Promise<void>;
+  fetchAssignments: () => Promise<void>;
+  fetchTeamUsers: () => Promise<void>;
+  assignConversation: (waId: string, user: User | null) => Promise<string | null>;
   selectConversation: (conv: Conversation | null) => void;
   openConversation: (input: { waId?: string; phone?: string; contactName?: string; contactId?: string | null }) => Promise<Conversation | null>;
   sendMessage: (to: string, message: string) => Promise<boolean>;
   sendMediaMessage: (to: string, media: WhatsAppAttachmentPayload) => Promise<boolean>;
   markRead: (waId: string) => void;
+}
+
+const USER_COLORS = ['#16a34a', '#2563eb', '#9333ea', '#dc2626', '#ea580c', '#0891b2', '#be185d', '#65a30d'];
+
+function getUserColor(userId: string): string {
+  const hash = userId.split('').reduce((sum, char) => sum + char.charCodeAt(0), 0);
+  return USER_COLORS[Math.abs(hash) % USER_COLORS.length];
 }
 
 async function getReadTimestamps(): Promise<Record<string, string>> {
@@ -102,6 +114,8 @@ function normalizePhone(value?: string, waId?: string): string {
 export const useWhatsAppStore = create<WhatsAppState>((set, get) => ({
   conversations: [],
   selectedConv: null,
+  assignments: {},
+  teamUsers: [],
   isLoading: true,
   fetchError: '',
   isSending: false,
@@ -120,10 +134,12 @@ export const useWhatsAppStore = create<WhatsAppState>((set, get) => ({
         const contactName = act.contact ? `${act.contact.firstName} ${act.contact.lastName}`.trim() : phone;
 
         if (!convMap.has(waId)) {
+          const assignment = get().assignments[waId] || null;
           convMap.set(waId, {
             waId, contactName, contactId: act.contact?.id || null, phone,
             lastMessage: act.description || '', lastMessageTime: act.occurredAt,
             messageCount: 0, messages: [], unreadCount: 0, lastInboundTime: null,
+            assignment,
           });
         }
         const conv = convMap.get(waId)!;
@@ -162,6 +178,98 @@ export const useWhatsAppStore = create<WhatsAppState>((set, get) => ({
     }
   },
 
+  fetchAssignments: async () => {
+    try {
+      const res = await api.get('/integrations/whatsapp/assignments');
+      const assignmentMap = (res.data?.data || {}) as Record<string, ConversationAssignment>;
+      const conversations = get().conversations.map((conversation) => ({
+        ...conversation,
+        assignment: assignmentMap[conversation.waId] || null,
+      }));
+      const selected = get().selectedConv;
+      const selectedConv = selected
+        ? {
+            ...selected,
+            assignment: assignmentMap[selected.waId] || null,
+          }
+        : null;
+      set({ assignments: assignmentMap, conversations, selectedConv });
+    } catch {
+      // Non-blocking: inbox should still work without assignment data.
+    }
+  },
+
+  fetchTeamUsers: async () => {
+    try {
+      const res = await api.get('/users');
+      const rows = Array.isArray(res.data?.data)
+        ? res.data.data
+        : Array.isArray(res.data?.users)
+          ? res.data.users
+          : Array.isArray(res.data)
+            ? res.data
+            : [];
+      set({
+        teamUsers: rows.filter((user: any) => user?.id).map((user: any) => ({
+          id: String(user.id),
+          email: String(user.email || ''),
+          firstName: String(user.firstName || ''),
+          lastName: String(user.lastName || ''),
+          role: String(user.role || ''),
+          status: typeof user.status === 'string' ? user.status : undefined,
+          workspaceId: String(user.workspaceId || ''),
+          avatar: typeof user.avatar === 'string' ? user.avatar : undefined,
+          preferences: user.preferences,
+        })),
+      });
+    } catch {
+      // Non-blocking: assignment picker can be hidden when users cannot be loaded.
+    }
+  },
+
+  assignConversation: async (waId, user) => {
+    const normalizedWaId = normalizeWaId(waId);
+    if (!normalizedWaId) {
+      return 'Conversation is invalid';
+    }
+    try {
+      const assignment = user
+        ? {
+            userId: user.id,
+            userName: `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.email || 'Unknown User',
+            color: getUserColor(user.id),
+            assignedAt: new Date().toISOString(),
+          }
+        : null;
+      await api.post(`/integrations/whatsapp/conversations/${normalizedWaId}/assign`, assignment ? {
+        userId: assignment.userId,
+        userName: assignment.userName,
+        color: assignment.color,
+      } : { userId: null });
+
+      const nextAssignments = { ...get().assignments };
+      if (assignment) {
+        nextAssignments[normalizedWaId] = assignment;
+      } else {
+        delete nextAssignments[normalizedWaId];
+      }
+
+      const nextConversations = get().conversations.map((conversation) => (
+        conversation.waId === normalizedWaId
+          ? { ...conversation, assignment: assignment || null }
+          : conversation
+      ));
+      const selected = get().selectedConv;
+      const nextSelected = selected && selected.waId === normalizedWaId
+        ? { ...selected, assignment: assignment || null }
+        : selected;
+      set({ assignments: nextAssignments, conversations: nextConversations, selectedConv: nextSelected });
+      return null;
+    } catch (err: any) {
+      return err?.response?.data?.message || 'Failed to assign conversation';
+    }
+  },
+
   selectConversation: async (conv) => {
     if (conv) {
       const ts = await getReadTimestamps();
@@ -188,6 +296,7 @@ export const useWhatsAppStore = create<WhatsAppState>((set, get) => ({
           phone: existing.phone || normalizedPhone,
           contactName: existing.contactName || contactName || normalizedPhone || normalizedWaId,
           contactId: existing.contactId || contactId || null,
+          assignment: existing.assignment || get().assignments[normalizedWaId] || null,
           unreadCount: 0,
         }
       : {
@@ -201,6 +310,7 @@ export const useWhatsAppStore = create<WhatsAppState>((set, get) => ({
           messages: [],
           unreadCount: 0,
           lastInboundTime: null,
+          assignment: get().assignments[normalizedWaId] || null,
         };
 
     const nextConversations = existing
