@@ -608,7 +608,7 @@ export class WhatsAppController {
   async broadcast(
     @Req() req: any,
     @Body() body: {
-      filter: { tags?: string[]; status?: string[]; source?: string[] };
+      filter: { tags?: string[]; status?: string[]; source?: string[]; selectedContactIds?: string[] };
       template: { name: string; language: string; params?: any[] };
     },
   ) {
@@ -770,7 +770,7 @@ export class WhatsAppController {
   @ApiOperation({ summary: 'Preview audience count for campaign filters' })
   async previewAudience(
     @Req() req: any,
-    @Body() body: { tags?: string[]; status?: string[]; source?: string[] },
+    @Body() body: { tags?: string[]; status?: string[]; source?: string[]; selectedContactIds?: string[] },
   ) {
     const workspaceId = req.user?.workspaceId;
     if (!workspaceId) throw new BadRequestException('Workspace ID required');

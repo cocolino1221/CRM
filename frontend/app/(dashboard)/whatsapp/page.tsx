@@ -685,6 +685,10 @@ export default function WhatsAppPage() {
   const [campFilterTags, setCampFilterTags] = useState<string[]>([]);
   const [campTagInput, setCampTagInput] = useState('');
   const [campFilterStatus, setCampFilterStatus] = useState<string[]>([]);
+  const [campContactSearch, setCampContactSearch] = useState('');
+  const [campContactResults, setCampContactResults] = useState<any[]>([]);
+  const [campSelectedContacts, setCampSelectedContacts] = useState<Array<{ id: string; name: string; phone: string }>>([]);
+  const [isSearchingCampContacts, setIsSearchingCampContacts] = useState(false);
   const [audiencePreview, setAudiencePreview] = useState<{ count: number; sample: any[] } | null>(null);
   const [isPreviewingAudience, setIsPreviewingAudience] = useState(false);
   const [isCreatingCampaign, setIsCreatingCampaign] = useState(false);
@@ -759,6 +763,18 @@ export default function WhatsAppPage() {
       setSelectedAutoSendRuleId(autoSendRules[0].id);
     }
   }, [autoSendRules, selectedAutoSendRuleId]);
+
+  useEffect(() => {
+    const q = campContactSearch.trim();
+    if (!q) {
+      setCampContactResults([]);
+      return;
+    }
+    const t = setTimeout(() => {
+      searchCampaignContacts(q);
+    }, 250);
+    return () => clearTimeout(t);
+  }, [campContactSearch]);
 
   const selectedAutoSendRule = autoSendRules.find(rule => rule.id === selectedAutoSendRuleId) || autoSendRules[0] || null;
 
@@ -1055,6 +1071,23 @@ export default function WhatsAppPage() {
       console.error('Failed to search contacts:', err);
     } finally {
       setIsSearchingContacts(false);
+    }
+  };
+
+  const searchCampaignContacts = async (query: string) => {
+    if (!query.trim()) {
+      setCampContactResults([]);
+      return;
+    }
+    setIsSearchingCampContacts(true);
+    try {
+      const res = await api.get(`/contacts?search=${encodeURIComponent(query)}&limit=20`);
+      const rows = res.data.data || res.data || [];
+      setCampContactResults(rows);
+    } catch {
+      setCampContactResults([]);
+    } finally {
+      setIsSearchingCampContacts(false);
     }
   };
 
@@ -1509,6 +1542,7 @@ export default function WhatsAppPage() {
       const res = await api.post('/integrations/whatsapp/campaigns/preview-audience', {
         tags: campFilterTags.length > 0 ? campFilterTags : undefined,
         status: campFilterStatus.length > 0 ? campFilterStatus : undefined,
+        selectedContactIds: campSelectedContacts.length > 0 ? campSelectedContacts.map(c => c.id) : undefined,
       });
       setAudiencePreview(res.data);
     } catch { /* silent */ }
@@ -1527,6 +1561,7 @@ export default function WhatsAppPage() {
         filter: {
           tags: campFilterTags.length > 0 ? campFilterTags : undefined,
           status: campFilterStatus.length > 0 ? campFilterStatus : undefined,
+          selectedContactIds: campSelectedContacts.length > 0 ? campSelectedContacts.map(c => c.id) : undefined,
         },
       });
       const campaign = res.data;
@@ -1537,6 +1572,9 @@ export default function WhatsAppPage() {
       setShowCreateCampaign(false);
       setCampName(''); setCampTemplate(''); setCampLanguage('en_US');
       setCampFilterTags([]); setCampFilterStatus([]);
+      setCampSelectedContacts([]);
+      setCampContactSearch('');
+      setCampContactResults([]);
       setAudiencePreview(null);
       fetchCampaigns();
     } catch (err: any) {
@@ -1781,7 +1819,16 @@ export default function WhatsAppPage() {
                 </h2>
                 <p className="text-sm text-gray-500 mt-0.5">Create campaigns to send approved templates to filtered contact segments</p>
               </div>
-              <button onClick={() => { setShowCreateCampaign(!showCreateCampaign); setCampaignError(''); setAudiencePreview(null); }}
+              <button onClick={() => {
+                setShowCreateCampaign(!showCreateCampaign);
+                setCampaignError('');
+                setAudiencePreview(null);
+                if (!showCreateCampaign) {
+                  setCampContactSearch('');
+                  setCampContactResults([]);
+                  setCampSelectedContacts([]);
+                }
+              }}
                 className="px-4 py-2 text-sm font-medium text-white bg-green-500 hover:bg-green-600 rounded-xl flex items-center gap-2">
                 <Plus className="h-4 w-4" /> New Campaign
               </button>
@@ -1856,6 +1903,71 @@ export default function WhatsAppPage() {
                     ))}
                   </div>
                   {campFilterStatus.length === 0 && <p className="text-xs text-gray-400 mt-1">No filter = all contacts with a phone number</p>}
+                </div>
+
+                {/* Manual contact selection */}
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Select specific contacts (optional)</label>
+                  <input
+                    type="text"
+                    placeholder="Search by name, phone, email..."
+                    value={campContactSearch}
+                    onChange={(e) => setCampContactSearch(e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-green-400"
+                  />
+                  {isSearchingCampContacts && (
+                    <div className="mt-2 flex items-center gap-2 text-xs text-gray-500">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" /> Searching contacts...
+                    </div>
+                  )}
+                  {!isSearchingCampContacts && campContactResults.length > 0 && (
+                    <div className="mt-2 max-h-36 overflow-y-auto rounded-xl border border-gray-200 bg-white">
+                      {campContactResults.map((c: any) => {
+                        const contactName = `${c.firstName || ''} ${c.lastName || ''}`.trim() || c.phone || c.email || 'Contact';
+                        const contactPhone = c.phone || '-';
+                        const isSelected = campSelectedContacts.some((sel) => sel.id === c.id);
+                        return (
+                          <button
+                            key={c.id}
+                            type="button"
+                            disabled={isSelected}
+                            onClick={() => {
+                              if (isSelected) return;
+                              setCampSelectedContacts((prev) => [...prev, { id: c.id, name: contactName, phone: contactPhone }]);
+                            }}
+                            className={`w-full text-left px-3 py-2 border-b border-gray-100 last:border-b-0 ${isSelected ? 'bg-gray-50 text-gray-400' : 'hover:bg-gray-50'}`}
+                          >
+                            <p className="text-sm font-medium">{contactName}</p>
+                            <p className="text-xs text-gray-500">{contactPhone}</p>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                  {campSelectedContacts.length > 0 && (
+                    <div className="mt-2">
+                      <div className="mb-1 flex items-center justify-between">
+                        <span className="text-xs font-medium text-green-700">{campSelectedContacts.length} selected</span>
+                        <button
+                          type="button"
+                          onClick={() => setCampSelectedContacts([])}
+                          className="text-xs text-gray-500 hover:text-red-500"
+                        >
+                          Clear
+                        </button>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {campSelectedContacts.map((c) => (
+                          <span key={c.id} className="inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded-full bg-blue-100 text-blue-700">
+                            {c.name}
+                            <button type="button" onClick={() => setCampSelectedContacts((prev) => prev.filter((x) => x.id !== c.id))}>
+                              <X className="h-3 w-3" />
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Audience preview */}

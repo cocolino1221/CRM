@@ -1308,12 +1308,16 @@ export class WhatsAppService {
    */
   async broadcastTemplate(
     workspaceId: string,
-    filter: { tags?: string[]; status?: string[]; source?: string[] },
+    filter: { tags?: string[]; status?: string[]; source?: string[]; selectedContactIds?: string[] },
     template: { name: string; language: string; params?: any[] },
   ): Promise<{ total: number; sent: number; failed: number; results: any[] }> {
     const where: any = { workspaceId };
+    const selectedIds = Array.isArray(filter.selectedContactIds)
+      ? Array.from(new Set(filter.selectedContactIds.filter(Boolean)))
+      : [];
     if (filter.status?.length) where.status = In(filter.status);
     if (filter.source?.length) where.source = In(filter.source);
+    if (selectedIds.length) where.id = In(selectedIds);
 
     let contacts = await this.contactRepository.find({ where, take: 1000 });
 
@@ -1758,11 +1762,15 @@ export class WhatsAppService {
 
   async previewCampaignAudience(
     workspaceId: string,
-    filter: { tags?: string[]; status?: string[]; source?: string[] },
+    filter: { tags?: string[]; status?: string[]; source?: string[]; selectedContactIds?: string[] },
   ): Promise<{ count: number; sample: Array<{ id: string; name: string; phone: string }> }> {
     const where: any = { workspaceId };
+    const selectedIds = Array.isArray(filter.selectedContactIds)
+      ? Array.from(new Set(filter.selectedContactIds.filter(Boolean)))
+      : [];
     if (filter.status?.length) where.status = In(filter.status);
     if (filter.source?.length) where.source = In(filter.source);
+    if (selectedIds.length) where.id = In(selectedIds);
 
     let contacts = await this.contactRepository.find({ where, take: 1000 });
     if (filter.tags?.length) {
