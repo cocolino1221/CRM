@@ -93,6 +93,24 @@ interface QuickReply {
   message: string;
 }
 
+interface AutoSendRuleForm {
+  id: string;
+  name: string;
+  enabled: boolean;
+  templateName: string;
+  language: string;
+  includeNameParam: boolean;
+  headerMediaType: '' | 'image' | 'video' | 'document';
+  headerMediaId: string;
+  headerMediaUrl: string;
+  priority: number;
+  conditions: {
+    sources: string[];
+    statuses: string[];
+    requirePhone: boolean;
+  };
+}
+
 // ─── Constants ──────────────────────────────────────────────
 
 const WHATSAPP_TEMPLATES: WhatsAppTemplate[] = [
@@ -131,6 +149,27 @@ const DEFAULT_QUICK_REPLIES: QuickReply[] = [
   { id: 'qr2', title: 'Follow up', message: 'Just checking in. Is there anything else you need help with?' },
   { id: 'qr3', title: 'More info', message: 'Could you please provide more details so I can assist you better?' },
 ];
+
+const AUTO_SEND_SOURCES = ['typeform', 'manychat', 'manual', 'form', 'import', 'webhook'];
+const AUTO_SEND_STATUSES = ['lead', 'prospect', 'customer', 'active'];
+
+const createAutoSendRule = (priority: number): AutoSendRuleForm => ({
+  id: `rule_${Date.now()}_${priority}_${Math.random().toString(36).slice(2, 7)}`,
+  name: `Rule ${priority + 1}`,
+  enabled: true,
+  templateName: 'hello_world',
+  language: 'en_US',
+  includeNameParam: false,
+  headerMediaType: '',
+  headerMediaId: '',
+  headerMediaUrl: '',
+  priority,
+  conditions: {
+    sources: [],
+    statuses: [],
+    requirePhone: true,
+  },
+});
 
 const EMOJI_DATA: Record<string, string[]> = {
   'Smileys': ['😀','😃','😄','😁','😅','😂','🤣','😊','😇','🙂','😉','😌','😍','🥰','😘','😗','😙','😚','🤗','🤔','😐','😑','😶','🙄','😏','😣','😥','😮','🤐','😯','😪','😫','😴','😛','😜','😝','🤑'],
@@ -482,17 +521,9 @@ export default function WhatsAppPage() {
 
   // Auto-send on contact creation
   const [showAutoSend, setShowAutoSend] = useState(false);
-  const [autoSendEnabled, setAutoSendEnabled] = useState(false);
-  const [autoSendTemplate, setAutoSendTemplate] = useState('hello_world');
-  const [autoSendLanguage, setAutoSendLanguage] = useState('en_US');
-  const [autoSendIncludeName, setAutoSendIncludeName] = useState(false);
-  const [autoSendHeaderMediaType, setAutoSendHeaderMediaType] = useState<'' | 'image' | 'video' | 'document'>('');
-  const [autoSendHeaderMediaId, setAutoSendHeaderMediaId] = useState('');
-  const [autoSendHeaderMediaUrl, setAutoSendHeaderMediaUrl] = useState('');
+  const [autoSendRules, setAutoSendRules] = useState<AutoSendRuleForm[]>([createAutoSendRule(0)]);
+  const [selectedAutoSendRuleId, setSelectedAutoSendRuleId] = useState<string>('');
   const [isUploadingAutoSendHeader, setIsUploadingAutoSendHeader] = useState(false);
-  const [autoSendSources, setAutoSendSources] = useState<string[]>([]);
-  const [autoSendStatuses, setAutoSendStatuses] = useState<string[]>([]);
-  const [autoSendRequirePhone, setAutoSendRequirePhone] = useState(true);
   const [isSavingAutoSend, setIsSavingAutoSend] = useState(false);
   const [autoSendSaveError, setAutoSendSaveError] = useState('');
 
@@ -617,6 +648,37 @@ export default function WhatsAppPage() {
       setQuickReplies(DEFAULT_QUICK_REPLIES);
     }
   }, []);
+
+  useEffect(() => {
+    if (autoSendRules.length === 0) {
+      setSelectedAutoSendRuleId('');
+      return;
+    }
+    if (!selectedAutoSendRuleId || !autoSendRules.some(rule => rule.id === selectedAutoSendRuleId)) {
+      setSelectedAutoSendRuleId(autoSendRules[0].id);
+    }
+  }, [autoSendRules, selectedAutoSendRuleId]);
+
+  const selectedAutoSendRule = autoSendRules.find(rule => rule.id === selectedAutoSendRuleId) || autoSendRules[0] || null;
+
+  const updateSelectedAutoSendRule = (updater: (rule: AutoSendRuleForm) => AutoSendRuleForm) => {
+    const targetId = selectedAutoSendRuleId || autoSendRules[0]?.id;
+    if (!targetId) return;
+    setAutoSendRules(prev => prev.map(rule => (rule.id === targetId ? updater(rule) : rule)));
+  };
+
+  const moveAutoSendRule = (ruleId: string, direction: 'up' | 'down') => {
+    setAutoSendRules(prev => {
+      const index = prev.findIndex(rule => rule.id === ruleId);
+      if (index < 0) return prev;
+      const nextIndex = direction === 'up' ? index - 1 : index + 1;
+      if (nextIndex < 0 || nextIndex >= prev.length) return prev;
+      const nextRules = [...prev];
+      const [rule] = nextRules.splice(index, 1);
+      nextRules.splice(nextIndex, 0, rule);
+      return nextRules.map((item, idx) => ({ ...item, priority: idx }));
+    });
+  };
 
   // ─── Data Fetching ────────────────────────────────────────
 
@@ -747,17 +809,30 @@ export default function WhatsAppPage() {
     try {
       const res = await api.get('/integrations/whatsapp/auto-send');
       const cfg = res.data;
-      const headerType = String(cfg.headerMediaType || '').toLowerCase();
-      setAutoSendEnabled(cfg.enabled ?? false);
-      setAutoSendTemplate(cfg.templateName || 'hello_world');
-      setAutoSendLanguage(cfg.language || 'en_US');
-      setAutoSendIncludeName(cfg.includeNameParam ?? false);
-      setAutoSendHeaderMediaType((['image', 'video', 'document'].includes(headerType) ? headerType : '') as '' | 'image' | 'video' | 'document');
-      setAutoSendHeaderMediaId(cfg.headerMediaId || '');
-      setAutoSendHeaderMediaUrl(cfg.headerMediaUrl || '');
-      setAutoSendSources(cfg.conditions?.sources || []);
-      setAutoSendStatuses(cfg.conditions?.statuses || []);
-      setAutoSendRequirePhone(cfg.conditions?.requirePhone ?? true);
+      const rawRules = Array.isArray(cfg.autoSendRules) && cfg.autoSendRules.length > 0
+        ? cfg.autoSendRules
+        : [cfg];
+      const rules = rawRules.map((rule: any, index: number): AutoSendRuleForm => {
+        const headerType = String(rule?.headerMediaType || '').toLowerCase();
+        return {
+          id: String(rule?.id || `rule_${Date.now()}_${index}`),
+          name: String(rule?.name || `Rule ${index + 1}`),
+          enabled: rule?.enabled !== false,
+          templateName: String(rule?.templateName || 'hello_world'),
+          language: String(rule?.language || 'en_US'),
+          includeNameParam: Boolean(rule?.includeNameParam),
+          headerMediaType: (['image', 'video', 'document'].includes(headerType) ? headerType : '') as '' | 'image' | 'video' | 'document',
+          headerMediaId: String(rule?.headerMediaId || ''),
+          headerMediaUrl: String(rule?.headerMediaUrl || ''),
+          priority: Number.isFinite(Number(rule?.priority)) ? Number(rule.priority) : index,
+          conditions: {
+            sources: Array.isArray(rule?.conditions?.sources) ? rule.conditions.sources : [],
+            statuses: Array.isArray(rule?.conditions?.statuses) ? rule.conditions.statuses : [],
+            requirePhone: rule?.conditions?.requirePhone !== false,
+          },
+        };
+      }).sort((a: AutoSendRuleForm, b: AutoSendRuleForm) => a.priority - b.priority);
+      setAutoSendRules(rules.length > 0 ? rules : [createAutoSendRule(0)]);
     } catch { /* silent */ }
   };
 
@@ -765,19 +840,25 @@ export default function WhatsAppPage() {
     setIsSavingAutoSend(true);
     setAutoSendSaveError('');
     try {
-      await api.post('/integrations/whatsapp/auto-send', {
-        enabled: autoSendEnabled,
-        templateName: autoSendTemplate.trim(),
-        language: autoSendLanguage.trim() || 'en',
-        includeNameParam: autoSendIncludeName,
-        headerMediaType: autoSendHeaderMediaType || undefined,
-        headerMediaId: autoSendHeaderMediaId.trim() || undefined,
-        headerMediaUrl: autoSendHeaderMediaUrl.trim() || undefined,
+      const rules = autoSendRules.map((rule, index) => ({
+        id: rule.id,
+        name: rule.name.trim() || `Rule ${index + 1}`,
+        enabled: rule.enabled,
+        templateName: rule.templateName.trim() || 'hello_world',
+        language: rule.language.trim() || 'en_US',
+        includeNameParam: rule.includeNameParam,
+        headerMediaType: rule.headerMediaType || undefined,
+        headerMediaId: rule.headerMediaId.trim() || undefined,
+        headerMediaUrl: rule.headerMediaUrl.trim() || undefined,
+        priority: index,
         conditions: {
-          sources: autoSendSources.length > 0 ? autoSendSources : undefined,
-          statuses: autoSendStatuses.length > 0 ? autoSendStatuses : undefined,
-          requirePhone: autoSendRequirePhone,
+          sources: rule.conditions.sources.length > 0 ? rule.conditions.sources : undefined,
+          statuses: rule.conditions.statuses.length > 0 ? rule.conditions.statuses : undefined,
+          requirePhone: rule.conditions.requirePhone,
         },
+      }));
+      await api.post('/integrations/whatsapp/auto-send', {
+        autoSendRules: rules,
       });
       setShowAutoSend(false);
     } catch (err: any) {
@@ -3240,180 +3321,309 @@ export default function WhatsAppPage() {
             </div>
 
             <div className="flex-1 overflow-y-auto p-4 space-y-5">
-              {/* Master toggle */}
-              <div className="flex items-center justify-between p-3 bg-gray-50 rounded-xl">
-                <div>
-                  <p className="text-sm font-medium text-gray-900">Enable Auto-Send</p>
-                  <p className="text-xs text-gray-500 mt-0.5">Automatically send a template when conditions match</p>
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Rules (first match wins)</p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAutoSendRules(prev => {
+                        const nextRule = createAutoSendRule(prev.length);
+                        return [...prev, nextRule];
+                      });
+                    }}
+                    className="text-xs px-2 py-1 rounded-lg bg-green-50 text-green-700 hover:bg-green-100"
+                  >
+                    + Add rule
+                  </button>
                 </div>
-                <button onClick={() => setAutoSendEnabled(!autoSendEnabled)}
-                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${autoSendEnabled ? 'bg-green-500' : 'bg-gray-300'}`}>
-                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${autoSendEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
-                </button>
+                <div className="space-y-2">
+                  {autoSendRules.map((rule, index) => (
+                    <button
+                      key={rule.id}
+                      type="button"
+                      onClick={() => setSelectedAutoSendRuleId(rule.id)}
+                      className={`w-full text-left px-3 py-2 rounded-xl border transition-colors ${
+                        (selectedAutoSendRule?.id === rule.id)
+                          ? 'border-green-300 bg-green-50'
+                          : 'border-gray-200 bg-white hover:bg-gray-50'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="text-sm font-medium text-gray-900 truncate">
+                          #{index + 1} {rule.name || `Rule ${index + 1}`}
+                        </p>
+                        <span className={`text-[11px] px-2 py-0.5 rounded-full ${rule.enabled ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                          {rule.enabled ? 'enabled' : 'disabled'}
+                        </span>
+                      </div>
+                      <p className="text-xs text-gray-500 truncate mt-0.5">
+                        {rule.templateName || 'No template selected'}
+                      </p>
+                    </button>
+                  ))}
+                </div>
               </div>
 
-              {/* Template config */}
-              <div className="space-y-3">
-                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Template</p>
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="text-xs text-gray-500">Select Template</label>
+              {selectedAutoSendRule && (
+                <>
+                  <div className="grid grid-cols-2 gap-2">
                     <button
                       type="button"
-                      onClick={fetchMetaTemplates}
-                      disabled={isLoadingTemplates}
-                      className="text-xs text-green-600 hover:text-green-700 flex items-center gap-1 disabled:opacity-50">
-                      {isLoadingTemplates ? 'Loading…' : '↻ Reload'}
+                      onClick={() => moveAutoSendRule(selectedAutoSendRule.id, 'up')}
+                      disabled={autoSendRules.findIndex(rule => rule.id === selectedAutoSendRule.id) === 0}
+                      className="px-3 py-2 text-xs font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-xl disabled:opacity-50"
+                    >
+                      Move up
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => moveAutoSendRule(selectedAutoSendRule.id, 'down')}
+                      disabled={autoSendRules.findIndex(rule => rule.id === selectedAutoSendRule.id) === autoSendRules.length - 1}
+                      className="px-3 py-2 text-xs font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-xl disabled:opacity-50"
+                    >
+                      Move down
                     </button>
                   </div>
-                  {isLoadingTemplates ? (
-                    <div className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl bg-gray-50 text-gray-400">Loading templates…</div>
-                  ) : (
-                    <select
-                      value={autoSendTemplate}
-                      onChange={e => {
-                        const selected = metaTemplates.find((t: any) => t.name === e.target.value);
-                        const headerType = getTemplateHeaderMediaType(selected);
-                        const bodyText = selected?.components?.find((c: any) => c.type === 'BODY')?.text || '';
-                        const hasBodyParams = /\{\{\d+\}\}/.test(bodyText);
-                        setAutoSendTemplate(e.target.value);
-                        if (selected?.language) setAutoSendLanguage(selected.language);
-                        setAutoSendHeaderMediaType(headerType);
-                        if (!hasBodyParams) setAutoSendIncludeName(false);
-                        if (!headerType) {
-                          setAutoSendHeaderMediaId('');
-                          setAutoSendHeaderMediaUrl('');
-                        }
-                      }}
-                      className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-green-400 focus:ring-2 focus:ring-green-100 bg-white">
-                      <option value="">— choose a template —</option>
-                      {metaTemplates.filter((t: any) => t.status === 'APPROVED').map((t: any) => (
-                        <option key={t.name} value={t.name}>{t.name} ({t.language})</option>
-                      ))}
-                    </select>
-                  )}
-                  {templatesLoaded && !isLoadingTemplates && metaTemplates.filter((t: any) => t.status === 'APPROVED').length === 0 && (
-                    <p className="text-xs text-amber-600 mt-1">No approved templates found. Make sure WABA ID is set in integration settings and you have approved templates in Meta.</p>
-                  )}
-                  {!templatesLoaded && !isLoadingTemplates && (
-                    <p className="text-xs text-gray-400 mt-1">Click ↻ Reload to load your approved templates.</p>
-                  )}
-                  {templatesLoaded && metaTemplates.filter((t: any) => t.status === 'APPROVED').length > 0 && (
-                    <p className="text-xs text-gray-400 mt-1">Only approved templates are listed.</p>
-                  )}
-                </div>
-                <div>
-                  <label className="text-xs text-gray-500 mb-1 block">Language Code</label>
-                  <input type="text" value={autoSendLanguage} onChange={e => setAutoSendLanguage(e.target.value)}
-                    placeholder="e.g. en_US, ro"
-                    className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-green-400 focus:ring-2 focus:ring-green-100" />
-                  <p className="text-xs text-gray-400 mt-1">Auto-filled when you select a template above</p>
-                </div>
-                <label className="flex items-center gap-3 cursor-pointer">
-                  <input type="checkbox" checked={autoSendIncludeName} onChange={e => setAutoSendIncludeName(e.target.checked)}
-                    className="h-4 w-4 rounded border-gray-300 text-green-600 accent-green-600" />
-                  <div>
-                    <p className="text-sm text-gray-800">Include contact first name as parameter</p>
-                    <p className="text-xs text-gray-400">Passes {`{{1}}`} = first name to the template</p>
-                  </div>
-                </label>
 
-                {autoSendHeaderMediaType && (
-                  <div className="space-y-2 rounded-xl border border-amber-200 bg-amber-50 p-3">
-                    <p className="text-xs font-semibold text-amber-800 uppercase tracking-wide">
-                      Header media required ({autoSendHeaderMediaType})
-                    </p>
-                    <p className="text-xs text-amber-700">
-                      This template has a media header. Set a media_id (recommended) or a public URL.
-                    </p>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="text"
-                        value={autoSendHeaderMediaId}
-                        onChange={e => setAutoSendHeaderMediaId(e.target.value)}
-                        placeholder="Meta media_id (recommended)"
-                        className="flex-1 px-3 py-2 text-sm border border-amber-200 rounded-xl focus:outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-100 bg-white"
-                      />
-                      <label className="px-3 py-2 text-xs font-medium text-amber-800 border border-amber-300 rounded-xl cursor-pointer hover:bg-amber-100 transition-colors">
-                        {isUploadingAutoSendHeader ? 'Uploading…' : 'Upload'}
-                        <input
-                          type="file"
-                          className="hidden"
-                          accept={autoSendHeaderMediaType === 'image' ? 'image/*' : autoSendHeaderMediaType === 'video' ? 'video/*' : '.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt'}
-                          onChange={async (e) => {
-                            const file = e.target.files?.[0];
-                            if (!file) return;
-                            setIsUploadingAutoSendHeader(true);
-                            setAutoSendSaveError('');
-                            try {
-                              const formData = new FormData();
-                              formData.append('file', file);
-                              const res = await api.post('/integrations/whatsapp/media/upload', formData);
-                              setAutoSendHeaderMediaId(res.data.id || '');
-                            } catch (err: any) {
-                              setAutoSendSaveError(`Upload failed: ${err?.response?.data?.message || err.message}`);
-                            } finally {
-                              setIsUploadingAutoSendHeader(false);
-                              e.target.value = '';
-                            }
-                          }}
-                        />
-                      </label>
-                    </div>
+                  <div className="grid grid-cols-[1fr_auto] gap-2">
                     <input
                       type="text"
-                      value={autoSendHeaderMediaUrl}
-                      onChange={e => setAutoSendHeaderMediaUrl(e.target.value)}
-                      placeholder={`${autoSendHeaderMediaType} URL (fallback if no media_id)`}
-                      className="w-full px-3 py-2 text-sm border border-amber-200 rounded-xl focus:outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-100 bg-white"
+                      value={selectedAutoSendRule.name}
+                      onChange={e => updateSelectedAutoSendRule(rule => ({ ...rule, name: e.target.value }))}
+                      placeholder="Rule name (ex: Typeform Welcome)"
+                      className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-green-400 focus:ring-2 focus:ring-green-100"
                     />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAutoSendRules(prev => {
+                          if (prev.length <= 1) return prev;
+                          return prev
+                            .filter(rule => rule.id !== selectedAutoSendRule.id)
+                            .map((rule, idx) => ({ ...rule, priority: idx }));
+                        });
+                      }}
+                      disabled={autoSendRules.length <= 1}
+                      className="px-3 py-2 text-xs font-medium text-red-600 bg-red-50 hover:bg-red-100 rounded-xl disabled:opacity-50"
+                    >
+                      Delete
+                    </button>
                   </div>
-                )}
-              </div>
 
-              {/* Source filter */}
-              <div className="space-y-2">
-                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Filter by Source</p>
-                <p className="text-xs text-gray-400">Leave all unchecked to send for contacts from any source</p>
-                <div className="grid grid-cols-2 gap-2">
-                  {['typeform', 'manychat', 'manual', 'form', 'import', 'webhook'].map(src => (
-                    <label key={src} className="flex items-center gap-2 cursor-pointer p-2 rounded-lg hover:bg-gray-50">
-                      <input type="checkbox"
-                        checked={autoSendSources.includes(src)}
-                        onChange={e => setAutoSendSources(prev => e.target.checked ? [...prev, src] : prev.filter(s => s !== src))}
-                        className="h-4 w-4 rounded border-gray-300 accent-green-600" />
-                      <span className="text-sm text-gray-700 capitalize">{src}</span>
+                  <div className="flex items-center justify-between p-3 bg-gray-50 rounded-xl">
+                    <div>
+                      <p className="text-sm font-medium text-gray-900">Enable this rule</p>
+                      <p className="text-xs text-gray-500 mt-0.5">Only enabled rules are used for auto-send</p>
+                    </div>
+                    <button
+                      onClick={() => updateSelectedAutoSendRule(rule => ({ ...rule, enabled: !rule.enabled }))}
+                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${selectedAutoSendRule.enabled ? 'bg-green-500' : 'bg-gray-300'}`}
+                    >
+                      <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${selectedAutoSendRule.enabled ? 'translate-x-6' : 'translate-x-1'}`} />
+                    </button>
+                  </div>
+
+                  {/* Template config */}
+                  <div className="space-y-3">
+                    <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Template</p>
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-xs text-gray-500">Select Template</label>
+                        <button
+                          type="button"
+                          onClick={fetchMetaTemplates}
+                          disabled={isLoadingTemplates}
+                          className="text-xs text-green-600 hover:text-green-700 flex items-center gap-1 disabled:opacity-50">
+                          {isLoadingTemplates ? 'Loading…' : '↻ Reload'}
+                        </button>
+                      </div>
+                      {isLoadingTemplates ? (
+                        <div className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl bg-gray-50 text-gray-400">Loading templates…</div>
+                      ) : (
+                        <select
+                          value={selectedAutoSendRule.templateName}
+                          onChange={e => {
+                            const selected = metaTemplates.find((t: any) => t.name === e.target.value);
+                            const headerType = getTemplateHeaderMediaType(selected);
+                            const bodyText = selected?.components?.find((c: any) => c.type === 'BODY')?.text || '';
+                            const hasBodyParams = /\{\{\d+\}\}/.test(bodyText);
+                            updateSelectedAutoSendRule(rule => ({
+                              ...rule,
+                              templateName: e.target.value,
+                              language: selected?.language || rule.language,
+                              includeNameParam: hasBodyParams ? rule.includeNameParam : false,
+                              headerMediaType: headerType,
+                              headerMediaId: headerType ? rule.headerMediaId : '',
+                              headerMediaUrl: headerType ? rule.headerMediaUrl : '',
+                            }));
+                          }}
+                          className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-green-400 focus:ring-2 focus:ring-green-100 bg-white">
+                          <option value="">— choose a template —</option>
+                          {metaTemplates.filter((t: any) => t.status === 'APPROVED').map((t: any) => (
+                            <option key={t.name} value={t.name}>{t.name} ({t.language})</option>
+                          ))}
+                        </select>
+                      )}
+                      {templatesLoaded && !isLoadingTemplates && metaTemplates.filter((t: any) => t.status === 'APPROVED').length === 0 && (
+                        <p className="text-xs text-amber-600 mt-1">No approved templates found. Make sure WABA ID is set in integration settings and you have approved templates in Meta.</p>
+                      )}
+                      {!templatesLoaded && !isLoadingTemplates && (
+                        <p className="text-xs text-gray-400 mt-1">Click ↻ Reload to load your approved templates.</p>
+                      )}
+                      {templatesLoaded && metaTemplates.filter((t: any) => t.status === 'APPROVED').length > 0 && (
+                        <p className="text-xs text-gray-400 mt-1">Only approved templates are listed.</p>
+                      )}
+                    </div>
+                    <div>
+                      <label className="text-xs text-gray-500 mb-1 block">Language Code</label>
+                      <input
+                        type="text"
+                        value={selectedAutoSendRule.language}
+                        onChange={e => updateSelectedAutoSendRule(rule => ({ ...rule, language: e.target.value }))}
+                        placeholder="e.g. en_US, ro"
+                        className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-green-400 focus:ring-2 focus:ring-green-100"
+                      />
+                      <p className="text-xs text-gray-400 mt-1">Auto-filled when you select a template above</p>
+                    </div>
+                    <label className="flex items-center gap-3 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={selectedAutoSendRule.includeNameParam}
+                        onChange={e => updateSelectedAutoSendRule(rule => ({ ...rule, includeNameParam: e.target.checked }))}
+                        className="h-4 w-4 rounded border-gray-300 text-green-600 accent-green-600"
+                      />
+                      <div>
+                        <p className="text-sm text-gray-800">Include contact first name as parameter</p>
+                        <p className="text-xs text-gray-400">Passes {`{{1}}`} = first name to the template</p>
+                      </div>
                     </label>
-                  ))}
-                </div>
-              </div>
 
-              {/* Status filter */}
-              <div className="space-y-2">
-                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Filter by Status</p>
-                <p className="text-xs text-gray-400">Leave all unchecked to send for any contact status</p>
-                <div className="grid grid-cols-2 gap-2">
-                  {['lead', 'prospect', 'customer', 'active'].map(st => (
-                    <label key={st} className="flex items-center gap-2 cursor-pointer p-2 rounded-lg hover:bg-gray-50">
-                      <input type="checkbox"
-                        checked={autoSendStatuses.includes(st)}
-                        onChange={e => setAutoSendStatuses(prev => e.target.checked ? [...prev, st] : prev.filter(s => s !== st))}
-                        className="h-4 w-4 rounded border-gray-300 accent-green-600" />
-                      <span className="text-sm text-gray-700 capitalize">{st}</span>
-                    </label>
-                  ))}
-                </div>
-              </div>
+                    {selectedAutoSendRule.headerMediaType && (
+                      <div className="space-y-2 rounded-xl border border-amber-200 bg-amber-50 p-3">
+                        <p className="text-xs font-semibold text-amber-800 uppercase tracking-wide">
+                          Header media required ({selectedAutoSendRule.headerMediaType})
+                        </p>
+                        <p className="text-xs text-amber-700">
+                          This template has a media header. Set a media_id (recommended) or a public URL.
+                        </p>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            value={selectedAutoSendRule.headerMediaId}
+                            onChange={e => updateSelectedAutoSendRule(rule => ({ ...rule, headerMediaId: e.target.value }))}
+                            placeholder="Meta media_id (recommended)"
+                            className="flex-1 px-3 py-2 text-sm border border-amber-200 rounded-xl focus:outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-100 bg-white"
+                          />
+                          <label className="px-3 py-2 text-xs font-medium text-amber-800 border border-amber-300 rounded-xl cursor-pointer hover:bg-amber-100 transition-colors">
+                            {isUploadingAutoSendHeader ? 'Uploading…' : 'Upload'}
+                            <input
+                              type="file"
+                              className="hidden"
+                              accept={selectedAutoSendRule.headerMediaType === 'image' ? 'image/*' : selectedAutoSendRule.headerMediaType === 'video' ? 'video/*' : '.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt'}
+                              onChange={async (e) => {
+                                const file = e.target.files?.[0];
+                                if (!file) return;
+                                setIsUploadingAutoSendHeader(true);
+                                setAutoSendSaveError('');
+                                try {
+                                  const formData = new FormData();
+                                  formData.append('file', file);
+                                  const res = await api.post('/integrations/whatsapp/media/upload', formData);
+                                  updateSelectedAutoSendRule(rule => ({ ...rule, headerMediaId: res.data.id || '' }));
+                                } catch (err: any) {
+                                  setAutoSendSaveError(`Upload failed: ${err?.response?.data?.message || err.message}`);
+                                } finally {
+                                  setIsUploadingAutoSendHeader(false);
+                                  e.target.value = '';
+                                }
+                              }}
+                            />
+                          </label>
+                        </div>
+                        <input
+                          type="text"
+                          value={selectedAutoSendRule.headerMediaUrl}
+                          onChange={e => updateSelectedAutoSendRule(rule => ({ ...rule, headerMediaUrl: e.target.value }))}
+                          placeholder={`${selectedAutoSendRule.headerMediaType} URL (fallback if no media_id)`}
+                          className="w-full px-3 py-2 text-sm border border-amber-200 rounded-xl focus:outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-100 bg-white"
+                        />
+                      </div>
+                    )}
+                  </div>
 
-              {/* Require phone */}
-              <label className="flex items-center gap-3 cursor-pointer p-3 bg-gray-50 rounded-xl">
-                <input type="checkbox" checked={autoSendRequirePhone} onChange={e => setAutoSendRequirePhone(e.target.checked)}
-                  className="h-4 w-4 rounded border-gray-300 accent-green-600" />
-                <div>
-                  <p className="text-sm font-medium text-gray-800">Only send if contact has a phone number</p>
-                  <p className="text-xs text-gray-400">Skip contacts without a phone — recommended</p>
-                </div>
-              </label>
+                  {/* Source filter */}
+                  <div className="space-y-2">
+                    <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Filter by Source</p>
+                    <p className="text-xs text-gray-400">Leave all unchecked to send for contacts from any source</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      {AUTO_SEND_SOURCES.map(src => (
+                        <label key={src} className="flex items-center gap-2 cursor-pointer p-2 rounded-lg hover:bg-gray-50">
+                          <input
+                            type="checkbox"
+                            checked={selectedAutoSendRule.conditions.sources.includes(src)}
+                            onChange={e => updateSelectedAutoSendRule(rule => ({
+                              ...rule,
+                              conditions: {
+                                ...rule.conditions,
+                                sources: e.target.checked
+                                  ? [...rule.conditions.sources, src]
+                                  : rule.conditions.sources.filter(source => source !== src),
+                              },
+                            }))}
+                            className="h-4 w-4 rounded border-gray-300 accent-green-600"
+                          />
+                          <span className="text-sm text-gray-700 capitalize">{src}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Status filter */}
+                  <div className="space-y-2">
+                    <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Filter by Status</p>
+                    <p className="text-xs text-gray-400">Leave all unchecked to send for any contact status</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      {AUTO_SEND_STATUSES.map(st => (
+                        <label key={st} className="flex items-center gap-2 cursor-pointer p-2 rounded-lg hover:bg-gray-50">
+                          <input
+                            type="checkbox"
+                            checked={selectedAutoSendRule.conditions.statuses.includes(st)}
+                            onChange={e => updateSelectedAutoSendRule(rule => ({
+                              ...rule,
+                              conditions: {
+                                ...rule.conditions,
+                                statuses: e.target.checked
+                                  ? [...rule.conditions.statuses, st]
+                                  : rule.conditions.statuses.filter(status => status !== st),
+                              },
+                            }))}
+                            className="h-4 w-4 rounded border-gray-300 accent-green-600"
+                          />
+                          <span className="text-sm text-gray-700 capitalize">{st}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Require phone */}
+                  <label className="flex items-center gap-3 cursor-pointer p-3 bg-gray-50 rounded-xl">
+                    <input
+                      type="checkbox"
+                      checked={selectedAutoSendRule.conditions.requirePhone}
+                      onChange={e => updateSelectedAutoSendRule(rule => ({
+                        ...rule,
+                        conditions: { ...rule.conditions, requirePhone: e.target.checked },
+                      }))}
+                      className="h-4 w-4 rounded border-gray-300 accent-green-600"
+                    />
+                    <div>
+                      <p className="text-sm font-medium text-gray-800">Only send if contact has a phone number</p>
+                      <p className="text-xs text-gray-400">Skip contacts without a phone — recommended</p>
+                    </div>
+                  </label>
+                </>
+              )}
 
               {autoSendSaveError && (
                 <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-xl px-3 py-2">{autoSendSaveError}</p>
@@ -3429,8 +3639,14 @@ export default function WhatsAppPage() {
                 onClick={saveAutoSendConfig}
                 disabled={
                   isSavingAutoSend
-                  || !autoSendTemplate.trim()
-                  || (autoSendHeaderMediaType !== '' && !autoSendHeaderMediaId.trim() && !autoSendHeaderMediaUrl.trim())
+                  || autoSendRules.length === 0
+                  || autoSendRules.some(rule => (
+                    rule.enabled
+                    && (
+                      !rule.templateName.trim()
+                      || (rule.headerMediaType !== '' && !rule.headerMediaId.trim() && !rule.headerMediaUrl.trim())
+                    )
+                  ))
                 }
                 className="flex-1 px-4 py-2 text-sm font-medium text-white bg-green-500 hover:bg-green-600 rounded-xl disabled:opacity-50 flex items-center justify-center gap-2">
                 {isSavingAutoSend ? <Loader2 className="h-4 w-4 animate-spin" /> : null}

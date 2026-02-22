@@ -1,18 +1,21 @@
 'use client';
 
+import type { CSSProperties } from 'react';
 import { cn } from '@/lib/utils';
 
 interface SkeletonProps {
   className?: string;
+  style?: CSSProperties;
 }
 
-export function Skeleton({ className }: SkeletonProps) {
+export function Skeleton({ className, style }: SkeletonProps) {
   return (
     <div
       className={cn(
         'animate-pulse rounded-lg bg-gray-200 dark:bg-gray-700',
         className
       )}
+      style={style}
     />
   );
 }

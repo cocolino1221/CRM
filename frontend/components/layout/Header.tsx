@@ -26,7 +26,7 @@ interface HeaderProps {
 
 export default function Header({ onMenuClick }: HeaderProps) {
   const router = useRouter();
-  const { theme, setTheme } = useTheme();
+  const { currentTheme, setTheme } = useTheme();
   const [user, setUser] = useState<any>(null);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -81,7 +81,7 @@ export default function Header({ onMenuClick }: HeaderProps) {
   };
 
   const toggleTheme = () => {
-    setTheme(theme === 'dark' ? 'light' : 'dark');
+    setTheme(currentTheme.id === 'dark' ? 'default' : 'dark');
   };
 
   const getInitials = (firstName?: string, lastName?: string) => {
@@ -152,9 +152,9 @@ export default function Header({ onMenuClick }: HeaderProps) {
         <button
           onClick={toggleTheme}
           className="flex items-center justify-center h-10 w-10 rounded-xl bg-white/50 hover:bg-white shadow-sm transition-all hover:shadow-md"
-          aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          aria-label={currentTheme.id === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
         >
-          {theme === 'dark' ? (
+          {currentTheme.id === 'dark' ? (
             <Sun className="h-5 w-5 text-amber-500" />
           ) : (
             <Moon className="h-5 w-5 text-indigo-500" />
@@ -220,7 +220,7 @@ export default function Header({ onMenuClick }: HeaderProps) {
                 }}
                 className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
               >
-                {theme === 'dark' ? (
+                {currentTheme.id === 'dark' ? (
                   <>
                     <Sun className="h-4 w-4 text-amber-500" />
                     Light Mode
