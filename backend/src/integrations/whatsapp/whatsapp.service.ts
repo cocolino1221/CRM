@@ -2389,22 +2389,22 @@ export class WhatsAppService {
         // Some clients may send button presses as plain text. Try matching by text.
         if (message.type === 'text' && message.text?.body) {
           const replyText = message.text.body.trim();
-          if (state.armedAfterAutoSend) {
-            const flows: any[] = integration.config?.conversationFlows || [];
-            const flow = flows.find((f: any) => f.id === state.flowId && f.enabled);
-            const currentStep = flow?.steps?.find((s: any) => s.id === state.currentStepId);
-            if (currentStep?.buttons?.length) {
-              const fallbackButton = currentStep.buttons[0];
-              if (fallbackButton?.id || fallbackButton?.title) {
-                const handledFallback = await this.handleButtonReply(
-                  workspaceId,
-                  waId,
-                  fallbackButton.id || fallbackButton.title,
-                  integration,
-                  fallbackButton.title,
-                );
-                if (handledFallback) return true;
-              }
+          const flows: any[] = integration.config?.conversationFlows || [];
+          const flow = flows.find((f: any) => f.id === state.flowId && f.enabled);
+          const currentStep = flow?.steps?.find((s: any) => s.id === state.currentStepId);
+
+          const shouldFallbackToFirstButton = Boolean(state.armedAfterAutoSend) || Boolean(currentStep?.fallbackOnTextReply);
+          if (shouldFallbackToFirstButton && currentStep?.buttons?.length) {
+            const fallbackButton = currentStep.buttons[0];
+            if (fallbackButton?.id || fallbackButton?.title) {
+              const handledFallback = await this.handleButtonReply(
+                workspaceId,
+                waId,
+                fallbackButton.id || fallbackButton.title,
+                integration,
+                fallbackButton.title,
+              );
+              if (handledFallback) return true;
             }
           }
           const handledByButton = await this.handleButtonReply(

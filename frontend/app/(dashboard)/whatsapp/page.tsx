@@ -1490,14 +1490,15 @@ export default function WhatsAppPage() {
           templateName: '',
           templateLanguage: 'en_US',
           delayMs: 0,
+          fallbackOnTextReply: true,
           message: '',
           buttons: [
             { id: `btn_${Date.now()}_a`, title: 'Option 1', nextStepId: 'step_1' },
             { id: `btn_${Date.now()}_b`, title: 'Option 2', nextStepId: 'step_2' },
           ],
         },
-        { id: 'step_1', message: 'You selected Option 1. Here is more info...', delayMs: 0, buttons: [] },
-        { id: 'step_2', message: 'You selected Option 2. Here is more info...', delayMs: 0, buttons: [] },
+        { id: 'step_1', message: 'You selected Option 1. Here is more info...', delayMs: 0, fallbackOnTextReply: false, buttons: [] },
+        { id: 'step_2', message: 'You selected Option 2. Here is more info...', delayMs: 0, fallbackOnTextReply: false, buttons: [] },
       ],
     };
     setEditingFlow(newFlow);
@@ -1581,7 +1582,7 @@ export default function WhatsAppPage() {
       const stepId = `step_${prev.steps.length}`;
       return {
         ...prev,
-        steps: [...prev.steps, { id: stepId, message: '', delayMs: 0, buttons: [] }],
+        steps: [...prev.steps, { id: stepId, message: '', delayMs: 0, fallbackOnTextReply: false, buttons: [] }],
       };
     });
   };
@@ -3934,6 +3935,7 @@ export default function WhatsAppPage() {
                                 templateLanguage: t?.language || 'en_US',
                                 message: t?.components?.find((c: any) => c.type === 'BODY')?.text || '',
                                 buttons: quickReplyBtns,
+                                fallbackOnTextReply: steps[si].fallbackOnTextReply ?? true,
                               };
                               setEditingFlow({ ...editingFlow, steps });
                             }} className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:border-green-400 bg-white">
@@ -4029,6 +4031,18 @@ export default function WhatsAppPage() {
                               )}
                             </div>
                           </div>
+                        )}
+
+                        {(step.buttons || []).length > 0 && (
+                          <label className="flex items-center gap-2 text-xs text-gray-600 bg-white border border-gray-200 rounded-lg px-2 py-1.5">
+                            <input
+                              type="checkbox"
+                              checked={step.fallbackOnTextReply === true}
+                              onChange={e => updateFlowStep(si, 'fallbackOnTextReply', e.target.checked)}
+                              className="h-3.5 w-3.5 rounded border-gray-300 accent-green-600"
+                            />
+                            If contact replies with text instead of button, continue on first button path
+                          </label>
                         )}
 
                         {/* Buttons */}
