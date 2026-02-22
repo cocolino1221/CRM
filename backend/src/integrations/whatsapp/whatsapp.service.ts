@@ -359,17 +359,30 @@ export class WhatsAppService {
     workspaceId: string,
     ownerId: string,
   ): Promise<void> {
+    const mediaMetadata: Record<string, any> = {};
     let messageBody = '';
     if (message.type === 'text' && message.text) {
       messageBody = message.text.body;
     } else if (message.type === 'image') {
       messageBody = `[Image] ${message.image?.caption || ''}`.trim();
+      mediaMetadata.mediaId = message.image?.id;
+      mediaMetadata.mediaMimeType = message.image?.mime_type;
+      mediaMetadata.mediaCaption = message.image?.caption;
     } else if (message.type === 'document') {
       messageBody = `[Document: ${message.document?.filename || 'file'}] ${message.document?.caption || ''}`.trim();
+      mediaMetadata.mediaId = message.document?.id;
+      mediaMetadata.mediaMimeType = message.document?.mime_type;
+      mediaMetadata.mediaCaption = message.document?.caption;
+      mediaMetadata.fileName = message.document?.filename;
     } else if (message.type === 'audio') {
       messageBody = '[Voice message]';
+      mediaMetadata.mediaId = message.audio?.id;
+      mediaMetadata.mediaMimeType = message.audio?.mime_type;
     } else if (message.type === 'video') {
       messageBody = `[Video] ${message.video?.caption || ''}`.trim();
+      mediaMetadata.mediaId = message.video?.id;
+      mediaMetadata.mediaMimeType = message.video?.mime_type;
+      mediaMetadata.mediaCaption = message.video?.caption;
     } else if (message.type === 'interactive') {
       const reply = message.interactive?.button_reply?.title || message.interactive?.list_reply?.title || '';
       messageBody = `[Button reply: ${reply}]`;
@@ -393,6 +406,7 @@ export class WhatsAppService {
         waId: message.from,
         messageType: message.type,
         metaTimestamp: message.timestamp, // keep original for reference
+        ...mediaMetadata,
       },
     });
 
@@ -409,6 +423,7 @@ export class WhatsAppService {
     workspaceId: string,
     userId?: string,
     whatsappMessageId?: string,
+    mediaMetadata?: Record<string, any>,
   ): Promise<void> {
     try {
       const phone = normalizePhoneE164(to) || (to.startsWith('+') ? to : `+${to}`);
@@ -430,6 +445,7 @@ export class WhatsAppService {
           waId: to,
           messageType,
           messageStatus: 'sent',
+          ...(mediaMetadata || {}),
         },
       });
 
@@ -944,6 +960,66 @@ export class WhatsAppService {
       this.httpService.get(`${this.apiUrl}/${mediaId}`, { headers: { 'Authorization': `Bearer ${accessToken}` } }),
     );
     return response.data.url;
+  }
+
+  async downloadMediaForWorkspace(
+    workspaceId: string,
+    mediaId: string,
+  ): Promise<{ buffer: Buffer; contentType: string; fileName?: string }> {
+    const integration = await this.integrationRepository.findOne({
+      where: { type: IntegrationType.WHATSAPP, workspaceId },
+    });
+    const { accessToken } = this.getCredentials(integration?.credentials);
+    if (!accessToken) {
+      throw new BadRequestException('WhatsApp credentials not configured');
+    }
+
+    let mediaInfo: any;
+    try {
+      const mediaInfoRes = await firstValueFrom(
+        this.httpService.get(`${this.apiUrl}/${mediaId}`, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+          params: { fields: 'id,mime_type,url' },
+        }),
+      );
+      mediaInfo = mediaInfoRes.data || {};
+    } catch (error: any) {
+      const metaError = error?.response?.data?.error;
+      if (metaError) {
+        throw new BadRequestException(`Unable to fetch media info: ${metaError.message || 'Unknown error'}`);
+      }
+      throw error;
+    }
+
+    if (!mediaInfo?.url) {
+      throw new BadRequestException('Media URL is missing');
+    }
+
+    const mediaFileResponse = await firstValueFrom(
+      this.httpService.get(mediaInfo.url, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        responseType: 'arraybuffer',
+      }),
+    );
+
+    const contentType = String(mediaFileResponse.headers?.['content-type'] || mediaInfo.mime_type || 'application/octet-stream');
+    const disposition = String(mediaFileResponse.headers?.['content-disposition'] || '');
+    const fileNameMatch = disposition.match(/filename\*?=(?:UTF-8''|")?([^\";]+)/i);
+    let fileName: string | undefined;
+    if (fileNameMatch?.[1]) {
+      const rawName = fileNameMatch[1].replace(/\"/g, '');
+      try {
+        fileName = decodeURIComponent(rawName);
+      } catch {
+        fileName = rawName;
+      }
+    }
+
+    return {
+      buffer: Buffer.from(mediaFileResponse.data),
+      contentType,
+      fileName,
+    };
   }
 
   /**
@@ -1833,12 +1909,26 @@ export class WhatsAppService {
       // Send media first if attached, then interactive buttons
       const hasMedia = (step.mediaUrl || step.mediaId) && step.mediaType;
       if (hasMedia) {
-        await this.sendMessageWithCredentials(credentials, {
+        const mediaResult = await this.sendMessageWithCredentials(credentials, {
           to: waId,
           type: step.mediaType!,
           content: '',
           media: { url: step.mediaUrl, id: step.mediaId, caption: stepMessage || undefined },
         });
+        const mediaMsgId = mediaResult?.messages?.[0]?.id;
+        await this.saveOutboundActivity(
+          waId,
+          `[${step.mediaType}] ${stepMessage || step.mediaUrl || 'uploaded media'}`,
+          step.mediaType!,
+          workspaceId,
+          '',
+          mediaMsgId,
+          {
+            mediaId: step.mediaId || undefined,
+            mediaUrl: step.mediaUrl || undefined,
+            mediaCaption: stepMessage || undefined,
+          },
+        );
       }
       const buttons = step.buttons.slice(0, 3).map(b => ({ id: b.id, title: b.title.slice(0, 20) }));
       const prompt = stepMessage || 'Please choose an option:';
@@ -1862,7 +1952,19 @@ export class WhatsAppService {
         content: '',
         media: { url: step.mediaUrl, id: step.mediaId, caption: stepMessage || undefined },
       });
-      await this.saveOutboundActivity(waId, `[${step.mediaType}] ${stepMessage || step.mediaUrl || 'uploaded media'}`, step.mediaType, workspaceId, '', undefined);
+      await this.saveOutboundActivity(
+        waId,
+        `[${step.mediaType}] ${stepMessage || step.mediaUrl || 'uploaded media'}`,
+        step.mediaType,
+        workspaceId,
+        '',
+        undefined,
+        {
+          mediaId: step.mediaId || undefined,
+          mediaUrl: step.mediaUrl || undefined,
+          mediaCaption: stepMessage || undefined,
+        },
+      );
     } else {
       // Send plain text (end of flow)
       const text = stepMessage || 'Thank you!';

@@ -25,7 +25,9 @@ interface WhatsAppActivity {
     waId?: string;
     messageType?: string;
     messageStatus?: 'sent' | 'delivered' | 'read' | 'failed';
+    mediaId?: string;
     mediaUrl?: string;
+    mediaMimeType?: string;
     mediaCaption?: string;
     fileName?: string;
   };
@@ -193,6 +195,51 @@ function MessageBubble({ msg, formatTime }: { msg: WhatsAppActivity; formatTime:
   const isOutbound = msg.direction === 'outbound';
   const parsed = parseMessageContent(msg);
   const status = getStatusDisplay(msg);
+  const [mediaObjectUrl, setMediaObjectUrl] = useState('');
+  const [isLoadingMedia, setIsLoadingMedia] = useState(false);
+  const [mediaError, setMediaError] = useState('');
+  const mediaSrc = parsed.mediaUrl || mediaObjectUrl;
+
+  useEffect(() => {
+    let isCancelled = false;
+    let objectUrl: string | null = null;
+
+    if (!parsed.mediaId || parsed.mediaUrl || !['image', 'video', 'audio', 'document'].includes(parsed.type)) {
+      setMediaObjectUrl('');
+      setIsLoadingMedia(false);
+      setMediaError('');
+      return;
+    }
+
+    const fetchMedia = async () => {
+      setIsLoadingMedia(true);
+      setMediaError('');
+      try {
+        const response = await api.get(`/integrations/whatsapp/media/${parsed.mediaId}/file`, {
+          responseType: 'blob',
+        });
+        if (isCancelled) return;
+        objectUrl = URL.createObjectURL(response.data);
+        setMediaObjectUrl(objectUrl);
+      } catch {
+        if (!isCancelled) {
+          setMediaObjectUrl('');
+          setMediaError('Cannot load media');
+        }
+      } finally {
+        if (!isCancelled) {
+          setIsLoadingMedia(false);
+        }
+      }
+    };
+
+    fetchMedia();
+
+    return () => {
+      isCancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [parsed.mediaId, parsed.mediaUrl, parsed.type]);
 
   return (
     <div className={`flex ${isOutbound ? 'justify-end' : 'justify-start'}`}>
@@ -201,33 +248,57 @@ function MessageBubble({ msg, formatTime }: { msg: WhatsAppActivity; formatTime:
           ? 'bg-green-500 text-white rounded-br-sm'
           : 'bg-white text-gray-900 rounded-bl-sm border border-gray-100'
       }`}>
-        {parsed.type === 'image' && (
+        {parsed.type === 'image' && (mediaSrc ? (
+          <img
+            src={mediaSrc}
+            alt="WhatsApp media"
+            className="mb-1 max-h-72 w-full rounded-lg object-cover"
+          />
+        ) : (
           <div className={`flex items-center gap-2 mb-1 ${isOutbound ? 'text-green-100' : 'text-gray-400'}`}>
             <Image className="h-4 w-4" />
             <span className="text-xs font-medium">Photo</span>
           </div>
-        )}
+        ))}
         {parsed.type === 'document' && (
           <div className={`flex items-center gap-2 p-2 mb-1 rounded-lg ${isOutbound ? 'bg-green-600' : 'bg-gray-50'}`}>
             <FileText className="h-5 w-5 flex-shrink-0" />
-            <span className="text-xs font-medium truncate">{parsed.fileName || 'Document'}</span>
+            {mediaSrc ? (
+              <a
+                href={mediaSrc}
+                download={parsed.fileName || 'document'}
+                target="_blank"
+                rel="noreferrer"
+                className={`text-xs font-medium truncate underline ${isOutbound ? 'text-white' : 'text-gray-700'}`}
+              >
+                {parsed.fileName || 'Document'}
+              </a>
+            ) : (
+              <span className="text-xs font-medium truncate">{parsed.fileName || 'Document'}</span>
+            )}
           </div>
         )}
-        {parsed.type === 'audio' && (
+        {parsed.type === 'audio' && (mediaSrc ? (
+          <audio controls className="mb-1 w-full" src={mediaSrc} />
+        ) : (
           <div className={`flex items-center gap-2 ${isOutbound ? 'text-green-100' : 'text-gray-400'}`}>
             <Mic className="h-4 w-4" />
-            <div className="flex gap-0.5">
-              {[3,5,8,4,7,6,3,5,8,4,6,3].map((h, i) => (
-                <div key={i} className={`w-1 rounded-full ${isOutbound ? 'bg-green-200' : 'bg-gray-300'}`} style={{ height: `${h * 2}px` }} />
-              ))}
-            </div>
+            <span className="text-xs font-medium">Audio</span>
           </div>
-        )}
-        {parsed.type === 'video' && (
+        ))}
+        {parsed.type === 'video' && (mediaSrc ? (
+          <video controls preload="metadata" className="mb-1 max-h-72 w-full rounded-lg bg-black" src={mediaSrc} />
+        ) : (
           <div className={`flex items-center gap-2 mb-1 ${isOutbound ? 'text-green-100' : 'text-gray-400'}`}>
             <Video className="h-4 w-4" />
             <span className="text-xs font-medium">Video</span>
           </div>
+        ))}
+        {isLoadingMedia && (
+          <p className={`text-xs mb-1 ${isOutbound ? 'text-green-100' : 'text-gray-500'}`}>Loading media...</p>
+        )}
+        {mediaError && (
+          <p className={`text-xs mb-1 ${isOutbound ? 'text-green-100' : 'text-red-500'}`}>{mediaError}</p>
         )}
         {parsed.text && <p className="text-sm whitespace-pre-wrap">{parsed.text}</p>}
         <div className={`flex items-center justify-end gap-1 mt-1 ${isOutbound ? 'text-green-100' : 'text-gray-400'}`}>
@@ -397,16 +468,46 @@ function ContactInfoSidebar({ contact, isLoading, onClose }: { contact: ContactD
 
 // ─── Helpers ────────────────────────────────────────────────
 
-function parseMessageContent(msg: WhatsAppActivity): { type: string; text: string; fileName?: string } {
+function parseMessageContent(msg: WhatsAppActivity): {
+  type: string;
+  text: string;
+  fileName?: string;
+  mediaId?: string;
+  mediaUrl?: string;
+} {
   const desc = msg.description || '';
   const msgType = msg.metadata?.messageType || 'text';
-  if (msgType === 'image' || desc.startsWith('[Image]')) return { type: 'image', text: desc.replace('[Image]', '').trim() || '' };
+  const mediaId = msg.metadata?.mediaId;
+  const mediaUrl = msg.metadata?.mediaUrl;
+  if (msgType === 'image' || desc.startsWith('[Image]')) {
+    return {
+      type: 'image',
+      text: desc.replace('[Image]', '').trim() || msg.metadata?.mediaCaption || '',
+      mediaId,
+      mediaUrl,
+    };
+  }
   if (msgType === 'document' || desc.startsWith('[Document:')) {
     const match = desc.match(/\[Document:\s*([^\]]+)\]/);
-    return { type: 'document', text: desc.replace(/\[Document:[^\]]*\]/, '').trim(), fileName: match?.[1] };
+    return {
+      type: 'document',
+      text: desc.replace(/\[Document:[^\]]*\]/, '').trim() || msg.metadata?.mediaCaption || '',
+      fileName: msg.metadata?.fileName || match?.[1],
+      mediaId,
+      mediaUrl,
+    };
   }
-  if (msgType === 'audio' || desc === '[Voice message]') return { type: 'audio', text: '' };
-  if (msgType === 'video' || desc.startsWith('[Video]')) return { type: 'video', text: desc.replace('[Video]', '').trim() || '' };
+  if (msgType === 'audio' || desc === '[Voice message]') {
+    return { type: 'audio', text: msg.metadata?.mediaCaption || '', mediaId, mediaUrl };
+  }
+  if (msgType === 'video' || desc.startsWith('[Video]')) {
+    return {
+      type: 'video',
+      text: desc.replace('[Video]', '').trim() || msg.metadata?.mediaCaption || '',
+      mediaId,
+      mediaUrl,
+    };
+  }
   return { type: 'text', text: desc };
 }
 
@@ -496,7 +597,7 @@ export default function WhatsAppPage() {
 
   // Attachment
   const [showAttachmentModal, setShowAttachmentModal] = useState(false);
-  const [attachmentType, setAttachmentType] = useState<'image' | 'document' | 'video'>('image');
+  const [attachmentType, setAttachmentType] = useState<'image' | 'document' | 'video' | 'audio'>('image');
   const [attachmentUrl, setAttachmentUrl] = useState('');
   const [attachmentMediaId, setAttachmentMediaId] = useState('');
   const [attachmentFileName, setAttachmentFileName] = useState('');
@@ -1154,6 +1255,7 @@ export default function WhatsAppPage() {
   const getAttachmentAccept = () => {
     if (attachmentType === 'image') return 'image/*';
     if (attachmentType === 'video') return 'video/*';
+    if (attachmentType === 'audio') return 'audio/*';
     return '.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt';
   };
 
@@ -1192,6 +1294,11 @@ export default function WhatsAppPage() {
         body = attachmentMediaId
           ? { to: selectedConv.waId, videoId: attachmentMediaId, caption: attachmentCaption.trim() || undefined }
           : { to: selectedConv.waId, videoUrl: attachmentUrl.trim(), caption: attachmentCaption.trim() || undefined };
+      } else if (attachmentType === 'audio') {
+        endpoint = '/integrations/whatsapp/send/audio';
+        body = attachmentMediaId
+          ? { to: selectedConv.waId, audioId: attachmentMediaId }
+          : { to: selectedConv.waId, audioUrl: attachmentUrl.trim() };
       } else {
         endpoint = '/integrations/whatsapp/send/document';
         body = attachmentMediaId
@@ -2723,6 +2830,12 @@ export default function WhatsAppPage() {
                   }`}>
                   <Video className="h-4 w-4" /> Video
                 </button>
+                <button onClick={() => { setAttachmentType('audio'); setAttachmentUrl(''); setAttachmentMediaId(''); setAttachmentFileName(''); }}
+                  className={`flex-1 py-2 text-sm font-medium rounded-xl flex items-center justify-center gap-2 transition-all ${
+                    attachmentType === 'audio' ? 'bg-green-100 text-green-700 border border-green-300' : 'bg-gray-50 text-gray-600 border border-gray-200'
+                  }`}>
+                  <Mic className="h-4 w-4" /> Audio
+                </button>
                 <button onClick={() => { setAttachmentType('document'); setAttachmentUrl(''); setAttachmentMediaId(''); setAttachmentFileName(''); }}
                   className={`flex-1 py-2 text-sm font-medium rounded-xl flex items-center justify-center gap-2 transition-all ${
                     attachmentType === 'document' ? 'bg-green-100 text-green-700 border border-green-300' : 'bg-gray-50 text-gray-600 border border-gray-200'
@@ -2771,14 +2884,22 @@ export default function WhatsAppPage() {
                 placeholder={
                   attachmentType === 'image' ? 'Image URL (JPEG/PNG, max 5MB)' :
                   attachmentType === 'video' ? 'Video URL (MP4/3GPP, max 16MB)' :
+                  attachmentType === 'audio' ? 'Audio URL (AAC/MP3/OGG, max 16MB)' :
                   'Document URL (PDF/DOC/XLS, max 100MB)'
                 }
                 value={attachmentUrl}
                 onChange={e => setAttachmentUrl(e.target.value)}
                 className="w-full px-4 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-green-400"
               />
-              <input type="text" placeholder="Caption (optional)" value={attachmentCaption} onChange={e => setAttachmentCaption(e.target.value)}
-                className="w-full px-4 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-green-400" />
+              {attachmentType !== 'audio' && (
+                <input
+                  type="text"
+                  placeholder="Caption (optional)"
+                  value={attachmentCaption}
+                  onChange={e => setAttachmentCaption(e.target.value)}
+                  className="w-full px-4 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-green-400"
+                />
+              )}
             </div>
             <div className="p-4 border-t border-gray-100 flex gap-2">
               <button onClick={resetAttachmentState}

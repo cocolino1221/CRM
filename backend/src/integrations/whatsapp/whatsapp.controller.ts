@@ -13,6 +13,8 @@ import {
   UseGuards,
   UseInterceptors,
   UploadedFiles,
+  StreamableFile,
+  Res,
 } from '@nestjs/common';
 import { AnyFilesInterceptor } from '@nestjs/platform-express';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
@@ -20,6 +22,7 @@ import { WhatsAppService, WhatsAppMessage, WhatsAppWebhook } from './whatsapp.se
 import { WhatsAppAIService } from './whatsapp-ai.service';
 import { Public } from '../../common/decorators/public.decorator';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
+import { Response } from 'express';
 
 @ApiTags('WhatsApp Business')
 @Controller('integrations/whatsapp')
@@ -166,7 +169,17 @@ export class WhatsAppController {
     if (workspaceId && userId) {
       const msgId = result?.messages?.[0]?.id;
       await this.whatsappService.saveOutboundActivity(
-        body.to, `[Image] ${body.caption || ''}`.trim(), 'image', workspaceId, userId, msgId,
+        body.to,
+        `[Image] ${body.caption || ''}`.trim(),
+        'image',
+        workspaceId,
+        userId,
+        msgId,
+        {
+          mediaId: body.imageId || undefined,
+          mediaUrl: body.imageUrl || undefined,
+          mediaCaption: body.caption || undefined,
+        },
       );
     }
     return result;
@@ -200,7 +213,18 @@ export class WhatsAppController {
     if (workspaceId && userId) {
       const msgId = result?.messages?.[0]?.id;
       await this.whatsappService.saveOutboundActivity(
-        body.to, `[Document: ${body.filename || 'file'}] ${body.caption || ''}`.trim(), 'document', workspaceId, userId, msgId,
+        body.to,
+        `[Document: ${body.filename || 'file'}] ${body.caption || ''}`.trim(),
+        'document',
+        workspaceId,
+        userId,
+        msgId,
+        {
+          mediaId: body.documentId || undefined,
+          mediaUrl: body.documentUrl || undefined,
+          mediaCaption: body.caption || undefined,
+          fileName: body.filename || undefined,
+        },
       );
     }
     return result;
@@ -230,7 +254,55 @@ export class WhatsAppController {
     if (workspaceId && userId) {
       const msgId = result?.messages?.[0]?.id;
       await this.whatsappService.saveOutboundActivity(
-        body.to, `[Video] ${body.caption || ''}`.trim(), 'video', workspaceId, userId, msgId,
+        body.to,
+        `[Video] ${body.caption || ''}`.trim(),
+        'video',
+        workspaceId,
+        userId,
+        msgId,
+        {
+          mediaId: body.videoId || undefined,
+          mediaUrl: body.videoUrl || undefined,
+          mediaCaption: body.caption || undefined,
+        },
+      );
+    }
+    return result;
+  }
+
+  @Post('send/audio')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Send an audio message (URL or uploaded media_id)' })
+  @ApiResponse({ status: 200, description: 'Audio sent successfully' })
+  async sendAudioMessage(@Req() req: any, @Body() body: { to: string; audioUrl?: string; audioId?: string }) {
+    if (!body.audioUrl && !body.audioId) {
+      throw new BadRequestException('audioUrl or audioId is required');
+    }
+    const result = await this.whatsappService.sendMessage({
+      to: body.to,
+      type: 'audio',
+      content: '',
+      media: {
+        url: body.audioUrl,
+        id: body.audioId,
+      },
+    });
+    const workspaceId = req.user?.workspaceId;
+    const userId = req.user?.id;
+    if (workspaceId && userId) {
+      const msgId = result?.messages?.[0]?.id;
+      await this.whatsappService.saveOutboundActivity(
+        body.to,
+        '[Voice message]',
+        'audio',
+        workspaceId,
+        userId,
+        msgId,
+        {
+          mediaId: body.audioId || undefined,
+          mediaUrl: body.audioUrl || undefined,
+        },
       );
     }
     return result;
@@ -774,5 +846,28 @@ export class WhatsAppController {
       file.mimetype,
       file.originalname,
     );
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('media/:mediaId/file')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Proxy WhatsApp media content by media_id' })
+  @ApiResponse({ status: 200, description: 'Binary media stream' })
+  async getMediaFile(
+    @Req() req: any,
+    @Param('mediaId') mediaId: string,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const workspaceId = req.user?.workspaceId;
+    if (!workspaceId) throw new BadRequestException('Workspace ID required');
+    if (!mediaId?.trim()) throw new BadRequestException('mediaId is required');
+
+    const media = await this.whatsappService.downloadMediaForWorkspace(workspaceId, mediaId.trim());
+    res.setHeader('Content-Type', media.contentType || 'application/octet-stream');
+    res.setHeader('Cache-Control', 'private, max-age=300');
+    if (media.fileName) {
+      res.setHeader('Content-Disposition', `inline; filename="${media.fileName.replace(/"/g, '')}"`);
+    }
+    return new StreamableFile(media.buffer);
   }
 }
