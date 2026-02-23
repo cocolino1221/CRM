@@ -38,7 +38,7 @@ interface WhatsAppState {
   fetchAssignments: () => Promise<void>;
   fetchTeamUsers: () => Promise<void>;
   assignConversation: (waId: string, user: User | null) => Promise<string | null>;
-  selectConversation: (conv: Conversation | null) => void;
+  selectConversation: (conv: Conversation | null) => Promise<void>;
   openConversation: (input: { waId?: string; phone?: string; contactName?: string; contactId?: string | null }) => Promise<Conversation | null>;
   sendMessage: (to: string, message: string) => Promise<boolean>;
   sendMediaMessage: (to: string, media: WhatsAppAttachmentPayload) => Promise<boolean>;
