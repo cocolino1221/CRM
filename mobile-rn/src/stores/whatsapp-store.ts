@@ -43,7 +43,7 @@ interface WhatsAppState {
   sendMessage: (to: string, message: string) => Promise<boolean>;
   sendMediaMessage: (to: string, media: WhatsAppAttachmentPayload) => Promise<boolean>;
   markUnread: (waId: string) => Promise<void>;
-  markRead: (waId: string) => void;
+  markRead: (waId: string) => Promise<void>;
   archiveConversation: (waId: string, archived?: boolean) => Promise<void>;
   deleteConversation: (waId: string) => Promise<string | null>;
   syncOutbox: () => Promise<void>;
@@ -106,6 +106,35 @@ async function getPendingOutbox(): Promise<PendingOutboxItem[]> {
 
 async function setPendingOutbox(value: PendingOutboxItem[]) {
   await AsyncStorage.setItem(OUTBOX_STORAGE_KEY, JSON.stringify(value));
+}
+
+async function getConversationStateFromServer(): Promise<{ archivedMap: Record<string, boolean>; readAtMap: Record<string, string> }> {
+  try {
+    const res = await api.get('/integrations/whatsapp/conversations/state');
+    const raw = res.data?.data || {};
+    const archivedRaw = raw.archivedMap && typeof raw.archivedMap === 'object' ? raw.archivedMap : {};
+    const readRaw = raw.readAtMap && typeof raw.readAtMap === 'object' ? raw.readAtMap : {};
+    const archivedMap: Record<string, boolean> = {};
+    const readAtMap: Record<string, string> = {};
+
+    for (const [waId, archived] of Object.entries(archivedRaw)) {
+      const normalizedWaId = normalizeWaId(String(waId || ''));
+      if (!normalizedWaId) continue;
+      if (archived) archivedMap[normalizedWaId] = true;
+    }
+    for (const [waId, readAtRaw] of Object.entries(readRaw)) {
+      const normalizedWaId = normalizeWaId(String(waId || ''));
+      if (!normalizedWaId) continue;
+      const readAt = String(readAtRaw || '').trim();
+      if (!readAt) continue;
+      const parsed = new Date(readAt);
+      if (Number.isNaN(parsed.getTime())) continue;
+      readAtMap[normalizedWaId] = parsed.toISOString();
+    }
+    return { archivedMap, readAtMap };
+  } catch {
+    return { archivedMap: {}, readAtMap: {} };
+  }
 }
 
 async function uploadMediaFile(payload: WhatsAppAttachmentPayload): Promise<string> {
@@ -190,10 +219,17 @@ export const useWhatsAppStore = create<WhatsAppState>((set, get) => ({
 
   fetchInbox: async () => {
     try {
-      const res = await api.get('/integrations/whatsapp/inbox?limit=200');
-      const activities: WhatsAppActivity[] = res.data.data || [];
-      const readTimestamps = await getReadTimestamps();
-      const archivedMap = await getArchivedMap();
+      const [inboxRes, serverState, localReadTimestamps, localArchivedMap] = await Promise.all([
+        api.get('/integrations/whatsapp/inbox?limit=200'),
+        getConversationStateFromServer(),
+        getReadTimestamps(),
+        getArchivedMap(),
+      ]);
+      const activities: WhatsAppActivity[] = inboxRes.data.data || [];
+      const readTimestamps = { ...localReadTimestamps, ...serverState.readAtMap };
+      const archivedMap = { ...localArchivedMap, ...serverState.archivedMap };
+      await setReadTimestamps(readTimestamps);
+      await setArchivedMap(archivedMap);
       const convMap = new Map<string, Conversation>();
 
       for (const act of activities) {
@@ -349,9 +385,7 @@ export const useWhatsAppStore = create<WhatsAppState>((set, get) => ({
 
   selectConversation: async (conv) => {
     if (conv) {
-      const ts = await getReadTimestamps();
-      ts[conv.waId] = new Date().toISOString();
-      await setReadTimestamps(ts);
+      await get().markRead(conv.waId);
       conv.unreadCount = 0;
     }
     set({ selectedConv: conv });
@@ -399,13 +433,20 @@ export const useWhatsAppStore = create<WhatsAppState>((set, get) => ({
     const ts = await getReadTimestamps();
     ts[conversation.waId] = now;
     await setReadTimestamps(ts);
+    api.post(`/integrations/whatsapp/conversations/${conversation.waId}/read`, { read: true }).catch(() => undefined);
 
     const archivedMap = { ...get().archivedMap };
     if (archivedMap[conversation.waId]) {
       delete archivedMap[conversation.waId];
       await setArchivedMap(archivedMap);
+      api.post(`/integrations/whatsapp/conversations/${conversation.waId}/archive`, { archived: false }).catch(() => undefined);
     }
-    set({ selectedConv: conversation, conversations: nextConversations });
+    const conversationsWithState = nextConversations.map((entry) => (
+      entry.waId === conversation.waId
+        ? { ...entry, unreadCount: 0, archived: false }
+        : entry
+    ));
+    set({ selectedConv: { ...conversation, unreadCount: 0, archived: false }, conversations: conversationsWithState, archivedMap });
 
     return conversation;
   },
@@ -475,6 +516,7 @@ export const useWhatsAppStore = create<WhatsAppState>((set, get) => ({
   markUnread: async (waId) => {
     const normalizedWaId = normalizeWaId(waId);
     if (!normalizedWaId) return;
+    await api.post(`/integrations/whatsapp/conversations/${normalizedWaId}/read`, { read: false }).catch(() => undefined);
     const ts = await getReadTimestamps();
     delete ts[normalizedWaId];
     await setReadTimestamps(ts);
@@ -489,6 +531,7 @@ export const useWhatsAppStore = create<WhatsAppState>((set, get) => ({
   markRead: async (waId) => {
     const normalizedWaId = normalizeWaId(waId);
     if (!normalizedWaId) return;
+    await api.post(`/integrations/whatsapp/conversations/${normalizedWaId}/read`, { read: true }).catch(() => undefined);
     const ts = await getReadTimestamps();
     ts[normalizedWaId] = new Date().toISOString();
     await setReadTimestamps(ts);
@@ -503,6 +546,7 @@ export const useWhatsAppStore = create<WhatsAppState>((set, get) => ({
   archiveConversation: async (waId, archived = true) => {
     const normalizedWaId = normalizeWaId(waId);
     if (!normalizedWaId) return;
+    await api.post(`/integrations/whatsapp/conversations/${normalizedWaId}/archive`, { archived }).catch(() => undefined);
     const map = { ...get().archivedMap };
     if (archived) {
       map[normalizedWaId] = true;

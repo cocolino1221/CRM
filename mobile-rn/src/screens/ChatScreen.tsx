@@ -139,6 +139,7 @@ export default function ChatScreen() {
     fetchAssignments,
     fetchTeamUsers,
     assignConversation,
+    markRead,
     openConversation,
   } = useWhatsAppStore();
   const showToast = useToastStore(s => s.show);
@@ -172,6 +173,11 @@ export default function ChatScreen() {
       contactName: route.params.contactName,
     });
   }, [route.params.waId, route.params.phone, route.params.contactName, openConversation]);
+
+  useEffect(() => {
+    if (!route.params.waId) return;
+    markRead(route.params.waId);
+  }, [route.params.waId, markRead]);
 
   useEffect(() => {
     if (sendError) showToast(sendError, 'error');

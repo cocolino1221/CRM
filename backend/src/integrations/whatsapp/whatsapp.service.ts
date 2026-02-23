@@ -1592,6 +1592,18 @@ export class WhatsAppService {
     return integration?.config?.conversationAssignments || {};
   }
 
+  async getConversationState(
+    workspaceId: string,
+  ): Promise<{ archivedMap: Record<string, boolean>; readAtMap: Record<string, string> }> {
+    const integration = await this.integrationRepository.findOne({
+      where: { type: IntegrationType.WHATSAPP, workspaceId },
+    });
+    return {
+      archivedMap: this.normalizeArchivedMap(integration?.config?.conversationArchivedMap),
+      readAtMap: this.normalizeReadAtMap(integration?.config?.conversationReadAtMap),
+    };
+  }
+
   /**
    * Assign (or unassign) a user to a conversation.
    * Passing userId=null removes the assignment.
@@ -1613,6 +1625,70 @@ export class WhatsAppService {
     }
     integration.config = { ...(integration.config || {}), conversationAssignments: current };
     await this.integrationRepository.save(integration);
+  }
+
+  async setConversationArchived(
+    workspaceId: string,
+    waId: string,
+    archived: boolean,
+  ): Promise<void> {
+    const integration = await this.integrationRepository.findOne({
+      where: { type: IntegrationType.WHATSAPP, workspaceId },
+    });
+    if (!integration) throw new BadRequestException('No WhatsApp integration found for this workspace');
+    const map = this.normalizeArchivedMap(integration.config?.conversationArchivedMap);
+    if (archived) {
+      map[waId] = true;
+    } else {
+      delete map[waId];
+    }
+    integration.config = { ...(integration.config || {}), conversationArchivedMap: map };
+    await this.integrationRepository.save(integration);
+  }
+
+  async setConversationReadState(
+    workspaceId: string,
+    waId: string,
+    read: boolean,
+  ): Promise<void> {
+    const integration = await this.integrationRepository.findOne({
+      where: { type: IntegrationType.WHATSAPP, workspaceId },
+    });
+    if (!integration) throw new BadRequestException('No WhatsApp integration found for this workspace');
+    const map = this.normalizeReadAtMap(integration.config?.conversationReadAtMap);
+    if (read) {
+      map[waId] = new Date().toISOString();
+    } else {
+      delete map[waId];
+    }
+    integration.config = { ...(integration.config || {}), conversationReadAtMap: map };
+    await this.integrationRepository.save(integration);
+  }
+
+  private normalizeArchivedMap(value: any): Record<string, boolean> {
+    if (!value || typeof value !== 'object') return {};
+    const result: Record<string, boolean> = {};
+    for (const [waId, archived] of Object.entries(value)) {
+      const normalizedWaId = normalizePhoneDigits(String(waId || ''));
+      if (!normalizedWaId) continue;
+      if (archived) result[normalizedWaId] = true;
+    }
+    return result;
+  }
+
+  private normalizeReadAtMap(value: any): Record<string, string> {
+    if (!value || typeof value !== 'object') return {};
+    const result: Record<string, string> = {};
+    for (const [waId, readAtRaw] of Object.entries(value)) {
+      const normalizedWaId = normalizePhoneDigits(String(waId || ''));
+      if (!normalizedWaId) continue;
+      const readAt = String(readAtRaw || '').trim();
+      if (!readAt) continue;
+      const parsed = new Date(readAt);
+      if (Number.isNaN(parsed.getTime())) continue;
+      result[normalizedWaId] = parsed.toISOString();
+    }
+    return result;
   }
 
   /**

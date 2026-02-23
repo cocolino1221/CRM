@@ -25,6 +25,7 @@ import { Public } from '../../common/decorators/public.decorator';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { Response } from 'express';
 import { tmpdir } from 'os';
+import { normalizePhoneDigits } from '../../common/utils/phone.util';
 
 @ApiTags('WhatsApp Business')
 @Controller('integrations/whatsapp')
@@ -662,6 +663,54 @@ export class WhatsAppController {
     if (!workspaceId) throw new BadRequestException('Workspace ID required');
     const data = await this.whatsappService.getConversationAssignments(workspaceId);
     return { data };
+  }
+
+  @Get('conversations/state')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get persisted conversation state (archive/read markers)' })
+  @ApiResponse({ status: 200, description: 'Conversation state maps' })
+  async getConversationState(@Req() req: any) {
+    const workspaceId = req.user?.workspaceId;
+    if (!workspaceId) throw new BadRequestException('Workspace ID required');
+    const data = await this.whatsappService.getConversationState(workspaceId);
+    return { data };
+  }
+
+  @Post('conversations/:waId/archive')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Archive or unarchive a conversation' })
+  @ApiResponse({ status: 200, description: 'Conversation archive state updated' })
+  async setConversationArchived(
+    @Req() req: any,
+    @Param('waId') waId: string,
+    @Body() body: { archived?: boolean } | null,
+  ) {
+    const workspaceId = req.user?.workspaceId;
+    if (!workspaceId) throw new BadRequestException('Workspace ID required');
+    const normalizedWaId = normalizePhoneDigits(waId);
+    if (!normalizedWaId) throw new BadRequestException('Invalid conversation id');
+    await this.whatsappService.setConversationArchived(workspaceId, normalizedWaId, body?.archived !== false);
+    return { success: true };
+  }
+
+  @Post('conversations/:waId/read')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Mark conversation as read/unread' })
+  @ApiResponse({ status: 200, description: 'Conversation read state updated' })
+  async setConversationReadState(
+    @Req() req: any,
+    @Param('waId') waId: string,
+    @Body() body: { read?: boolean } | null,
+  ) {
+    const workspaceId = req.user?.workspaceId;
+    if (!workspaceId) throw new BadRequestException('Workspace ID required');
+    const normalizedWaId = normalizePhoneDigits(waId);
+    if (!normalizedWaId) throw new BadRequestException('Invalid conversation id');
+    await this.whatsappService.setConversationReadState(workspaceId, normalizedWaId, body?.read !== false);
+    return { success: true };
   }
 
   @Delete('conversation/:waId')
