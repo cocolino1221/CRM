@@ -13,11 +13,23 @@ export interface WhatsAppAttachmentPayload {
   caption?: string;
 }
 
+interface PendingOutboxItem {
+  id: string;
+  waId: string;
+  kind: 'text' | 'media';
+  text?: string;
+  media?: WhatsAppAttachmentPayload;
+  retries: number;
+  createdAt: string;
+}
+
 interface WhatsAppState {
   conversations: Conversation[];
   selectedConv: Conversation | null;
   assignments: Record<string, ConversationAssignment>;
+  archivedMap: Record<string, boolean>;
   teamUsers: User[];
+  pendingOutboxCount: number;
   isLoading: boolean;
   fetchError: string;
   isSending: boolean;
@@ -30,14 +42,30 @@ interface WhatsAppState {
   openConversation: (input: { waId?: string; phone?: string; contactName?: string; contactId?: string | null }) => Promise<Conversation | null>;
   sendMessage: (to: string, message: string) => Promise<boolean>;
   sendMediaMessage: (to: string, media: WhatsAppAttachmentPayload) => Promise<boolean>;
+  markUnread: (waId: string) => Promise<void>;
   markRead: (waId: string) => void;
+  archiveConversation: (waId: string, archived?: boolean) => Promise<void>;
+  deleteConversation: (waId: string) => Promise<string | null>;
+  syncOutbox: () => Promise<void>;
 }
 
 const USER_COLORS = ['#16a34a', '#2563eb', '#9333ea', '#dc2626', '#ea580c', '#0891b2', '#be185d', '#65a30d'];
+const ARCHIVED_STORAGE_KEY = 'wa_archived_conversations';
+const OUTBOX_STORAGE_KEY = 'wa_pending_outbox';
 
 function getUserColor(userId: string): string {
   const hash = userId.split('').reduce((sum, char) => sum + char.charCodeAt(0), 0);
   return USER_COLORS[Math.abs(hash) % USER_COLORS.length];
+}
+
+function shouldQueueRetry(err: any): boolean {
+  if (!err?.response) return true;
+  const status = Number(err?.response?.status || 0);
+  return status >= 500;
+}
+
+function createOutboxId(): string {
+  return `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
 async function getReadTimestamps(): Promise<Record<string, string>> {
@@ -51,6 +79,33 @@ async function getReadTimestamps(): Promise<Record<string, string>> {
 
 async function setReadTimestamps(ts: Record<string, string>) {
   await AsyncStorage.setItem('wa_read_timestamps', JSON.stringify(ts));
+}
+
+async function getArchivedMap(): Promise<Record<string, boolean>> {
+  try {
+    const raw = await AsyncStorage.getItem(ARCHIVED_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+async function setArchivedMap(value: Record<string, boolean>) {
+  await AsyncStorage.setItem(ARCHIVED_STORAGE_KEY, JSON.stringify(value));
+}
+
+async function getPendingOutbox(): Promise<PendingOutboxItem[]> {
+  try {
+    const raw = await AsyncStorage.getItem(OUTBOX_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+async function setPendingOutbox(value: PendingOutboxItem[]) {
+  await AsyncStorage.setItem(OUTBOX_STORAGE_KEY, JSON.stringify(value));
 }
 
 async function uploadMediaFile(payload: WhatsAppAttachmentPayload): Promise<string> {
@@ -100,6 +155,16 @@ function buildMediaSendRequest(to: string, mediaId: string, payload: WhatsAppAtt
   }
 }
 
+async function sendTextNow(to: string, message: string): Promise<void> {
+  await api.post('/integrations/whatsapp/send', { to, message });
+}
+
+async function sendMediaNow(to: string, payload: WhatsAppAttachmentPayload): Promise<void> {
+  const mediaId = await uploadMediaFile(payload);
+  const request = buildMediaSendRequest(to, mediaId, payload);
+  await api.post(request.endpoint, request.body);
+}
+
 function normalizeWaId(value?: string): string {
   return String(value || '').replace(/[^0-9]/g, '');
 }
@@ -115,7 +180,9 @@ export const useWhatsAppStore = create<WhatsAppState>((set, get) => ({
   conversations: [],
   selectedConv: null,
   assignments: {},
+  archivedMap: {},
   teamUsers: [],
+  pendingOutboxCount: 0,
   isLoading: true,
   fetchError: '',
   isSending: false,
@@ -126,6 +193,7 @@ export const useWhatsAppStore = create<WhatsAppState>((set, get) => ({
       const res = await api.get('/integrations/whatsapp/inbox?limit=200');
       const activities: WhatsAppActivity[] = res.data.data || [];
       const readTimestamps = await getReadTimestamps();
+      const archivedMap = await getArchivedMap();
       const convMap = new Map<string, Conversation>();
 
       for (const act of activities) {
@@ -140,6 +208,7 @@ export const useWhatsAppStore = create<WhatsAppState>((set, get) => ({
             lastMessage: act.description || '', lastMessageTime: act.occurredAt,
             messageCount: 0, messages: [], unreadCount: 0, lastInboundTime: null,
             assignment,
+            archived: !!archivedMap[waId],
           });
         }
         const conv = convMap.get(waId)!;
@@ -171,7 +240,15 @@ export const useWhatsAppStore = create<WhatsAppState>((set, get) => ({
 
       const selected = get().selectedConv;
       const updated = selected ? convList.find(c => c.waId === selected.waId) || null : null;
-      set({ conversations: convList, selectedConv: updated, isLoading: false, fetchError: '' });
+      const outbox = await getPendingOutbox();
+      set({
+        conversations: convList,
+        selectedConv: updated,
+        archivedMap,
+        pendingOutboxCount: outbox.length,
+        isLoading: false,
+        fetchError: '',
+      });
     } catch (err: any) {
       const msg = err?.response?.data?.message || err?.message || 'Failed to load conversations';
       set({ isLoading: false, fetchError: msg });
@@ -297,6 +374,7 @@ export const useWhatsAppStore = create<WhatsAppState>((set, get) => ({
           contactName: existing.contactName || contactName || normalizedPhone || normalizedWaId,
           contactId: existing.contactId || contactId || null,
           assignment: existing.assignment || get().assignments[normalizedWaId] || null,
+          archived: false,
           unreadCount: 0,
         }
       : {
@@ -311,6 +389,7 @@ export const useWhatsAppStore = create<WhatsAppState>((set, get) => ({
           unreadCount: 0,
           lastInboundTime: null,
           assignment: get().assignments[normalizedWaId] || null,
+          archived: false,
         };
 
     const nextConversations = existing
@@ -320,6 +399,12 @@ export const useWhatsAppStore = create<WhatsAppState>((set, get) => ({
     const ts = await getReadTimestamps();
     ts[conversation.waId] = now;
     await setReadTimestamps(ts);
+
+    const archivedMap = { ...get().archivedMap };
+    if (archivedMap[conversation.waId]) {
+      delete archivedMap[conversation.waId];
+      await setArchivedMap(archivedMap);
+    }
     set({ selectedConv: conversation, conversations: nextConversations });
 
     return conversation;
@@ -328,11 +413,29 @@ export const useWhatsAppStore = create<WhatsAppState>((set, get) => ({
   sendMessage: async (to, message) => {
     set({ isSending: true, sendError: '' });
     try {
-      await api.post('/integrations/whatsapp/send', { to, message });
+      await sendTextNow(to, message);
       set({ isSending: false });
       get().fetchInbox();
       return true;
     } catch (err: any) {
+      if (shouldQueueRetry(err)) {
+        const queue = await getPendingOutbox();
+        queue.push({
+          id: createOutboxId(),
+          waId: normalizeWaId(to),
+          kind: 'text',
+          text: message,
+          retries: 0,
+          createdAt: new Date().toISOString(),
+        });
+        await setPendingOutbox(queue);
+        set({
+          isSending: false,
+          pendingOutboxCount: queue.length,
+          sendError: 'No connection. Message queued and will retry automatically.',
+        });
+        return true;
+      }
       set({ isSending: false, sendError: err?.response?.data?.message || 'Send failed' });
       return false;
     }
@@ -341,21 +444,138 @@ export const useWhatsAppStore = create<WhatsAppState>((set, get) => ({
   sendMediaMessage: async (to, payload) => {
     set({ isSending: true, sendError: '' });
     try {
-      const mediaId = await uploadMediaFile(payload);
-      const request = buildMediaSendRequest(to, mediaId, payload);
-      await api.post(request.endpoint, request.body);
+      await sendMediaNow(to, payload);
       set({ isSending: false });
       get().fetchInbox();
       return true;
     } catch (err: any) {
+      if (shouldQueueRetry(err)) {
+        const queue = await getPendingOutbox();
+        queue.push({
+          id: createOutboxId(),
+          waId: normalizeWaId(to),
+          kind: 'media',
+          media: payload,
+          retries: 0,
+          createdAt: new Date().toISOString(),
+        });
+        await setPendingOutbox(queue);
+        set({
+          isSending: false,
+          pendingOutboxCount: queue.length,
+          sendError: 'No connection. Media queued and will retry automatically.',
+        });
+        return true;
+      }
       set({ isSending: false, sendError: err?.response?.data?.message || err?.message || 'Media send failed' });
       return false;
     }
   },
 
-  markRead: async (waId) => {
+  markUnread: async (waId) => {
+    const normalizedWaId = normalizeWaId(waId);
+    if (!normalizedWaId) return;
     const ts = await getReadTimestamps();
-    ts[waId] = new Date().toISOString();
+    delete ts[normalizedWaId];
     await setReadTimestamps(ts);
+    const conversations = get().conversations.map((conversation) => (
+      conversation.waId === normalizedWaId
+        ? { ...conversation, unreadCount: Math.max(conversation.unreadCount, 1) }
+        : conversation
+    ));
+    set({ conversations });
+  },
+
+  markRead: async (waId) => {
+    const normalizedWaId = normalizeWaId(waId);
+    if (!normalizedWaId) return;
+    const ts = await getReadTimestamps();
+    ts[normalizedWaId] = new Date().toISOString();
+    await setReadTimestamps(ts);
+    const conversations = get().conversations.map((conversation) => (
+      conversation.waId === normalizedWaId
+        ? { ...conversation, unreadCount: 0 }
+        : conversation
+    ));
+    set({ conversations });
+  },
+
+  archiveConversation: async (waId, archived = true) => {
+    const normalizedWaId = normalizeWaId(waId);
+    if (!normalizedWaId) return;
+    const map = { ...get().archivedMap };
+    if (archived) {
+      map[normalizedWaId] = true;
+    } else {
+      delete map[normalizedWaId];
+    }
+    await setArchivedMap(map);
+    const conversations = get().conversations.map((conversation) => (
+      conversation.waId === normalizedWaId
+        ? { ...conversation, archived }
+        : conversation
+    ));
+    const selected = get().selectedConv;
+    const selectedConv = selected && selected.waId === normalizedWaId
+      ? { ...selected, archived }
+      : selected;
+    set({ archivedMap: map, conversations, selectedConv });
+  },
+
+  deleteConversation: async (waId) => {
+    const normalizedWaId = normalizeWaId(waId);
+    if (!normalizedWaId) return 'Conversation is invalid';
+    try {
+      await api.delete(`/integrations/whatsapp/conversation/${normalizedWaId}`);
+      const conversations = get().conversations.filter((conversation) => conversation.waId !== normalizedWaId);
+      const selected = get().selectedConv;
+      const selectedConv = selected && selected.waId === normalizedWaId ? null : selected;
+      const archivedMap = { ...get().archivedMap };
+      delete archivedMap[normalizedWaId];
+      await setArchivedMap(archivedMap);
+      set({ conversations, selectedConv, archivedMap });
+      return null;
+    } catch (err: any) {
+      return err?.response?.data?.message || 'Failed to delete conversation';
+    }
+  },
+
+  syncOutbox: async () => {
+    const queue = await getPendingOutbox();
+    if (!queue.length) {
+      if (get().pendingOutboxCount !== 0) {
+        set({ pendingOutboxCount: 0 });
+      }
+      return;
+    }
+
+    const remaining: PendingOutboxItem[] = [];
+    let sentAny = false;
+
+    for (const item of queue) {
+      try {
+        if (item.kind === 'text' && item.text) {
+          await sendTextNow(item.waId, item.text);
+          sentAny = true;
+          continue;
+        }
+        if (item.kind === 'media' && item.media) {
+          await sendMediaNow(item.waId, item.media);
+          sentAny = true;
+          continue;
+        }
+      } catch {
+        if (item.retries < 5) {
+          remaining.push({ ...item, retries: item.retries + 1 });
+        }
+        continue;
+      }
+    }
+
+    await setPendingOutbox(remaining);
+    set({ pendingOutboxCount: remaining.length });
+    if (sentAny) {
+      await get().fetchInbox();
+    }
   },
 }));

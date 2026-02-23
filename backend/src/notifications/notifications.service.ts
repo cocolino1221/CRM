@@ -42,6 +42,7 @@ export class NotificationsService {
         message: dto.message,
         link: dto.link,
         notificationId: saved.id,
+        metadata: dto.metadata,
       })
       .catch((err) => this.logger.error(`Push error: ${err.message}`));
 

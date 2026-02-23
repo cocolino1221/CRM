@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { View, Text, TextInput, TouchableOpacity, FlatList, RefreshControl, Modal, ScrollView } from 'react-native';
-import { Search, Plus, X, WifiOff, RefreshCw, Users, Check } from 'lucide-react-native';
+import { Search, Plus, X, WifiOff, RefreshCw, Users, Check, Archive, ArchiveRestore, Trash2, MailOpen } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -36,7 +36,7 @@ function getInitials(name?: string): string {
   return `${tokens[0][0] || ''}${tokens[1][0] || ''}`.toUpperCase();
 }
 
-type InboxFilter = 'all' | 'unassigned' | 'mine' | 'unread' | 'today';
+type InboxFilter = 'all' | 'unassigned' | 'mine' | 'unread' | 'today' | 'archived';
 
 function isSameDay(dateStr: string): boolean {
   const source = new Date(dateStr);
@@ -54,6 +54,11 @@ export default function WhatsAppInboxScreen() {
     fetchAssignments,
     fetchTeamUsers,
     assignConversation,
+    markUnread,
+    archiveConversation,
+    deleteConversation,
+    pendingOutboxCount,
+    syncOutbox,
     openConversation,
   } = useWhatsAppStore();
   const currentUser = useAuthStore(s => s.user);
@@ -62,7 +67,9 @@ export default function WhatsAppInboxScreen() {
   const [showNewModal, setShowNewModal] = useState(false);
   const [inboxFilter, setInboxFilter] = useState<InboxFilter>('all');
   const [assignTarget, setAssignTarget] = useState<Conversation | null>(null);
+  const [actionTarget, setActionTarget] = useState<Conversation | null>(null);
   const [isAssigning, setIsAssigning] = useState(false);
+  const [isApplyingAction, setIsApplyingAction] = useState(false);
   const [contactQuery, setContactQuery] = useState('');
   const [contactResults, setContactResults] = useState<any[]>([]);
   const [manualPhone, setManualPhone] = useState('');
@@ -75,11 +82,14 @@ export default function WhatsAppInboxScreen() {
     fetchInbox();
     fetchAssignments();
     fetchTeamUsers();
+    syncOutbox();
     intervalRef.current = setInterval(fetchInbox, 5000);
     return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
   }, []);
 
   const matchesFilter = useCallback((conv: Conversation, filter: InboxFilter) => {
+    if (filter === 'archived') return !!conv.archived;
+    if (conv.archived) return false;
     if (filter === 'unassigned') return !conv.assignment;
     if (filter === 'mine') return !!currentUser?.id && conv.assignment?.userId === currentUser.id;
     if (filter === 'unread') return conv.unreadCount > 0;
@@ -104,12 +114,14 @@ export default function WhatsAppInboxScreen() {
     mine: conversations.filter(conv => matchesFilter(conv, 'mine')).length,
     unread: conversations.filter(conv => matchesFilter(conv, 'unread')).length,
     today: conversations.filter(conv => matchesFilter(conv, 'today')).length,
+    archived: conversations.filter(conv => matchesFilter(conv, 'archived')).length,
   };
 
   const onRefresh = useCallback(() => {
     fetchInbox();
     fetchAssignments();
-  }, [fetchInbox, fetchAssignments]);
+    syncOutbox();
+  }, [fetchInbox, fetchAssignments, syncOutbox]);
 
   const handleAssign = async (userId: string | null) => {
     if (!assignTarget || isAssigning) return;
@@ -132,6 +144,30 @@ export default function WhatsAppInboxScreen() {
       contactName: conv.contactName,
       phone: conv.phone,
     });
+  };
+
+  const handleMarkUnread = async () => {
+    if (!actionTarget || isApplyingAction) return;
+    setIsApplyingAction(true);
+    await markUnread(actionTarget.waId);
+    setIsApplyingAction(false);
+    setActionTarget(null);
+  };
+
+  const handleArchiveToggle = async () => {
+    if (!actionTarget || isApplyingAction) return;
+    setIsApplyingAction(true);
+    await archiveConversation(actionTarget.waId, !actionTarget.archived);
+    setIsApplyingAction(false);
+    setActionTarget(null);
+  };
+
+  const handleDeleteConversation = async () => {
+    if (!actionTarget || isApplyingAction) return;
+    setIsApplyingAction(true);
+    await deleteConversation(actionTarget.waId);
+    setIsApplyingAction(false);
+    setActionTarget(null);
   };
 
   const searchContacts = useCallback(async (query: string) => {
@@ -187,6 +223,7 @@ export default function WhatsAppInboxScreen() {
     return (
       <TouchableOpacity
         onPress={() => openChat(conv)}
+        onLongPress={() => setActionTarget(conv)}
         className="bg-white/90 border border-slate-100 rounded-2xl p-3.5 mb-2.5 flex-row items-center gap-3"
         activeOpacity={0.7}
       >
@@ -266,6 +303,11 @@ export default function WhatsAppInboxScreen() {
           <View className="bg-white/15 border border-white/20 px-2.5 py-1 rounded-full">
             <Text className="text-[11px] font-semibold text-white">{activeSessions} active</Text>
           </View>
+          {pendingOutboxCount > 0 && (
+            <View className="bg-amber-100 border border-amber-200 px-2.5 py-1 rounded-full">
+              <Text className="text-[11px] font-semibold text-amber-700">retry {pendingOutboxCount}</Text>
+            </View>
+          )}
         </View>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingTop: 10 }}>
           {([
@@ -274,6 +316,7 @@ export default function WhatsAppInboxScreen() {
             ['mine', 'My leads'],
             ['unread', 'Unread'],
             ['today', 'Today'],
+            ['archived', 'Archived'],
           ] as Array<[InboxFilter, string]>).map(([key, label]) => {
             const active = inboxFilter === key;
             return (
@@ -467,6 +510,53 @@ export default function WhatsAppInboxScreen() {
                 </TouchableOpacity>
               </View>
             )}
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={!!actionTarget} animationType="slide" transparent onRequestClose={() => setActionTarget(null)}>
+        <View className="flex-1 bg-black/40 justify-end">
+          <View className="bg-white rounded-t-3xl" style={{ paddingBottom: insets.bottom > 0 ? insets.bottom : 16 }}>
+            <View className="px-4 py-3 border-b border-slate-100 flex-row items-center justify-between">
+              <View className="flex-1 pr-3">
+                <Text className="text-base font-bold text-slate-900">Conversation actions</Text>
+                <Text className="text-xs text-slate-500 mt-0.5" numberOfLines={1}>{actionTarget?.contactName}</Text>
+              </View>
+              <TouchableOpacity onPress={() => setActionTarget(null)} className="h-8 w-8 rounded-full bg-slate-100 items-center justify-center">
+                <X size={14} color="#64748b" />
+              </TouchableOpacity>
+            </View>
+
+            <View className="px-4 pt-3 gap-2">
+              <TouchableOpacity
+                onPress={handleMarkUnread}
+                disabled={isApplyingAction}
+                className="px-4 py-3 rounded-xl border border-slate-200 bg-slate-50 flex-row items-center gap-2"
+              >
+                <MailOpen size={16} color="#334155" />
+                <Text className="text-sm font-medium text-slate-700">Mark as unread</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={handleArchiveToggle}
+                disabled={isApplyingAction}
+                className="px-4 py-3 rounded-xl border border-slate-200 bg-slate-50 flex-row items-center gap-2"
+              >
+                {actionTarget?.archived ? <ArchiveRestore size={16} color="#334155" /> : <Archive size={16} color="#334155" />}
+                <Text className="text-sm font-medium text-slate-700">
+                  {actionTarget?.archived ? 'Unarchive' : 'Archive'}
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={handleDeleteConversation}
+                disabled={isApplyingAction}
+                className="px-4 py-3 rounded-xl border border-rose-200 bg-rose-50 flex-row items-center gap-2"
+              >
+                <Trash2 size={16} color="#dc2626" />
+                <Text className="text-sm font-semibold text-rose-600">Delete conversation</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>

@@ -265,7 +265,11 @@ export class WhatsAppService {
         title: 'Auto-send delivered',
         message: `Template "${templateName}" sent to ${fullName} (${contactPhone})`,
         link: '/whatsapp',
-        metadata: { contactId: contact?.id, templateName },
+        metadata: {
+          contactId: contact?.id,
+          templateName,
+          waId: normalizePhoneDigits(contactPhone),
+        },
       };
 
       if (this.isValidUuid(targetUserId)) {
@@ -666,6 +670,11 @@ export class WhatsAppService {
               title: 'New WhatsApp message',
               message: `${senderName}: ${msgPreview.substring(0, 80)}`,
               link: '/whatsapp',
+              metadata: {
+                contactId: contact.id,
+                waId: message.from,
+                messageType: message.type,
+              },
             });
           }
         }
@@ -1469,6 +1478,7 @@ export class WhatsAppService {
         title: 'New lead added',
         message: `${fullName} was added${contact.source ? ` via ${contact.source}` : ''}`,
         link: '/contacts',
+        metadata: { contactId: contact.id },
       });
 
       const integration = await this.integrationRepository.findOne({

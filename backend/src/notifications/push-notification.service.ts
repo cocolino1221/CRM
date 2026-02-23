@@ -183,6 +183,7 @@ export class PushNotificationService implements OnModuleInit {
       message: string;
       link?: string;
       notificationId?: string;
+      metadata?: Record<string, any>;
     },
   ): Promise<void> {
     if (!this.apnsEnabled && !this.firebaseInitialized) return;
@@ -212,6 +213,8 @@ export class PushNotificationService implements OnModuleInit {
       type: notification.type,
       link: notification.link || '',
       notificationId: notification.notificationId || '',
+      waId: String(notification.metadata?.waId || ''),
+      contactId: String(notification.metadata?.contactId || ''),
     };
 
     const iosTokens = tokens.filter((t) => t.platform === DevicePlatform.IOS);

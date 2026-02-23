@@ -20,6 +20,7 @@ import type { WhatsAppStackParams } from '../navigation/WhatsAppStack';
 import type { WhatsAppActivity } from '../types';
 
 type ChatRoute = RouteProp<WhatsAppStackParams, 'Chat'>;
+const DRAFT_PREFIX = 'wa_draft_';
 
 function getDateLabel(dateStr: string): string {
   const d = new Date(dateStr);
@@ -225,6 +226,7 @@ export default function ChatScreen() {
       if (ok) {
         setPendingAttachment(null);
         setText('');
+        await AsyncStorage.removeItem(`${DRAFT_PREFIX}${conv.waId}`);
       }
       return;
     }
@@ -232,7 +234,10 @@ export default function ChatScreen() {
     if (!text.trim()) return;
     const msg = text.trim();
     setText('');
-    await sendMessage(conv.waId, msg);
+    const ok = await sendMessage(conv.waId, msg);
+    if (ok) {
+      await AsyncStorage.removeItem(`${DRAFT_PREFIX}${conv.waId}`);
+    }
   };
 
   const handlePickAttachment = async () => {
@@ -263,6 +268,28 @@ export default function ChatScreen() {
       : { bg: 'bg-rose-100', text: 'text-rose-700', label: 'Expired' };
 
   const assigned = conv.assignment;
+
+  useEffect(() => {
+    let mounted = true;
+    AsyncStorage.getItem(`${DRAFT_PREFIX}${conv.waId}`)
+      .then((saved) => {
+        if (!mounted) return;
+        if (saved && !text.trim()) {
+          setText(saved);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      mounted = false;
+    };
+  }, [conv.waId]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      AsyncStorage.setItem(`${DRAFT_PREFIX}${conv.waId}`, text).catch(() => {});
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [conv.waId, text]);
 
   const handleAssign = async (userId: string | null) => {
     if (isAssigning) return;

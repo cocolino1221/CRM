@@ -64,6 +64,7 @@ export interface Conversation {
   unreadCount: number;
   lastInboundTime: string | null;
   assignment?: ConversationAssignment | null;
+  archived?: boolean;
 }
 
 export interface Contact {
