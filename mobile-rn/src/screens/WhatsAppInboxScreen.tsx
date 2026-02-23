@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { View, Text, TextInput, TouchableOpacity, FlatList, RefreshControl, Modal } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, FlatList, RefreshControl, Modal, ScrollView } from 'react-native';
 import { Search, Plus, X, WifiOff, RefreshCw, Users, Check } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import api from '../lib/api';
 import { useWhatsAppStore } from '../stores/whatsapp-store';
+import { useAuthStore } from '../stores/auth-store';
 import Avatar from '../components/Avatar';
 import type { WhatsAppStackParams } from '../navigation/WhatsAppStack';
 import type { Conversation } from '../types';
@@ -35,6 +36,14 @@ function getInitials(name?: string): string {
   return `${tokens[0][0] || ''}${tokens[1][0] || ''}`.toUpperCase();
 }
 
+type InboxFilter = 'all' | 'unassigned' | 'mine' | 'unread' | 'today';
+
+function isSameDay(dateStr: string): boolean {
+  const source = new Date(dateStr);
+  const today = new Date();
+  return source.toDateString() === today.toDateString();
+}
+
 export default function WhatsAppInboxScreen() {
   const {
     conversations,
@@ -47,9 +56,11 @@ export default function WhatsAppInboxScreen() {
     assignConversation,
     openConversation,
   } = useWhatsAppStore();
+  const currentUser = useAuthStore(s => s.user);
   const [search, setSearch] = useState('');
   const [showSearch, setShowSearch] = useState(false);
   const [showNewModal, setShowNewModal] = useState(false);
+  const [inboxFilter, setInboxFilter] = useState<InboxFilter>('all');
   const [assignTarget, setAssignTarget] = useState<Conversation | null>(null);
   const [isAssigning, setIsAssigning] = useState(false);
   const [contactQuery, setContactQuery] = useState('');
@@ -68,15 +79,32 @@ export default function WhatsAppInboxScreen() {
     return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
   }, []);
 
+  const matchesFilter = useCallback((conv: Conversation, filter: InboxFilter) => {
+    if (filter === 'unassigned') return !conv.assignment;
+    if (filter === 'mine') return !!currentUser?.id && conv.assignment?.userId === currentUser.id;
+    if (filter === 'unread') return conv.unreadCount > 0;
+    if (filter === 'today') return isSameDay(conv.lastMessageTime);
+    return true;
+  }, [currentUser?.id]);
+
+  const byFilter = conversations.filter(conv => matchesFilter(conv, inboxFilter));
+
   const filtered = search
-    ? conversations.filter(c =>
+    ? byFilter.filter(c =>
         c.contactName.toLowerCase().includes(search.toLowerCase()) ||
         c.phone.includes(search)
       )
-    : conversations;
+    : byFilter;
 
   const totalUnread = conversations.reduce((sum, c) => sum + c.unreadCount, 0);
   const activeSessions = conversations.filter(sessionOpen).length;
+  const filterCounts = {
+    all: conversations.length,
+    unassigned: conversations.filter(conv => matchesFilter(conv, 'unassigned')).length,
+    mine: conversations.filter(conv => matchesFilter(conv, 'mine')).length,
+    unread: conversations.filter(conv => matchesFilter(conv, 'unread')).length,
+    today: conversations.filter(conv => matchesFilter(conv, 'today')).length,
+  };
 
   const onRefresh = useCallback(() => {
     fetchInbox();
@@ -239,6 +267,28 @@ export default function WhatsAppInboxScreen() {
             <Text className="text-[11px] font-semibold text-white">{activeSessions} active</Text>
           </View>
         </View>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingTop: 10 }}>
+          {([
+            ['all', 'All'],
+            ['unassigned', 'Unassigned'],
+            ['mine', 'My leads'],
+            ['unread', 'Unread'],
+            ['today', 'Today'],
+          ] as Array<[InboxFilter, string]>).map(([key, label]) => {
+            const active = inboxFilter === key;
+            return (
+              <TouchableOpacity
+                key={key}
+                onPress={() => setInboxFilter(key)}
+                className={`px-3 py-1.5 rounded-full border ${active ? 'bg-white border-white' : 'bg-white/10 border-white/25'}`}
+              >
+                <Text className={`text-[11px] font-semibold ${active ? 'text-sky-800' : 'text-white'}`}>
+                  {label} ({filterCounts[key]})
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
         {showSearch && (
           <TextInput
             value={search}
