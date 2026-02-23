@@ -124,6 +124,20 @@ function getNameInitials(name?: string): string {
   return `${tokens[0][0] || ''}${tokens[1][0] || ''}`.toUpperCase();
 }
 
+function formatSourceLabel(source?: string | null): string {
+  const raw = String(source || '').trim();
+  if (!raw) return '';
+  const normalized = raw.toLowerCase();
+  if (normalized === 'manychat') return 'ManyChat';
+  if (normalized === 'typeform') return 'Typeform';
+  return raw
+    .replace(/[_-]+/g, ' ')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
 export default function ChatScreen() {
   const route = useRoute<ChatRoute>();
   const navigation = useNavigation();
@@ -274,6 +288,7 @@ export default function ChatScreen() {
       : { bg: 'bg-rose-100', text: 'text-rose-700', label: 'Expired' };
 
   const assigned = conv.assignment;
+  const sourceLabel = formatSourceLabel(conv.contactSource);
 
   useEffect(() => {
     let mounted = true;
@@ -327,8 +342,11 @@ export default function ChatScreen() {
         </TouchableOpacity>
         <Avatar name={route.params.contactName} size="sm" />
         <View className="flex-1 min-w-0">
-          <Text className="text-sm font-semibold text-white" numberOfLines={1}>{route.params.contactName}</Text>
-          <Text className="text-[11px] text-sky-200" numberOfLines={1}>{route.params.phone}</Text>
+          <Text className="text-sm font-semibold text-white" numberOfLines={1}>{conv.contactName || route.params.contactName}</Text>
+          {!!sourceLabel && (
+            <Text className="text-[11px] text-sky-200" numberOfLines={1}>{sourceLabel}</Text>
+          )}
+          <Text className="text-[11px] text-sky-100" numberOfLines={1}>{route.params.phone}</Text>
         </View>
         <TouchableOpacity
           onPress={() => setShowAssignModal(true)}

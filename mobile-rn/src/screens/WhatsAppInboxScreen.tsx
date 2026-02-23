@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { View, Text, TextInput, TouchableOpacity, FlatList, RefreshControl, Modal, ScrollView } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, FlatList, RefreshControl, Modal, ScrollView, Alert } from 'react-native';
 import { Search, Plus, X, WifiOff, RefreshCw, Users, Check, Archive, ArchiveRestore, Trash2, MailOpen } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -10,6 +10,7 @@ import { useWhatsAppStore } from '../stores/whatsapp-store';
 import { useAuthStore } from '../stores/auth-store';
 import Avatar from '../components/Avatar';
 import type { WhatsAppStackParams } from '../navigation/WhatsAppStack';
+import * as Haptics from 'expo-haptics';
 import type { Conversation } from '../types';
 
 type Nav = NativeStackNavigationProp<WhatsAppStackParams, 'Inbox'>;
@@ -35,6 +36,20 @@ function getInitials(name?: string): string {
   if (!tokens.length) return '??';
   if (tokens.length === 1) return tokens[0].slice(0, 2).toUpperCase();
   return `${tokens[0][0] || ''}${tokens[1][0] || ''}`.toUpperCase();
+}
+
+function formatSourceLabel(source?: string | null): string {
+  const raw = String(source || '').trim();
+  if (!raw) return '';
+  const normalized = raw.toLowerCase();
+  if (normalized === 'manychat') return 'ManyChat';
+  if (normalized === 'typeform') return 'Typeform';
+  return raw
+    .replace(/[_-]+/g, ' ')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
 type InboxFilter = 'all' | 'unassigned' | 'mine' | 'unread' | 'today' | 'archived';
@@ -170,12 +185,26 @@ export default function WhatsAppInboxScreen() {
     setActionTarget(null);
   };
 
-  const handleDeleteConversation = async () => {
+  const handleDeleteConversation = () => {
     if (!actionTarget || isApplyingAction) return;
-    setIsApplyingAction(true);
-    await deleteConversation(actionTarget.waId);
-    setIsApplyingAction(false);
-    setActionTarget(null);
+    Alert.alert(
+      'Delete conversation?',
+      'This will permanently remove all messages with ' + actionTarget.contactName,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            setIsApplyingAction(true);
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+            await deleteConversation(actionTarget.waId);
+            setIsApplyingAction(false);
+            setActionTarget(null);
+          },
+        },
+      ],
+    );
   };
 
   const searchContacts = useCallback(async (query: string) => {
@@ -242,17 +271,33 @@ export default function WhatsAppInboxScreen() {
 
   const handleMarkUnreadFromSwipe = async (conv: Conversation) => {
     closeSwipeFor(conv.waId);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     await markUnread(conv.waId);
   };
 
   const handleArchiveFromSwipe = async (conv: Conversation) => {
     closeSwipeFor(conv.waId);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     await archiveConversation(conv.waId, !conv.archived);
   };
 
-  const handleDeleteFromSwipe = async (conv: Conversation) => {
+  const handleDeleteFromSwipe = (conv: Conversation) => {
     closeSwipeFor(conv.waId);
-    await deleteConversation(conv.waId);
+    Alert.alert(
+      'Delete conversation?',
+      'This will permanently remove all messages with ' + conv.contactName,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+            await deleteConversation(conv.waId);
+          },
+        },
+      ],
+    );
   };
 
   const renderSwipeActions = (conv: Conversation) => (
@@ -289,6 +334,7 @@ export default function WhatsAppInboxScreen() {
   const renderItem = ({ item: conv }: { item: Conversation }) => {
     const isActive = sessionOpen(conv);
     const assigned = conv.assignment;
+    const sourceLabel = formatSourceLabel(conv.contactSource);
     return (
       <Swipeable
         ref={(ref) => { swipeRowsRef.current[conv.waId] = ref; }}
@@ -322,6 +368,11 @@ export default function WhatsAppInboxScreen() {
               </Text>
               <Text className="text-[10px] text-slate-400 ml-2">{timeAgo(conv.lastMessageTime)}</Text>
             </View>
+            {!!sourceLabel && (
+              <Text className="text-[11px] text-sky-700 mt-0.5" numberOfLines={1}>
+                {sourceLabel}
+              </Text>
+            )}
             <Text className="text-xs text-slate-500 mt-0.5" numberOfLines={1}>
               {conv.lastMessage}
             </Text>

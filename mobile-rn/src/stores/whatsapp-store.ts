@@ -241,6 +241,7 @@ export const useWhatsAppStore = create<WhatsAppState>((set, get) => ({
           const assignment = get().assignments[waId] || null;
           convMap.set(waId, {
             waId, contactName, contactId: act.contact?.id || null, phone,
+            contactSource: act.contact?.source || null,
             lastMessage: act.description || '', lastMessageTime: act.occurredAt,
             messageCount: 0, messages: [], unreadCount: 0, lastInboundTime: null,
             assignment,
@@ -248,6 +249,9 @@ export const useWhatsAppStore = create<WhatsAppState>((set, get) => ({
           });
         }
         const conv = convMap.get(waId)!;
+        if (!conv.contactSource && act.contact?.source) {
+          conv.contactSource = act.contact.source;
+        }
         conv.messages.push(act);
         conv.messageCount++;
 
@@ -407,6 +411,7 @@ export const useWhatsAppStore = create<WhatsAppState>((set, get) => ({
           phone: existing.phone || normalizedPhone,
           contactName: existing.contactName || contactName || normalizedPhone || normalizedWaId,
           contactId: existing.contactId || contactId || null,
+          contactSource: existing.contactSource || null,
           assignment: existing.assignment || get().assignments[normalizedWaId] || null,
           archived: false,
           unreadCount: 0,
@@ -415,6 +420,7 @@ export const useWhatsAppStore = create<WhatsAppState>((set, get) => ({
           waId: normalizedWaId,
           contactName: contactName || normalizedPhone || normalizedWaId,
           contactId: contactId || null,
+          contactSource: null,
           phone: normalizedPhone || `+${normalizedWaId}`,
           lastMessage: '',
           lastMessageTime: now,

@@ -42,6 +42,7 @@ export interface WhatsAppActivity {
     lastName: string;
     phone: string;
     status: string;
+    source?: string;
   } | null;
 }
 
@@ -56,6 +57,7 @@ export interface Conversation {
   waId: string;
   contactName: string;
   contactId: string | null;
+  contactSource?: string | null;
   phone: string;
   lastMessage: string;
   lastMessageTime: string;
