@@ -4,13 +4,11 @@ import { Search, Plus, X, WifiOff, RefreshCw, Users, Check, Archive, ArchiveRest
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import Swipeable from 'react-native-gesture-handler/Swipeable';
 import api from '../lib/api';
 import { useWhatsAppStore } from '../stores/whatsapp-store';
 import { useAuthStore } from '../stores/auth-store';
 import Avatar from '../components/Avatar';
 import type { WhatsAppStackParams } from '../navigation/WhatsAppStack';
-import * as Haptics from 'expo-haptics';
 import type { Conversation } from '../types';
 
 type Nav = NativeStackNavigationProp<WhatsAppStackParams, 'Inbox'>;
@@ -93,8 +91,6 @@ export default function WhatsAppInboxScreen() {
   const navigation = useNavigation<Nav>();
   const insets = useSafeAreaInsets();
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const swipeRowsRef = useRef<Record<string, Swipeable | null>>({});
-  const openedSwipeWaIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     fetchInbox();
@@ -151,11 +147,6 @@ export default function WhatsAppInboxScreen() {
   };
 
   const openChat = (conv: Conversation) => {
-    const opened = openedSwipeWaIdRef.current;
-    if (opened) {
-      swipeRowsRef.current[opened]?.close();
-      openedSwipeWaIdRef.current = null;
-    }
     openConversation({
       waId: conv.waId,
       phone: conv.phone,
@@ -197,7 +188,6 @@ export default function WhatsAppInboxScreen() {
           style: 'destructive',
           onPress: async () => {
             setIsApplyingAction(true);
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
             await deleteConversation(actionTarget.waId);
             setIsApplyingAction(false);
             setActionTarget(null);
@@ -254,149 +244,58 @@ export default function WhatsAppInboxScreen() {
     });
   };
 
-  const closeSwipeFor = (waId: string) => {
-    swipeRowsRef.current[waId]?.close();
-    if (openedSwipeWaIdRef.current === waId) {
-      openedSwipeWaIdRef.current = null;
-    }
-  };
-
-  const handleSwipeOpen = (waId: string) => {
-    const opened = openedSwipeWaIdRef.current;
-    if (opened && opened !== waId) {
-      swipeRowsRef.current[opened]?.close();
-    }
-    openedSwipeWaIdRef.current = waId;
-  };
-
-  const handleMarkUnreadFromSwipe = async (conv: Conversation) => {
-    closeSwipeFor(conv.waId);
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    await markUnread(conv.waId);
-  };
-
-  const handleArchiveFromSwipe = async (conv: Conversation) => {
-    closeSwipeFor(conv.waId);
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    await archiveConversation(conv.waId, !conv.archived);
-  };
-
-  const handleDeleteFromSwipe = (conv: Conversation) => {
-    closeSwipeFor(conv.waId);
-    Alert.alert(
-      'Delete conversation?',
-      'This will permanently remove all messages with ' + conv.contactName,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-            await deleteConversation(conv.waId);
-          },
-        },
-      ],
-    );
-  };
-
-  const renderSwipeActions = (conv: Conversation) => (
-    <View className="mb-2.5 flex-row items-stretch rounded-2xl overflow-hidden">
-      <TouchableOpacity
-        onPress={() => handleMarkUnreadFromSwipe(conv)}
-        className="w-[78px] bg-slate-700 items-center justify-center"
-        activeOpacity={0.8}
-      >
-        <MailOpen size={16} color="#fff" />
-        <Text className="text-[10px] font-semibold text-white mt-1">Unread</Text>
-      </TouchableOpacity>
-      <TouchableOpacity
-        onPress={() => handleArchiveFromSwipe(conv)}
-        className="w-[78px] bg-amber-600 items-center justify-center"
-        activeOpacity={0.8}
-      >
-        {conv.archived ? <ArchiveRestore size={16} color="#fff" /> : <Archive size={16} color="#fff" />}
-        <Text className="text-[10px] font-semibold text-white mt-1">
-          {conv.archived ? 'Unarch' : 'Archive'}
-        </Text>
-      </TouchableOpacity>
-      <TouchableOpacity
-        onPress={() => handleDeleteFromSwipe(conv)}
-        className="w-[78px] bg-rose-600 items-center justify-center"
-        activeOpacity={0.8}
-      >
-        <Trash2 size={16} color="#fff" />
-        <Text className="text-[10px] font-semibold text-white mt-1">Delete</Text>
-      </TouchableOpacity>
-    </View>
-  );
-
   const renderItem = ({ item: conv }: { item: Conversation }) => {
     const isActive = sessionOpen(conv);
     const assigned = conv.assignment;
     const sourceLabel = formatSourceLabel(conv.contactSource);
     return (
-      <Swipeable
-        ref={(ref) => { swipeRowsRef.current[conv.waId] = ref; }}
-        friction={2}
-        rightThreshold={32}
-        overshootRight={false}
-        onSwipeableWillOpen={() => handleSwipeOpen(conv.waId)}
-        onSwipeableWillClose={() => {
-          if (openedSwipeWaIdRef.current === conv.waId) {
-            openedSwipeWaIdRef.current = null;
-          }
-        }}
-        renderRightActions={() => renderSwipeActions(conv)}
+      <TouchableOpacity
+        onPress={() => openChat(conv)}
+        onLongPress={() => setActionTarget(conv)}
+        className="bg-white/90 border border-slate-100 rounded-2xl p-3.5 mb-2.5 flex-row items-center gap-3"
+        activeOpacity={0.7}
       >
-        <TouchableOpacity
-          onPress={() => openChat(conv)}
-          onLongPress={() => setActionTarget(conv)}
-          className="bg-white/90 border border-slate-100 rounded-2xl p-3.5 mb-2.5 flex-row items-center gap-3"
-          activeOpacity={0.7}
-        >
-          <View>
-            <Avatar name={conv.contactName} />
-            {isActive && (
-              <View className="absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 bg-emerald-400 rounded-full border-2 border-white" />
-            )}
-          </View>
-          <View className="flex-1 min-w-0">
-            <View className="flex-row items-center justify-between">
-              <Text className="text-sm font-semibold text-slate-900" numberOfLines={1}>
-                {conv.contactName}
-              </Text>
-              <Text className="text-[10px] text-slate-400 ml-2">{timeAgo(conv.lastMessageTime)}</Text>
-            </View>
-            {!!sourceLabel && (
-              <Text className="text-[11px] text-sky-700 mt-0.5" numberOfLines={1}>
-                {sourceLabel}
-              </Text>
-            )}
-            <Text className="text-xs text-slate-500 mt-0.5" numberOfLines={1}>
-              {conv.lastMessage}
+        <View>
+          <Avatar name={conv.contactName} />
+          {isActive && (
+            <View className="absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 bg-emerald-400 rounded-full border-2 border-white" />
+          )}
+        </View>
+        <View className="flex-1 min-w-0">
+          <View className="flex-row items-center justify-between">
+            <Text className="text-sm font-semibold text-slate-900" numberOfLines={1}>
+              {conv.contactName}
             </Text>
+            <Text className="text-[10px] text-slate-400 ml-2">{timeAgo(conv.lastMessageTime)}</Text>
           </View>
-          <View className="items-end gap-1.5">
-            <TouchableOpacity
-              onPress={() => setAssignTarget(conv)}
-              className="h-8 w-8 rounded-full items-center justify-center border border-slate-200"
-              style={{ backgroundColor: assigned?.color || '#e2e8f0' }}
-            >
-              {assigned ? (
-                <Text className="text-[10px] font-bold text-white">{getInitials(assigned.userName)}</Text>
-              ) : (
-                <Users size={14} color="#64748b" />
-              )}
-            </TouchableOpacity>
-            {conv.unreadCount > 0 && (
-              <View className="bg-teal-500 rounded-full min-w-[20px] h-5 items-center justify-center px-1.5">
-                <Text className="text-white text-[10px] font-bold">{conv.unreadCount}</Text>
-              </View>
+          {!!sourceLabel && (
+            <Text className="text-[11px] text-sky-700 mt-0.5" numberOfLines={1}>
+              {sourceLabel}
+            </Text>
+          )}
+          <Text className="text-xs text-slate-500 mt-0.5" numberOfLines={1}>
+            {conv.lastMessage}
+          </Text>
+        </View>
+        <View className="items-end gap-1.5">
+          <TouchableOpacity
+            onPress={() => setAssignTarget(conv)}
+            className="h-8 w-8 rounded-full items-center justify-center border border-slate-200"
+            style={{ backgroundColor: assigned?.color || '#e2e8f0' }}
+          >
+            {assigned ? (
+              <Text className="text-[10px] font-bold text-white">{getInitials(assigned.userName)}</Text>
+            ) : (
+              <Users size={14} color="#64748b" />
             )}
-          </View>
-        </TouchableOpacity>
-      </Swipeable>
+          </TouchableOpacity>
+          {conv.unreadCount > 0 && (
+            <View className="bg-teal-500 rounded-full min-w-[20px] h-5 items-center justify-center px-1.5">
+              <Text className="text-white text-[10px] font-bold">{conv.unreadCount}</Text>
+            </View>
+          )}
+        </View>
+      </TouchableOpacity>
     );
   };
 
