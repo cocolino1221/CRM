@@ -23,6 +23,7 @@ import { ChangePasswordDto } from './dto/change-password.dto';
 import { JwtPayload } from './interfaces/jwt-payload.interface';
 import { AuthResponse } from './interfaces/auth-response.interface';
 import { TokenBlacklistService } from './token-blacklist/token-blacklist.service';
+import { EmailService } from '../email/email.service';
 
 /**
  * Authentication service with comprehensive security features
@@ -44,6 +45,7 @@ export class AuthService {
     private configService: ConfigService,
     private httpService: HttpService,
     private tokenBlacklistService: TokenBlacklistService,
+    private emailService: EmailService,
   ) {
     this.oauthStateSecret = this.configService.get<string>('auth.jwtSecret') ?? '';
   }
@@ -593,8 +595,11 @@ export class AuthService {
       { expiresIn: '1h' }
     );
 
-    // TODO: Send email with reset link. Token is not returned in response.
     this.logger.log(`Password reset token generated for user ${user.id}`);
+    const emailSent = await this.emailService.sendPasswordResetEmail(user.email, resetToken);
+    if (!emailSent) {
+      this.logger.warn(`Failed to send password reset email to user ${user.id}`);
+    }
 
     return {
       message: 'If that email exists, a password reset link has been sent',

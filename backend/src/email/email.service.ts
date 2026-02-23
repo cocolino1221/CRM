@@ -108,7 +108,7 @@ export class EmailService {
 
   async sendPasswordResetEmail(to: string, resetToken: string): Promise<boolean> {
     const frontendUrl = this.configService.get<string>('FRONTEND_URL', 'https://etcrm.primafisoft.com');
-    const resetUrl = `${frontendUrl}/auth/reset-password?token=${resetToken}`;
+    const resetUrl = `${frontendUrl}/reset-password?token=${resetToken}`;
 
     const html = `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">

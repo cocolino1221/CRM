@@ -11,6 +11,7 @@ import { Workspace } from '../database/entities/workspace.entity';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { LocalStrategy } from './strategies/local.strategy';
 import { TokenBlacklistModule } from './token-blacklist/token-blacklist.module';
+import { EmailModule } from '../email/email.module';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { TokenBlacklistModule } from './token-blacklist/token-blacklist.module';
     PassportModule.register({ defaultStrategy: 'jwt' }),
     HttpModule,
     TokenBlacklistModule,
+    EmailModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
       useFactory: (configService: ConfigService) => ({
