@@ -5,6 +5,7 @@ import { NavigationContainer, useNavigationContainerRef } from '@react-navigatio
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import * as Notifications from 'expo-notifications';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { useAuthStore } from './src/stores/auth-store';
 import { useNotificationsStore } from './src/stores/notifications-store';
 import { useWhatsAppStore } from './src/stores/whatsapp-store';
@@ -119,12 +120,14 @@ export default function App() {
   }, [isAuthenticated, navigationRef]);
 
   return (
-    <SafeAreaProvider>
-      <NavigationContainer ref={navigationRef}>
-        <StatusBar style="light" />
-        {isAuthenticated ? <TabNavigator /> : <LoginScreen />}
-        <ToastContainer />
-      </NavigationContainer>
-    </SafeAreaProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaProvider>
+        <NavigationContainer ref={navigationRef}>
+          <StatusBar style="light" />
+          {isAuthenticated ? <TabNavigator /> : <LoginScreen />}
+          <ToastContainer />
+        </NavigationContainer>
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
   );
 }
