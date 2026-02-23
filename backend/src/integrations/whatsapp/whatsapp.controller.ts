@@ -17,12 +17,14 @@ import {
   Res,
 } from '@nestjs/common';
 import { AnyFilesInterceptor } from '@nestjs/platform-express';
+import { diskStorage } from 'multer';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { WhatsAppService, WhatsAppMessage, WhatsAppWebhook } from './whatsapp.service';
 import { WhatsAppAIService } from './whatsapp-ai.service';
 import { Public } from '../../common/decorators/public.decorator';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { Response } from 'express';
+import { tmpdir } from 'os';
 
 @ApiTags('WhatsApp Business')
 @Controller('integrations/whatsapp')
@@ -139,7 +141,17 @@ export class WhatsAppController {
     if (workspaceId && userId) {
       const msgId = result?.messages?.[0]?.id;
       await this.whatsappService.saveOutboundActivity(
-        body.to, `[Template: ${body.templateName}]`, 'template', workspaceId, userId, msgId,
+        body.to,
+        `[Template: ${body.templateName}]`,
+        'template',
+        workspaceId,
+        userId,
+        msgId,
+        {
+          mediaType: ['image', 'video', 'document'].includes(headerType) ? headerType : undefined,
+          mediaId: headerMediaId || undefined,
+          mediaUrl: headerMediaUrl || undefined,
+        },
       );
     }
     return result;
@@ -829,7 +841,16 @@ export class WhatsAppController {
   @UseGuards(JwtAuthGuard)
   @Post('media/upload')
   @ApiBearerAuth()
-  @UseInterceptors(AnyFilesInterceptor({ limits: { fileSize: 64 * 1024 * 1024 } }))
+  @UseInterceptors(AnyFilesInterceptor({
+    storage: diskStorage({
+      destination: tmpdir(),
+      filename: (_req, file, cb) => {
+        const safeOriginal = String(file.originalname || 'upload.bin').replace(/[^a-zA-Z0-9._-]/g, '_');
+        cb(null, `${Date.now()}-${Math.random().toString(36).slice(2, 10)}-${safeOriginal}`);
+      },
+    }),
+    limits: { fileSize: 64 * 1024 * 1024 },
+  }))
   @ApiOperation({ summary: 'Upload media to WhatsApp (returns media_id for use in messages)' })
   @ApiResponse({ status: 200, description: 'Media uploaded, returns { id: media_id }' })
   async uploadMedia(
@@ -840,9 +861,10 @@ export class WhatsAppController {
     if (!workspaceId) throw new BadRequestException('Workspace ID required');
     const file = files?.[0];
     if (!file) throw new BadRequestException('File is required');
+    if (!file.path) throw new BadRequestException('Uploaded file path is missing');
     return this.whatsappService.uploadMedia(
       workspaceId,
-      file.buffer,
+      file.path,
       file.mimetype,
       file.originalname,
     );

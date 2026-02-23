@@ -5,6 +5,7 @@ import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In } from 'typeorm';
 import { firstValueFrom } from 'rxjs';
+import { createReadStream, promises as fsPromises } from 'fs';
 import { Contact, ContactStatus, ContactSource } from '../../database/entities/contact.entity';
 import { Activity, ActivityType, ActivityDirection, ActivityOutcome } from '../../database/entities/activity.entity';
 import { Integration, IntegrationType, IntegrationStatus } from '../../database/entities/integration.entity';
@@ -1043,7 +1044,7 @@ export class WhatsAppService {
    */
   async uploadMedia(
     workspaceId: string,
-    file: Buffer,
+    filePath: string,
     mimeType: string,
     filename: string,
   ): Promise<{ id: string }> {
@@ -1056,26 +1057,32 @@ export class WhatsAppService {
     const FormData = require('form-data');
     const form = new FormData();
     form.append('messaging_product', 'whatsapp');
-    form.append('file', file, { filename, contentType: mimeType });
+    form.append('file', createReadStream(filePath), { filename, contentType: mimeType });
     form.append('type', mimeType);
 
-    const response = await firstValueFrom(
-      this.httpService.post(
-        `${this.apiUrl}/${phoneNumberId}/media`,
-        form,
-        {
-          headers: {
-            'Authorization': `Bearer ${accessToken}`,
-            ...form.getHeaders(),
+    try {
+      const response = await firstValueFrom(
+        this.httpService.post(
+          `${this.apiUrl}/${phoneNumberId}/media`,
+          form,
+          {
+            headers: {
+              'Authorization': `Bearer ${accessToken}`,
+              ...form.getHeaders(),
+            },
+            maxContentLength: 64 * 1024 * 1024, // 64MB
+            maxBodyLength: 64 * 1024 * 1024,
           },
-          maxContentLength: 64 * 1024 * 1024, // 64MB
-          maxBodyLength: 64 * 1024 * 1024,
-        },
-      ),
-    );
+        ),
+      );
 
-    this.logger.log(`Media uploaded: ${response.data.id} (${mimeType}, ${filename})`);
-    return { id: response.data.id };
+      this.logger.log(`Media uploaded: ${response.data.id} (${mimeType}, ${filename})`);
+      return { id: response.data.id };
+    } finally {
+      await fsPromises.unlink(filePath).catch((error: any) => {
+        this.logger.warn(`Failed to cleanup temp upload file ${filePath}: ${error?.message || error}`);
+      });
+    }
   }
 
   /**
