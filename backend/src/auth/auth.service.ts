@@ -5,6 +5,7 @@ import {
   ConflictException,
   NotFoundException,
   Logger,
+  OnModuleInit,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -30,11 +31,12 @@ import { EmailService } from '../email/email.service';
  * Handles login, registration, JWT tokens, and user management
  */
 @Injectable()
-export class AuthService {
+export class AuthService implements OnModuleInit {
   private readonly logger = new Logger(AuthService.name);
   private readonly oauthStateTtlMs = 10 * 60 * 1000;
   private readonly oauthAuthCodeTtlMs = 5 * 60 * 1000;
   private readonly oauthStateSecret: string;
+  private readonly superAdminEmail: string;
 
   constructor(
     @InjectRepository(User)
@@ -48,6 +50,28 @@ export class AuthService {
     private emailService: EmailService,
   ) {
     this.oauthStateSecret = this.configService.get<string>('auth.jwtSecret') ?? '';
+    this.superAdminEmail = (
+      this.configService.get<string>('SUPER_ADMIN_EMAIL') ||
+      process.env.SUPER_ADMIN_EMAIL ||
+      'constantin.pristavita@gmail.com'
+    ).trim().toLowerCase();
+  }
+
+  async onModuleInit(): Promise<void> {
+    await this.promoteConfiguredSuperAdmin();
+  }
+
+  private isConfiguredSuperAdminEmail(email?: string): boolean {
+    return !!email && email.trim().toLowerCase() === this.superAdminEmail;
+  }
+
+  private async promoteConfiguredSuperAdmin(): Promise<void> {
+    if (!this.superAdminEmail) return;
+    const user = await this.userRepository.findOne({ where: { email: this.superAdminEmail } });
+    if (!user || user.role === UserRole.SUPER_ADMIN) return;
+    user.role = UserRole.SUPER_ADMIN;
+    await this.userRepository.save(user);
+    this.logger.log(`Promoted ${this.superAdminEmail} to SUPER_ADMIN`);
   }
 
   /**
@@ -67,6 +91,11 @@ export class AuthService {
 
       if (!user) {
         return null;
+      }
+
+      if (this.isConfiguredSuperAdminEmail(user.email) && user.role !== UserRole.SUPER_ADMIN) {
+        user.role = UserRole.SUPER_ADMIN;
+        await this.userRepository.save(user);
       }
 
       // Check if account is locked
@@ -183,6 +212,15 @@ export class AuthService {
               aiEnabled: true,
               slackIntegration: true,
               emailIntegration: true,
+              whatsappEnabled: true,
+              contactsEnabled: true,
+              leadsEnabled: true,
+              calendarEnabled: true,
+              pipelineEnabled: true,
+              tasksEnabled: true,
+              automationEnabled: true,
+              marketingEnabled: true,
+              mobileAppEnabled: true,
             },
           },
         });
@@ -194,6 +232,12 @@ export class AuthService {
       // Hash password before creating user (no longer using entity hooks)
       const bcryptRounds = this.configService.get<number>('auth.bcryptRounds') || 12;
       const hashedPassword = await bcrypt.hash(registerDto.password, bcryptRounds);
+
+      if (this.isConfiguredSuperAdminEmail(registerDto.email)) {
+        userRole = UserRole.SUPER_ADMIN;
+        userStatus = UserStatus.ACTIVE;
+        pendingApproval = false;
+      }
 
       // Create user
       const user = this.userRepository.create({
@@ -766,7 +810,7 @@ export class AuthService {
           firstName,
           lastName,
           password: await bcrypt.hash(Math.random().toString(36), 10), // Random password
-          role: UserRole.ADMIN,
+          role: this.isConfiguredSuperAdminEmail(email) ? UserRole.SUPER_ADMIN : UserRole.ADMIN,
           status: UserStatus.ACTIVE,
           workspaceId: workspace.id,
           // Store Google ID if you have a field for it
@@ -775,6 +819,9 @@ export class AuthService {
         this.logger.log(`New user ${user.id} created via Google OAuth`);
       } else {
         // Update last login
+        if (this.isConfiguredSuperAdminEmail(user.email) && user.role !== UserRole.SUPER_ADMIN) {
+          user.role = UserRole.SUPER_ADMIN;
+        }
         user.updateLastLogin();
         await this.userRepository.save(user);
       }
@@ -851,7 +898,7 @@ export class AuthService {
           firstName,
           lastName,
           password: await bcrypt.hash(Math.random().toString(36), 10), // Random password
-          role: UserRole.ADMIN,
+          role: this.isConfiguredSuperAdminEmail(email) ? UserRole.SUPER_ADMIN : UserRole.ADMIN,
           status: UserStatus.ACTIVE,
           workspaceId: workspace.id,
         });
@@ -859,6 +906,9 @@ export class AuthService {
         this.logger.log(`New user ${user.id} created via Slack OAuth`);
       } else {
         // Update last login
+        if (this.isConfiguredSuperAdminEmail(user.email) && user.role !== UserRole.SUPER_ADMIN) {
+          user.role = UserRole.SUPER_ADMIN;
+        }
         user.updateLastLogin();
         await this.userRepository.save(user);
       }

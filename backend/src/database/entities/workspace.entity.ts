@@ -17,6 +17,15 @@ export interface WorkspaceSettings {
     aiEnabled: boolean;
     slackIntegration: boolean;
     emailIntegration: boolean;
+    whatsappEnabled?: boolean;
+    contactsEnabled?: boolean;
+    leadsEnabled?: boolean;
+    calendarEnabled?: boolean;
+    pipelineEnabled?: boolean;
+    tasksEnabled?: boolean;
+    automationEnabled?: boolean;
+    marketingEnabled?: boolean;
+    mobileAppEnabled?: boolean;
   };
 }
 

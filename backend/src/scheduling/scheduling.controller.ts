@@ -57,7 +57,7 @@ export class SchedulingController {
   @UseGuards(JwtAuthGuard, WorkspaceGuard, RolesGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get my availability schedule' })
-  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'support_agent')
+  @Roles('super_admin', 'admin', 'manager', 'sales_rep', 'closer', 'setter', 'support_agent')
   async getAvailabilities(
     @CurrentWorkspace('id') workspaceId: string,
     @CurrentUser('id') userId: string,
@@ -220,7 +220,7 @@ export class SchedulingController {
     const end = endDate ? new Date(endDate) : undefined;
 
     // Admins and managers see all bookings, others see only their own
-    const userId = ['admin', 'manager'].includes(user.role) ? undefined : user.id;
+    const userId = ['super_admin', 'admin', 'manager'].includes(user.role) ? undefined : user.id;
 
     return this.schedulingService.getBookings(workspaceId, userId, start, end);
   }

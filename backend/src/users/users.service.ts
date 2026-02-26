@@ -38,7 +38,7 @@ export class UsersService {
     creatorRole: UserRole,
   ): Promise<UserResponseDto> {
     // Check if creator has permission (only ADMIN and MANAGER can create users)
-    if (![UserRole.ADMIN, UserRole.MANAGER].includes(creatorRole)) {
+    if (![UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.MANAGER].includes(creatorRole)) {
       throw new ForbiddenException('You do not have permission to create users');
     }
 
@@ -154,7 +154,7 @@ export class UsersService {
     currentUserRole: UserRole,
   ): Promise<UserResponseDto> {
     // Only ADMIN can change roles
-    if (currentUserRole !== UserRole.ADMIN) {
+    if (![UserRole.SUPER_ADMIN, UserRole.ADMIN].includes(currentUserRole)) {
       throw new ForbiddenException('Only administrators can change user roles');
     }
 
@@ -182,7 +182,7 @@ export class UsersService {
     currentUserRole: UserRole,
   ): Promise<UserResponseDto> {
     // Only ADMIN and MANAGER can change status
-    if (![UserRole.ADMIN, UserRole.MANAGER].includes(currentUserRole)) {
+    if (![UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.MANAGER].includes(currentUserRole)) {
       throw new ForbiddenException('You do not have permission to change user status');
     }
 
@@ -209,7 +209,7 @@ export class UsersService {
     currentUserRole: UserRole,
   ): Promise<void> {
     // Only ADMIN can delete users
-    if (currentUserRole !== UserRole.ADMIN) {
+    if (![UserRole.SUPER_ADMIN, UserRole.ADMIN].includes(currentUserRole)) {
       throw new ForbiddenException('Only administrators can remove users');
     }
 
@@ -244,12 +244,34 @@ export class UsersService {
       throw new ConflictException('User already exists in this workspace');
     }
 
-    // Get workspace invite code for the registration link
+    // Get (or create) workspace invite code for registration
     const workspace = await this.workspaceRepository.findOne({ where: { id: workspaceId } });
-    const inviteCode = workspace?.inviteCode || '';
+    if (!workspace) {
+      throw new NotFoundException('Workspace not found');
+    }
 
-    const frontendUrl = this.configService.get('FRONTEND_URL') || process.env.FRONTEND_URL || 'http://etcrm.primafisoft.com';
-    const inviteUrl = `${frontendUrl}/register?code=${inviteCode}`;
+    let inviteCode = (workspace.inviteCode || '').trim().toUpperCase();
+    if (!inviteCode) {
+      workspace.regenerateInviteCode();
+      await this.workspaceRepository.save(workspace);
+      inviteCode = workspace.inviteCode;
+    }
+
+    const configuredFrontendUrl =
+      this.configService.get<string>('FRONTEND_URL') ||
+      process.env.FRONTEND_URL ||
+      'https://etcrm.primafisoft.com';
+
+    let frontendOrigin = 'https://etcrm.primafisoft.com';
+    try {
+      frontendOrigin = new URL(configuredFrontendUrl).origin;
+    } catch {
+      frontendOrigin = 'https://etcrm.primafisoft.com';
+    }
+
+    const inviteUrlObj = new URL('/register', frontendOrigin);
+    inviteUrlObj.searchParams.set('code', inviteCode);
+    const inviteUrl = inviteUrlObj.toString();
 
     // Send invitation email
     await this.emailService.sendInviteEmail(
@@ -257,6 +279,7 @@ export class UsersService {
       inviterName,
       inviteUrl,
       inviteDto.customMessage,
+      inviteCode,
     );
 
     return {
@@ -272,7 +295,7 @@ export class UsersService {
   }
 
   async regenerateWorkspaceInviteCode(workspaceId: string, currentUserRole: UserRole): Promise<{ inviteCode: string }> {
-    if (currentUserRole !== UserRole.ADMIN) {
+    if (![UserRole.SUPER_ADMIN, UserRole.ADMIN].includes(currentUserRole)) {
       throw new ForbiddenException('Only administrators can regenerate invite codes');
     }
     const workspace = await this.workspaceRepository.findOne({ where: { id: workspaceId } });

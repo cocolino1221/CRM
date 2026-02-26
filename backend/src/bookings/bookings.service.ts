@@ -200,7 +200,7 @@ export class BookingsService {
 
     // Only host or admin can cancel
     const user = await this.userRepository.findOne({ where: { id: userId } });
-    if (booking.hostId !== userId && user?.role !== 'admin') {
+    if (booking.hostId !== userId && !['admin', 'super_admin'].includes(user?.role || '')) {
       throw new ForbiddenException('You do not have permission to cancel this booking');
     }
 

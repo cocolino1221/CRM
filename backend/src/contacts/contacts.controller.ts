@@ -261,6 +261,16 @@ export class ContactsController {
     return this.contactsService.addTags(workspaceId, id, tags);
   }
 
+  @Post('maintenance/move-tagged-to-contacted')
+  @ApiOperation({ summary: 'Move existing tagged contacts to Contacted stage' })
+  @ApiResponse({ status: 200, description: 'Tagged contacts moved successfully' })
+  @Roles('admin', 'manager')
+  async moveTaggedContactsToContacted(
+    @CurrentWorkspace('id') workspaceId: string,
+  ) {
+    return this.contactsService.moveExistingTaggedContactsToContacted(workspaceId);
+  }
+
   @Delete(':id/tags')
   @ApiOperation({ summary: 'Remove tags from a contact' })
   @ApiParam({ name: 'id', description: 'Contact ID' })
@@ -288,7 +298,7 @@ export class ContactsController {
     @CurrentUser() user: User,
   ) {
     // Admins and managers see all data, other roles only see their own
-    const ownerId = ['admin', 'manager'].includes(user.role) ? undefined : user.id;
+    const ownerId = ['super_admin', 'admin', 'manager'].includes(user.role) ? undefined : user.id;
     return this.contactsService.getAnalyticsOverview(workspaceId, ownerId);
   }
 
@@ -301,7 +311,7 @@ export class ContactsController {
     @CurrentUser() user: User,
   ) {
     // Admins and managers see all data, other roles only see their own
-    const ownerId = ['admin', 'manager'].includes(user.role) ? undefined : user.id;
+    const ownerId = ['super_admin', 'admin', 'manager'].includes(user.role) ? undefined : user.id;
     return this.contactsService.getAnalyticsByTags(workspaceId, ownerId);
   }
 
@@ -314,7 +324,7 @@ export class ContactsController {
     @CurrentUser() user: User,
   ) {
     // Admins and managers see all data, other roles only see their own
-    const ownerId = ['admin', 'manager'].includes(user.role) ? undefined : user.id;
+    const ownerId = ['super_admin', 'admin', 'manager'].includes(user.role) ? undefined : user.id;
     return this.contactsService.getConversionFunnel(workspaceId, ownerId);
   }
 
@@ -322,7 +332,7 @@ export class ContactsController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Assign all contacts without a pipeline to the default pipeline' })
   @ApiResponse({ status: 200, description: 'Orphan contacts assigned' })
-  @Roles('admin', 'manager')
+  @Roles('super_admin', 'admin', 'manager')
   async fixPipeline(
     @CurrentWorkspace('id') workspaceId: string,
   ) {
