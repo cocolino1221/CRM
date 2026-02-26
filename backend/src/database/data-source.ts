@@ -25,8 +25,8 @@ const baseConfig: any = {
 
   // Connection pool settings
   extra: {
-    max: configService.get('DB_MAX_CONNECTIONS', 100),
-    min: configService.get('DB_MIN_CONNECTIONS', 5),
+    max: configService.get('DB_MAX_CONNECTIONS', 50),
+    min: configService.get('DB_MIN_CONNECTIONS', 2),
     connectionTimeoutMillis: configService.get('DB_CONNECTION_TIMEOUT', 60000),
     idleTimeoutMillis: configService.get('DB_IDLE_TIMEOUT', 600000),
     acquireTimeoutMillis: configService.get('DB_ACQUIRE_TIMEOUT', 60000),
