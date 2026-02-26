@@ -36,7 +36,8 @@ export class AuthService implements OnModuleInit {
   private readonly oauthStateTtlMs = 10 * 60 * 1000;
   private readonly oauthAuthCodeTtlMs = 5 * 60 * 1000;
   private readonly oauthStateSecret: string;
-  private readonly superAdminEmail: string;
+  private readonly superAdminEmailSet: Set<string>;
+  private readonly superAdminEmailRawCandidates: string[];
 
   constructor(
     @InjectRepository(User)
@@ -50,28 +51,83 @@ export class AuthService implements OnModuleInit {
     private emailService: EmailService,
   ) {
     this.oauthStateSecret = this.configService.get<string>('auth.jwtSecret') ?? '';
-    this.superAdminEmail = (
-      this.configService.get<string>('SUPER_ADMIN_EMAIL') ||
-      process.env.SUPER_ADMIN_EMAIL ||
-      'constantin.pristavita@gmail.com'
-    ).trim().toLowerCase();
+    const configured = [
+      ...(String(this.configService.get<string>('SUPER_ADMIN_EMAILS') || process.env.SUPER_ADMIN_EMAILS || '')
+        .split(',')
+        .map((entry) => entry.trim())
+        .filter(Boolean)),
+      String(this.configService.get<string>('SUPER_ADMIN_EMAIL') || process.env.SUPER_ADMIN_EMAIL || '').trim(),
+      // default fallback(s)
+      'constantin.pristavita@gmail.com',
+      'constantinpristavita@gmail.com',
+    ]
+      .map((entry) => entry.trim().toLowerCase())
+      .filter(Boolean);
+
+    this.superAdminEmailSet = new Set(
+      configured
+        .map((entry) => this.normalizeEmailForMatch(entry))
+        .filter(Boolean),
+    );
+    this.superAdminEmailRawCandidates = this.expandEmailCandidates(configured);
   }
 
   async onModuleInit(): Promise<void> {
     await this.promoteConfiguredSuperAdmin();
   }
 
+  private normalizeEmailForMatch(email?: string): string {
+    const raw = String(email || '').trim().toLowerCase();
+    if (!raw || !raw.includes('@')) return raw;
+    const [localPart, domainPart] = raw.split('@');
+    if (!localPart || !domainPart) return raw;
+
+    if (domainPart === 'gmail.com' || domainPart === 'googlemail.com') {
+      const localBase = localPart.split('+')[0].replace(/\./g, '');
+      return `${localBase}@gmail.com`;
+    }
+
+    return `${localPart}@${domainPart}`;
+  }
+
+  private expandEmailCandidates(items: string[]): string[] {
+    const out = new Set<string>();
+    for (const input of items) {
+      const raw = String(input || '').trim().toLowerCase();
+      if (!raw || !raw.includes('@')) continue;
+      out.add(raw);
+
+      const [localPart, domainPart] = raw.split('@');
+      if (!localPart || !domainPart) continue;
+
+      if (domainPart === 'gmail.com' || domainPart === 'googlemail.com') {
+        const withoutPlus = localPart.split('+')[0];
+        out.add(`${withoutPlus}@gmail.com`);
+        out.add(`${withoutPlus.replace(/\./g, '')}@gmail.com`);
+      }
+    }
+    return Array.from(out);
+  }
+
   private isConfiguredSuperAdminEmail(email?: string): boolean {
-    return !!email && email.trim().toLowerCase() === this.superAdminEmail;
+    const normalized = this.normalizeEmailForMatch(email);
+    return !!normalized && this.superAdminEmailSet.has(normalized);
   }
 
   private async promoteConfiguredSuperAdmin(): Promise<void> {
-    if (!this.superAdminEmail) return;
-    const user = await this.userRepository.findOne({ where: { email: this.superAdminEmail } });
-    if (!user || user.role === UserRole.SUPER_ADMIN) return;
-    user.role = UserRole.SUPER_ADMIN;
-    await this.userRepository.save(user);
-    this.logger.log(`Promoted ${this.superAdminEmail} to SUPER_ADMIN`);
+    if (!this.superAdminEmailRawCandidates.length) return;
+
+    const users = await this.userRepository
+      .createQueryBuilder('user')
+      .where('LOWER(user.email) IN (:...emails)', { emails: this.superAdminEmailRawCandidates })
+      .getMany();
+
+    for (const user of users) {
+      if (!this.isConfiguredSuperAdminEmail(user.email) || user.role === UserRole.SUPER_ADMIN) continue;
+      user.role = UserRole.SUPER_ADMIN;
+      await this.userRepository.save(user);
+      this.logger.log(`Promoted ${user.email} to SUPER_ADMIN`);
+    }
   }
 
   /**
