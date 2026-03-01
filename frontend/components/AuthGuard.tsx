@@ -22,6 +22,8 @@ export default function AuthGuard({ children }: AuthGuardProps) {
     '/signin',
     '/register',
     '/signup',
+    '/forgot-password',
+    '/reset-password',
     '/privacy',
     '/terms',
     '/auth/callback', // OAuth callback must stay public so tokens can be exchanged
