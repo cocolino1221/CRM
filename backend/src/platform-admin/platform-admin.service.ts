@@ -1,9 +1,17 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
+import { ConfigService } from '@nestjs/config';
+import * as bcrypt from 'bcrypt';
 import { Workspace } from '../database/entities/workspace.entity';
-import { User } from '../database/entities/user.entity';
+import { User, UserRole, UserStatus } from '../database/entities/user.entity';
 import { Contact } from '../database/entities/contact.entity';
+import { Activity } from '../database/entities/activity.entity';
+import { Notification } from '../database/entities/notification.entity';
+import { IntegrationLog } from '../database/entities/integration.entity';
+import { CreatePlatformWorkspaceDto } from './dto/create-platform-workspace.dto';
+
+type WorkspacePlan = 'trial' | 'starter' | 'professional' | 'enterprise';
 
 type WorkspaceFeatureFlags = {
   aiEnabled: boolean;
@@ -20,6 +28,23 @@ type WorkspaceFeatureFlags = {
   mobileAppEnabled: boolean;
 };
 
+type PlatformLogSource = 'activity' | 'notification' | 'integration';
+type PlatformLogLevel = 'info' | 'warn' | 'error';
+
+type PlatformLogEntry = {
+  id: string;
+  source: PlatformLogSource;
+  level: PlatformLogLevel;
+  category: string;
+  message: string;
+  createdAt: Date;
+  workspaceId: string;
+  workspaceName?: string;
+  actor?: string;
+  referenceId?: string;
+  metadata?: Record<string, any>;
+};
+
 @Injectable()
 export class PlatformAdminService {
   constructor(
@@ -29,6 +54,13 @@ export class PlatformAdminService {
     private readonly userRepository: Repository<User>,
     @InjectRepository(Contact)
     private readonly contactRepository: Repository<Contact>,
+    @InjectRepository(Activity)
+    private readonly activityRepository: Repository<Activity>,
+    @InjectRepository(Notification)
+    private readonly notificationRepository: Repository<Notification>,
+    @InjectRepository(IntegrationLog)
+    private readonly integrationLogRepository: Repository<IntegrationLog>,
+    private readonly configService: ConfigService,
   ) {}
 
   private getDefaultFeatures(): WorkspaceFeatureFlags {
@@ -62,10 +94,124 @@ export class PlatformAdminService {
     return next;
   }
 
+  private getDefaultWorkspaceSettings() {
+    return {
+      timezone: 'UTC',
+      dateFormat: 'MM/DD/YYYY',
+      currency: 'USD',
+      features: this.getDefaultFeatures(),
+    };
+  }
+
+  private sanitizeDomainCandidate(raw: string): string {
+    return String(raw || '')
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9-]+/g, '-')
+      .replace(/-{2,}/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 80);
+  }
+
+  private async resolveWorkspaceDomain(
+    proposedDomain: string | undefined,
+    workspaceName: string,
+    workspaceRepo: Repository<Workspace> = this.workspaceRepository,
+  ): Promise<string> {
+    if (proposedDomain && proposedDomain.trim()) {
+      const sanitized = this.sanitizeDomainCandidate(proposedDomain);
+      if (!sanitized) {
+        throw new BadRequestException('Invalid workspace domain');
+      }
+
+      const exists = await workspaceRepo.exists({ where: { domain: sanitized } });
+      if (exists) {
+        throw new ConflictException('Workspace domain already exists');
+      }
+
+      return sanitized;
+    }
+
+    const base = this.sanitizeDomainCandidate(workspaceName) || 'workspace';
+    let candidate = base;
+    let suffix = 1;
+
+    while (await workspaceRepo.exists({ where: { domain: candidate } })) {
+      suffix += 1;
+      const suffixLabel = `${suffix}`;
+      const maxBaseLength = Math.max(2, 80 - suffixLabel.length - 1);
+      candidate = `${base.slice(0, maxBaseLength)}-${suffixLabel}`;
+    }
+
+    return candidate;
+  }
+
   private extractWorkspaceFeatures(workspace: Workspace): WorkspaceFeatureFlags {
     const settings = workspace?.settings && typeof workspace.settings === 'object' ? workspace.settings : {};
     const features = (settings as any).features;
     return this.sanitizeFeatures(features);
+  }
+
+  async createWorkspace(payload: CreatePlatformWorkspaceDto) {
+    return this.workspaceRepository.manager.transaction(async (manager) => {
+      const workspaceRepo = manager.getRepository(Workspace);
+      const userRepo = manager.getRepository(User);
+
+      const normalizedAdminEmail = payload.adminEmail.trim().toLowerCase();
+      const existingUser = await userRepo.findOne({
+        where: { email: normalizedAdminEmail },
+      });
+      if (existingUser) {
+        throw new ConflictException('A user with this admin email already exists');
+      }
+
+      const domain = await this.resolveWorkspaceDomain(payload.domain, payload.name, workspaceRepo);
+
+      const workspace = workspaceRepo.create({
+        name: payload.name.trim(),
+        domain,
+        plan: (payload.plan || 'trial') as WorkspacePlan,
+        isActive: payload.isActive ?? true,
+        settings: this.getDefaultWorkspaceSettings(),
+      });
+      const savedWorkspace = await workspaceRepo.save(workspace);
+
+      const bcryptRounds = this.configService.get<number>('auth.bcryptRounds') || 12;
+      const hashedPassword = await bcrypt.hash(payload.adminPassword, bcryptRounds);
+
+      const adminUser = userRepo.create({
+        email: normalizedAdminEmail,
+        firstName: payload.adminFirstName.trim(),
+        lastName: payload.adminLastName.trim(),
+        password: hashedPassword,
+        role: UserRole.ADMIN,
+        status: UserStatus.ACTIVE,
+        workspaceId: savedWorkspace.id,
+      });
+      const savedAdminUser = await userRepo.save(adminUser);
+
+      return {
+        message: 'Workspace created successfully',
+        workspace: {
+          id: savedWorkspace.id,
+          name: savedWorkspace.name,
+          domain: savedWorkspace.domain,
+          plan: savedWorkspace.plan,
+          isActive: savedWorkspace.isActive,
+          inviteCode: savedWorkspace.inviteCode,
+          createdAt: savedWorkspace.createdAt,
+          features: this.extractWorkspaceFeatures(savedWorkspace),
+        },
+        adminUser: {
+          id: savedAdminUser.id,
+          email: savedAdminUser.email,
+          firstName: savedAdminUser.firstName,
+          lastName: savedAdminUser.lastName,
+          role: savedAdminUser.role,
+          status: savedAdminUser.status,
+        },
+      };
+    });
   }
 
   async getOverview() {
@@ -195,6 +341,156 @@ export class PlatformAdminService {
       workspaceId: workspace.id,
       workspaceName: workspace.name,
       features: next,
+    };
+  }
+
+  async getPlatformLogs(options?: { limit?: number; workspaceId?: string }) {
+    const safeLimit = Math.min(Math.max(options?.limit || 200, 20), 500);
+    const workspaceId = options?.workspaceId;
+
+    if (workspaceId) {
+      const workspaceExists = await this.workspaceRepository.exists({ where: { id: workspaceId } });
+      if (!workspaceExists) {
+        throw new NotFoundException('Workspace not found');
+      }
+    }
+
+    const whereClause = workspaceId ? { workspaceId } : ({} as any);
+
+    const [activities, notifications, integrationLogs] = await Promise.all([
+      this.activityRepository.find({
+        where: whereClause,
+        relations: ['user'],
+        order: { createdAt: 'DESC' },
+        take: safeLimit,
+      }),
+      this.notificationRepository.find({
+        where: whereClause,
+        relations: ['user'],
+        order: { createdAt: 'DESC' },
+        take: safeLimit,
+      }),
+      this.integrationLogRepository.find({
+        where: whereClause,
+        relations: ['integration'],
+        order: { createdAt: 'DESC' },
+        take: safeLimit,
+      }),
+    ]);
+
+    const workspaceIds = Array.from(new Set([
+      ...activities.map((item) => item.workspaceId),
+      ...notifications.map((item) => item.workspaceId),
+      ...integrationLogs.map((item) => item.workspaceId),
+    ])).filter(Boolean);
+
+    const workspaces = workspaceIds.length
+      ? await this.workspaceRepository.find({
+          where: { id: In(workspaceIds) },
+          select: ['id', 'name'],
+        })
+      : [];
+
+    const workspaceNameMap = new Map(workspaces.map((workspace) => [workspace.id, workspace.name]));
+
+    const activityLogs: PlatformLogEntry[] = activities.map((activity) => {
+      const actorName = activity.user
+        ? `${activity.user.firstName} ${activity.user.lastName}`.trim()
+        : undefined;
+      const level: PlatformLogLevel =
+        activity.outcome === 'failed' ? 'error'
+          : activity.type === 'system_event' || activity.type === 'api_call' ? 'warn'
+            : 'info';
+
+      return {
+        id: activity.id,
+        source: 'activity',
+        level,
+        category: String(activity.type || 'activity'),
+        message: activity.title || activity.description || 'Activity event',
+        createdAt: activity.createdAt,
+        workspaceId: activity.workspaceId,
+        workspaceName: workspaceNameMap.get(activity.workspaceId),
+        actor: actorName,
+        referenceId: activity.contactId || activity.dealId || activity.taskId,
+        metadata: activity.metadata,
+      };
+    });
+
+    const notificationLogs: PlatformLogEntry[] = notifications.map((notification) => {
+      const actorName = notification.user
+        ? `${notification.user.firstName} ${notification.user.lastName}`.trim()
+        : undefined;
+      const content = `${notification.title || 'Notification'}${notification.message ? ` - ${notification.message}` : ''}`;
+      const lowerContent = content.toLowerCase();
+      const level: PlatformLogLevel =
+        lowerContent.includes('error') || lowerContent.includes('failed')
+          ? 'error'
+          : notification.type === 'system'
+            ? 'warn'
+            : 'info';
+
+      return {
+        id: notification.id,
+        source: 'notification',
+        level,
+        category: String(notification.type || 'notification'),
+        message: content,
+        createdAt: notification.createdAt,
+        workspaceId: notification.workspaceId,
+        workspaceName: workspaceNameMap.get(notification.workspaceId),
+        actor: actorName,
+        referenceId: notification.userId,
+        metadata: notification.metadata,
+      };
+    });
+
+    const integrationSystemLogs: PlatformLogEntry[] = integrationLogs.map((log) => {
+      const level: PlatformLogLevel =
+        log.level === 'error' ? 'error'
+          : log.level === 'warn' ? 'warn'
+            : 'info';
+
+      return {
+        id: log.id,
+        source: 'integration',
+        level,
+        category: log.integration?.type || 'integration',
+        message: log.integration?.name
+          ? `${log.integration.name}: ${log.message}`
+          : log.message,
+        createdAt: log.createdAt,
+        workspaceId: log.workspaceId,
+        workspaceName: workspaceNameMap.get(log.workspaceId),
+        actor: log.integration?.name,
+        referenceId: log.integrationId,
+        metadata: {
+          action: log.action,
+          duration: log.duration,
+          ...(log.data || {}),
+        },
+      };
+    });
+
+    const mergedLogs = [...activityLogs, ...notificationLogs, ...integrationSystemLogs]
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+      .slice(0, safeLimit);
+
+    const sources: Record<PlatformLogSource, number> = {
+      activity: 0,
+      notification: 0,
+      integration: 0,
+    };
+
+    for (const log of mergedLogs) {
+      sources[log.source] += 1;
+    }
+
+    return {
+      logs: mergedLogs,
+      total: mergedLogs.length,
+      sources,
+      generatedAt: new Date(),
     };
   }
 }

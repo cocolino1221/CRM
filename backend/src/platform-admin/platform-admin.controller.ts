@@ -1,8 +1,9 @@
-import { Controller, Get, Req, UseGuards, ForbiddenException, Param, Patch, Body } from '@nestjs/common';
+import { Controller, Get, Req, UseGuards, ForbiddenException, Param, Patch, Body, Post, Query } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PlatformAdminService } from './platform-admin.service';
 import { UserRole } from '../database/entities/user.entity';
+import { CreatePlatformWorkspaceDto } from './dto/create-platform-workspace.dto';
 
 @ApiTags('Platform Admin')
 @Controller('platform-admin')
@@ -32,6 +33,13 @@ export class PlatformAdminController {
     return this.platformAdminService.getWorkspaceDetail(id);
   }
 
+  @Post('workspaces')
+  @ApiOperation({ summary: 'Create a new workspace/company with initial admin user' })
+  async createWorkspace(@Req() req: any, @Body() body: CreatePlatformWorkspaceDto) {
+    this.assertSuperAdmin(req);
+    return this.platformAdminService.createWorkspace(body);
+  }
+
   @Patch('workspaces/:id/features')
   @ApiOperation({ summary: 'Update workspace feature access' })
   async updateWorkspaceFeatures(
@@ -54,5 +62,22 @@ export class PlatformAdminController {
   ) {
     this.assertSuperAdmin(req);
     return this.platformAdminService.updateWorkspaceFeatures(id, body || {});
+  }
+
+  @Get('logs')
+  @ApiOperation({ summary: 'Get global system logs across all workspaces' })
+  async getPlatformLogs(
+    @Req() req: any,
+    @Query('limit') limit?: string,
+    @Query('workspaceId') workspaceId?: string,
+  ) {
+    this.assertSuperAdmin(req);
+
+    const parsedLimit = typeof limit === 'string' ? Number.parseInt(limit, 10) : Number.NaN;
+
+    return this.platformAdminService.getPlatformLogs({
+      limit: Number.isFinite(parsedLimit) ? parsedLimit : undefined,
+      workspaceId: workspaceId?.trim() || undefined,
+    });
   }
 }

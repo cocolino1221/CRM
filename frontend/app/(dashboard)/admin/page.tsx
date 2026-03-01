@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { Building2, Users, UserCheck, ChevronDown, ChevronRight, Shield, Globe, Calendar, Search } from 'lucide-react';
+import { useState, useEffect, type FormEvent } from 'react';
+import { Building2, Users, UserCheck, ChevronDown, ChevronRight, Shield, Search } from 'lucide-react';
 import api from '@/lib/api';
 
 interface WorkspaceUser {
@@ -45,6 +45,18 @@ interface OverviewData {
   companies: WorkspaceCompany[];
 }
 
+type WorkspacePlan = 'trial' | 'starter' | 'professional' | 'enterprise';
+
+interface CreateWorkspacePayload {
+  name: string;
+  domain?: string;
+  plan: WorkspacePlan;
+  adminEmail: string;
+  adminFirstName: string;
+  adminLastName: string;
+  adminPassword: string;
+}
+
 const roleBadgeColors: Record<string, string> = {
   super_admin: 'bg-red-100 text-red-700',
   admin: 'bg-purple-100 text-purple-700',
@@ -57,6 +69,7 @@ const roleBadgeColors: Record<string, string> = {
 };
 
 const planBadgeColors: Record<string, string> = {
+  trial: 'bg-indigo-100 text-indigo-700',
   free: 'bg-gray-100 text-gray-600',
   starter: 'bg-blue-100 text-blue-700',
   professional: 'bg-purple-100 text-purple-700',
@@ -85,6 +98,18 @@ export default function AdminPage() {
   const [expandedWorkspaces, setExpandedWorkspaces] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState('');
   const [savingWorkspaceId, setSavingWorkspaceId] = useState<string | null>(null);
+  const [isCreatingWorkspace, setIsCreatingWorkspace] = useState(false);
+  const [createWorkspaceError, setCreateWorkspaceError] = useState<string | null>(null);
+  const [createWorkspaceSuccess, setCreateWorkspaceSuccess] = useState<string | null>(null);
+  const [createWorkspaceForm, setCreateWorkspaceForm] = useState<CreateWorkspacePayload>({
+    name: '',
+    domain: '',
+    plan: 'trial',
+    adminEmail: '',
+    adminFirstName: '',
+    adminLastName: '',
+    adminPassword: '',
+  });
 
   useEffect(() => {
     fetchOverview();
@@ -139,6 +164,40 @@ export default function AdminPage() {
     }
   };
 
+  const handleCreateWorkspace = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    try {
+      setIsCreatingWorkspace(true);
+      setCreateWorkspaceError(null);
+      setCreateWorkspaceSuccess(null);
+
+      await api.post('/platform-admin/workspaces', {
+        ...createWorkspaceForm,
+        domain: createWorkspaceForm.domain?.trim() || undefined,
+      });
+
+      setCreateWorkspaceForm({
+        name: '',
+        domain: '',
+        plan: 'trial',
+        adminEmail: '',
+        adminFirstName: '',
+        adminLastName: '',
+        adminPassword: '',
+      });
+      setCreateWorkspaceSuccess('Workspace created successfully.');
+      await fetchOverview();
+    } catch (err: any) {
+      const message = Array.isArray(err?.response?.data?.message)
+        ? err.response.data.message.join(', ')
+        : err?.response?.data?.message || 'Failed to create workspace';
+      setCreateWorkspaceError(message);
+    } finally {
+      setIsCreatingWorkspace(false);
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
@@ -175,6 +234,94 @@ export default function AdminPage() {
         <h1 className="text-2xl font-bold text-gray-900">Platform Admin</h1>
         <p className="text-sm text-gray-500 mt-1">Manage all workspaces across the platform</p>
       </div>
+
+      <form
+        onSubmit={handleCreateWorkspace}
+        className="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm space-y-4"
+      >
+        <div>
+          <h2 className="text-base font-semibold text-gray-900">Create New Company</h2>
+          <p className="text-xs text-gray-500 mt-1">Creates a new workspace and initial admin user.</p>
+        </div>
+
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+          <input
+            type="text"
+            value={createWorkspaceForm.name}
+            onChange={(event) => setCreateWorkspaceForm((prev) => ({ ...prev, name: event.target.value }))}
+            placeholder="Company / Workspace name"
+            required
+            className="rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          />
+          <input
+            type="text"
+            value={createWorkspaceForm.domain || ''}
+            onChange={(event) => setCreateWorkspaceForm((prev) => ({ ...prev, domain: event.target.value.toLowerCase() }))}
+            placeholder="Domain (optional, ex: acme-corp)"
+            className="rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          />
+          <select
+            value={createWorkspaceForm.plan}
+            onChange={(event) => setCreateWorkspaceForm((prev) => ({ ...prev, plan: event.target.value as WorkspacePlan }))}
+            className="rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          >
+            <option value="trial">Trial</option>
+            <option value="starter">Starter</option>
+            <option value="professional">Professional</option>
+            <option value="enterprise">Enterprise</option>
+          </select>
+          <input
+            type="email"
+            value={createWorkspaceForm.adminEmail}
+            onChange={(event) => setCreateWorkspaceForm((prev) => ({ ...prev, adminEmail: event.target.value }))}
+            placeholder="Admin email"
+            required
+            className="rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          />
+          <input
+            type="text"
+            value={createWorkspaceForm.adminFirstName}
+            onChange={(event) => setCreateWorkspaceForm((prev) => ({ ...prev, adminFirstName: event.target.value }))}
+            placeholder="Admin first name"
+            required
+            className="rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          />
+          <input
+            type="text"
+            value={createWorkspaceForm.adminLastName}
+            onChange={(event) => setCreateWorkspaceForm((prev) => ({ ...prev, adminLastName: event.target.value }))}
+            placeholder="Admin last name"
+            required
+            className="rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          />
+        </div>
+
+        <div className="flex flex-col gap-2 md:flex-row md:items-center">
+          <input
+            type="password"
+            value={createWorkspaceForm.adminPassword}
+            onChange={(event) => setCreateWorkspaceForm((prev) => ({ ...prev, adminPassword: event.target.value }))}
+            placeholder="Admin password (min 12 chars, uppercase, lowercase, number, special char)"
+            minLength={12}
+            required
+            className="flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          />
+          <button
+            type="submit"
+            disabled={isCreatingWorkspace}
+            className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white disabled:bg-indigo-300"
+          >
+            {isCreatingWorkspace ? 'Creating...' : 'Create Company'}
+          </button>
+        </div>
+
+        {createWorkspaceError && (
+          <p className="text-sm text-red-600">{createWorkspaceError}</p>
+        )}
+        {createWorkspaceSuccess && (
+          <p className="text-sm text-green-600">{createWorkspaceSuccess}</p>
+        )}
+      </form>
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
