@@ -1,4 +1,4 @@
-import { Controller, Get, UseGuards, Param, Patch, Body, Post, Query } from '@nestjs/common';
+import { Controller, Get, UseGuards, Param, Patch, Body, Post, Delete, Query } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { PlatformAdminGuard } from './platform-admin.guard';
 import { PlatformAdminService } from './platform-admin.service';
@@ -28,6 +28,27 @@ export class PlatformAdminController {
   @ApiOperation({ summary: 'Create a new workspace/company with initial admin user' })
   async createWorkspace(@Body() body: CreatePlatformWorkspaceDto) {
     return this.platformAdminService.createWorkspace(body);
+  }
+
+  @Patch('workspaces/:id')
+  @ApiOperation({ summary: 'Update workspace name, plan, or active status' })
+  async updateWorkspace(
+    @Param('id') id: string,
+    @Body() body: { name?: string; plan?: string; isActive?: boolean },
+  ) {
+    return this.platformAdminService.updateWorkspace(id, body || {});
+  }
+
+  @Delete('workspaces/:id')
+  @ApiOperation({ summary: 'Delete a workspace and all its data' })
+  async deleteWorkspace(@Param('id') id: string) {
+    return this.platformAdminService.deleteWorkspace(id);
+  }
+
+  @Delete('users/:id')
+  @ApiOperation({ summary: 'Delete a user from a workspace' })
+  async deleteUser(@Param('id') id: string) {
+    return this.platformAdminService.deleteUser(id);
   }
 
   @Patch('workspaces/:id/features')

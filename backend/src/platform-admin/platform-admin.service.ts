@@ -344,6 +344,76 @@ export class PlatformAdminService {
     };
   }
 
+  async updateWorkspace(workspaceId: string, payload: { name?: string; plan?: string; isActive?: boolean }) {
+    const workspace = await this.workspaceRepository.findOne({ where: { id: workspaceId } });
+    if (!workspace) {
+      throw new NotFoundException('Workspace not found');
+    }
+
+    if (payload.name !== undefined) {
+      workspace.name = payload.name.trim();
+    }
+    if (payload.plan !== undefined) {
+      workspace.plan = payload.plan as WorkspacePlan;
+    }
+    if (payload.isActive !== undefined) {
+      workspace.isActive = payload.isActive;
+    }
+
+    await this.workspaceRepository.save(workspace);
+
+    return {
+      id: workspace.id,
+      name: workspace.name,
+      domain: workspace.domain,
+      plan: workspace.plan,
+      isActive: workspace.isActive,
+      updatedAt: workspace.updatedAt,
+    };
+  }
+
+  async deleteWorkspace(workspaceId: string) {
+    const workspace = await this.workspaceRepository.findOne({ where: { id: workspaceId } });
+    if (!workspace) {
+      throw new NotFoundException('Workspace not found');
+    }
+
+    // Delete all workspace data in dependency order
+    await this.workspaceRepository.manager.transaction(async (manager) => {
+      // Delete notifications
+      await manager.delete(Notification, { workspaceId });
+      // Delete activities
+      await manager.delete(Activity, { workspaceId });
+      // Delete contacts (soft-delete aware — use hard delete)
+      await manager.query('DELETE FROM contacts WHERE "workspaceId" = $1', [workspaceId]);
+      // Delete users
+      await manager.delete(User, { workspaceId });
+      // Delete workspace
+      await manager.delete(Workspace, { id: workspaceId });
+    });
+
+    return { message: 'Workspace deleted', workspaceId };
+  }
+
+  async deleteUser(userId: string) {
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    // Check not the only admin in the workspace
+    const adminCount = await this.userRepository.count({
+      where: { workspaceId: user.workspaceId, role: UserRole.ADMIN },
+    });
+    if (user.role === UserRole.ADMIN && adminCount <= 1) {
+      throw new BadRequestException('Cannot delete the only admin of a workspace');
+    }
+
+    await this.userRepository.delete({ id: userId });
+
+    return { message: 'User deleted', userId };
+  }
+
   async getPlatformLogs(options?: { limit?: number; workspaceId?: string }) {
     const safeLimit = Math.min(Math.max(options?.limit || 200, 20), 500);
     const workspaceId = options?.workspaceId;
