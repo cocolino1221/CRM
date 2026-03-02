@@ -98,7 +98,7 @@ async function bootstrap() {
     },
     credentials: true, // Required for httpOnly cookies
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Correlation-ID', 'X-CSRF-Token'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Correlation-ID', 'X-CSRF-Token', 'x-platform-admin-key'],
     exposedHeaders: ['Set-Cookie'],
   });
 
