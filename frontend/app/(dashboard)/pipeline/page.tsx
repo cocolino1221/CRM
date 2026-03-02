@@ -19,6 +19,20 @@ interface Deal {
   probability?: number;
 }
 
+interface PipelineStageApi {
+  stage: string;
+  deals: Array<{
+    id: string;
+    title: string;
+    value: number | string;
+    probability?: number;
+    contact?: { name?: string } | null;
+    company?: { name?: string } | null;
+    expectedCloseDate?: string | null;
+  }>;
+  totalValue: number;
+}
+
 interface Pipeline {
   id: string;
   name: string;
@@ -40,6 +54,15 @@ const STAGE_COLORS: Record<string, string> = {
   negotiation: 'bg-yellow-100 border-yellow-300',
   closed_won: 'bg-green-100 border-green-300',
   closed_lost: 'bg-red-100 border-red-300',
+};
+
+const STAGE_LABELS: Record<string, string> = {
+  lead: 'New Leads',
+  qualified: 'Qualified',
+  proposal: 'Proposal',
+  negotiation: 'Negotiation',
+  closed_won: 'Closed Won',
+  closed_lost: 'Closed Lost',
 };
 
 export default function PipelinePage() {
@@ -64,30 +87,61 @@ export default function PipelinePage() {
   const fetchPipelineData = async () => {
     try {
       setIsLoading(true);
-      const response = await api.get<{ deals: Deal[] }>('/deals');
+      const response = await api.get('/deals/pipeline');
+      const apiStages = Array.isArray(response.data?.pipeline) ? response.data.pipeline as PipelineStageApi[] : [];
 
-      // Group deals by stage
-      const dealsByStage = response.data.deals.reduce((acc, deal) => {
-        if (!acc[deal.stage]) {
-          acc[deal.stage] = [];
-        }
-        acc[deal.stage].push(deal);
-        return acc;
-      }, {} as Record<string, Deal[]>);
+      const fallbackDeals = Array.isArray(response.data?.deals)
+        ? response.data.deals
+        : (Array.isArray(response.data?.data) ? response.data.data : []);
 
-      // Create pipeline structure
-      const stages: PipelineStage[] = [
-        { id: 'lead', name: 'New Leads', color: 'gray', deals: dealsByStage['lead'] || [], totalValue: 0 },
-        { id: 'qualified', name: 'Qualified', color: 'blue', deals: dealsByStage['qualified'] || [], totalValue: 0 },
-        { id: 'proposal', name: 'Proposal', color: 'purple', deals: dealsByStage['proposal'] || [], totalValue: 0 },
-        { id: 'negotiation', name: 'Negotiation', color: 'yellow', deals: dealsByStage['negotiation'] || [], totalValue: 0 },
-        { id: 'closed_won', name: 'Closed Won', color: 'green', deals: dealsByStage['closed_won'] || [], totalValue: 0 },
-      ];
+      const stagesFromPipeline: PipelineStage[] = apiStages.map((stageData) => {
+        const mappedDeals: Deal[] = (stageData.deals || []).map((deal) => ({
+          id: deal.id,
+          title: deal.title,
+          value: Number(deal.value) || 0,
+          stage: stageData.stage,
+          contactName: deal.contact?.name || '',
+          companyName: deal.company?.name || '',
+          createdAt: deal.expectedCloseDate || new Date().toISOString(),
+          updatedAt: deal.expectedCloseDate || new Date().toISOString(),
+          probability: typeof deal.probability === 'number' ? deal.probability : undefined,
+        }));
 
-      // Calculate total value for each stage
-      stages.forEach(stage => {
-        stage.totalValue = stage.deals.reduce((sum, deal) => sum + deal.value, 0);
+        const stageId = stageData.stage;
+        return {
+          id: stageId,
+          name: STAGE_LABELS[stageId] || stageId.replace(/_/g, ' '),
+          color: stageId,
+          deals: mappedDeals,
+          totalValue: mappedDeals.reduce((sum, deal) => sum + deal.value, 0),
+        };
       });
+
+      const stages = stagesFromPipeline.length > 0
+        ? stagesFromPipeline
+        : Object.keys(STAGE_LABELS).map((stageId) => {
+          const dealsInStage: Deal[] = fallbackDeals
+            .filter((deal: any) => deal?.stage === stageId)
+            .map((deal: any) => ({
+              id: String(deal.id),
+              title: String(deal.title || ''),
+              value: Number(deal.value) || 0,
+              stage: String(deal.stage || stageId),
+              contactName: deal.contactName || `${deal.contact?.firstName || ''} ${deal.contact?.lastName || ''}`.trim(),
+              companyName: deal.companyName || deal.company?.name || '',
+              createdAt: String(deal.createdAt || new Date().toISOString()),
+              updatedAt: String(deal.updatedAt || deal.createdAt || new Date().toISOString()),
+              probability: typeof deal.probability === 'number' ? deal.probability : undefined,
+            }));
+
+          return {
+            id: stageId,
+            name: STAGE_LABELS[stageId],
+            color: stageId,
+            deals: dealsInStage,
+            totalValue: dealsInStage.reduce((sum, deal) => sum + deal.value, 0),
+          };
+        });
 
       setPipeline({
         id: 'main',
@@ -96,6 +150,7 @@ export default function PipelinePage() {
       });
     } catch (error) {
       console.error('Failed to fetch pipeline data:', error);
+      setPipeline(null);
     } finally {
       setIsLoading(false);
     }
