@@ -25,16 +25,66 @@ interface AnalyticsOverview {
 interface TagAnalytics {
   tag: string;
   count: number;
-  percentage: number;
   averageLeadScore: number;
+  conversionRate: number;
 }
 
 interface ConversionFunnel {
   stage: string;
   count: number;
   percentage: number;
-  conversionRate: number;
+  dropoffRate: number;
 }
+
+interface ConversionFunnelResponse {
+  stages: ConversionFunnel[];
+  totalEntered: number;
+  totalConverted: number;
+  overallConversionRate: number;
+}
+
+const toNumber = (value: unknown, fallback = 0): number => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const normalizeOverview = (raw: any): AnalyticsOverview => ({
+  total: toNumber(raw?.total),
+  byStatus: {
+    lead: toNumber(raw?.byStatus?.lead),
+    prospect: toNumber(raw?.byStatus?.prospect),
+    qualified: toNumber(raw?.byStatus?.qualified),
+    customer: toNumber(raw?.byStatus?.customer),
+  },
+  bySource: raw?.bySource && typeof raw.bySource === 'object' ? raw.bySource : {},
+  averageLeadScore: toNumber(raw?.averageLeadScore),
+  highTicketLeads: toNumber(raw?.highTicketLeads),
+  lowTicketLeads: toNumber(raw?.lowTicketLeads),
+  followUpNeeded: toNumber(raw?.followUpNeeded),
+  lostLeads: toNumber(raw?.lostLeads),
+  conversionRate: toNumber(raw?.conversionRate),
+  recentlyAdded: toNumber(raw?.recentlyAdded),
+});
+
+const normalizeTagAnalytics = (raw: any[]): TagAnalytics[] => {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((entry) => ({
+    tag: String(entry?.tag || 'unknown'),
+    count: toNumber(entry?.count),
+    averageLeadScore: toNumber(entry?.averageLeadScore),
+    conversionRate: toNumber(entry?.conversionRate),
+  }));
+};
+
+const normalizeFunnel = (raw: any): ConversionFunnel[] => {
+  const stages = Array.isArray(raw?.stages) ? raw.stages : [];
+  return stages.map((stage) => ({
+    stage: String(stage?.stage || 'unknown'),
+    count: toNumber(stage?.count),
+    percentage: Math.max(0, Math.min(100, toNumber(stage?.percentage))),
+    dropoffRate: Math.max(0, Math.min(100, toNumber(stage?.dropoffRate))),
+  }));
+};
 
 export default function AnalyticsPage() {
   const [overview, setOverview] = useState<AnalyticsOverview | null>(null);
@@ -53,12 +103,12 @@ export default function AnalyticsPage() {
       const [overviewRes, tagsRes, funnelRes] = await Promise.all([
         api.get<AnalyticsOverview>('/contacts/analytics/overview'),
         api.get<TagAnalytics[]>('/contacts/analytics/by-tags'),
-        api.get<ConversionFunnel[]>('/contacts/analytics/conversion-funnel'),
+        api.get<ConversionFunnelResponse>('/contacts/analytics/conversion-funnel'),
       ]);
 
-      setOverview(overviewRes.data);
-      setTagAnalytics(tagsRes.data);
-      setConversionFunnel(funnelRes.data);
+      setOverview(normalizeOverview(overviewRes.data));
+      setTagAnalytics(normalizeTagAnalytics(tagsRes.data as any[]));
+      setConversionFunnel(normalizeFunnel(funnelRes.data));
     } catch (err) {
       console.error('Failed to fetch analytics:', err);
       setError('Failed to load analytics data');
@@ -184,8 +234,9 @@ export default function AnalyticsPage() {
         <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-lg">
           <h2 className="text-xl font-bold text-gray-900 mb-6">Lead Status Distribution</h2>
           <div className="space-y-4">
-            {Object.entries(overview.byStatus).map(([status, count]) => {
-              const percentage = overview.total > 0 ? ((count / overview.total) * 100).toFixed(1) : 0;
+            {Object.entries(overview.byStatus || {}).map(([status, count]) => {
+              const safeCount = toNumber(count);
+              const percentage = overview.total > 0 ? ((safeCount / overview.total) * 100).toFixed(1) : 0;
               const statusColors: Record<string, string> = {
                 lead: 'bg-gray-500',
                 prospect: 'bg-blue-500',
@@ -198,7 +249,7 @@ export default function AnalyticsPage() {
                   <div className="flex items-center justify-between mb-2">
                     <span className="text-sm font-medium text-gray-700 capitalize">{status}</span>
                     <span className="text-sm font-semibold text-gray-900">
-                      {count} ({percentage}%)
+                      {safeCount} ({percentage}%)
                     </span>
                   </div>
                   <div className="w-full bg-gray-200 rounded-full h-3">
@@ -217,15 +268,16 @@ export default function AnalyticsPage() {
         <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-lg">
           <h2 className="text-xl font-bold text-gray-900 mb-6">Lead Sources</h2>
           <div className="space-y-4">
-            {Object.entries(overview.bySource).map(([source, count]) => {
-              const percentage = overview.total > 0 ? ((count / overview.total) * 100).toFixed(1) : 0;
+            {Object.entries(overview.bySource || {}).map(([source, count]) => {
+              const safeCount = toNumber(count);
+              const percentage = overview.total > 0 ? ((safeCount / overview.total) * 100).toFixed(1) : 0;
 
               return (
                 <div key={source}>
                   <div className="flex items-center justify-between mb-2">
                     <span className="text-sm font-medium text-gray-700 capitalize">{source}</span>
                     <span className="text-sm font-semibold text-gray-900">
-                      {count} ({percentage}%)
+                      {safeCount} ({percentage}%)
                     </span>
                   </div>
                   <div className="w-full bg-gray-200 rounded-full h-3">
@@ -251,25 +303,28 @@ export default function AnalyticsPage() {
                 <tr className="border-b border-gray-200">
                   <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">Tag</th>
                   <th className="text-right py-3 px-4 text-sm font-semibold text-gray-700">Count</th>
-                  <th className="text-right py-3 px-4 text-sm font-semibold text-gray-700">Percentage</th>
+                  <th className="text-right py-3 px-4 text-sm font-semibold text-gray-700">% of Total</th>
                   <th className="text-right py-3 px-4 text-sm font-semibold text-gray-700">Avg Score</th>
                 </tr>
               </thead>
               <tbody>
-                {tagAnalytics.map((tag) => (
-                  <tr key={tag.tag} className="border-b border-gray-100 hover:bg-gray-50">
-                    <td className="py-3 px-4">
-                      <span className="inline-flex items-center rounded-full bg-indigo-100 px-3 py-1 text-sm font-medium text-indigo-700">
-                        {tag.tag}
-                      </span>
-                    </td>
-                    <td className="py-3 px-4 text-right text-sm text-gray-900">{tag.count}</td>
-                    <td className="py-3 px-4 text-right text-sm text-gray-900">{tag.percentage.toFixed(1)}%</td>
-                    <td className="py-3 px-4 text-right text-sm font-semibold text-gray-900">
-                      {tag.averageLeadScore.toFixed(0)}/100
-                    </td>
-                  </tr>
-                ))}
+                {tagAnalytics.map((tag) => {
+                  const pct = overview.total > 0 ? ((tag.count / overview.total) * 100) : 0;
+                  return (
+                    <tr key={tag.tag} className="border-b border-gray-100 hover:bg-gray-50">
+                      <td className="py-3 px-4">
+                        <span className="inline-flex items-center rounded-full bg-indigo-100 px-3 py-1 text-sm font-medium text-indigo-700">
+                          {tag.tag}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-right text-sm text-gray-900">{tag.count}</td>
+                      <td className="py-3 px-4 text-right text-sm text-gray-900">{pct.toFixed(1)}%</td>
+                      <td className="py-3 px-4 text-right text-sm font-semibold text-gray-900">
+                        {(tag.averageLeadScore ?? 0).toFixed(0)}/100
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -292,9 +347,9 @@ export default function AnalyticsPage() {
                   </div>
                   <div className="flex items-center gap-4">
                     <span className="text-sm font-semibold text-gray-900">{stage.count} leads</span>
-                    {index > 0 && (
-                      <span className="text-sm text-green-600 font-semibold">
-                        {stage.conversionRate.toFixed(1)}% conversion
+                    {index > 0 && stage.dropoffRate != null && (
+                      <span className="text-sm text-amber-600 font-semibold">
+                        {stage.dropoffRate.toFixed(1)}% drop-off
                       </span>
                     )}
                   </div>
