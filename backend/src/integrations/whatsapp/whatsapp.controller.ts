@@ -67,13 +67,29 @@ export class WhatsAppController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Send a WhatsApp text message' })
   @ApiResponse({ status: 200, description: 'Message sent' })
-  async sendTo(@Req() req: any, @Body() body: { to: string; message: string }) {
-    const result = await this.whatsappService.sendTextMessage(body.to, body.message);
+  async sendTo(@Req() req: any, @Body() body: { to: string; message: string; integrationId?: string }) {
     const workspaceId = req.user?.workspaceId;
     const userId = req.user?.id;
+    const sent = workspaceId
+      ? await this.whatsappService.sendMessageForWorkspace(workspaceId, {
+        to: body.to,
+        type: 'text',
+        content: body.message,
+      }, body.integrationId)
+      : { result: await this.whatsappService.sendTextMessage(body.to, body.message), sender: {} };
+
+    const result = sent.result;
     if (workspaceId && userId) {
       const msgId = result?.messages?.[0]?.id;
-      await this.whatsappService.saveOutboundActivity(body.to, body.message, 'text', workspaceId, userId, msgId);
+      await this.whatsappService.saveOutboundActivity(
+        body.to,
+        body.message,
+        'text',
+        workspaceId,
+        userId,
+        msgId,
+        sent.sender,
+      );
     }
     return result;
   }
@@ -83,13 +99,29 @@ export class WhatsAppController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Send a text message' })
   @ApiResponse({ status: 200, description: 'Message sent successfully' })
-  async sendTextMessage(@Req() req: any, @Body() body: { to: string; message: string }) {
-    const result = await this.whatsappService.sendTextMessage(body.to, body.message);
+  async sendTextMessage(@Req() req: any, @Body() body: { to: string; message: string; integrationId?: string }) {
     const workspaceId = req.user?.workspaceId;
     const userId = req.user?.id;
+    const sent = workspaceId
+      ? await this.whatsappService.sendMessageForWorkspace(workspaceId, {
+        to: body.to,
+        type: 'text',
+        content: body.message,
+      }, body.integrationId)
+      : { result: await this.whatsappService.sendTextMessage(body.to, body.message), sender: {} };
+
+    const result = sent.result;
     if (workspaceId && userId) {
       const msgId = result?.messages?.[0]?.id;
-      await this.whatsappService.saveOutboundActivity(body.to, body.message, 'text', workspaceId, userId, msgId);
+      await this.whatsappService.saveOutboundActivity(
+        body.to,
+        body.message,
+        'text',
+        workspaceId,
+        userId,
+        msgId,
+        sent.sender,
+      );
     }
     return result;
   }
@@ -109,6 +141,7 @@ export class WhatsAppController {
       headerMediaType?: 'image' | 'video' | 'document';
       headerMediaId?: string;
       headerMediaUrl?: string;
+      integrationId?: string;
     },
   ) {
     const workspaceId = req.user?.workspaceId;
@@ -124,20 +157,28 @@ export class WhatsAppController {
       components.unshift({ type: 'header', parameters: [headerParam] });
     }
 
-    const result = workspaceId
-      ? await this.whatsappService.sendTemplateMessageForWorkspace(
-        workspaceId,
-        body.to,
-        body.templateName,
-        body.language || 'en',
-        components,
-      )
-      : await this.whatsappService.sendTemplateMessage(
-        body.to,
-        body.templateName,
-        body.language || 'en',
-        components,
-      );
+    const sent = workspaceId
+      ? await this.whatsappService.sendMessageForWorkspace(workspaceId, {
+        to: body.to,
+        type: 'template',
+        content: '',
+        template: {
+          name: body.templateName,
+          language: body.language || 'en',
+          parameters: components,
+        },
+      }, body.integrationId)
+      : {
+        result: await this.whatsappService.sendTemplateMessage(
+          body.to,
+          body.templateName,
+          body.language || 'en',
+          components,
+        ),
+        sender: {},
+      };
+
+    const result = sent.result;
 
     if (workspaceId && userId) {
       const msgId = result?.messages?.[0]?.id;
@@ -149,6 +190,7 @@ export class WhatsAppController {
         userId,
         msgId,
         {
+          ...sent.sender,
           mediaType: ['image', 'video', 'document'].includes(headerType) ? headerType : undefined,
           mediaId: headerMediaId || undefined,
           mediaUrl: headerMediaUrl || undefined,
@@ -163,22 +205,40 @@ export class WhatsAppController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Send an image message (by URL or uploaded media_id)' })
   @ApiResponse({ status: 200, description: 'Image sent successfully' })
-  async sendImageMessage(@Req() req: any, @Body() body: { to: string; imageUrl?: string; imageId?: string; caption?: string }) {
+  async sendImageMessage(
+    @Req() req: any,
+    @Body() body: { to: string; imageUrl?: string; imageId?: string; caption?: string; integrationId?: string },
+  ) {
     if (!body.imageUrl && !body.imageId) {
       throw new BadRequestException('imageUrl or imageId is required');
     }
-    const result = await this.whatsappService.sendMessage({
-      to: body.to,
-      type: 'image',
-      content: '',
-      media: {
-        url: body.imageUrl,
-        id: body.imageId,
-        caption: body.caption,
-      },
-    });
     const workspaceId = req.user?.workspaceId;
     const userId = req.user?.id;
+    const sent = workspaceId
+      ? await this.whatsappService.sendMessageForWorkspace(workspaceId, {
+        to: body.to,
+        type: 'image',
+        content: '',
+        media: {
+          url: body.imageUrl,
+          id: body.imageId,
+          caption: body.caption,
+        },
+      }, body.integrationId)
+      : {
+        result: await this.whatsappService.sendMessage({
+          to: body.to,
+          type: 'image',
+          content: '',
+          media: {
+            url: body.imageUrl,
+            id: body.imageId,
+            caption: body.caption,
+          },
+        }),
+        sender: {},
+      };
+    const result = sent.result;
     if (workspaceId && userId) {
       const msgId = result?.messages?.[0]?.id;
       await this.whatsappService.saveOutboundActivity(
@@ -189,6 +249,7 @@ export class WhatsAppController {
         userId,
         msgId,
         {
+          ...sent.sender,
           mediaId: body.imageId || undefined,
           mediaUrl: body.imageUrl || undefined,
           mediaCaption: body.caption || undefined,
@@ -205,24 +266,40 @@ export class WhatsAppController {
   @ApiResponse({ status: 200, description: 'Document sent successfully' })
   async sendDocumentMessage(
     @Req() req: any,
-    @Body() body: { to: string; documentUrl?: string; documentId?: string; caption?: string; filename?: string },
+    @Body() body: { to: string; documentUrl?: string; documentId?: string; caption?: string; filename?: string; integrationId?: string },
   ) {
     if (!body.documentUrl && !body.documentId) {
       throw new BadRequestException('documentUrl or documentId is required');
     }
-    const result = await this.whatsappService.sendMessage({
-      to: body.to,
-      type: 'document',
-      content: '',
-      media: {
-        url: body.documentUrl,
-        id: body.documentId,
-        caption: body.caption,
-        filename: body.filename,
-      },
-    });
     const workspaceId = req.user?.workspaceId;
     const userId = req.user?.id;
+    const sent = workspaceId
+      ? await this.whatsappService.sendMessageForWorkspace(workspaceId, {
+        to: body.to,
+        type: 'document',
+        content: '',
+        media: {
+          url: body.documentUrl,
+          id: body.documentId,
+          caption: body.caption,
+          filename: body.filename,
+        },
+      }, body.integrationId)
+      : {
+        result: await this.whatsappService.sendMessage({
+          to: body.to,
+          type: 'document',
+          content: '',
+          media: {
+            url: body.documentUrl,
+            id: body.documentId,
+            caption: body.caption,
+            filename: body.filename,
+          },
+        }),
+        sender: {},
+      };
+    const result = sent.result;
     if (workspaceId && userId) {
       const msgId = result?.messages?.[0]?.id;
       await this.whatsappService.saveOutboundActivity(
@@ -233,6 +310,7 @@ export class WhatsAppController {
         userId,
         msgId,
         {
+          ...sent.sender,
           mediaId: body.documentId || undefined,
           mediaUrl: body.documentUrl || undefined,
           mediaCaption: body.caption || undefined,
@@ -248,22 +326,40 @@ export class WhatsAppController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Send a video message (URL or uploaded media_id)' })
   @ApiResponse({ status: 200, description: 'Video sent successfully' })
-  async sendVideoMessage(@Req() req: any, @Body() body: { to: string; videoUrl?: string; videoId?: string; caption?: string }) {
+  async sendVideoMessage(
+    @Req() req: any,
+    @Body() body: { to: string; videoUrl?: string; videoId?: string; caption?: string; integrationId?: string },
+  ) {
     if (!body.videoUrl && !body.videoId) {
       throw new BadRequestException('videoUrl or videoId is required');
     }
-    const result = await this.whatsappService.sendMessage({
-      to: body.to,
-      type: 'video',
-      content: '',
-      media: {
-        url: body.videoUrl,
-        id: body.videoId,
-        caption: body.caption,
-      },
-    });
     const workspaceId = req.user?.workspaceId;
     const userId = req.user?.id;
+    const sent = workspaceId
+      ? await this.whatsappService.sendMessageForWorkspace(workspaceId, {
+        to: body.to,
+        type: 'video',
+        content: '',
+        media: {
+          url: body.videoUrl,
+          id: body.videoId,
+          caption: body.caption,
+        },
+      }, body.integrationId)
+      : {
+        result: await this.whatsappService.sendMessage({
+          to: body.to,
+          type: 'video',
+          content: '',
+          media: {
+            url: body.videoUrl,
+            id: body.videoId,
+            caption: body.caption,
+          },
+        }),
+        sender: {},
+      };
+    const result = sent.result;
     if (workspaceId && userId) {
       const msgId = result?.messages?.[0]?.id;
       await this.whatsappService.saveOutboundActivity(
@@ -274,6 +370,7 @@ export class WhatsAppController {
         userId,
         msgId,
         {
+          ...sent.sender,
           mediaId: body.videoId || undefined,
           mediaUrl: body.videoUrl || undefined,
           mediaCaption: body.caption || undefined,
@@ -288,21 +385,38 @@ export class WhatsAppController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Send an audio message (URL or uploaded media_id)' })
   @ApiResponse({ status: 200, description: 'Audio sent successfully' })
-  async sendAudioMessage(@Req() req: any, @Body() body: { to: string; audioUrl?: string; audioId?: string }) {
+  async sendAudioMessage(
+    @Req() req: any,
+    @Body() body: { to: string; audioUrl?: string; audioId?: string; integrationId?: string },
+  ) {
     if (!body.audioUrl && !body.audioId) {
       throw new BadRequestException('audioUrl or audioId is required');
     }
-    const result = await this.whatsappService.sendMessage({
-      to: body.to,
-      type: 'audio',
-      content: '',
-      media: {
-        url: body.audioUrl,
-        id: body.audioId,
-      },
-    });
     const workspaceId = req.user?.workspaceId;
     const userId = req.user?.id;
+    const sent = workspaceId
+      ? await this.whatsappService.sendMessageForWorkspace(workspaceId, {
+        to: body.to,
+        type: 'audio',
+        content: '',
+        media: {
+          url: body.audioUrl,
+          id: body.audioId,
+        },
+      }, body.integrationId)
+      : {
+        result: await this.whatsappService.sendMessage({
+          to: body.to,
+          type: 'audio',
+          content: '',
+          media: {
+            url: body.audioUrl,
+            id: body.audioId,
+          },
+        }),
+        sender: {},
+      };
+    const result = sent.result;
     if (workspaceId && userId) {
       const msgId = result?.messages?.[0]?.id;
       await this.whatsappService.saveOutboundActivity(
@@ -313,6 +427,7 @@ export class WhatsAppController {
         userId,
         msgId,
         {
+          ...sent.sender,
           mediaId: body.audioId || undefined,
           mediaUrl: body.audioUrl || undefined,
         },
@@ -334,18 +449,47 @@ export class WhatsAppController {
       buttons: Array<{ id: string; title: string }>;
       header?: string;
       footer?: string;
+      integrationId?: string;
     },
   ) {
-    const result = await this.whatsappService.sendInteractiveButtons(
-      body.to, body.body, body.buttons, body.header, body.footer,
-    );
     const workspaceId = req.user?.workspaceId;
     const userId = req.user?.id;
+    const sent = workspaceId
+      ? await this.whatsappService.sendMessageForWorkspace(workspaceId, {
+        to: body.to,
+        type: 'interactive',
+        content: '',
+        interactive: {
+          type: 'button',
+          ...(body.header ? { header: { type: 'text', text: body.header } } : {}),
+          body: { text: body.body },
+          ...(body.footer ? { footer: { text: body.footer } } : {}),
+          action: {
+            buttons: (body.buttons || []).slice(0, 3).map(b => ({
+              type: 'reply',
+              reply: { id: b.id, title: String(b.title || '').slice(0, 20) },
+            })),
+          },
+        },
+      }, body.integrationId)
+      : {
+        result: await this.whatsappService.sendInteractiveButtons(
+          body.to, body.body, body.buttons, body.header, body.footer,
+        ),
+        sender: {},
+      };
+    const result = sent.result;
     if (workspaceId && userId) {
       const msgId = result?.messages?.[0]?.id;
       const btnLabels = body.buttons.map(b => b.title).join(', ');
       await this.whatsappService.saveOutboundActivity(
-        body.to, `[Buttons: ${btnLabels}] ${body.body}`, 'interactive', workspaceId, userId, msgId,
+        body.to,
+        `[Buttons: ${btnLabels}] ${body.body}`,
+        'interactive',
+        workspaceId,
+        userId,
+        msgId,
+        sent.sender,
       );
     }
     return result;
@@ -365,17 +509,44 @@ export class WhatsAppController {
       sections: Array<{ title: string; rows: Array<{ id: string; title: string; description?: string }> }>;
       header?: string;
       footer?: string;
+      integrationId?: string;
     },
   ) {
-    const result = await this.whatsappService.sendInteractiveList(
-      body.to, body.body, body.buttonText, body.sections, body.header, body.footer,
-    );
     const workspaceId = req.user?.workspaceId;
     const userId = req.user?.id;
+    const sent = workspaceId
+      ? await this.whatsappService.sendMessageForWorkspace(workspaceId, {
+        to: body.to,
+        type: 'interactive',
+        content: '',
+        interactive: {
+          type: 'list',
+          ...(body.header ? { header: { type: 'text', text: body.header } } : {}),
+          body: { text: body.body },
+          ...(body.footer ? { footer: { text: body.footer } } : {}),
+          action: {
+            button: body.buttonText,
+            sections: body.sections,
+          },
+        },
+      }, body.integrationId)
+      : {
+        result: await this.whatsappService.sendInteractiveList(
+          body.to, body.body, body.buttonText, body.sections, body.header, body.footer,
+        ),
+        sender: {},
+      };
+    const result = sent.result;
     if (workspaceId && userId) {
       const msgId = result?.messages?.[0]?.id;
       await this.whatsappService.saveOutboundActivity(
-        body.to, `[List menu] ${body.body}`, 'interactive', workspaceId, userId, msgId,
+        body.to,
+        `[List menu] ${body.body}`,
+        'interactive',
+        workspaceId,
+        userId,
+        msgId,
+        sent.sender,
       );
     }
     return result;
@@ -426,6 +597,17 @@ export class WhatsAppController {
       limit ? parseInt(limit, 10) : 50,
     );
     return { data: activities };
+  }
+
+  @Get('accounts')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'List connected WhatsApp sender numbers for current workspace' })
+  @ApiResponse({ status: 200, description: 'Connected WhatsApp accounts' })
+  async getAccounts(@Req() req: any) {
+    const workspaceId = req.user?.workspaceId;
+    if (!workspaceId) throw new BadRequestException('Workspace ID required');
+    return this.whatsappService.listWorkspaceAccounts(workspaceId);
   }
 
   @Get('limits')
@@ -507,7 +689,7 @@ export class WhatsAppController {
       headerMediaType?: 'image' | 'video' | 'document';
       headerMediaId?: string;
       headerMediaUrl?: string;
-      conditions?: { sources?: string[]; statuses?: string[]; requirePhone?: boolean };
+      conditions?: { sources?: string[]; statuses?: string[]; typeformFormIds?: string[]; requirePhone?: boolean };
       autoSendRules?: Array<{
         id?: string;
         name?: string;
@@ -519,7 +701,7 @@ export class WhatsAppController {
         headerMediaId?: string;
         headerMediaUrl?: string;
         priority?: number;
-        conditions?: { sources?: string[]; statuses?: string[]; requirePhone?: boolean };
+        conditions?: { sources?: string[]; statuses?: string[]; typeformFormIds?: string[]; requirePhone?: boolean };
       }>;
       rules?: Array<{
         id?: string;
@@ -532,7 +714,7 @@ export class WhatsAppController {
         headerMediaId?: string;
         headerMediaUrl?: string;
         priority?: number;
-        conditions?: { sources?: string[]; statuses?: string[]; requirePhone?: boolean };
+        conditions?: { sources?: string[]; statuses?: string[]; typeformFormIds?: string[]; requirePhone?: boolean };
       }>;
     },
   ) {
@@ -849,6 +1031,31 @@ export class WhatsAppController {
     return { success: true };
   }
 
+  // ─── Meta Embedded Signup ──────────────────────────────────────────────────
+
+  @UseGuards(JwtAuthGuard)
+  @Get('embedded-signup-config')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get Meta app ID and config URL for Embedded Signup' })
+  async getEmbeddedSignupConfig() {
+    return this.whatsappService.getEmbeddedSignupConfig();
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('embedded-signup')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Complete Meta Embedded Signup — exchange code for token and create integration' })
+  async completeEmbeddedSignup(
+    @Req() req: any,
+    @Body() body: { code: string },
+  ) {
+    const workspaceId = req.user?.workspaceId;
+    const userId = req.user?.id;
+    if (!workspaceId) throw new BadRequestException('Workspace ID required');
+    if (!body.code?.trim()) throw new BadRequestException('Authorization code required');
+    return this.whatsappService.completeEmbeddedSignup(workspaceId, userId, body.code.trim());
+  }
+
   // ─── Conversation Flows (Chatbot) ─────────────────────────────────────────
 
   @UseGuards(JwtAuthGuard)
@@ -905,6 +1112,7 @@ export class WhatsAppController {
   async uploadMedia(
     @Req() req: any,
     @UploadedFiles() files: Express.Multer.File[],
+    @Query('integrationId') integrationId: string | undefined,
   ) {
     const workspaceId = req.user?.workspaceId;
     if (!workspaceId) throw new BadRequestException('Workspace ID required');
@@ -916,6 +1124,7 @@ export class WhatsAppController {
       file.path,
       file.mimetype,
       file.originalname,
+      integrationId?.trim() || undefined,
     );
   }
 
@@ -928,12 +1137,17 @@ export class WhatsAppController {
     @Req() req: any,
     @Param('mediaId') mediaId: string,
     @Res({ passthrough: true }) res: Response,
+    @Query('integrationId') integrationId: string | undefined,
   ) {
     const workspaceId = req.user?.workspaceId;
     if (!workspaceId) throw new BadRequestException('Workspace ID required');
     if (!mediaId?.trim()) throw new BadRequestException('mediaId is required');
 
-    const media = await this.whatsappService.downloadMediaForWorkspace(workspaceId, mediaId.trim());
+    const media = await this.whatsappService.downloadMediaForWorkspace(
+      workspaceId,
+      mediaId.trim(),
+      integrationId?.trim() || undefined,
+    );
     res.setHeader('Content-Type', media.contentType || 'application/octet-stream');
     res.setHeader('Cache-Control', 'private, max-age=300');
     if (media.fileName) {

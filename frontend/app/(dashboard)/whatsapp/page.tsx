@@ -25,6 +25,10 @@ interface WhatsAppActivity {
     waId?: string;
     messageType?: string;
     messageStatus?: 'sent' | 'delivered' | 'read' | 'failed';
+    senderIntegrationId?: string;
+    senderPhoneNumberId?: string;
+    senderPhoneDisplay?: string;
+    senderIntegrationName?: string;
     mediaId?: string;
     mediaUrl?: string;
     mediaMimeType?: string;
@@ -37,6 +41,7 @@ interface WhatsAppActivity {
     lastName: string;
     phone: string;
     status: string;
+    source?: string;
   } | null;
 }
 
@@ -51,6 +56,7 @@ interface Conversation {
   waId: string;
   contactName: string;
   contactId: string | null;
+  contactSource?: string | null;
   phone: string;
   lastMessage: string;
   lastMessageTime: string;
@@ -109,8 +115,23 @@ interface AutoSendRuleForm {
   conditions: {
     sources: string[];
     statuses: string[];
+    typeformFormIds: string[];
     requirePhone: boolean;
   };
+}
+
+interface TypeformFormOption {
+  formId: string;
+  name: string;
+}
+
+interface WhatsAppSenderAccount {
+  id: string;
+  name: string;
+  status: string;
+  phoneNumberId?: string | null;
+  phoneDisplay?: string | null;
+  isDefault?: boolean;
 }
 
 // ─── Constants ──────────────────────────────────────────────
@@ -169,6 +190,7 @@ const createAutoSendRule = (priority: number): AutoSendRuleForm => ({
   conditions: {
     sources: [],
     statuses: [],
+    typeformFormIds: [],
     requirePhone: true,
   },
 });
@@ -195,6 +217,7 @@ function MessageBubble({ msg, formatTime }: { msg: WhatsAppActivity; formatTime:
   const isOutbound = msg.direction === 'outbound';
   const parsed = parseMessageContent(msg);
   const status = getStatusDisplay(msg);
+  const senderIntegrationId = msg.metadata?.senderIntegrationId;
   const [mediaObjectUrl, setMediaObjectUrl] = useState('');
   const [isLoadingMedia, setIsLoadingMedia] = useState(false);
   const [mediaError, setMediaError] = useState('');
@@ -217,6 +240,7 @@ function MessageBubble({ msg, formatTime }: { msg: WhatsAppActivity; formatTime:
       try {
         const response = await api.get(`/integrations/whatsapp/media/${parsed.mediaId}/file`, {
           responseType: 'blob',
+          params: senderIntegrationId ? { integrationId: senderIntegrationId } : undefined,
         });
         if (isCancelled) return;
         objectUrl = URL.createObjectURL(response.data);
@@ -239,7 +263,7 @@ function MessageBubble({ msg, formatTime }: { msg: WhatsAppActivity; formatTime:
       isCancelled = true;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [parsed.mediaId, parsed.mediaUrl, parsed.type]);
+  }, [parsed.mediaId, parsed.mediaUrl, parsed.type, senderIntegrationId]);
 
   return (
     <div className={`flex ${isOutbound ? 'justify-end' : 'justify-start'}`}>
@@ -376,6 +400,12 @@ function ContactInfoSidebar({ contact, isLoading, onClose }: { contact: ContactD
 
         {/* Contact Details */}
         <div className="p-4 space-y-3 border-b border-gray-100">
+          {contact.source && (
+            <div className="flex items-center gap-3 text-sm">
+              <Tag className="h-4 w-4 text-gray-400" />
+              <span className="text-gray-700 capitalize">{formatSourceLabel(contact.source)}</span>
+            </div>
+          )}
           {contact.phone && (
             <div className="flex items-center gap-3 text-sm">
               <Phone className="h-4 w-4 text-gray-400" />
@@ -468,6 +498,21 @@ function ContactInfoSidebar({ contact, isLoading, onClose }: { contact: ContactD
 
 // ─── Helpers ────────────────────────────────────────────────
 
+function formatSourceLabel(source?: string | null): string {
+  const raw = String(source || '').trim();
+  if (!raw) return '';
+  const normalized = raw.toLowerCase();
+  if (normalized === 'manychat') return 'ManyChat';
+  if (normalized === 'typeform') return 'Typeform';
+  if (normalized === 'webhook') return 'Webhook';
+  return raw
+    .replace(/[_-]+/g, ' ')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
 function parseMessageContent(msg: WhatsAppActivity): {
   type: string;
   text: string;
@@ -549,6 +594,8 @@ export default function WhatsAppPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [sendError, setSendError] = useState('');
+  const [senderAccounts, setSenderAccounts] = useState<WhatsAppSenderAccount[]>([]);
+  const [selectedSenderId, setSelectedSenderId] = useState('');
   const [convFilter, setConvFilter] = useState<'all' | 'unread' | 'assigned'>('all');
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -627,6 +674,9 @@ export default function WhatsAppPage() {
   const [isUploadingAutoSendHeader, setIsUploadingAutoSendHeader] = useState(false);
   const [isSavingAutoSend, setIsSavingAutoSend] = useState(false);
   const [autoSendSaveError, setAutoSendSaveError] = useState('');
+  const [typeformForms, setTypeformForms] = useState<TypeformFormOption[]>([]);
+  const [isLoadingTypeformForms, setIsLoadingTypeformForms] = useState(false);
+  const [typeformFormInput, setTypeformFormInput] = useState('');
 
   // Auto-responses
   const [showAutoResponses, setShowAutoResponses] = useState(false);
@@ -725,9 +775,11 @@ export default function WhatsAppPage() {
 
   useEffect(() => {
     fetchInbox();
+    fetchSenderAccounts();
     fetchWebhookInfo();
     fetchAutoResponses();
     fetchAutoSend();
+    fetchTypeformForms();
     fetchAssignments();
     fetchTeamUsers();
     // Poll every 5 seconds for near-real-time inbox updates
@@ -740,6 +792,14 @@ export default function WhatsAppPage() {
       document.removeEventListener('visibilitychange', onVisible);
     };
   }, []);
+
+  useEffect(() => {
+    if (!selectedSenderId) {
+      localStorage.removeItem('wa_selected_sender_id');
+      return;
+    }
+    localStorage.setItem('wa_selected_sender_id', selectedSenderId);
+  }, [selectedSenderId]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -777,6 +837,10 @@ export default function WhatsAppPage() {
   }, [campContactSearch]);
 
   const selectedAutoSendRule = autoSendRules.find(rule => rule.id === selectedAutoSendRuleId) || autoSendRules[0] || null;
+  const selectedSender = senderAccounts.find(account => account.id === selectedSenderId) || null;
+  const withSelectedSender = useCallback((payload: Record<string, any> = {}) => (
+    selectedSenderId ? { ...payload, integrationId: selectedSenderId } : payload
+  ), [selectedSenderId]);
 
   const updateSelectedAutoSendRule = (updater: (rule: AutoSendRuleForm) => AutoSendRuleForm) => {
     const targetId = selectedAutoSendRuleId || autoSendRules[0]?.id;
@@ -810,15 +874,19 @@ export default function WhatsAppPage() {
         const waId = act.metadata?.waId || act.contact?.phone?.replace('+', '') || 'unknown';
         const phone = act.contact?.phone || `+${waId}`;
         const contactName = act.contact ? `${act.contact.firstName} ${act.contact.lastName}`.trim() : phone;
+        const contactSource = act.contact?.source || null;
 
         if (!convMap.has(waId)) {
           convMap.set(waId, {
-            waId, contactName, contactId: act.contact?.id || null, phone,
+            waId, contactName, contactId: act.contact?.id || null, contactSource, phone,
             lastMessage: act.description || '', lastMessageTime: act.occurredAt,
             messageCount: 0, messages: [], unreadCount: 0, lastInboundTime: null,
           });
         }
         const conv = convMap.get(waId)!;
+        if (!conv.contactSource && contactSource) {
+          conv.contactSource = contactSource;
+        }
         conv.messages.push(act);
         conv.messageCount++;
 
@@ -856,6 +924,29 @@ export default function WhatsAppPage() {
       setIsLoading(false);
     }
   }, [selectedConv]);
+
+  const fetchSenderAccounts = useCallback(async () => {
+    try {
+      const res = await api.get('/integrations/whatsapp/accounts');
+      const accounts: WhatsAppSenderAccount[] = Array.isArray(res.data?.data) ? res.data.data : [];
+      const defaultIntegrationId = String(res.data?.defaultIntegrationId || '').trim();
+      setSenderAccounts(accounts);
+
+      const savedSenderId = localStorage.getItem('wa_selected_sender_id') || '';
+      const fallbackId = defaultIntegrationId || accounts[0]?.id || '';
+      setSelectedSenderId(prev =>
+        (savedSenderId && accounts.some(account => account.id === savedSenderId))
+          ? savedSenderId
+          : (prev && accounts.some(account => account.id === prev))
+            ? prev
+            : fallbackId,
+      );
+    } catch (err) {
+      console.error('Failed to fetch WhatsApp sender accounts:', err);
+      setSenderAccounts([]);
+      setSelectedSenderId('');
+    }
+  }, []);
 
   const fetchWebhookInfo = async () => {
     try {
@@ -945,12 +1036,42 @@ export default function WhatsAppPage() {
           conditions: {
             sources: Array.isArray(rule?.conditions?.sources) ? rule.conditions.sources : [],
             statuses: Array.isArray(rule?.conditions?.statuses) ? rule.conditions.statuses : [],
+            typeformFormIds: Array.isArray(rule?.conditions?.typeformFormIds) ? rule.conditions.typeformFormIds : [],
             requirePhone: rule?.conditions?.requirePhone !== false,
           },
         };
       }).sort((a: AutoSendRuleForm, b: AutoSendRuleForm) => a.priority - b.priority);
       setAutoSendRules(rules.length > 0 ? rules : [createAutoSendRule(0)]);
     } catch { /* silent */ }
+  };
+
+  const fetchTypeformForms = async () => {
+    setIsLoadingTypeformForms(true);
+    try {
+      const res = await api.get('/integrations', { params: { type: 'typeform' } });
+      const integrations = Array.isArray(res.data?.integrations) ? res.data.integrations : [];
+      const formMap = new Map<string, TypeformFormOption>();
+
+      integrations.forEach((integration: any) => {
+        const forms = Array.isArray(integration?.config?.typeformForms) ? integration.config.typeformForms : [];
+        forms.forEach((form: any) => {
+          if (form?.enabled === false) return;
+          const formId = String(form?.formId || '').trim();
+          if (!formId) return;
+          if (formMap.has(formId)) return;
+          formMap.set(formId, {
+            formId,
+            name: String(form?.name || formId).trim() || formId,
+          });
+        });
+      });
+
+      setTypeformForms(Array.from(formMap.values()).sort((a, b) => a.name.localeCompare(b.name)));
+    } catch {
+      setTypeformForms([]);
+    } finally {
+      setIsLoadingTypeformForms(false);
+    }
   };
 
   const saveAutoSendConfig = async () => {
@@ -971,6 +1092,7 @@ export default function WhatsAppPage() {
         conditions: {
           sources: rule.conditions.sources.length > 0 ? rule.conditions.sources : undefined,
           statuses: rule.conditions.statuses.length > 0 ? rule.conditions.statuses : undefined,
+          typeformFormIds: rule.conditions.typeformFormIds.length > 0 ? rule.conditions.typeformFormIds : undefined,
           requirePhone: rule.conditions.requirePhone,
         },
       }));
@@ -1213,10 +1335,14 @@ export default function WhatsAppPage() {
 
   const handleSend = async () => {
     if (!replyText.trim() || !selectedConv) return;
+    if (senderAccounts.length > 0 && !selectedSenderId) {
+      setSendError('Selecteaza numarul WhatsApp din care vrei sa trimiti.');
+      return;
+    }
     setIsSending(true);
     setSendError('');
     try {
-      await api.post('/integrations/whatsapp/send', { to: selectedConv.waId, message: replyText.trim() });
+      await api.post('/integrations/whatsapp/send', withSelectedSender({ to: selectedConv.waId, message: replyText.trim() }));
       setReplyText('');
       await fetchInbox();
     } catch (err: any) {
@@ -1235,7 +1361,7 @@ export default function WhatsAppPage() {
     setIsSending(true);
     setSendError('');
     try {
-      await api.post('/integrations/whatsapp/send/template', {
+      await api.post('/integrations/whatsapp/send/template', withSelectedSender({
         to,
         templateName: template.name,
         language: template.language,
@@ -1243,7 +1369,7 @@ export default function WhatsAppPage() {
         headerMediaType: template.headerMediaType || undefined,
         headerMediaId: templateHeaderMediaId.trim() || undefined,
         headerMediaUrl: templateHeaderMediaUrl.trim() || undefined,
-      });
+      }));
       setShowTemplatePanel(false);
       setSelectedTemplate(null);
       setTemplateParams([]);
@@ -1267,7 +1393,9 @@ export default function WhatsAppPage() {
     try {
       const formData = new FormData();
       formData.append('file', file);
-      const res = await api.post('/integrations/whatsapp/media/upload', formData);
+      const res = await api.post('/integrations/whatsapp/media/upload', formData, {
+        params: selectedSenderId ? { integrationId: selectedSenderId } : undefined,
+      });
       setTemplateHeaderMediaId(res.data.id || '');
     } catch (err: any) {
       setSendError(`Upload failed: ${err.response?.data?.message || err.message}`);
@@ -1298,7 +1426,9 @@ export default function WhatsAppPage() {
     try {
       const formData = new FormData();
       formData.append('file', file);
-      const res = await api.post('/integrations/whatsapp/media/upload', formData);
+      const res = await api.post('/integrations/whatsapp/media/upload', formData, {
+        params: selectedSenderId ? { integrationId: selectedSenderId } : undefined,
+      });
       setAttachmentMediaId(res.data.id || '');
       setAttachmentFileName(file.name);
     } catch (err: any) {
@@ -1343,7 +1473,7 @@ export default function WhatsAppPage() {
             }
           : { to: selectedConv.waId, documentUrl: attachmentUrl.trim(), caption: attachmentCaption.trim() || undefined };
       }
-      await api.post(endpoint, body);
+      await api.post(endpoint, withSelectedSender(body));
       resetAttachmentState();
       await fetchInbox();
     } catch (err: any) {
@@ -1426,6 +1556,7 @@ export default function WhatsAppPage() {
 
   const sessionStatus = selectedConv ? getSessionStatus(selectedConv) : 'closed';
   const sessionOpen = sessionStatus === 'open' || sessionStatus === 'closing';
+  const selectedSourceLabel = selectedConv ? formatSourceLabel(selectedConv.contactSource || contactDetail?.source || null) : '';
 
   // True if this conversation has NEVER received an inbound message
   const hasEverReceivedInbound = selectedConv?.messages.some(m => m.direction === 'inbound') ?? false;
@@ -2255,6 +2386,30 @@ export default function WhatsAppPage() {
               </button>
             </div>
           </div>
+          <div className="rounded-lg border border-gray-200 bg-gray-50 px-2 py-1.5">
+            <div className="flex items-center gap-2">
+              <Phone className="h-3.5 w-3.5 text-gray-500 flex-shrink-0" />
+              <select
+                value={selectedSenderId}
+                onChange={(e) => setSelectedSenderId(e.target.value)}
+                className="flex-1 bg-white border border-gray-200 rounded-md px-2 py-1 text-xs text-gray-700 focus:outline-none focus:border-green-400"
+              >
+                {senderAccounts.length === 0 && <option value="">No connected numbers</option>}
+                {senderAccounts.map((account) => (
+                  <option key={account.id} value={account.id}>
+                    {account.phoneDisplay || account.phoneNumberId || account.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                onClick={fetchSenderAccounts}
+                className="p-1 rounded-md hover:bg-gray-200 transition-colors"
+                title="Refresh connected numbers"
+              >
+                <RefreshCw className="h-3.5 w-3.5 text-gray-500" />
+              </button>
+            </div>
+          </div>
           {/* Search */}
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
@@ -2298,6 +2453,7 @@ export default function WhatsAppPage() {
                   const isSelected = selectedConv?.waId === conv.waId;
                   const hasUnread = conv.unreadCount > 0;
                   const convAssignment = assignments[conv.waId];
+                  const sourceLabel = formatSourceLabel(conv.contactSource);
                   return (
                     <div key={conv.waId} className={`relative group/conv ${isSelected ? 'bg-green-50 border-l-3 border-l-green-500' : 'border-l-3 border-l-transparent hover:bg-gray-50'}`}>
                     <button onClick={() => selectConversation(conv)}
@@ -2329,6 +2485,9 @@ export default function WhatsAppPage() {
                             <span className="text-[11px] text-gray-400">{formatTime(conv.lastMessageTime)}</span>
                           </div>
                         </div>
+                        {sourceLabel && (
+                          <p className="text-[11px] text-indigo-600 truncate mt-0.5">{sourceLabel}</p>
+                        )}
                         <div className="flex items-center justify-between mt-0.5">
                           <p className={`text-xs truncate ${hasUnread ? 'font-medium text-gray-700' : 'text-gray-500'}`}>{conv.lastMessage}</p>
                           {hasUnread && (
@@ -2375,6 +2534,16 @@ export default function WhatsAppPage() {
               <h2 className="font-semibold text-gray-900 truncate">{selectedConv.contactName}</h2>
               <div className="flex items-center gap-2">
                 <p className="text-xs text-gray-500 flex items-center gap-1"><Phone className="h-3 w-3" />{selectedConv.phone}</p>
+                {selectedSender && (
+                  <span className="text-[11px] px-1.5 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-100">
+                    Send from: {selectedSender.phoneDisplay || selectedSender.phoneNumberId || selectedSender.name}
+                  </span>
+                )}
+                {selectedSourceLabel && (
+                  <span className="text-[11px] px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-100">
+                    {selectedSourceLabel}
+                  </span>
+                )}
                 {assignments[selectedConv.waId] && (
                   <span className="flex items-center gap-1 text-xs text-gray-500">
                     <div className="h-4 w-4 rounded-full flex items-center justify-center text-white text-xs font-bold"
@@ -3768,7 +3937,9 @@ export default function WhatsAppPage() {
                                 try {
                                   const formData = new FormData();
                                   formData.append('file', file);
-                                  const res = await api.post('/integrations/whatsapp/media/upload', formData);
+                                  const res = await api.post('/integrations/whatsapp/media/upload', formData, {
+                                    params: selectedSenderId ? { integrationId: selectedSenderId } : undefined,
+                                  });
                                   updateSelectedAutoSendRule(rule => ({ ...rule, headerMediaId: res.data.id || '' }));
                                 } catch (err: any) {
                                   setAutoSendSaveError(`Upload failed: ${err?.response?.data?.message || err.message}`);
@@ -3817,6 +3988,93 @@ export default function WhatsAppPage() {
                       ))}
                     </div>
                   </div>
+
+                  {selectedAutoSendRule.conditions.sources.includes('typeform') && (
+                    <div className="space-y-2 rounded-xl border border-sky-200 bg-sky-50 p-3">
+                      <p className="text-xs font-semibold text-sky-700 uppercase tracking-wide">Typeform Form Filter</p>
+                      <p className="text-xs text-sky-600">Choose one or more Typeform forms for this rule.</p>
+
+                      {isLoadingTypeformForms ? (
+                        <p className="text-xs text-sky-600">Loading connected forms...</p>
+                      ) : typeformForms.length > 0 ? (
+                        <div className="grid grid-cols-1 gap-2">
+                          {typeformForms.map(form => (
+                            <label key={form.formId} className="flex items-center gap-2 cursor-pointer p-2 rounded-lg hover:bg-sky-100/70">
+                              <input
+                                type="checkbox"
+                                checked={selectedAutoSendRule.conditions.typeformFormIds.includes(form.formId)}
+                                onChange={e => updateSelectedAutoSendRule(rule => ({
+                                  ...rule,
+                                  conditions: {
+                                    ...rule.conditions,
+                                    typeformFormIds: e.target.checked
+                                      ? [...rule.conditions.typeformFormIds, form.formId]
+                                      : rule.conditions.typeformFormIds.filter(id => id !== form.formId),
+                                  },
+                                }))}
+                                className="h-4 w-4 rounded border-gray-300 accent-green-600"
+                              />
+                              <span className="text-sm text-gray-700 truncate">{form.name}</span>
+                              <span className="text-[11px] text-gray-400">{form.formId}</span>
+                            </label>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-sky-600">No connected Typeform forms found. You can still add form ID manually.</p>
+                      )}
+
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={typeformFormInput}
+                          onChange={(e) => setTypeformFormInput(e.target.value)}
+                          placeholder="Typeform formId"
+                          className="flex-1 px-3 py-2 text-sm border border-sky-200 rounded-xl focus:outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-100 bg-white"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const formId = typeformFormInput.trim();
+                            if (!formId) return;
+                            updateSelectedAutoSendRule(rule => ({
+                              ...rule,
+                              conditions: {
+                                ...rule.conditions,
+                                typeformFormIds: rule.conditions.typeformFormIds.includes(formId)
+                                  ? rule.conditions.typeformFormIds
+                                  : [...rule.conditions.typeformFormIds, formId],
+                              },
+                            }));
+                            setTypeformFormInput('');
+                          }}
+                          className="px-3 py-2 text-xs font-medium text-sky-700 bg-white border border-sky-300 rounded-xl hover:bg-sky-100"
+                        >
+                          Add ID
+                        </button>
+                      </div>
+
+                      {selectedAutoSendRule.conditions.typeformFormIds.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5">
+                          {selectedAutoSendRule.conditions.typeformFormIds.map(formId => (
+                            <button
+                              type="button"
+                              key={formId}
+                              onClick={() => updateSelectedAutoSendRule(rule => ({
+                                ...rule,
+                                conditions: {
+                                  ...rule.conditions,
+                                  typeformFormIds: rule.conditions.typeformFormIds.filter(id => id !== formId),
+                                },
+                              }))}
+                              className="px-2 py-1 text-[11px] font-medium text-sky-700 bg-white border border-sky-300 rounded-full hover:bg-sky-100"
+                            >
+                              {formId} ✕
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   {/* Status filter */}
                   <div className="space-y-2">
@@ -4233,7 +4491,9 @@ export default function WhatsAppPage() {
                                           try {
                                             const formData = new FormData();
                                             formData.append('file', file);
-                                            const res = await api.post('/integrations/whatsapp/media/upload', formData);
+                                            const res = await api.post('/integrations/whatsapp/media/upload', formData, {
+                                              params: selectedSenderId ? { integrationId: selectedSenderId } : undefined,
+                                            });
                                             updateFlowStep(si, 'mediaId', res.data.id);
                                             updateFlowStep(si, 'mediaUrl', undefined);
                                             updateFlowStep(si, 'mediaFileName', file.name);

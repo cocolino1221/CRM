@@ -10,6 +10,7 @@ import { Contact, ContactStatus, ContactSource } from '../../database/entities/c
 import { Activity, ActivityType, ActivityDirection, ActivityOutcome } from '../../database/entities/activity.entity';
 import { Integration, IntegrationType, IntegrationStatus } from '../../database/entities/integration.entity';
 import { User, UserStatus } from '../../database/entities/user.entity';
+import { PipelineStage } from '../../database/entities/pipeline-stage.entity';
 import { NotificationsService, CreateNotificationDto } from '../../notifications/notifications.service';
 import { NotificationType } from '../../database/entities/notification.entity';
 import { WhatsAppAIService } from './whatsapp-ai.service';
@@ -88,6 +89,7 @@ type AutoSendHeaderMediaType = 'image' | 'video' | 'document';
 interface AutoSendConditions {
   sources?: string[];
   statuses?: string[];
+  typeformFormIds?: string[];
   requirePhone?: boolean;
 }
 
@@ -124,6 +126,8 @@ export class WhatsAppService {
     private readonly integrationRepository: Repository<Integration>,
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
+    @InjectRepository(PipelineStage)
+    private readonly pipelineStageRepository: Repository<PipelineStage>,
     private readonly notificationsService: NotificationsService,
     private readonly whatsAppAIService: WhatsAppAIService,
     private readonly eventEmitter: EventEmitter2,
@@ -146,10 +150,155 @@ export class WhatsAppService {
     }
   }
 
-  private getCredentials(credentials?: Record<string, any>) {
+  private getCredentials(credentials?: Record<string, any>, includeEnvFallback = true) {
+    const accessToken = credentials?.accessToken || credentials?.access_token || '';
+    const phoneNumberId =
+      credentials?.phoneNumberId
+      || credentials?.phone_number_id
+      || credentials?.phoneId
+      || credentials?.phone_id
+      || '';
     return {
-      accessToken: credentials?.accessToken || this.configService.get<string>('WHATSAPP_ACCESS_TOKEN') || '',
-      phoneNumberId: credentials?.phoneNumberId || this.configService.get<string>('WHATSAPP_PHONE_NUMBER_ID') || '',
+      accessToken: accessToken || (includeEnvFallback ? (this.configService.get<string>('WHATSAPP_ACCESS_TOKEN') || '') : ''),
+      phoneNumberId: phoneNumberId || (includeEnvFallback ? (this.configService.get<string>('WHATSAPP_PHONE_NUMBER_ID') || '') : ''),
+    };
+  }
+
+  private isIntegrationUsable(integration?: Integration | null): boolean {
+    if (!integration) return false;
+    return (
+      integration.status !== IntegrationStatus.DISABLED
+      && integration.status !== IntegrationStatus.EXPIRED
+      && integration.status !== IntegrationStatus.SUSPENDED
+    );
+  }
+
+  private getIntegrationCredentials(integration?: Integration | null): Record<string, any> {
+    return {
+      ...(integration?.config || {}),
+      ...(integration?.credentials || {}),
+    };
+  }
+
+  private getIntegrationSenderInfo(integration?: Integration | null): {
+    senderIntegrationId?: string;
+    senderPhoneNumberId?: string;
+    senderPhoneDisplay?: string;
+    senderIntegrationName?: string;
+  } {
+    if (!integration) return {};
+    const credentials = this.getIntegrationCredentials(integration);
+    const { phoneNumberId } = this.getCredentials(credentials, false);
+    const display =
+      String(integration.config?.phoneDisplay || integration.config?.displayPhoneNumber || '').trim()
+      || undefined;
+
+    return {
+      senderIntegrationId: integration.id,
+      senderPhoneNumberId: phoneNumberId || undefined,
+      senderPhoneDisplay: display,
+      senderIntegrationName: integration.name || undefined,
+    };
+  }
+
+  private hasIntegrationSendCredentials(integration?: Integration | null): boolean {
+    if (!integration) return false;
+    const { accessToken, phoneNumberId } = this.getCredentials(this.getIntegrationCredentials(integration), false);
+    return !!(accessToken && phoneNumberId);
+  }
+
+  private async listWorkspaceWhatsAppIntegrations(workspaceId: string): Promise<Integration[]> {
+    const integrations = await this.integrationRepository.find({
+      where: { workspaceId, type: IntegrationType.WHATSAPP },
+      order: { createdAt: 'ASC' },
+    });
+    return integrations;
+  }
+
+  private chooseDefaultWorkspaceIntegration(integrations: Integration[]): Integration | null {
+    if (!integrations.length) return null;
+    const usable = integrations.filter((integration) =>
+      this.isIntegrationUsable(integration) && this.hasIntegrationSendCredentials(integration),
+    );
+    if (!usable.length) return null;
+    return usable.find((integration) => integration.status === IntegrationStatus.ACTIVE) || usable[0];
+  }
+
+  private async resolveWorkspaceSendIntegration(workspaceId: string, integrationId?: string): Promise<Integration> {
+    const allIntegrations = await this.listWorkspaceWhatsAppIntegrations(workspaceId);
+    if (!allIntegrations.length) {
+      throw new BadRequestException('No WhatsApp integration found for this workspace');
+    }
+
+    let selected: Integration | null = null;
+    if (integrationId?.trim()) {
+      selected = allIntegrations.find((integration) => integration.id === integrationId.trim()) || null;
+      if (!selected) {
+        throw new BadRequestException('Selected WhatsApp number was not found');
+      }
+    } else {
+      selected = this.chooseDefaultWorkspaceIntegration(allIntegrations);
+    }
+
+    if (!selected) {
+      throw new BadRequestException('No active WhatsApp sender number is configured');
+    }
+    if (!this.isIntegrationUsable(selected)) {
+      throw new BadRequestException('Selected WhatsApp sender number is disabled');
+    }
+    if (!this.hasIntegrationSendCredentials(selected)) {
+      throw new BadRequestException('Selected WhatsApp sender number is missing credentials');
+    }
+
+    return selected;
+  }
+
+  async listWorkspaceAccounts(workspaceId: string): Promise<{ defaultIntegrationId: string | null; data: Array<Record<string, any>> }> {
+    const integrations = await this.listWorkspaceWhatsAppIntegrations(workspaceId);
+    const defaultIntegration = this.chooseDefaultWorkspaceIntegration(integrations);
+    const data = integrations
+      .filter((integration) => this.isIntegrationUsable(integration))
+      .map((integration) => {
+        const credentials = this.getIntegrationCredentials(integration);
+        const { phoneNumberId } = this.getCredentials(credentials, false);
+        const wabaId = String(credentials.wabaId || credentials.waba_id || integration.config?.wabaId || '').trim() || null;
+        const phoneDisplay = String(integration.config?.phoneDisplay || integration.config?.displayPhoneNumber || '').trim() || null;
+        return {
+          id: integration.id,
+          name: integration.name,
+          status: integration.status,
+          phoneNumberId: phoneNumberId || null,
+          phoneDisplay,
+          wabaId,
+          isDefault: integration.id === defaultIntegration?.id,
+        };
+      });
+
+    return {
+      defaultIntegrationId: defaultIntegration?.id || null,
+      data,
+    };
+  }
+
+  async sendMessageForWorkspace(
+    workspaceId: string,
+    message: WhatsAppMessage,
+    integrationId?: string,
+  ): Promise<{ result: any; sender: ReturnType<WhatsAppService['getIntegrationSenderInfo']> }> {
+    const integration = await this.resolveWorkspaceSendIntegration(workspaceId, integrationId);
+    const payload: WhatsAppMessage = message.type === 'template' && message.template
+      ? {
+          ...message,
+          template: {
+            ...message.template,
+            parameters: this.normalizeTemplateComponents(message.template.parameters || []),
+          },
+        }
+      : message;
+    const result = await this.sendMessageWithCredentials(this.getIntegrationCredentials(integration), payload);
+    return {
+      result,
+      sender: this.getIntegrationSenderInfo(integration),
     };
   }
 
@@ -189,6 +338,7 @@ export class WhatsAppService {
       conditions: {
         sources: this.sanitizeStringArray(config?.conditions?.sources),
         statuses: this.sanitizeStringArray(config?.conditions?.statuses),
+        typeformFormIds: this.sanitizeStringArray(config?.conditions?.typeformFormIds),
         requirePhone: config?.conditions?.requirePhone !== false,
       },
     };
@@ -225,6 +375,11 @@ export class WhatsAppService {
     return [];
   }
 
+  private getContactTypeformFormId(contact: any): string {
+    const raw = contact?.customFields?.typeformMetadata?.formId;
+    return String(raw || '').trim();
+  }
+
   private matchesAutoSendRule(contact: any, rule: AutoSendRule): boolean {
     const conditions = rule.conditions || {};
     const contactSource = String(contact?.source || '').trim();
@@ -236,6 +391,18 @@ export class WhatsAppService {
 
     if (conditions.statuses?.length && !conditions.statuses.includes(contactStatus)) {
       return false;
+    }
+
+    if (conditions.typeformFormIds?.length) {
+      const contactFormId = this.getContactTypeformFormId(contact).toLowerCase();
+      const allowedFormIds = new Set(
+        conditions.typeformFormIds
+          .map((formId) => String(formId || '').trim().toLowerCase())
+          .filter(Boolean),
+      );
+      if (!contactFormId || !allowedFormIds.has(contactFormId)) {
+        return false;
+      }
     }
 
     return true;
@@ -290,15 +457,11 @@ export class WhatsAppService {
       where: { type: IntegrationType.WHATSAPP },
     });
 
-    const usable = integrations.filter(
-      i => i.status !== IntegrationStatus.DISABLED && i.status !== IntegrationStatus.EXPIRED && i.status !== IntegrationStatus.SUSPENDED,
-    );
+    const usable = integrations.filter((integration) => this.isIntegrationUsable(integration));
 
     // First try exact match on phoneNumberId
     for (const integration of usable) {
-      const storedId = integration.credentials?.phoneNumberId
-        || integration.config?.phoneNumberId
-        || integration.config?.phoneId;
+      const storedId = this.getCredentials(this.getIntegrationCredentials(integration), false).phoneNumberId;
       if (storedId && storedId === phoneNumberId) return integration;
     }
 
@@ -364,6 +527,7 @@ export class WhatsAppService {
     message: any,
     workspaceId: string,
     ownerId: string,
+    integration?: Integration,
   ): Promise<void> {
     const mediaMetadata: Record<string, any> = {};
     let messageBody = '';
@@ -417,6 +581,7 @@ export class WhatsAppService {
         waId: message.from,
         messageType: message.type,
         metaTimestamp: message.timestamp, // keep original for reference
+        ...this.getIntegrationSenderInfo(integration),
         ...mediaMetadata,
       },
     });
@@ -514,16 +679,15 @@ export class WhatsAppService {
     templateName: string,
     language = 'en',
     parameters: any[] = [],
+    integrationId?: string,
   ): Promise<any> {
-    const integration = await this.integrationRepository.findOne({
-      where: { type: IntegrationType.WHATSAPP, workspaceId },
-    });
-    return this.sendMessageWithCredentials(integration?.credentials || {}, {
+    const { result } = await this.sendMessageForWorkspace(workspaceId, {
       to,
       type: 'template',
       content: '',
       template: { name: templateName, language, parameters: this.normalizeTemplateComponents(parameters) },
-    });
+    }, integrationId);
+    return result;
   }
 
   async sendTextMessage(to: string, text: string, credentials?: Record<string, any>): Promise<any> {
@@ -631,7 +795,7 @@ export class WhatsAppService {
               message.from, profileName, integration.workspaceId, ownerId,
             );
 
-            await this.saveMessageActivity(contact, message, integration.workspaceId, ownerId);
+            await this.saveMessageActivity(contact, message, integration.workspaceId, ownerId, integration);
             await this.markMessageAsRead(message.id, integration.credentials);
 
             const messageEventPayload = {
@@ -981,61 +1145,76 @@ export class WhatsAppService {
   async downloadMediaForWorkspace(
     workspaceId: string,
     mediaId: string,
+    integrationId?: string,
   ): Promise<{ buffer: Buffer; contentType: string; fileName?: string }> {
-    const integration = await this.integrationRepository.findOne({
-      where: { type: IntegrationType.WHATSAPP, workspaceId },
-    });
-    const { accessToken } = this.getCredentials(integration?.credentials);
-    if (!accessToken) {
-      throw new BadRequestException('WhatsApp credentials not configured');
+    let candidates: Integration[] = [];
+    if (integrationId?.trim()) {
+      candidates = [await this.resolveWorkspaceSendIntegration(workspaceId, integrationId.trim())];
+    } else {
+      const all = await this.listWorkspaceWhatsAppIntegrations(workspaceId);
+      const preferred = this.chooseDefaultWorkspaceIntegration(all);
+      const preferredId = preferred?.id;
+      candidates = preferred
+        ? [preferred, ...all.filter((integration) => integration.id !== preferredId && this.isIntegrationUsable(integration))]
+        : all.filter((integration) => this.isIntegrationUsable(integration));
     }
 
-    let mediaInfo: any;
-    try {
-      const mediaInfoRes = await firstValueFrom(
-        this.httpService.get(`${this.apiUrl}/${mediaId}`, {
-          headers: { Authorization: `Bearer ${accessToken}` },
-          params: { fields: 'id,mime_type,url' },
-        }),
-      );
-      mediaInfo = mediaInfoRes.data || {};
-    } catch (error: any) {
-      const metaError = error?.response?.data?.error;
-      if (metaError) {
-        throw new BadRequestException(`Unable to fetch media info: ${metaError.message || 'Unknown error'}`);
-      }
-      throw error;
+    if (!candidates.length) {
+      throw new BadRequestException('No WhatsApp integration found for this workspace');
     }
 
-    if (!mediaInfo?.url) {
-      throw new BadRequestException('Media URL is missing');
-    }
+    let lastError: any = null;
+    for (const integration of candidates) {
+      const { accessToken } = this.getCredentials(this.getIntegrationCredentials(integration), false);
+      if (!accessToken) continue;
 
-    const mediaFileResponse = await firstValueFrom(
-      this.httpService.get(mediaInfo.url, {
-        headers: { Authorization: `Bearer ${accessToken}` },
-        responseType: 'arraybuffer',
-      }),
-    );
-
-    const contentType = String(mediaFileResponse.headers?.['content-type'] || mediaInfo.mime_type || 'application/octet-stream');
-    const disposition = String(mediaFileResponse.headers?.['content-disposition'] || '');
-    const fileNameMatch = disposition.match(/filename\*?=(?:UTF-8''|")?([^\";]+)/i);
-    let fileName: string | undefined;
-    if (fileNameMatch?.[1]) {
-      const rawName = fileNameMatch[1].replace(/\"/g, '');
       try {
-        fileName = decodeURIComponent(rawName);
-      } catch {
-        fileName = rawName;
+        const mediaInfoRes = await firstValueFrom(
+          this.httpService.get(`${this.apiUrl}/${mediaId}`, {
+            headers: { Authorization: `Bearer ${accessToken}` },
+            params: { fields: 'id,mime_type,url' },
+          }),
+        );
+        const mediaInfo = mediaInfoRes.data || {};
+        if (!mediaInfo?.url) continue;
+
+        const mediaFileResponse = await firstValueFrom(
+          this.httpService.get(mediaInfo.url, {
+            headers: { Authorization: `Bearer ${accessToken}` },
+            responseType: 'arraybuffer',
+          }),
+        );
+
+        const contentType = String(mediaFileResponse.headers?.['content-type'] || mediaInfo.mime_type || 'application/octet-stream');
+        const disposition = String(mediaFileResponse.headers?.['content-disposition'] || '');
+        const fileNameMatch = disposition.match(/filename\*?=(?:UTF-8''|")?([^\";]+)/i);
+        let fileName: string | undefined;
+        if (fileNameMatch?.[1]) {
+          const rawName = fileNameMatch[1].replace(/\"/g, '');
+          try {
+            fileName = decodeURIComponent(rawName);
+          } catch {
+            fileName = rawName;
+          }
+        }
+
+        return {
+          buffer: Buffer.from(mediaFileResponse.data),
+          contentType,
+          fileName,
+        };
+      } catch (error: any) {
+        lastError = error;
       }
     }
 
-    return {
-      buffer: Buffer.from(mediaFileResponse.data),
-      contentType,
-      fileName,
-    };
+    if (lastError?.response?.data?.error?.message) {
+      throw new BadRequestException(`Unable to fetch media: ${lastError.response.data.error.message}`);
+    }
+    if (lastError?.message) {
+      throw new BadRequestException(`Unable to fetch media: ${lastError.message}`);
+    }
+    throw new BadRequestException('Unable to fetch media with any connected WhatsApp number');
   }
 
   /**
@@ -1047,11 +1226,10 @@ export class WhatsAppService {
     filePath: string,
     mimeType: string,
     filename: string,
+    integrationId?: string,
   ): Promise<{ id: string }> {
-    const integration = await this.integrationRepository.findOne({
-      where: { type: IntegrationType.WHATSAPP, workspaceId },
-    });
-    const { accessToken, phoneNumberId } = this.getCredentials(integration?.credentials);
+    const integration = await this.resolveWorkspaceSendIntegration(workspaceId, integrationId);
+    const { accessToken, phoneNumberId } = this.getCredentials(this.getIntegrationCredentials(integration), false);
 
     // Build FormData for Meta upload
     const FormData = require('form-data');
@@ -1585,6 +1763,61 @@ export class WhatsAppService {
   /**
    * Returns { [waId]: { userId, userName, color, assignedAt } } for this workspace
    */
+  private async getContactedStage(
+    workspaceId: string,
+    pipelineId?: string,
+  ): Promise<Pick<PipelineStage, 'id' | 'pipelineId'> | null> {
+    const query = this.pipelineStageRepository
+      .createQueryBuilder('stage')
+      .select(['stage.id', 'stage.pipelineId'])
+      .where('stage.workspaceId = :workspaceId', { workspaceId })
+      .andWhere('stage.deletedAt IS NULL')
+      .andWhere('LOWER(stage.name) LIKE :contactedPattern', { contactedPattern: '%contact%' })
+      .orderBy('stage.displayOrder', 'ASC');
+
+    if (pipelineId) {
+      query.andWhere('stage.pipelineId = :pipelineId', { pipelineId });
+    }
+
+    return query.getOne();
+  }
+
+  private async syncAssignedConversationContact(
+    workspaceId: string,
+    waId: string,
+    userId: string,
+  ): Promise<void> {
+    const contact = await this.findContactByPhone(workspaceId, waId);
+    if (!contact) {
+      return;
+    }
+
+    let shouldSave = false;
+    if (contact.ownerId !== userId) {
+      contact.ownerId = userId;
+      shouldSave = true;
+    }
+
+    if (contact.status === ContactStatus.LEAD) {
+      contact.status = ContactStatus.PROSPECT;
+      shouldSave = true;
+    }
+
+    const contactedStage = await this.getContactedStage(workspaceId, contact.pipelineId);
+    if (contactedStage && contact.pipelineStageId !== contactedStage.id) {
+      contact.pipelineStageId = contactedStage.id;
+      if (!contact.pipelineId) {
+        contact.pipelineId = contactedStage.pipelineId;
+      }
+      shouldSave = true;
+    }
+
+    if (shouldSave) {
+      contact.lastContactedAt = new Date();
+      await this.contactRepository.save(contact);
+    }
+  }
+
   async getConversationAssignments(workspaceId: string): Promise<Record<string, any>> {
     const integration = await this.integrationRepository.findOne({
       where: { type: IntegrationType.WHATSAPP, workspaceId },
@@ -1625,6 +1858,10 @@ export class WhatsAppService {
     }
     integration.config = { ...(integration.config || {}), conversationAssignments: current };
     await this.integrationRepository.save(integration);
+
+    if (assignment?.userId) {
+      await this.syncAssignedConversationContact(workspaceId, waId, assignment.userId);
+    }
   }
 
   async setConversationArchived(
@@ -1793,8 +2030,9 @@ export class WhatsAppService {
     const hasIntegrationToken = !!(workspaceIntegration?.credentials?.verifyToken || workspaceIntegration?.config?.verifyToken);
     const hasEnvToken = !!envToken;
     const hasVerifyToken = hasIntegrationToken || hasEnvToken;
-    const hasAccessToken = !!(workspaceIntegration?.credentials?.accessToken || envAccessToken);
-    const hasPhoneNumberId = !!(workspaceIntegration?.credentials?.phoneNumberId || workspaceIntegration?.config?.phoneNumberId || envPhoneId);
+    const workspaceResolvedCreds = this.getCredentials(this.getIntegrationCredentials(workspaceIntegration || undefined), false);
+    const hasAccessToken = !!(workspaceResolvedCreds.accessToken || envAccessToken);
+    const hasPhoneNumberId = !!(workspaceResolvedCreds.phoneNumberId || envPhoneId);
 
     return {
       status: integrationStatus,
@@ -1957,9 +2195,8 @@ export class WhatsAppService {
   }
 
   private async findIntegrationForWorkspace(workspaceId: string): Promise<any> {
-    return this.integrationRepository.findOne({
-      where: { workspaceId, type: IntegrationType.WHATSAPP },
-    });
+    const integrations = await this.listWorkspaceWhatsAppIntegrations(workspaceId);
+    return this.chooseDefaultWorkspaceIntegration(integrations) || integrations[0] || null;
   }
 
   // ─── Conversation Flows (Chatbot) ──────────────────────────────────────────
@@ -2747,5 +2984,183 @@ export class WhatsAppService {
     } catch (err) {
       return { success: false, message: `Failed: ${err.response?.data?.error?.message || err.message}` };
     }
+  }
+
+  // ─── Meta Embedded Signup ──────────────────────────────────────────────────
+
+  getEmbeddedSignupConfig() {
+    const appId = this.configService.get<string>('META_APP_ID') || '';
+    const configId = this.configService.get<string>('META_CONFIG_ID') || '';
+    return {
+      appId,
+      configId,
+      available: !!(appId),
+    };
+  }
+
+  async completeEmbeddedSignup(workspaceId: string, userId: string, code: string) {
+    const appId = this.configService.get<string>('META_APP_ID');
+    const appSecret = this.configService.get<string>('META_APP_SECRET');
+
+    if (!appId || !appSecret) {
+      throw new BadRequestException('Meta app credentials not configured on server');
+    }
+
+    // 1. Exchange code for short-lived token
+    this.logger.log(`[EmbeddedSignup] Exchanging code for token...`);
+    let accessToken: string;
+    try {
+      const tokenRes = await firstValueFrom(
+        this.httpService.get('https://graph.facebook.com/v21.0/oauth/access_token', {
+          params: {
+            client_id: appId,
+            client_secret: appSecret,
+            code,
+          },
+        }),
+      );
+      accessToken = tokenRes.data.access_token;
+    } catch (err) {
+      this.logger.error(`[EmbeddedSignup] Token exchange failed: ${err.response?.data?.error?.message || err.message}`);
+      throw new BadRequestException('Failed to exchange authorization code: ' + (err.response?.data?.error?.message || err.message));
+    }
+
+    // 2. Debug token to find WABA ID and shared phone numbers
+    this.logger.log(`[EmbeddedSignup] Fetching shared WABA info...`);
+    let wabaId: string;
+    let phones: Array<{ id: string; display: string }> = [];
+
+    try {
+      // Get debug token info
+      const debugRes = await firstValueFrom(
+        this.httpService.get(`https://graph.facebook.com/v21.0/debug_token`, {
+          params: { input_token: accessToken, access_token: `${appId}|${appSecret}` },
+        }),
+      );
+      const granularScopes = debugRes.data?.data?.granular_scopes || [];
+      const waScope = granularScopes.find((s: any) => s.scope === 'whatsapp_business_management');
+      const wabaIds = waScope?.target_ids || [];
+
+      if (!wabaIds.length) {
+        throw new Error('No WABA shared during signup');
+      }
+      wabaId = wabaIds[0];
+
+      // Get phone numbers for this WABA
+      const phonesRes = await firstValueFrom(
+        this.httpService.get(`https://graph.facebook.com/v21.0/${wabaId}/phone_numbers`, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        }),
+      );
+
+      const rawPhones = Array.isArray(phonesRes.data?.data) ? phonesRes.data.data : [];
+      if (!rawPhones.length) {
+        throw new Error('No phone numbers found for this WABA');
+      }
+
+      phones = rawPhones
+        .map((phone: any) => ({
+          id: String(phone?.id || '').trim(),
+          display: String(phone?.display_phone_number || phone?.verified_name || phone?.id || '').trim(),
+        }))
+        .filter((phone: { id: string }) => !!phone.id);
+      if (!phones.length) {
+        throw new Error('No valid phone numbers found for this WABA');
+      }
+    } catch (err) {
+      this.logger.error(`[EmbeddedSignup] WABA fetch failed: ${err.message}`);
+      throw new BadRequestException('Failed to retrieve WhatsApp account info: ' + err.message);
+    }
+
+    // 3. Subscribe the WABA to our app's webhooks
+    try {
+      await firstValueFrom(
+        this.httpService.post(
+          `https://graph.facebook.com/v21.0/${wabaId}/subscribed_apps`,
+          null,
+          { headers: { Authorization: `Bearer ${accessToken}` } },
+        ),
+      );
+      this.logger.log(`[EmbeddedSignup] Subscribed WABA ${wabaId} to app webhooks`);
+    } catch (err) {
+      this.logger.warn(`[EmbeddedSignup] Webhook subscription warning: ${err.message}`);
+    }
+
+    // 4. Create/update one integration per phone number so workspaces can use multiple senders
+    const existingIntegrations = await this.listWorkspaceWhatsAppIntegrations(workspaceId);
+    const integrationsByPhone = new Map<string, Integration>();
+    for (const integration of existingIntegrations) {
+      const phoneId = this.getCredentials(this.getIntegrationCredentials(integration), false).phoneNumberId;
+      if (phoneId) integrationsByPhone.set(phoneId, integration);
+    }
+
+    const savedIntegrations: Integration[] = [];
+    for (const phone of phones) {
+      const existingIntegration = integrationsByPhone.get(phone.id);
+      const nextCredentials = {
+        ...(existingIntegration?.credentials || {}),
+        accessToken,
+        access_token: accessToken,
+        phoneNumberId: phone.id,
+        phone_number_id: phone.id,
+        wabaId,
+        waba_id: wabaId,
+      };
+      const nextConfig = {
+        ...(existingIntegration?.config || {}),
+        wabaId,
+        phoneNumberId: phone.id,
+        phoneDisplay: phone.display || phone.id,
+        embeddedSignup: true,
+        embeddedSignupAt: new Date().toISOString(),
+      };
+
+      const integration = existingIntegration
+        ? Object.assign(existingIntegration, {
+            status: IntegrationStatus.ACTIVE,
+            name: existingIntegration.name || `WhatsApp (${phone.display || phone.id})`,
+            credentials: nextCredentials,
+            config: nextConfig,
+          })
+        : this.integrationRepository.create({
+            workspaceId,
+            userId,
+            type: IntegrationType.WHATSAPP,
+            name: `WhatsApp (${phone.display || phone.id})`,
+            status: IntegrationStatus.ACTIVE,
+            credentials: nextCredentials,
+            config: nextConfig,
+          });
+
+      const saved = await this.integrationRepository.save(integration);
+      savedIntegrations.push(saved);
+    }
+
+    const primaryPhone = phones[0];
+    const primaryIntegration =
+      savedIntegrations.find((integration) => this.getCredentials(this.getIntegrationCredentials(integration), false).phoneNumberId === primaryPhone.id)
+      || savedIntegrations[0];
+
+    this.logger.log(
+      `[EmbeddedSignup] Workspace ${workspaceId} synced ${savedIntegrations.length} WhatsApp number(s) for WABA ${wabaId}`,
+    );
+
+    return {
+      success: true,
+      integrationId: primaryIntegration?.id,
+      wabaId,
+      phoneNumberId: primaryPhone.id,
+      phoneDisplay: primaryPhone.display,
+      integrations: savedIntegrations.map((integration) => {
+        const sender = this.getIntegrationSenderInfo(integration);
+        return {
+          id: integration.id,
+          name: integration.name,
+          status: integration.status,
+          phoneNumberId: sender.senderPhoneNumberId || null,
+          phoneDisplay: sender.senderPhoneDisplay || null,
+        };
+      }),
+    };
   }
 }
