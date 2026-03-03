@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
-import { AlertTriangle, Loader2, RefreshCw, ShieldAlert } from 'lucide-react';
+import { AlertTriangle, Download, Loader2, RefreshCw, ShieldAlert } from 'lucide-react';
 import api from '@/lib/api';
 
 type LogSource = 'activity' | 'notification' | 'integration';
@@ -175,6 +175,53 @@ export default function LogsPage() {
     return next;
   }, [filteredLogs]);
 
+  const downloadFilteredCsv = () => {
+    if (!filteredLogs.length) return;
+
+    const escapeCsv = (value: unknown) => {
+      const text = String(value ?? '');
+      if (text.includes('"') || text.includes(',') || text.includes('\n')) {
+        return `"${text.replace(/"/g, '""')}"`;
+      }
+      return text;
+    };
+
+    const headers = isSuperAdmin
+      ? ['time', 'workspace', 'source', 'level', 'category', 'message', 'actor']
+      : ['time', 'source', 'level', 'category', 'message', 'actor'];
+
+    const rows = filteredLogs.map((log) => {
+      const base = [
+        new Date(log.createdAt).toISOString(),
+      ];
+
+      if (isSuperAdmin) {
+        base.push(log.workspaceName || log.workspaceId || '');
+      }
+
+      base.push(
+        log.source,
+        log.level,
+        log.category || '',
+        log.message || '',
+        log.actor || '',
+      );
+
+      return base.map(escapeCsv).join(',');
+    });
+
+    const csv = [headers.join(','), ...rows].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `system-logs-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.csv`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    URL.revokeObjectURL(url);
+  };
+
   if (isLoading) {
     return (
       <div className="flex h-80 items-center justify-center">
@@ -214,6 +261,14 @@ export default function LogsPage() {
         >
           <RefreshCw className="h-4 w-4" />
           Refresh
+        </button>
+        <button
+          onClick={downloadFilteredCsv}
+          disabled={filteredLogs.length === 0}
+          className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <Download className="h-4 w-4" />
+          Export CSV
         </button>
       </div>
 
