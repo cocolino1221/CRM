@@ -65,6 +65,14 @@ export interface EsemneazaSyncResult {
   message?: string;
 }
 
+export interface EsemneazaRequestSummary {
+  id: string;
+  createdAt?: string;
+  docName?: string;
+  status?: string;
+  completedAt?: string | null;
+}
+
 @Injectable()
 export class DocumentsService {
   private readonly logger = new Logger(DocumentsService.name);
@@ -468,33 +476,14 @@ export class DocumentsService {
       };
     }
 
-    const endpoint = this.getFirstNonEmpty(
-      integration.config?.listDocumentsPath,
-      integration.config?.listContractsPath,
-      '/api/v1/requests',
-    ) as string;
     const rawListLimit = Number(integration.config?.listDocumentsLimit || integration.config?.syncMaxRows || 50);
     const listLimit = Number.isFinite(rawListLimit) && rawListLimit > 0 ? Math.min(rawListLimit, 100) : 50;
 
     let responseData: any;
     try {
-      const listBaseUrl = this.buildProviderUrl(apiUrl, endpoint);
-      const listUrl = `${listBaseUrl}${listBaseUrl.includes('?') ? '&' : '?'}limit=${encodeURIComponent(String(listLimit))}`;
-      const headers = this.buildProviderHeaders(integration);
-
-      try {
-        const response = await this.httpService.axiosRef.get(listUrl, { headers });
-        responseData = response.data;
-      } catch (error) {
-        const status = (error as any)?.response?.status;
-        if (status === 400) {
-          // Some providers reject large/unknown limit values; retry without query params.
-          const retry = await this.httpService.axiosRef.get(listBaseUrl, { headers });
-          responseData = retry.data;
-        } else {
-          throw error;
-        }
-      }
+      responseData = await this.fetchEsemneazaRequestsPayload(integration, apiUrl, {
+        limit: listLimit,
+      });
     } catch (error) {
       const message = this.extractHttpErrorMessage(error);
       this.logger.error(`Could not fetch eSemneaza documents from API: ${message}`);
@@ -806,6 +795,242 @@ export class DocumentsService {
       totalFetched: limitedRows.length,
       message: rows.length > maxRows ? `Imported first ${maxRows} records (syncMaxRows limit)` : undefined,
     };
+  }
+
+  async listEsemneazaRequests(
+    workspaceId: string,
+    options?: { cursor?: string; limit?: number },
+  ): Promise<EsemneazaRequestSummary[]> {
+    const integration = await this.findApiProviderIntegration(workspaceId, ['esemneaza'], true);
+    const apiUrl = this.resolveProviderBaseUrl(integration);
+    if (!apiUrl) {
+      throw new BadRequestException('eSemneaza API URL is not configured');
+    }
+
+    const rawLimit = Number(options?.limit);
+    const limit = Number.isFinite(rawLimit) && rawLimit > 0
+      ? Math.min(Math.trunc(rawLimit), 100)
+      : undefined;
+
+    let payload: any;
+    try {
+      payload = await this.fetchEsemneazaRequestsPayload(integration, apiUrl, {
+        cursor: options?.cursor,
+        limit,
+      });
+    } catch (error) {
+      throw new BadRequestException(`Could not list eSemneaza requests: ${this.extractHttpErrorMessage(error)}`);
+    }
+
+    const rows = this.extractApiRows(payload, [
+      'documents',
+      'contracts',
+      'items',
+      'results',
+      'data',
+    ]).filter((row) => row && typeof row === 'object');
+
+    return rows
+      .map((row: any) => ({
+        id: String(
+          row?.id ||
+          row?.requestId ||
+          row?.documentId ||
+          row?.contractId ||
+          row?.uuid ||
+          '',
+        ).trim(),
+        createdAt: this.getFirstNonEmpty(
+          row?.createdAt,
+          row?.created_at,
+          row?.sentAt,
+          row?.sent_at,
+        ),
+        docName: this.getFirstNonEmpty(
+          row?.docName,
+          row?.name,
+          row?.title,
+          row?.documentName,
+          row?.contractName,
+        ),
+        status: this.getFirstNonEmpty(row?.status, row?.state),
+        completedAt: this.getFirstNonEmpty(row?.completedAt, row?.completed_at) || null,
+      }))
+      .filter((row) => !!row.id);
+  }
+
+  async getEsemneazaRequestDetails(workspaceId: string, requestId: string): Promise<any> {
+    const normalizedRequestId = String(requestId || '').trim();
+    if (!normalizedRequestId) {
+      throw new BadRequestException('requestId is required');
+    }
+
+    const integration = await this.findApiProviderIntegration(workspaceId, ['esemneaza'], true);
+    const apiUrl = this.resolveProviderBaseUrl(integration);
+    if (!apiUrl) {
+      throw new BadRequestException('eSemneaza API URL is not configured');
+    }
+
+    const detailsPathTemplate = String(
+      integration.config?.requestDetailsPath || '/api/v1/requests/{requestId}',
+    );
+    const detailsPath = detailsPathTemplate.includes('{requestId}')
+      ? detailsPathTemplate.replace('{requestId}', encodeURIComponent(normalizedRequestId))
+      : `${detailsPathTemplate.replace(/\/+$/, '')}/${encodeURIComponent(normalizedRequestId)}`;
+
+    try {
+      const response = await this.httpService.axiosRef.get(
+        this.buildProviderUrl(apiUrl, detailsPath),
+        {
+          headers: this.buildProviderHeaders(integration),
+        },
+      );
+      return response.data || {};
+    } catch (error) {
+      throw new BadRequestException(`Could not fetch eSemneaza request details: ${this.extractHttpErrorMessage(error)}`);
+    }
+  }
+
+  async cancelEsemneazaRequest(
+    workspaceId: string,
+    requestId: string,
+    userId: string,
+  ): Promise<{ success: boolean; message: string }> {
+    const normalizedRequestId = String(requestId || '').trim();
+    if (!normalizedRequestId) {
+      throw new BadRequestException('requestId is required');
+    }
+
+    const integration = await this.findApiProviderIntegration(workspaceId, ['esemneaza'], true);
+    const apiUrl = this.resolveProviderBaseUrl(integration);
+    if (!apiUrl) {
+      throw new BadRequestException('eSemneaza API URL is not configured');
+    }
+
+    const cancelPathTemplate = String(
+      integration.config?.cancelRequestPath || '/api/v1/requests/{requestId}/cancel',
+    );
+    const cancelPath = cancelPathTemplate.includes('{requestId}')
+      ? cancelPathTemplate.replace('{requestId}', encodeURIComponent(normalizedRequestId))
+      : `${cancelPathTemplate.replace(/\/+$/, '')}/${encodeURIComponent(normalizedRequestId)}/cancel`;
+
+    let responseData: any;
+    try {
+      const response = await this.httpService.axiosRef.post(
+        this.buildProviderUrl(apiUrl, cancelPath),
+        {},
+        {
+          headers: this.buildProviderHeaders(integration),
+        },
+      );
+      responseData = response.data || {};
+    } catch (error) {
+      throw new BadRequestException(`Could not cancel eSemneaza request: ${this.extractHttpErrorMessage(error)}`);
+    }
+
+    const localDocument = await this.documentRepository.findOne({
+      where: {
+        workspaceId,
+        integrationId: integration.id,
+        externalId: normalizedRequestId,
+      },
+    });
+
+    if (localDocument) {
+      localDocument.status = DocumentStatus.VOIDED;
+      localDocument.voidedAt = new Date();
+      localDocument.addAuditEntry('esemneaza.canceled', userId, {
+        requestId: normalizedRequestId,
+      });
+      await this.documentRepository.save(localDocument);
+    }
+
+    return {
+      success: responseData?.success !== false,
+      message: this.getFirstNonEmpty(responseData?.message, 'Request canceled') as string,
+    };
+  }
+
+  async getEsemneazaRequestTempDownloadUrl(
+    workspaceId: string,
+    requestId: string,
+  ): Promise<{ requestId: string; docUrl: string }> {
+    return this.getEsemneazaRequestDownloadUrl(
+      workspaceId,
+      requestId,
+      '/api/v1/requests/{requestId}/temp_download_url',
+      'Could not get temporary download URL',
+    );
+  }
+
+  async getEsemneazaRequestCompletedDownloadUrl(
+    workspaceId: string,
+    requestId: string,
+  ): Promise<{ requestId: string; docUrl: string }> {
+    return this.getEsemneazaRequestDownloadUrl(
+      workspaceId,
+      requestId,
+      '/api/v1/requests/{requestId}/completed_download_url',
+      'Could not get completed download URL',
+    );
+  }
+
+  async signEsemneazaRecipientOnBehalf(
+    workspaceId: string,
+    userId: string,
+    payload: { token: string; signatureText: string },
+  ): Promise<any> {
+    const token = String(payload?.token || '').trim();
+    const signatureText = String(payload?.signatureText || '').trim();
+    if (!token) {
+      throw new BadRequestException('token is required');
+    }
+    if (!signatureText) {
+      throw new BadRequestException('signatureText is required');
+    }
+
+    const integration = await this.findApiProviderIntegration(workspaceId, ['esemneaza'], true);
+    const apiUrl = this.resolveProviderBaseUrl(integration);
+    if (!apiUrl) {
+      throw new BadRequestException('eSemneaza API URL is not configured');
+    }
+
+    const signOnBehalfPath = String(
+      integration.config?.signOnBehalfPath || '/api/v1/recipients/sign-on-behalf',
+    );
+
+    try {
+      const response = await this.httpService.axiosRef.post(
+        this.buildProviderUrl(apiUrl, signOnBehalfPath),
+        { token, signatureText },
+        {
+          headers: this.buildProviderHeaders(integration),
+        },
+      );
+
+      const responseData = response.data || {};
+      const requestId = this.getFirstNonEmpty(responseData?.requestId);
+      if (requestId) {
+        const localDocument = await this.documentRepository.findOne({
+          where: {
+            workspaceId,
+            integrationId: integration.id,
+            externalId: requestId,
+          },
+        });
+        if (localDocument) {
+          localDocument.addAuditEntry('esemneaza.sign_on_behalf_requested', userId, {
+            requestId,
+            recipientId: responseData?.recipientId,
+          });
+          await this.documentRepository.save(localDocument);
+        }
+      }
+
+      return responseData;
+    } catch (error) {
+      throw new BadRequestException(`Could not sign on behalf: ${this.extractHttpErrorMessage(error)}`);
+    }
   }
 
   async createFromEsemneaza(
@@ -2021,6 +2246,61 @@ export class DocumentsService {
     }
   }
 
+  private async fetchEsemneazaRequestsPayload(
+    integration: Integration,
+    apiUrl: string,
+    options?: { cursor?: string; limit?: number },
+  ): Promise<any> {
+    const configuredPath = String(
+      this.getFirstNonEmpty(
+        integration.config?.listDocumentsPath,
+        integration.config?.listContractsPath,
+        '/api/v1/requests',
+      ),
+    );
+    const defaultPath = '/api/v1/requests';
+    const pathCandidates = configuredPath === defaultPath
+      ? [configuredPath]
+      : [configuredPath, defaultPath];
+
+    const queryParams: Record<string, string | number | undefined> = {
+      cursor: options?.cursor ? String(options.cursor).trim() : undefined,
+      limit:
+        typeof options?.limit === 'number' &&
+        Number.isFinite(options.limit) &&
+        options.limit > 0
+          ? Math.min(Math.trunc(options.limit), 100)
+          : undefined,
+    };
+
+    let lastError: any;
+    for (const path of pathCandidates) {
+      const baseUrl = this.buildProviderUrl(apiUrl, path);
+      const urlsToTry = [
+        this.buildUrlWithQueryParams(baseUrl, queryParams),
+        baseUrl,
+      ].filter((url, index, arr) => arr.indexOf(url) === index);
+
+      for (const url of urlsToTry) {
+        try {
+          const response = await this.httpService.axiosRef.get(url, {
+            headers: this.buildProviderHeaders(integration),
+          });
+          return response.data;
+        } catch (error) {
+          lastError = error;
+          const status = (error as any)?.response?.status;
+          const shouldRetry = status === 400 || status === 404;
+          if (!shouldRetry) {
+            throw error;
+          }
+        }
+      }
+    }
+
+    throw lastError || new Error('Could not fetch eSemneaza requests');
+  }
+
   private extractApiRows(payload: any, keys: string[]): any[] {
     if (!payload) return [];
     if (Array.isArray(payload)) return payload;
@@ -2042,6 +2322,50 @@ export class DocumentsService {
     }
 
     return [];
+  }
+
+  private async getEsemneazaRequestDownloadUrl(
+    workspaceId: string,
+    requestId: string,
+    pathTemplate: string,
+    errorPrefix: string,
+  ): Promise<{ requestId: string; docUrl: string }> {
+    const normalizedRequestId = String(requestId || '').trim();
+    if (!normalizedRequestId) {
+      throw new BadRequestException('requestId is required');
+    }
+
+    const integration = await this.findApiProviderIntegration(workspaceId, ['esemneaza'], true);
+    const apiUrl = this.resolveProviderBaseUrl(integration);
+    if (!apiUrl) {
+      throw new BadRequestException('eSemneaza API URL is not configured');
+    }
+
+    const path = pathTemplate.includes('{requestId}')
+      ? pathTemplate.replace('{requestId}', encodeURIComponent(normalizedRequestId))
+      : `${pathTemplate.replace(/\/+$/, '')}/${encodeURIComponent(normalizedRequestId)}`;
+
+    try {
+      const response = await this.httpService.axiosRef.get(
+        this.buildProviderUrl(apiUrl, path),
+        {
+          headers: this.buildProviderHeaders(integration),
+        },
+      );
+
+      const responseData = response.data || {};
+      const docUrl = this.getFirstNonEmpty(responseData?.docUrl, responseData?.url);
+      if (!docUrl) {
+        throw new Error('Missing docUrl in provider response');
+      }
+
+      return {
+        requestId: this.getFirstNonEmpty(responseData?.requestId, normalizedRequestId) as string,
+        docUrl,
+      };
+    } catch (error) {
+      throw new BadRequestException(`${errorPrefix}: ${this.extractHttpErrorMessage(error)}`);
+    }
   }
 
   private parseDateValue(value: any): Date | undefined {
@@ -2301,7 +2625,31 @@ export class DocumentsService {
     if (/^https?:\/\//i.test(normalizedEndpoint)) {
       return normalizedEndpoint;
     }
-    return `${normalizedBase}/${normalizedEndpoint.replace(/^\/+/, '')}`;
+
+    const endpointWithLeadingSlash = `/${normalizedEndpoint.replace(/^\/+/, '')}`;
+    const baseEndsWithApiV1 = /\/api\/v1$/i.test(normalizedBase);
+    const endpointStartsWithApiV1 = /^\/api\/v1(\/|$)/i.test(endpointWithLeadingSlash);
+    if (baseEndsWithApiV1 && endpointStartsWithApiV1) {
+      const suffix = endpointWithLeadingSlash.replace(/^\/api\/v1/i, '');
+      return `${normalizedBase}${suffix}`;
+    }
+
+    return `${normalizedBase}${endpointWithLeadingSlash}`;
+  }
+
+  private buildUrlWithQueryParams(
+    url: string,
+    params: Record<string, string | number | undefined>,
+  ): string {
+    const query = Object.entries(params)
+      .filter(([, value]) => value !== undefined && value !== null && String(value).trim() !== '')
+      .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`)
+      .join('&');
+
+    if (!query) {
+      return url;
+    }
+    return `${url}${url.includes('?') ? '&' : '?'}${query}`;
   }
 
   private getPrimaryRecipient(document: Document): { email?: string; name?: string } {

@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { DndContext, DragEndEvent, DragOverlay, DragStartEvent, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
-import { Loader2, Plus, Filter, Search, TrendingUp, DollarSign, Calendar, User } from 'lucide-react';
+import { Loader2, Plus, TrendingUp, DollarSign, Calendar, User } from 'lucide-react';
 import api from '@/lib/api';
 import { formatCurrency } from '@/lib/utils';
 
@@ -47,6 +47,22 @@ interface PipelineStage {
   totalValue: number;
 }
 
+interface ContactPipeline {
+  id: string;
+  name: string;
+  isDefault?: boolean;
+  stages: ContactPipelineStage[];
+}
+
+interface ContactPipelineStage {
+  id: string;
+  name: string;
+  color: string;
+  displayOrder: number;
+  isClosedWon?: boolean;
+  isClosedLost?: boolean;
+}
+
 const STAGE_COLORS: Record<string, string> = {
   lead: 'bg-gray-100 border-gray-300',
   qualified: 'bg-blue-100 border-blue-300',
@@ -67,10 +83,17 @@ const STAGE_LABELS: Record<string, string> = {
 
 export default function PipelinePage() {
   const [pipeline, setPipeline] = useState<Pipeline | null>(null);
+  const [contactPipelines, setContactPipelines] = useState<ContactPipeline[]>([]);
+  const [selectedContactPipelineId, setSelectedContactPipelineId] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [activeDeal, setActiveDeal] = useState<Deal | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterStage, setFilterStage] = useState<string>('all');
+  const [newStatusName, setNewStatusName] = useState('');
+  const [newStatusColor, setNewStatusColor] = useState('#6366F1');
+  const [newStatusType, setNewStatusType] = useState<'normal' | 'won' | 'lost'>('normal');
+  const [savingStatus, setSavingStatus] = useState(false);
+  const [statusError, setStatusError] = useState('');
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -81,7 +104,10 @@ export default function PipelinePage() {
   );
 
   useEffect(() => {
-    fetchPipelineData();
+    const initialize = async () => {
+      await Promise.all([fetchPipelineData(), fetchContactPipelines()]);
+    };
+    initialize();
   }, []);
 
   const fetchPipelineData = async () => {
@@ -153,6 +179,66 @@ export default function PipelinePage() {
       setPipeline(null);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const fetchContactPipelines = async () => {
+    try {
+      const response = await api.get('/pipelines');
+      const rows: ContactPipeline[] = Array.isArray(response.data) ? response.data : [];
+      setContactPipelines(rows);
+      if (rows.length === 0) {
+        setSelectedContactPipelineId('');
+        return;
+      }
+
+      setSelectedContactPipelineId((current) => {
+        if (current && rows.some((pipelineRow) => pipelineRow.id === current)) {
+          return current;
+        }
+        const defaultPipeline = rows.find((pipelineRow) => pipelineRow.isDefault);
+        return defaultPipeline?.id || rows[0].id;
+      });
+    } catch (error) {
+      console.error('Failed to fetch contact pipelines:', error);
+      setContactPipelines([]);
+      setSelectedContactPipelineId('');
+    }
+  };
+
+  const handleAddPipelineStatus = async () => {
+    const pipelineId = selectedContactPipelineId;
+    const name = newStatusName.trim();
+    if (!pipelineId) {
+      setStatusError('Selecteaza un pipeline inainte sa adaugi status.');
+      return;
+    }
+    if (!name) {
+      setStatusError('Numele statusului este obligatoriu.');
+      return;
+    }
+
+    setSavingStatus(true);
+    setStatusError('');
+    try {
+      await api.post(`/pipelines/${pipelineId}/stages`, {
+        name,
+        color: newStatusColor,
+        isClosedWon: newStatusType === 'won',
+        isClosedLost: newStatusType === 'lost',
+      });
+      setNewStatusName('');
+      setNewStatusType('normal');
+      await fetchContactPipelines();
+    } catch (error: any) {
+      const rawMessage = error?.response?.data?.message;
+      if (Array.isArray(rawMessage)) {
+        setStatusError(rawMessage.join(', '));
+      } else {
+        setStatusError(rawMessage || 'Nu am putut adauga statusul.');
+      }
+    } finally {
+      setSavingStatus(false);
     }
   };
 
@@ -236,6 +322,7 @@ export default function PipelinePage() {
 
   const totalPipelineValue = pipeline.stages.reduce((sum, stage) => sum + stage.totalValue, 0);
   const totalDeals = pipeline.stages.reduce((sum, stage) => sum + stage.deals.length, 0);
+  const selectedContactPipeline = contactPipelines.find((row) => row.id === selectedContactPipelineId) || null;
 
   return (
     <div className="space-y-6">
@@ -253,6 +340,89 @@ export default function PipelinePage() {
           <Plus className="h-4 w-4" />
           New Deal
         </button>
+      </div>
+
+      <div className="rounded-xl border border-indigo-200 bg-white p-4 space-y-4">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div>
+            <h2 className="text-lg font-semibold text-gray-900">Statusuri Pipeline</h2>
+            <p className="text-sm text-gray-600">
+              Adauga statusuri noi pentru pipeline-ul de lead-uri din CRM.
+            </p>
+          </div>
+          <select
+            value={selectedContactPipelineId}
+            onChange={(e) => setSelectedContactPipelineId(e.target.value)}
+            className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+          >
+            {contactPipelines.map((row) => (
+              <option key={row.id} value={row.id}>
+                {row.name}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {selectedContactPipeline ? (
+          <>
+            <div className="flex flex-wrap gap-2">
+              {selectedContactPipeline.stages
+                .slice()
+                .sort((a, b) => a.displayOrder - b.displayOrder)
+                .map((stage) => (
+                  <span
+                    key={stage.id}
+                    className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-semibold text-white"
+                    style={{ backgroundColor: stage.color || '#6366F1' }}
+                  >
+                    {stage.name}
+                    {stage.isClosedWon ? ' (Won)' : ''}
+                    {stage.isClosedLost ? ' (Lost)' : ''}
+                  </span>
+                ))}
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+              <input
+                type="text"
+                value={newStatusName}
+                onChange={(e) => setNewStatusName(e.target.value)}
+                placeholder="Nume status nou"
+                className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+              />
+              <input
+                type="color"
+                value={newStatusColor}
+                onChange={(e) => setNewStatusColor(e.target.value)}
+                className="h-10 w-full rounded-lg border border-gray-300"
+              />
+              <select
+                value={newStatusType}
+                onChange={(e) => setNewStatusType(e.target.value as 'normal' | 'won' | 'lost')}
+                className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+              >
+                <option value="normal">Normal</option>
+                <option value="won">Closed Won</option>
+                <option value="lost">Closed Lost</option>
+              </select>
+              <button
+                type="button"
+                onClick={handleAddPipelineStatus}
+                disabled={savingStatus}
+                className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-60"
+              >
+                {savingStatus ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                Adauga status
+              </button>
+            </div>
+          </>
+        ) : (
+          <p className="text-sm text-gray-600">Nu exista pipeline configurat in workspace.</p>
+        )}
+
+        {statusError && (
+          <p className="text-sm text-red-600">{statusError}</p>
+        )}
       </div>
 
       {/* Stats */}

@@ -63,6 +63,75 @@ export class DocumentsController {
     };
   }
 
+  @Get('esemneaza/requests')
+  @ApiOperation({ summary: 'List eSemneaza sign requests' })
+  @ApiResponse({ status: 200, description: 'Sign requests retrieved successfully' })
+  async listEsemneazaRequests(
+    @Req() req: any,
+    @Query('cursor') cursor?: string,
+    @Query('limit') limit?: string,
+  ) {
+    const parsedLimit = Number(limit);
+    return {
+      requests: await this.documentsService.listEsemneazaRequests(req.user.workspaceId, {
+        cursor,
+        limit: Number.isFinite(parsedLimit) ? parsedLimit : undefined,
+      }),
+    };
+  }
+
+  @Get('esemneaza/requests/:requestId')
+  @ApiOperation({ summary: 'Get eSemneaza sign request details' })
+  @ApiResponse({ status: 200, description: 'Sign request retrieved successfully' })
+  async getEsemneazaRequestDetails(
+    @Req() req: any,
+    @Param('requestId') requestId: string,
+  ) {
+    return this.documentsService.getEsemneazaRequestDetails(req.user.workspaceId, requestId);
+  }
+
+  @Post('esemneaza/requests/:requestId/cancel')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Cancel eSemneaza sign request' })
+  @ApiResponse({ status: 200, description: 'Sign request canceled successfully' })
+  async cancelEsemneazaRequest(
+    @Req() req: any,
+    @Param('requestId') requestId: string,
+  ) {
+    return this.documentsService.cancelEsemneazaRequest(req.user.workspaceId, requestId, req.user.id);
+  }
+
+  @Get('esemneaza/requests/:requestId/temp-download-url')
+  @ApiOperation({ summary: 'Get eSemneaza temporary document download URL' })
+  @ApiResponse({ status: 200, description: 'Temporary download URL generated successfully' })
+  async getEsemneazaTempDownloadUrl(
+    @Req() req: any,
+    @Param('requestId') requestId: string,
+  ) {
+    return this.documentsService.getEsemneazaRequestTempDownloadUrl(req.user.workspaceId, requestId);
+  }
+
+  @Get('esemneaza/requests/:requestId/completed-download-url')
+  @ApiOperation({ summary: 'Get eSemneaza completed document download URL' })
+  @ApiResponse({ status: 200, description: 'Completed download URL generated successfully' })
+  async getEsemneazaCompletedDownloadUrl(
+    @Req() req: any,
+    @Param('requestId') requestId: string,
+  ) {
+    return this.documentsService.getEsemneazaRequestCompletedDownloadUrl(req.user.workspaceId, requestId);
+  }
+
+  @Post('esemneaza/recipients/sign-on-behalf')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Sign on behalf of an eSemneaza recipient' })
+  @ApiResponse({ status: 200, description: 'Sign on behalf accepted successfully' })
+  async signEsemneazaOnBehalf(
+    @Req() req: any,
+    @Body() body: { token: string; signatureText: string },
+  ) {
+    return this.documentsService.signEsemneazaRecipientOnBehalf(req.user.workspaceId, req.user.id, body);
+  }
+
   @Post('esemneaza/sync')
   @ApiOperation({ summary: 'Import documents from eSemneaza dashboard into CRM' })
   @ApiResponse({ status: 200, description: 'eSemneaza documents synced successfully' })
