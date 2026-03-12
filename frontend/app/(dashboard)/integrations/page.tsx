@@ -472,7 +472,14 @@ export default function IntegrationsPage() {
       connected: false,
       features: ['Trimitere contract', 'Link semnare', 'Webhook status semnat', 'Automatizare post-semnare'],
       configFields: [
-        { name: 'apiUrl', label: 'API URL', type: 'url', required: true, placeholder: 'https://api.esemneaza.ro' },
+        {
+          name: 'apiUrl',
+          label: 'API URL (optional)',
+          type: 'url',
+          required: false,
+          placeholder: 'https://api.esemneaza.ro',
+          helpText: 'Optional pentru modul webhook-only. Daca nu ai API URL, lasa campul gol si foloseste doar Webhook URL-ul generat mai jos.',
+        },
         { name: 'apiKey', label: 'API Key', type: 'password', required: true, placeholder: 'ESM_...' },
         { name: 'sendContractPath', label: 'Send Contract Path', type: 'text', required: false, placeholder: '/contracts/send' },
         { name: 'listTemplatesPath', label: 'Templates Path', type: 'text', required: false, placeholder: '/templates' },
@@ -490,7 +497,14 @@ export default function IntegrationsPage() {
       connected: false,
       features: ['Funnel tracking', 'Payment processing', 'Conversion optimization', 'A/B testing'],
       configFields: [
-        { name: 'apiUrl', label: 'API URL', type: 'url', required: false, placeholder: 'https://api.payfunnels.com' },
+        {
+          name: 'apiUrl',
+          label: 'API URL (optional)',
+          type: 'url',
+          required: false,
+          placeholder: 'https://api.payfunnels.com',
+          helpText: 'Optional pentru modul webhook-only. Daca nu ai API URL, lasa campul gol.',
+        },
         { name: 'apiKey', label: 'API Key', type: 'password', required: true, placeholder: 'Your PayFunnels API key' },
         { name: 'accountId', label: 'Account ID', type: 'text', required: true, placeholder: 'Your account ID' },
         { name: 'createPaymentPath', label: 'Create Payment Path', type: 'text', required: false, placeholder: '/payments/links' },
@@ -730,7 +744,7 @@ export default function IntegrationsPage() {
           if (!backendInt && !connectedEntry) return staticInt;
           // Webhook-only integrations (typeform, manychat, calendly) work without active API key test — treat pending as connected
           const isConnected = connectedEntry
-            ? connectedEntry.status !== 'disabled' && connectedEntry.status !== 'expired' && connectedEntry.status !== 'suspended'
+            ? !['disabled', 'expired', 'suspended', 'error'].includes(String(connectedEntry.status || '').toLowerCase())
             : false;
           return {
             ...staticInt,

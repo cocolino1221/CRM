@@ -177,14 +177,26 @@ export class IntegrationsController {
     // Webhook-only integrations (ManyChat, Calendly, etc.) should always be activated
     // because the webhook receiver works independently of an API key connection test.
     const webhookOnlyTypes: string[] = [IntegrationType.MANYCHAT, IntegrationType.CALENDLY];
-    if (webhookOnlyTypes.includes(integration.type as any)) {
+    const webhookFirstApiProviders = new Set(['esemneaza', 'payfunnels', 'payfunnel']);
+    const providerKey = String(integration.config?.provider || integration.externalId || '').trim().toLowerCase();
+    const isWebhookFirstApiProvider =
+      integration.type === IntegrationType.API && webhookFirstApiProviders.has(providerKey);
+
+    if (webhookOnlyTypes.includes(integration.type as any) || isWebhookFirstApiProvider) {
       integration.status = IntegrationStatus.ACTIVE;
       await this.integrationRepository.save(integration);
-      this.logger.log(`Webhook-only integration ${integration.id} (${integration.type}) auto-activated`);
+      this.logger.log(
+        `Webhook-first integration ${integration.id} (${integration.type}${providerKey ? `/${providerKey}` : ''}) auto-activated`,
+      );
     }
 
     // For API key integrations, auto-test connection and activate if valid
-    if (normalizedDto.authType === IntegrationAuthType.API_KEY && (normalizedDto.credentials && Object.keys(normalizedDto.credentials).length > 0)) {
+    if (
+      normalizedDto.authType === IntegrationAuthType.API_KEY &&
+      normalizedDto.credentials &&
+      Object.keys(normalizedDto.credentials).length > 0 &&
+      !isWebhookFirstApiProvider
+    ) {
       try {
         const testResult = await this.integrationsService.testConnection(integration.id, req.user.workspaceId);
         if (testResult.success) {
