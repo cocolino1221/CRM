@@ -70,6 +70,21 @@ interface EsemneazaSyncResult {
 }
 
 export default function DocumentsPage() {
+  const initialCreateForm: CreateEsemneazaForm = {
+    name: '',
+    type: 'contract',
+    templateId: '',
+    fileName: '',
+    templateName: '',
+    recipientName: '',
+    recipientEmail: '',
+    contactId: '',
+    dealId: '',
+    paymentAmount: '',
+    paymentCurrency: 'EUR',
+    autoSendPaymentLink: true,
+  };
+
   const [documents, setDocuments] = useState<Document[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -83,38 +98,17 @@ export default function DocumentsPage() {
   const [uploadingFile, setUploadingFile] = useState(false);
   const [esemneazaSource, setEsemneazaSource] = useState<'template' | 'file'>('template');
   const [uploadedFileLabel, setUploadedFileLabel] = useState('');
+  const [showReminderModal, setShowReminderModal] = useState(false);
+  const [reminderEmail, setReminderEmail] = useState('');
+  const [reminderDoc, setReminderDoc] = useState<Document | null>(null);
+  const [sendingReminder, setSendingReminder] = useState(false);
+  const [signingDocumentId, setSigningDocumentId] = useState('');
   const [createError, setCreateError] = useState('');
 
-  const [form, setForm] = useState<CreateEsemneazaForm>({
-    name: '',
-    type: 'contract',
-    templateId: '',
-    fileName: '',
-    templateName: '',
-    recipientName: '',
-    recipientEmail: '',
-    contactId: '',
-    dealId: '',
-    paymentAmount: '',
-    paymentCurrency: 'EUR',
-    autoSendPaymentLink: true,
-  });
+  const [form, setForm] = useState<CreateEsemneazaForm>(initialCreateForm);
 
   const resetCreateForm = () => {
-    setForm({
-      name: '',
-      type: 'contract',
-      templateId: '',
-      fileName: '',
-      templateName: '',
-      recipientName: '',
-      recipientEmail: '',
-      contactId: '',
-      dealId: '',
-      paymentAmount: '',
-      paymentCurrency: 'EUR',
-      autoSendPaymentLink: true,
-    });
+    setForm(initialCreateForm);
     setEsemneazaSource('template');
     setUploadedFileLabel('');
   };
@@ -247,6 +241,20 @@ export default function DocumentsPage() {
     }));
   };
 
+  const openCreateFromTemplate = (template: EsemneazaTemplate) => {
+    setCreateError('');
+    setSelectedProvider('esemneaza');
+    setEsemneazaSource('template');
+    setUploadedFileLabel('');
+    setForm({
+      ...initialCreateForm,
+      name: template.name || '',
+      templateId: template.id,
+      templateName: template.name,
+    });
+    setShowCreateModal(true);
+  };
+
   const handleUploadEsemneazaFile = async (file: File | null) => {
     if (!file) return;
     setCreateError('');
@@ -322,6 +330,51 @@ export default function DocumentsPage() {
     } catch (error) {
       console.error('Failed to generate payment link:', error);
       alert('Nu am putut genera link-ul de plata.');
+    }
+  };
+
+  const openReminderModal = (doc: Document) => {
+    setReminderDoc(doc);
+    setReminderEmail(doc.recipients?.[0]?.email || '');
+    setShowReminderModal(true);
+  };
+
+  const handleSendReminder = async () => {
+    if (!reminderDoc?.id) return;
+    const email = reminderEmail.trim();
+    if (!email || !email.includes('@')) {
+      alert('Completeaza un email valid.');
+      return;
+    }
+
+    try {
+      setSendingReminder(true);
+      await api.post(`/documents/${reminderDoc.id}/esemneaza/remind`, { email });
+      setShowReminderModal(false);
+      setReminderDoc(null);
+      setReminderEmail('');
+      alert('Reminder trimis cu succes.');
+      await fetchDocuments();
+    } catch (error: any) {
+      console.error('Failed to send reminder:', error);
+      alert(error?.response?.data?.message || 'Nu am putut trimite reminder.');
+    } finally {
+      setSendingReminder(false);
+    }
+  };
+
+  const handleSignByApi = async (doc: Document) => {
+    if (!doc?.id) return;
+    try {
+      setSigningDocumentId(doc.id);
+      await api.post(`/documents/${doc.id}/esemneaza/sign`);
+      alert('Semnarea a fost initiata. Statusul se actualizeaza prin webhook.');
+      await fetchDocuments();
+    } catch (error: any) {
+      console.error('Failed to sign document:', error);
+      alert(error?.response?.data?.message || 'Nu am putut initia semnarea.');
+    } finally {
+      setSigningDocumentId('');
     }
   };
 
@@ -438,6 +491,7 @@ export default function DocumentsPage() {
                 <tr>
                   <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Template</th>
                   <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ID</th>
+                  <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Action</th>
                 </tr>
               </thead>
               <tbody>
@@ -445,6 +499,15 @@ export default function DocumentsPage() {
                   <tr key={template.id} className="border-b border-gray-100 last:border-b-0">
                     <td className="px-4 py-2 text-sm text-gray-900">{template.name}</td>
                     <td className="px-4 py-2 text-xs text-gray-600">{template.id}</td>
+                    <td className="px-4 py-2 text-right">
+                      <button
+                        type="button"
+                        onClick={() => openCreateFromTemplate(template)}
+                        className="px-3 py-1.5 text-xs font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700"
+                      >
+                        Select & Send
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -486,6 +549,10 @@ export default function DocumentsPage() {
                   const providerKey = getProviderKey(doc);
                   const paymentStatus = doc.metadata?.payment?.status;
                   const paymentLink = doc.metadata?.payment?.paymentLink;
+                  const isEsemneazaDoc = providerKey === 'esemneaza';
+                  const canSignByApi =
+                    isEsemneazaDoc &&
+                    !['signed', 'completed', 'declined', 'voided', 'expired'].includes(String(doc.status || '').toLowerCase());
                   const canGeneratePaymentLink =
                     (doc.status === 'signed' || doc.status === 'completed') &&
                     paymentStatus !== 'paid';
@@ -529,6 +596,23 @@ export default function DocumentsPage() {
                               Sign Link
                             </a>
                           )}
+                          {isEsemneazaDoc && (
+                            <button
+                              onClick={() => openReminderModal(doc)}
+                              className="text-amber-600 hover:text-amber-800"
+                            >
+                              Remind
+                            </button>
+                          )}
+                          {canSignByApi && (
+                            <button
+                              onClick={() => handleSignByApi(doc)}
+                              disabled={signingDocumentId === doc.id}
+                              className="text-purple-600 hover:text-purple-900 disabled:opacity-50"
+                            >
+                              {signingDocumentId === doc.id ? 'Signing...' : 'Sign API'}
+                            </button>
+                          )}
                           {paymentLink && (
                             <a href={paymentLink} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-900">
                               Payment Link
@@ -552,6 +636,48 @@ export default function DocumentsPage() {
           </div>
         )}
       </div>
+
+      {showReminderModal && reminderDoc && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">Trimite Reminder</h3>
+            <p className="text-sm text-gray-600 mb-4">
+              Document: <span className="font-medium text-gray-900">{reminderDoc.name}</span>
+            </p>
+
+            <label className="block text-sm font-medium text-gray-700 mb-1">Email destinatar*</label>
+            <input
+              type="email"
+              value={reminderEmail}
+              onChange={(e) => setReminderEmail(e.target.value)}
+              placeholder="client@email.com"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-4"
+            />
+
+            <div className="flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowReminderModal(false);
+                  setReminderDoc(null);
+                  setReminderEmail('');
+                }}
+                className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSendReminder}
+                disabled={sendingReminder}
+                className="px-4 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 disabled:opacity-50"
+              >
+                {sendingReminder ? 'Sending...' : 'Send Reminder'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showCreateModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">

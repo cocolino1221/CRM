@@ -1019,6 +1019,121 @@ export class DocumentsService {
     return saved;
   }
 
+  async remindEsemneazaRecipient(
+    workspaceId: string,
+    documentId: string,
+    userId: string,
+    email: string,
+  ): Promise<{ success: boolean; message: string; recipientId?: string }> {
+    const normalizedEmail = String(email || '').trim().toLowerCase();
+    if (!normalizedEmail || !normalizedEmail.includes('@')) {
+      throw new BadRequestException('Valid recipient email is required');
+    }
+
+    const context = await this.getEsemneazaDocumentContext(workspaceId, documentId);
+    const detailsPathTemplate = String(
+      context.integration.config?.requestDetailsPath || '/api/v1/requests/{requestId}',
+    );
+    const detailsPath = detailsPathTemplate.includes('{requestId}')
+      ? detailsPathTemplate.replace('{requestId}', encodeURIComponent(context.requestId))
+      : `${detailsPathTemplate.replace(/\/+$/, '')}/${encodeURIComponent(context.requestId)}`;
+
+    let requestDetails: any;
+    try {
+      const detailsResponse = await this.httpService.axiosRef.get(
+        this.buildProviderUrl(context.apiUrl, detailsPath),
+        {
+          headers: this.buildProviderHeaders(context.integration),
+        },
+      );
+      requestDetails = detailsResponse.data || {};
+    } catch (error) {
+      throw new BadRequestException(`Could not fetch sign request details: ${this.extractHttpErrorMessage(error)}`);
+    }
+
+    const recipients = Array.isArray(requestDetails?.recipients) ? requestDetails.recipients : [];
+    const recipient = recipients.find(
+      (entry: any) => String(entry?.email || '').trim().toLowerCase() === normalizedEmail,
+    );
+    if (!recipient?.id) {
+      throw new BadRequestException('Recipient email not found in sign request');
+    }
+
+    const recipientId = String(recipient.id).trim();
+    const remindPathTemplate = String(
+      context.integration.config?.remindRecipientPath || '/api/v1/recipients/{recipientId}/remind',
+    );
+    const remindPath = remindPathTemplate.includes('{recipientId}')
+      ? remindPathTemplate.replace('{recipientId}', encodeURIComponent(recipientId))
+      : `${remindPathTemplate.replace(/\/+$/, '')}/${encodeURIComponent(recipientId)}/remind`;
+
+    try {
+      await this.httpService.axiosRef.post(
+        this.buildProviderUrl(context.apiUrl, remindPath),
+        {},
+        {
+          headers: this.buildProviderHeaders(context.integration),
+        },
+      );
+    } catch (error) {
+      throw new BadRequestException(`Could not send reminder: ${this.extractHttpErrorMessage(error)}`);
+    }
+
+    context.document.addAuditEntry('esemneaza.reminder_sent', userId, {
+      recipientId,
+      email: normalizedEmail,
+    });
+    await this.documentRepository.save(context.document);
+
+    await this.notifyDocumentStakeholders(context.document, {
+      title: 'Reminder trimis',
+      message: `A fost trimis reminder pentru ${normalizedEmail} la documentul "${context.document.name}".`,
+    });
+
+    return { success: true, message: 'Reminder sent', recipientId };
+  }
+
+  async signEsemneazaRequest(
+    workspaceId: string,
+    documentId: string,
+    userId: string,
+  ): Promise<{ success: boolean; message: string }> {
+    const context = await this.getEsemneazaDocumentContext(workspaceId, documentId);
+    const signPathTemplate = String(
+      context.integration.config?.signRequestPath || '/api/v1/requests/{requestId}/sign',
+    );
+    const signPath = signPathTemplate.includes('{requestId}')
+      ? signPathTemplate.replace('{requestId}', encodeURIComponent(context.requestId))
+      : `${signPathTemplate.replace(/\/+$/, '')}/${encodeURIComponent(context.requestId)}/sign`;
+
+    try {
+      await this.httpService.axiosRef.post(
+        this.buildProviderUrl(context.apiUrl, signPath),
+        {},
+        {
+          headers: this.buildProviderHeaders(context.integration),
+        },
+      );
+    } catch (error) {
+      throw new BadRequestException(`Could not sign request: ${this.extractHttpErrorMessage(error)}`);
+    }
+
+    context.document.addAuditEntry('esemneaza.sign_requested', userId, {
+      requestId: context.requestId,
+    });
+    await this.documentRepository.save(context.document);
+
+    await this.notifyDocumentStakeholders(context.document, {
+      title: 'Semnare initiata',
+      message: `Semnarea a fost initiata pentru documentul "${context.document.name}".`,
+    });
+
+    return {
+      success: true,
+      message: 'Sign request accepted. Status will update asynchronously via webhook.',
+    };
+  }
+
   async processEsemneazaWebhook(
     integrationId: string,
     payload: any,
@@ -1716,6 +1831,40 @@ export class DocumentsService {
       externalPaymentId: paymentId,
       raw: { mode: 'fallback_url' },
     };
+  }
+
+  private async getEsemneazaDocumentContext(
+    workspaceId: string,
+    documentId: string,
+  ): Promise<{ document: Document; integration: Integration; apiUrl: string; requestId: string }> {
+    const document = await this.documentRepository.findOne({
+      where: { id: documentId, workspaceId },
+      relations: ['deal', 'contact'],
+    });
+    if (!document) {
+      throw new NotFoundException('Document not found');
+    }
+
+    if (!document.integrationId) {
+      throw new BadRequestException('Document is not linked to an eSemneaza integration');
+    }
+
+    const integration = await this.assertProviderIntegration(document.integrationId, ['esemneaza']);
+    if (integration.workspaceId !== workspaceId) {
+      throw new UnauthorizedException('Integration workspace mismatch');
+    }
+
+    const apiUrl = this.resolveProviderBaseUrl(integration);
+    if (!apiUrl) {
+      throw new BadRequestException('eSemneaza API URL is not configured');
+    }
+
+    const requestId = String(document.externalId || '').trim();
+    if (!requestId) {
+      throw new BadRequestException('Document has no eSemneaza request id');
+    }
+
+    return { document, integration, apiUrl, requestId };
   }
 
   private extractSignerEmailFromPayload(payload: any): string | undefined {

@@ -227,6 +227,38 @@ export class DocumentsController {
     );
   }
 
+  @Post(':id/esemneaza/remind')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Send eSemneaza reminder to recipient by email' })
+  @ApiResponse({ status: 200, description: 'Reminder sent successfully' })
+  async remindEsemneazaRecipient(
+    @Req() req: any,
+    @Param('id') id: string,
+    @Body() body: { email: string },
+  ) {
+    return this.documentsService.remindEsemneazaRecipient(
+      req.user.workspaceId,
+      id,
+      req.user.id,
+      body?.email,
+    );
+  }
+
+  @Post(':id/esemneaza/sign')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Sign eSemneaza request with API account default signature' })
+  @ApiResponse({ status: 200, description: 'Sign request accepted' })
+  async signEsemneazaRequest(
+    @Req() req: any,
+    @Param('id') id: string,
+  ) {
+    return this.documentsService.signEsemneazaRequest(
+      req.user.workspaceId,
+      id,
+      req.user.id,
+    );
+  }
+
   @Post(':id/void')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Void a document' })
