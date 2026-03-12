@@ -10,7 +10,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, FindOptionsWhere, ILike } from 'typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { randomUUID } from 'crypto';
-import { Document, DocumentStatus, DocumentProvider } from '../database/entities/document.entity';
+import { Document, DocumentStatus, DocumentProvider, DocumentType } from '../database/entities/document.entity';
 import { User } from '../database/entities/user.entity';
 import { Contact, ContactStatus } from '../database/entities/contact.entity';
 import { Deal } from '../database/entities/deal.entity';
@@ -53,6 +53,14 @@ export interface CreateEsemneazaDocumentInput {
   paymentAmount?: number;
   paymentCurrency?: string;
   paymentDescription?: string;
+}
+
+export interface EsemneazaSyncResult {
+  imported: number;
+  updated: number;
+  skipped: number;
+  totalFetched: number;
+  message?: string;
 }
 
 @Injectable()
@@ -338,13 +346,12 @@ export class DocumentsService {
         },
       );
 
-      const rows = Array.isArray(response.data?.templates)
-        ? response.data.templates
-        : Array.isArray(response.data?.data)
-          ? response.data.data
-          : Array.isArray(response.data)
-            ? response.data
-            : [];
+      const rows = this.extractApiRows(response.data, [
+        'templates',
+        'items',
+        'results',
+        'data',
+      ]);
 
       return rows
         .map((row: any) => ({
@@ -357,6 +364,275 @@ export class DocumentsService {
       this.logger.warn(`Could not fetch eSemneaza templates from API: ${error.message}`);
       return [];
     }
+  }
+
+  async syncEsemneazaDocuments(workspaceId: string, userId?: string): Promise<EsemneazaSyncResult> {
+    const integration = await this.findApiProviderIntegration(workspaceId, ['esemneaza']);
+    if (!integration) {
+      return {
+        imported: 0,
+        updated: 0,
+        skipped: 0,
+        totalFetched: 0,
+        message: 'eSemneaza integration is not connected',
+      };
+    }
+
+    const apiUrl = this.getFirstNonEmpty(
+      integration.config?.apiUrl,
+      integration.config?.baseUrl,
+    );
+    if (!apiUrl) {
+      return {
+        imported: 0,
+        updated: 0,
+        skipped: 0,
+        totalFetched: 0,
+        message: 'eSemneaza API URL is not configured. Webhook-only mode cannot import dashboard documents.',
+      };
+    }
+
+    const endpoint = this.getFirstNonEmpty(
+      integration.config?.listDocumentsPath,
+      integration.config?.listContractsPath,
+      '/contracts',
+    ) as string;
+
+    let responseData: any;
+    try {
+      const response = await this.httpService.axiosRef.get(
+        `${apiUrl}${endpoint}`,
+        {
+          headers: this.buildProviderHeaders(integration),
+        },
+      );
+      responseData = response.data;
+    } catch (error) {
+      this.logger.error(`Could not fetch eSemneaza documents from API: ${error.message}`);
+      throw new BadRequestException(`eSemneaza documents sync failed: ${error.message}`);
+    }
+
+    const rows = this.extractApiRows(responseData, [
+      'documents',
+      'contracts',
+      'items',
+      'results',
+      'data',
+    ]).filter((row) => row && typeof row === 'object');
+
+    const rawMaxRows = Number(integration.config?.syncMaxRows || 200);
+    const maxRows = Number.isFinite(rawMaxRows) && rawMaxRows > 0 ? rawMaxRows : 200;
+    const limitedRows = rows.slice(0, maxRows);
+
+    let imported = 0;
+    let updated = 0;
+    let skipped = 0;
+
+    for (const row of limitedRows) {
+      const externalId = this.getFirstNonEmpty(
+        row?.id,
+        row?.documentId,
+        row?.contractId,
+        row?.uuid,
+        row?.externalId,
+        row?.data?.id,
+        row?.data?.documentId,
+        row?.data?.contractId,
+      );
+
+      if (!externalId) {
+        skipped += 1;
+        continue;
+      }
+
+      const statusRaw = String(
+        row?.status ||
+        row?.state ||
+        row?.documentStatus ||
+        row?.contractStatus ||
+        row?.data?.status ||
+        '',
+      ).trim();
+      const mappedStatus = this.mapEsemneazaStatus(statusRaw);
+
+      const recipients = this.extractEsemneazaRecipients(row);
+      const primaryRecipientEmail = recipients[0]?.email;
+      const contactId = await this.findContactIdByEmail(workspaceId, primaryRecipientEmail);
+
+      const name =
+        this.getFirstNonEmpty(
+          row?.name,
+          row?.title,
+          row?.subject,
+          row?.documentName,
+          row?.contractName,
+          row?.data?.name,
+          row?.data?.title,
+        ) || `Contract ${externalId}`;
+
+      const remoteType = this.getFirstNonEmpty(
+        row?.type,
+        row?.documentType,
+        row?.contractType,
+        row?.data?.type,
+      );
+      const documentType = this.mapDocumentType(remoteType);
+
+      const signingUrl = this.getFirstNonEmpty(
+        row?.signingUrl,
+        row?.signUrl,
+        row?.url,
+        row?.signLink,
+        row?.signing_link,
+        row?.data?.signingUrl,
+        row?.data?.signUrl,
+      );
+      const documentUrl = this.getFirstNonEmpty(
+        row?.documentUrl,
+        row?.fileUrl,
+        row?.pdfUrl,
+        row?.viewUrl,
+        row?.data?.documentUrl,
+        row?.data?.fileUrl,
+      );
+      const downloadUrl = this.getFirstNonEmpty(
+        row?.downloadUrl,
+        row?.pdfDownloadUrl,
+        row?.fileDownloadUrl,
+        row?.data?.downloadUrl,
+      );
+
+      const templateId = this.getFirstNonEmpty(
+        row?.templateId,
+        row?.template?.id,
+        row?.templateUuid,
+        row?.data?.templateId,
+      );
+      const templateName = this.getFirstNonEmpty(
+        row?.templateName,
+        row?.template?.name,
+        row?.templateTitle,
+        row?.data?.templateName,
+      );
+
+      const sentAt = this.parseDateValue(
+        row?.sentAt ||
+        row?.sent_at ||
+        row?.createdAt ||
+        row?.created_at ||
+        row?.data?.sentAt,
+      );
+      const viewedAt = this.parseDateValue(
+        row?.viewedAt ||
+        row?.openedAt ||
+        row?.lastViewedAt ||
+        row?.data?.viewedAt,
+      );
+      const signedAt = this.parseDateValue(
+        row?.signedAt ||
+        row?.completedAt ||
+        row?.completed_at ||
+        row?.signDate ||
+        row?.data?.signedAt,
+      );
+      const expiresAt = this.parseDateValue(
+        row?.expiresAt ||
+        row?.expiredAt ||
+        row?.expiryDate ||
+        row?.data?.expiresAt,
+      );
+
+      const existing = await this.documentRepository.findOne({
+        where: {
+          workspaceId,
+          integrationId: integration.id,
+          externalId,
+        },
+      });
+
+      if (existing) {
+        existing.name = name;
+        existing.type = documentType;
+        existing.status = mappedStatus;
+        existing.signingUrl = signingUrl || existing.signingUrl;
+        existing.documentUrl = documentUrl || existing.documentUrl;
+        existing.downloadUrl = downloadUrl || existing.downloadUrl;
+        existing.recipients = recipients.length > 0 ? recipients : existing.recipients;
+        existing.template = {
+          ...(existing.template || {}),
+          ...(templateId ? { id: templateId } : {}),
+          ...(templateName ? { name: templateName } : {}),
+        };
+        existing.sentAt = sentAt || existing.sentAt;
+        existing.viewedAt = viewedAt || existing.viewedAt;
+        existing.signedAt = signedAt || existing.signedAt;
+        existing.expiresAt = expiresAt || existing.expiresAt;
+        if (contactId) {
+          existing.contactId = contactId;
+        }
+        existing.metadata = {
+          ...(existing.metadata || {}),
+          provider: 'esemneaza',
+          source: 'esemneaza.sync',
+          remoteStatus: statusRaw || mappedStatus,
+          lastRemoteSyncAt: new Date().toISOString(),
+          providerPayload: row,
+        };
+        existing.addAuditEntry('esemneaza.synced', userId || 'system', {
+          status: mappedStatus,
+        });
+
+        await this.documentRepository.save(existing);
+        updated += 1;
+        continue;
+      }
+
+      const created = this.documentRepository.create({
+        workspaceId,
+        name,
+        type: documentType,
+        status: mappedStatus,
+        provider: DocumentProvider.INTERNAL,
+        externalId,
+        documentUrl,
+        signingUrl,
+        downloadUrl,
+        createdById: userId || integration.userId,
+        contactId: contactId || undefined,
+        integrationId: integration.id,
+        template: {
+          id: templateId,
+          name: templateName,
+        },
+        recipients,
+        metadata: {
+          provider: 'esemneaza',
+          source: 'esemneaza.sync',
+          remoteStatus: statusRaw || mappedStatus,
+          lastRemoteSyncAt: new Date().toISOString(),
+          providerPayload: row,
+        },
+        sentAt,
+        viewedAt,
+        signedAt,
+        expiresAt,
+      });
+
+      created.addAuditEntry('esemneaza.imported', userId || 'system', {
+        status: mappedStatus,
+      });
+
+      await this.documentRepository.save(created);
+      imported += 1;
+    }
+
+    return {
+      imported,
+      updated,
+      skipped: skipped + Math.max(rows.length - limitedRows.length, 0),
+      totalFetched: limitedRows.length,
+      message: rows.length > maxRows ? `Imported first ${maxRows} records (syncMaxRows limit)` : undefined,
+    };
   }
 
   async createFromEsemneaza(
@@ -1376,6 +1652,186 @@ export class DocumentsService {
     }
   }
 
+  private extractApiRows(payload: any, keys: string[]): any[] {
+    if (!payload) return [];
+    if (Array.isArray(payload)) return payload;
+
+    for (const key of keys) {
+      const value = payload?.[key];
+      if (Array.isArray(value)) return value;
+      if (value && typeof value === 'object') {
+        if (Array.isArray(value.items)) return value.items;
+        if (Array.isArray(value.results)) return value.results;
+        if (Array.isArray(value.data)) return value.data;
+      }
+    }
+
+    if (Array.isArray(payload?.data)) return payload.data;
+    if (payload?.data && typeof payload.data === 'object') {
+      if (Array.isArray(payload.data.items)) return payload.data.items;
+      if (Array.isArray(payload.data.results)) return payload.data.results;
+    }
+
+    return [];
+  }
+
+  private parseDateValue(value: any): Date | undefined {
+    if (!value) return undefined;
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) {
+      return undefined;
+    }
+    return parsed;
+  }
+
+  private mapDocumentType(rawType?: string): DocumentType {
+    const normalized = String(rawType || '').trim().toLowerCase();
+    if (!normalized) return DocumentType.CONTRACT;
+
+    if (normalized.includes('quote') || normalized.includes('oferta')) return DocumentType.QUOTE;
+    if (normalized.includes('invoice') || normalized.includes('factura')) return DocumentType.INVOICE;
+    if (normalized.includes('nda')) return DocumentType.NDA;
+    if (normalized.includes('sow')) return DocumentType.SOW;
+    if (normalized.includes('msa')) return DocumentType.MSA;
+    if (normalized.includes('proposal') || normalized.includes('propunere')) return DocumentType.PROPOSAL;
+    if (normalized.includes('contract')) return DocumentType.CONTRACT;
+    return DocumentType.OTHER;
+  }
+
+  private mapEsemneazaStatus(rawStatus?: string): DocumentStatus {
+    const status = String(rawStatus || '').trim().toLowerCase();
+    if (!status) return DocumentStatus.PENDING;
+
+    if (['signed', 'completed', 'done', 'finalized', 'semnat', 'document.signed', 'contract.signed'].some((token) => status.includes(token))) {
+      return DocumentStatus.SIGNED;
+    }
+    if (['viewed', 'opened', 'read', 'document.viewed', 'vizualizat'].some((token) => status.includes(token))) {
+      return DocumentStatus.VIEWED;
+    }
+    if (['declined', 'rejected', 'refused', 'respins'].some((token) => status.includes(token))) {
+      return DocumentStatus.DECLINED;
+    }
+    if (['voided', 'cancelled', 'canceled', 'anulat'].some((token) => status.includes(token))) {
+      return DocumentStatus.VOIDED;
+    }
+    if (['expired', 'expirat'].some((token) => status.includes(token))) {
+      return DocumentStatus.EXPIRED;
+    }
+    if (['draft', 'new', 'creat'].some((token) => status.includes(token))) {
+      return DocumentStatus.DRAFT;
+    }
+    if (['sent', 'pending', 'in_progress', 'waiting', 'trimis'].some((token) => status.includes(token))) {
+      return DocumentStatus.SENT;
+    }
+    return DocumentStatus.PENDING;
+  }
+
+  private normalizeRecipientStatus(rawStatus?: string): 'pending' | 'sent' | 'viewed' | 'signed' | 'declined' {
+    const status = String(rawStatus || '').trim().toLowerCase();
+    if (!status) return 'pending';
+    if (['signed', 'completed', 'done', 'semnat'].some((token) => status.includes(token))) return 'signed';
+    if (['viewed', 'opened', 'read', 'vizualizat'].some((token) => status.includes(token))) return 'viewed';
+    if (['declined', 'rejected', 'respins', 'refused'].some((token) => status.includes(token))) return 'declined';
+    if (['sent', 'pending', 'trimis', 'waiting'].some((token) => status.includes(token))) return 'sent';
+    return 'pending';
+  }
+
+  private extractEsemneazaRecipients(row: any): Array<{
+    email: string;
+    name?: string;
+    role?: string;
+    order?: number;
+    status?: 'pending' | 'sent' | 'viewed' | 'signed' | 'declined';
+    signedAt?: Date;
+    viewedAt?: Date;
+    sentAt?: Date;
+  }> {
+    const rawList =
+      (Array.isArray(row?.recipients) && row.recipients) ||
+      (Array.isArray(row?.signers) && row.signers) ||
+      (Array.isArray(row?.participants) && row.participants) ||
+      (Array.isArray(row?.data?.recipients) && row.data.recipients) ||
+      (Array.isArray(row?.data?.signers) && row.data.signers) ||
+      [];
+
+    const fromList = rawList
+      .map((item: any, index: number) => {
+        const email = this.getFirstNonEmpty(
+          item?.email,
+          item?.recipientEmail,
+          item?.signerEmail,
+          item?.contactEmail,
+        );
+        if (!email) return null;
+
+        return {
+          email,
+          name: this.getFirstNonEmpty(item?.name, item?.fullName, item?.recipientName, item?.signerName),
+          role: this.getFirstNonEmpty(item?.role, item?.type),
+          order: typeof item?.order === 'number' ? item.order : index + 1,
+          status: this.normalizeRecipientStatus(item?.status || item?.state),
+          signedAt: this.parseDateValue(item?.signedAt || item?.completedAt),
+          viewedAt: this.parseDateValue(item?.viewedAt || item?.openedAt),
+          sentAt: this.parseDateValue(item?.sentAt || item?.createdAt),
+        };
+      })
+      .filter((entry) => !!entry) as Array<{
+      email: string;
+      name?: string;
+      role?: string;
+      order?: number;
+      status?: 'pending' | 'sent' | 'viewed' | 'signed' | 'declined';
+      signedAt?: Date;
+      viewedAt?: Date;
+      sentAt?: Date;
+    }>;
+
+    if (fromList.length > 0) {
+      return fromList;
+    }
+
+    const fallbackEmail = this.getFirstNonEmpty(
+      row?.email,
+      row?.recipientEmail,
+      row?.signerEmail,
+      row?.recipient?.email,
+      row?.signer?.email,
+      row?.data?.email,
+      row?.data?.recipientEmail,
+      row?.data?.signerEmail,
+    );
+    if (!fallbackEmail) return [];
+
+    return [
+      {
+        email: fallbackEmail,
+        name: this.getFirstNonEmpty(
+          row?.recipientName,
+          row?.signerName,
+          row?.recipient?.name,
+          row?.signer?.name,
+          row?.data?.recipientName,
+        ),
+        role: 'signer',
+        order: 1,
+        status: this.normalizeRecipientStatus(row?.status || row?.state || row?.data?.status),
+      },
+    ];
+  }
+
+  private async findContactIdByEmail(workspaceId: string, email?: string): Promise<string | undefined> {
+    if (!email || !email.includes('@')) return undefined;
+    const normalized = email.trim().toLowerCase();
+    const match = await this.contactRepository
+      .createQueryBuilder('contact')
+      .select(['contact.id'])
+      .where('contact.workspaceId = :workspaceId', { workspaceId })
+      .andWhere('LOWER(contact.email) = :email', { email: normalized })
+      .orderBy('contact.updatedAt', 'DESC')
+      .getOne();
+    return match?.id;
+  }
+
   private buildProviderHeaders(integration: Integration): Record<string, string> {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -1416,10 +1872,14 @@ export class DocumentsService {
     return [];
   }
 
-  private getFirstNonEmpty(...values: Array<string | undefined | null>): string | undefined {
+  private getFirstNonEmpty(...values: Array<any>): string | undefined {
     for (const value of values) {
-      if (typeof value === 'string' && value.trim()) {
-        return value.trim();
+      if (value === null || value === undefined) {
+        continue;
+      }
+      const normalized = String(value).trim();
+      if (normalized) {
+        return normalized;
       }
     }
     return undefined;

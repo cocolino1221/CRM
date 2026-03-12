@@ -60,6 +60,13 @@ export class DocumentsController {
     };
   }
 
+  @Post('esemneaza/sync')
+  @ApiOperation({ summary: 'Import documents from eSemneaza dashboard into CRM' })
+  @ApiResponse({ status: 200, description: 'eSemneaza documents synced successfully' })
+  async syncEsemneazaDocuments(@Req() req: any) {
+    return this.documentsService.syncEsemneazaDocuments(req.user.workspaceId, req.user.id);
+  }
+
   @Post('esemneaza')
   @ApiOperation({ summary: 'Create and send document via eSemneaza' })
   @ApiResponse({ status: 201, description: 'Document created successfully' })

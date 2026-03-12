@@ -60,6 +60,14 @@ interface CreateEsemneazaForm {
   autoSendPaymentLink: boolean;
 }
 
+interface EsemneazaSyncResult {
+  imported: number;
+  updated: number;
+  skipped: number;
+  totalFetched: number;
+  message?: string;
+}
+
 export default function DocumentsPage() {
   const [documents, setDocuments] = useState<Document[]>([]);
   const [loading, setLoading] = useState(true);
@@ -67,6 +75,9 @@ export default function DocumentsPage() {
   const [selectedProvider, setSelectedProvider] = useState<'pandadoc' | 'docusign' | 'esemneaza'>('esemneaza');
   const [templates, setTemplates] = useState<EsemneazaTemplate[]>([]);
   const [loadingTemplates, setLoadingTemplates] = useState(false);
+  const [syncingEsemneaza, setSyncingEsemneaza] = useState(false);
+  const [syncError, setSyncError] = useState('');
+  const [syncResult, setSyncResult] = useState<EsemneazaSyncResult | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [createError, setCreateError] = useState('');
 
@@ -85,7 +96,12 @@ export default function DocumentsPage() {
   });
 
   useEffect(() => {
-    fetchDocuments();
+    const initialize = async () => {
+      await syncEsemneazaDocuments(true);
+      await fetchDocuments();
+      await fetchEsemneazaTemplates();
+    };
+    initialize();
   }, []);
 
   useEffect(() => {
@@ -116,6 +132,37 @@ export default function DocumentsPage() {
       setTemplates([]);
     } finally {
       setLoadingTemplates(false);
+    }
+  };
+
+  const syncEsemneazaDocuments = async (silent = false) => {
+    if (!silent) {
+      setSyncingEsemneaza(true);
+    }
+    setSyncError('');
+
+    try {
+      const response = await api.post('/documents/esemneaza/sync');
+      const data = response.data || {};
+      setSyncResult({
+        imported: Number(data.imported || 0),
+        updated: Number(data.updated || 0),
+        skipped: Number(data.skipped || 0),
+        totalFetched: Number(data.totalFetched || 0),
+        message: data.message,
+      });
+
+      if (!silent) {
+        await fetchDocuments();
+        await fetchEsemneazaTemplates();
+      }
+    } catch (error: any) {
+      const message = error?.response?.data?.message || 'Nu am putut sincroniza documentele din eSemneaza.';
+      setSyncError(message);
+    } finally {
+      if (!silent) {
+        setSyncingEsemneaza(false);
+      }
     }
   };
 
@@ -242,17 +289,40 @@ export default function DocumentsPage() {
               Contracte, semnare electronica si incasari
             </p>
           </div>
-          <button
-            onClick={() => {
-              setCreateError('');
-              setShowCreateModal(true);
-            }}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-          >
-            + Create Document
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => syncEsemneazaDocuments(false)}
+              disabled={syncingEsemneaza}
+              className="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-60"
+            >
+              {syncingEsemneaza ? 'Syncing...' : 'Sync eSemneaza'}
+            </button>
+            <button
+              onClick={() => {
+                setCreateError('');
+                setShowCreateModal(true);
+              }}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+            >
+              + Create Document
+            </button>
+          </div>
         </div>
       </div>
+
+      {syncError && (
+        <div className="mb-6 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {syncError}
+        </div>
+      )}
+
+      {syncResult && (
+        <div className="mb-6 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+          <span className="font-semibold">eSemneaza Sync:</span>{' '}
+          fetched {syncResult.totalFetched}, imported {syncResult.imported}, updated {syncResult.updated}, skipped {syncResult.skipped}
+          {syncResult.message ? ` - ${syncResult.message}` : ''}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
         <div className="bg-white rounded-lg shadow p-6">
@@ -277,6 +347,49 @@ export default function DocumentsPage() {
             {documents.filter((d) => d.metadata?.payment?.status === 'paid').length}
           </div>
         </div>
+      </div>
+
+      <div className="bg-white rounded-lg shadow p-6 mb-8">
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <h3 className="text-lg font-semibold text-gray-900">eSemneaza Templates</h3>
+            <p className="text-sm text-gray-600">Template-uri aduse din dashboard-ul eSemneaza</p>
+          </div>
+          <button
+            onClick={fetchEsemneazaTemplates}
+            disabled={loadingTemplates}
+            className="px-3 py-2 text-sm bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-60"
+          >
+            {loadingTemplates ? 'Loading...' : 'Refresh templates'}
+          </button>
+        </div>
+
+        {loadingTemplates ? (
+          <div className="text-sm text-gray-500">Loading templates...</div>
+        ) : templates.length === 0 ? (
+          <div className="text-sm text-gray-500">
+            Nu exista template-uri sincronizate. Verifica API URL + listTemplatesPath in integrarea eSemneaza.
+          </div>
+        ) : (
+          <div className="max-h-56 overflow-auto border border-gray-100 rounded-lg">
+            <table className="w-full">
+              <thead className="bg-gray-50 border-b border-gray-200">
+                <tr>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Template</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ID</th>
+                </tr>
+              </thead>
+              <tbody>
+                {templates.map((template) => (
+                  <tr key={template.id} className="border-b border-gray-100 last:border-b-0">
+                    <td className="px-4 py-2 text-sm text-gray-900">{template.name}</td>
+                    <td className="px-4 py-2 text-xs text-gray-600">{template.id}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       <div className="bg-white rounded-lg shadow">
