@@ -337,10 +337,10 @@ export class DocumentsService {
       return [];
     }
 
-    const endpoint = integration.config?.listTemplatesPath || '/templates';
+    const endpoint = integration.config?.listTemplatesPath || '/api/v1/templates';
     try {
       const response = await this.httpService.axiosRef.get(
-        `${apiUrl}${endpoint}`,
+        this.buildProviderUrl(apiUrl, endpoint),
         {
           headers: this.buildProviderHeaders(integration),
         },
@@ -356,7 +356,7 @@ export class DocumentsService {
       return rows
         .map((row: any) => ({
           id: String(row.id || row.templateId || row.uuid || '').trim(),
-          name: String(row.name || row.title || row.templateName || '').trim(),
+          name: String(row.name || row.title || row.templateName || row.docName || '').trim(),
           description: row.description ? String(row.description) : undefined,
         }))
         .filter((t: EsemneazaTemplate) => !!t.id && !!t.name);
@@ -395,13 +395,17 @@ export class DocumentsService {
     const endpoint = this.getFirstNonEmpty(
       integration.config?.listDocumentsPath,
       integration.config?.listContractsPath,
-      '/contracts',
+      '/api/v1/requests',
     ) as string;
+    const rawListLimit = Number(integration.config?.listDocumentsLimit || integration.config?.syncMaxRows || 200);
+    const listLimit = Number.isFinite(rawListLimit) && rawListLimit > 0 ? Math.min(rawListLimit, 500) : 200;
 
     let responseData: any;
     try {
+      const listBaseUrl = this.buildProviderUrl(apiUrl, endpoint);
+      const listUrl = `${listBaseUrl}${listBaseUrl.includes('?') ? '&' : '?'}limit=${encodeURIComponent(String(listLimit))}`;
       const response = await this.httpService.axiosRef.get(
-        `${apiUrl}${endpoint}`,
+        listUrl,
         {
           headers: this.buildProviderHeaders(integration),
         },
@@ -445,23 +449,60 @@ export class DocumentsService {
         continue;
       }
 
+      let details: any = null;
+      const shouldFetchDetails = integration.config?.fetchRequestDetails !== false;
+      if (shouldFetchDetails) {
+        const detailsPathTemplate = String(
+          integration.config?.requestDetailsPath || '/api/v1/requests/{requestId}',
+        );
+        const detailsPath = detailsPathTemplate.includes('{requestId}')
+          ? detailsPathTemplate.replace('{requestId}', encodeURIComponent(externalId))
+          : `${detailsPathTemplate.replace(/\/+$/, '')}/${encodeURIComponent(externalId)}`;
+
+        try {
+          const detailsResponse = await this.httpService.axiosRef.get(
+            this.buildProviderUrl(apiUrl, detailsPath),
+            {
+              headers: this.buildProviderHeaders(integration),
+            },
+          );
+          details = detailsResponse.data || null;
+        } catch (error) {
+          this.logger.warn(`Could not fetch eSemneaza details for request ${externalId}: ${error.message}`);
+        }
+      }
+
+      const source = details || row;
+
       const statusRaw = String(
+        source?.status ||
+        source?.state ||
+        source?.documentStatus ||
+        source?.contractStatus ||
         row?.status ||
         row?.state ||
-        row?.documentStatus ||
-        row?.contractStatus ||
+        source?.data?.status ||
         row?.data?.status ||
         '',
       ).trim();
       const mappedStatus = this.mapEsemneazaStatus(statusRaw);
 
-      const recipients = this.extractEsemneazaRecipients(row);
+      const recipients = this.extractEsemneazaRecipients(source);
       const primaryRecipientEmail = recipients[0]?.email;
       const contactId = await this.findContactIdByEmail(workspaceId, primaryRecipientEmail);
 
       const name =
         this.getFirstNonEmpty(
+          source?.name,
+          source?.docName,
+          source?.title,
+          source?.subject,
+          source?.documentName,
+          source?.contractName,
+          source?.data?.name,
+          source?.data?.title,
           row?.name,
+          row?.docName,
           row?.title,
           row?.subject,
           row?.documentName,
@@ -471,14 +512,25 @@ export class DocumentsService {
         ) || `Contract ${externalId}`;
 
       const remoteType = this.getFirstNonEmpty(
+        source?.type,
+        source?.documentType,
+        source?.contractType,
         row?.type,
         row?.documentType,
         row?.contractType,
+        source?.data?.type,
         row?.data?.type,
       );
       const documentType = this.mapDocumentType(remoteType);
 
       const signingUrl = this.getFirstNonEmpty(
+        source?.signingUrl,
+        source?.signUrl,
+        source?.url,
+        source?.signLink,
+        source?.signing_link,
+        source?.data?.signingUrl,
+        source?.data?.signUrl,
         row?.signingUrl,
         row?.signUrl,
         row?.url,
@@ -488,6 +540,12 @@ export class DocumentsService {
         row?.data?.signUrl,
       );
       const documentUrl = this.getFirstNonEmpty(
+        source?.documentUrl,
+        source?.fileUrl,
+        source?.pdfUrl,
+        source?.viewUrl,
+        source?.data?.documentUrl,
+        source?.data?.fileUrl,
         row?.documentUrl,
         row?.fileUrl,
         row?.pdfUrl,
@@ -496,6 +554,10 @@ export class DocumentsService {
         row?.data?.fileUrl,
       );
       const downloadUrl = this.getFirstNonEmpty(
+        source?.downloadUrl,
+        source?.pdfDownloadUrl,
+        source?.fileDownloadUrl,
+        source?.data?.downloadUrl,
         row?.downloadUrl,
         row?.pdfDownloadUrl,
         row?.fileDownloadUrl,
@@ -503,12 +565,20 @@ export class DocumentsService {
       );
 
       const templateId = this.getFirstNonEmpty(
+        source?.templateId,
+        source?.template?.id,
+        source?.templateUuid,
+        source?.data?.templateId,
         row?.templateId,
         row?.template?.id,
         row?.templateUuid,
         row?.data?.templateId,
       );
       const templateName = this.getFirstNonEmpty(
+        source?.templateName,
+        source?.template?.name,
+        source?.templateTitle,
+        source?.data?.templateName,
         row?.templateName,
         row?.template?.name,
         row?.templateTitle,
@@ -516,6 +586,11 @@ export class DocumentsService {
       );
 
       const sentAt = this.parseDateValue(
+        source?.sentAt ||
+        source?.sent_at ||
+        source?.createdAt ||
+        source?.created_at ||
+        source?.data?.sentAt ||
         row?.sentAt ||
         row?.sent_at ||
         row?.createdAt ||
@@ -523,12 +598,21 @@ export class DocumentsService {
         row?.data?.sentAt,
       );
       const viewedAt = this.parseDateValue(
+        source?.viewedAt ||
+        source?.openedAt ||
+        source?.lastViewedAt ||
+        source?.data?.viewedAt ||
         row?.viewedAt ||
         row?.openedAt ||
         row?.lastViewedAt ||
         row?.data?.viewedAt,
       );
       const signedAt = this.parseDateValue(
+        source?.signedAt ||
+        source?.completedAt ||
+        source?.completed_at ||
+        source?.signDate ||
+        source?.data?.signedAt ||
         row?.signedAt ||
         row?.completedAt ||
         row?.completed_at ||
@@ -536,6 +620,10 @@ export class DocumentsService {
         row?.data?.signedAt,
       );
       const expiresAt = this.parseDateValue(
+        source?.expiresAt ||
+        source?.expiredAt ||
+        source?.expiryDate ||
+        source?.data?.expiresAt ||
         row?.expiresAt ||
         row?.expiredAt ||
         row?.expiryDate ||
@@ -576,7 +664,7 @@ export class DocumentsService {
           source: 'esemneaza.sync',
           remoteStatus: statusRaw || mappedStatus,
           lastRemoteSyncAt: new Date().toISOString(),
-          providerPayload: row,
+          providerPayload: details || row,
         };
         existing.addAuditEntry('esemneaza.synced', userId || 'system', {
           status: mappedStatus,
@@ -610,7 +698,7 @@ export class DocumentsService {
           source: 'esemneaza.sync',
           remoteStatus: statusRaw || mappedStatus,
           lastRemoteSyncAt: new Date().toISOString(),
-          providerPayload: row,
+          providerPayload: details || row,
         },
         sentAt,
         viewedAt,
@@ -853,9 +941,11 @@ export class DocumentsService {
 
     const externalId =
       String(
+        payload?.requestId ||
         payload?.documentId ||
         payload?.contractId ||
         payload?.id ||
+        payload?.data?.requestId ||
         payload?.data?.documentId ||
         payload?.data?.contractId ||
         payload?.data?.id ||
@@ -886,7 +976,19 @@ export class DocumentsService {
     }
 
     const event =
-      String(payload?.event || payload?.type || payload?.status || payload?.data?.status || '')
+      String(
+        payload?.event ||
+        payload?.eventType ||
+        payload?.eventName ||
+        payload?.type ||
+        payload?.status ||
+        payload?.name ||
+        payload?.data?.event ||
+        payload?.data?.eventType ||
+        payload?.data?.eventName ||
+        payload?.data?.status ||
+        '',
+      )
         .toLowerCase()
         .trim();
 
@@ -1346,17 +1448,13 @@ export class DocumentsService {
     userId: string,
   ): Promise<{ externalId: string; signingUrl: string; documentUrl?: string; raw?: any }> {
     const apiUrl = this.getFirstNonEmpty(integration.config?.apiUrl, integration.config?.baseUrl);
-    const endpoint = integration.config?.sendContractPath || '/contracts/send';
-    const payload = {
-      name: data.name,
-      templateId: data.templateId,
-      recipient: {
-        email: data.recipient.email,
-        name: data.recipient.name,
-        phone: data.recipient.phone,
-      },
-      fields: data.fields || {},
-      metadata: {
+    const endpoint = integration.config?.sendContractPath || '/api/v1/requests';
+
+    const recipientPayload: Record<string, any> = {
+      type: 'EMAIL',
+      email: data.recipient.email,
+      name: data.recipient.name,
+      metaData: {
         workspaceId,
         userId,
         contactId: data.contactId,
@@ -1364,10 +1462,29 @@ export class DocumentsService {
       },
     };
 
+    if (data.recipient.phone) {
+      recipientPayload.phone = data.recipient.phone;
+    }
+
+    const rawFields = (data.fields as any)?.fields || data.fields;
+    if (Array.isArray(rawFields)) {
+      recipientPayload.fields = rawFields;
+    }
+
+    const payload = {
+      templateId: data.templateId,
+      recipients: [recipientPayload],
+      signInOrder: false,
+      extractTags: false,
+      emailSubject: data.name,
+      senderName: integration.config?.senderName || undefined,
+      tags: ['crm', workspaceId].filter(Boolean),
+    };
+
     if (apiUrl) {
       try {
         const response = await this.httpService.axiosRef.post(
-          `${apiUrl}${endpoint}`,
+          this.buildProviderUrl(apiUrl, endpoint),
           payload,
           {
             headers: this.buildProviderHeaders(integration),
@@ -1376,12 +1493,15 @@ export class DocumentsService {
 
         const externalId = String(
           response.data?.id ||
+          response.data?.requestId ||
           response.data?.documentId ||
           response.data?.contractId ||
           response.data?.uuid ||
           '',
         ).trim();
         const signingUrl = String(
+          response.data?.recipients?.[0]?.signUrl ||
+          response.data?.recipients?.[0]?.phoneUrl ||
           response.data?.signingUrl ||
           response.data?.signUrl ||
           response.data?.url ||
@@ -1395,7 +1515,7 @@ export class DocumentsService {
         return {
           externalId,
           signingUrl,
-          documentUrl: response.data?.documentUrl,
+          documentUrl: response.data?.documentUrl || response.data?.docUrl,
           raw: response.data,
         };
       } catch (error) {
@@ -1449,7 +1569,7 @@ export class DocumentsService {
     if (apiUrl) {
       try {
         const response = await this.httpService.axiosRef.post(
-          `${apiUrl}${endpoint}`,
+          this.buildProviderUrl(apiUrl, endpoint),
           payload,
           {
             headers: this.buildProviderHeaders(integration),
@@ -1883,6 +2003,19 @@ export class DocumentsService {
       }
     }
     return undefined;
+  }
+
+  private buildProviderUrl(baseUrl: string, endpoint?: string): string {
+    const normalizedBase = String(baseUrl || '').trim().replace(/\/+$/, '');
+    const normalizedEndpoint = String(endpoint || '').trim();
+
+    if (!normalizedEndpoint) {
+      return normalizedBase;
+    }
+    if (/^https?:\/\//i.test(normalizedEndpoint)) {
+      return normalizedEndpoint;
+    }
+    return `${normalizedBase}/${normalizedEndpoint.replace(/^\/+/, '')}`;
   }
 
   private getPrimaryRecipient(document: Document): { email?: string; name?: string } {
