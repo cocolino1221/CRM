@@ -473,23 +473,32 @@ export class DocumentsService {
       integration.config?.listContractsPath,
       '/api/v1/requests',
     ) as string;
-    const rawListLimit = Number(integration.config?.listDocumentsLimit || integration.config?.syncMaxRows || 200);
-    const listLimit = Number.isFinite(rawListLimit) && rawListLimit > 0 ? Math.min(rawListLimit, 500) : 200;
+    const rawListLimit = Number(integration.config?.listDocumentsLimit || integration.config?.syncMaxRows || 50);
+    const listLimit = Number.isFinite(rawListLimit) && rawListLimit > 0 ? Math.min(rawListLimit, 100) : 50;
 
     let responseData: any;
     try {
       const listBaseUrl = this.buildProviderUrl(apiUrl, endpoint);
       const listUrl = `${listBaseUrl}${listBaseUrl.includes('?') ? '&' : '?'}limit=${encodeURIComponent(String(listLimit))}`;
-      const response = await this.httpService.axiosRef.get(
-        listUrl,
-        {
-          headers: this.buildProviderHeaders(integration),
-        },
-      );
-      responseData = response.data;
+      const headers = this.buildProviderHeaders(integration);
+
+      try {
+        const response = await this.httpService.axiosRef.get(listUrl, { headers });
+        responseData = response.data;
+      } catch (error) {
+        const status = (error as any)?.response?.status;
+        if (status === 400) {
+          // Some providers reject large/unknown limit values; retry without query params.
+          const retry = await this.httpService.axiosRef.get(listBaseUrl, { headers });
+          responseData = retry.data;
+        } else {
+          throw error;
+        }
+      }
     } catch (error) {
-      this.logger.error(`Could not fetch eSemneaza documents from API: ${error.message}`);
-      throw new BadRequestException(`eSemneaza documents sync failed: ${error.message}`);
+      const message = this.extractHttpErrorMessage(error);
+      this.logger.error(`Could not fetch eSemneaza documents from API: ${message}`);
+      throw new BadRequestException(`eSemneaza documents sync failed: ${message}`);
     }
 
     const rows = this.extractApiRows(responseData, [
@@ -544,7 +553,7 @@ export class DocumentsService {
           );
           details = detailsResponse.data || null;
         } catch (error) {
-          this.logger.warn(`Could not fetch eSemneaza details for request ${externalId}: ${error.message}`);
+          this.logger.warn(`Could not fetch eSemneaza details for request ${externalId}: ${this.extractHttpErrorMessage(error)}`);
         }
       }
 
@@ -2046,6 +2055,7 @@ export class DocumentsService {
   private buildProviderHeaders(integration: Integration): Record<string, string> {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
+      'Accept': 'application/json',
       ...(integration.config?.headers || {}),
     };
 
@@ -2099,6 +2109,24 @@ export class DocumentsService {
       }
     }
     return undefined;
+  }
+
+  private extractHttpErrorMessage(error: any): string {
+    const status = error?.response?.status;
+    const data = error?.response?.data;
+    const detail =
+      this.getFirstNonEmpty(
+        data?.message,
+        data?.error?.message,
+        data?.error,
+        typeof data === 'string' ? data : undefined,
+        error?.message,
+      ) || 'Unknown error';
+
+    if (status) {
+      return `HTTP ${status}: ${detail}`;
+    }
+    return detail;
   }
 
   private resolveProviderBaseUrl(integration: Integration): string | undefined {

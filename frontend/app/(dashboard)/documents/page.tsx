@@ -164,6 +164,7 @@ export default function DocumentsPage() {
       setSyncingEsemneaza(true);
     }
     setSyncError('');
+    setSyncResult(null);
 
     try {
       const response = await api.post('/documents/esemneaza/sync');
@@ -183,6 +184,7 @@ export default function DocumentsPage() {
     } catch (error: any) {
       const message = error?.response?.data?.message || 'Nu am putut sincroniza documentele din eSemneaza.';
       setSyncError(message);
+      setSyncResult(null);
     } finally {
       if (!silent) {
         setSyncingEsemneaza(false);
