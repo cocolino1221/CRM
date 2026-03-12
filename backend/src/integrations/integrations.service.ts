@@ -430,20 +430,40 @@ export class IntegrationsService {
   }): Promise<any> {
     const integration = await this.findOne(id, workspaceId);
 
-    // Check if we have access token
-    if (!integration.credentials?.accessToken) {
+    const hasAccessToken = !!integration.credentials?.accessToken;
+    const hasApiCredentials = !!(
+      integration.credentials?.apiKey ||
+      integration.credentials?.apiToken ||
+      integration.credentials?.token ||
+      integration.config?.apiKey ||
+      integration.config?.apiToken
+    );
+    const providerKey = String(integration.config?.provider || integration.externalId || '').toLowerCase().trim();
+    const webhookFirstProviders = new Set(['esemneaza', 'payfunnels', 'payfunnel']);
+    const isWebhookFirstProvider = integration.type === IntegrationType.API && webhookFirstProviders.has(providerKey);
+
+    // OAuth integrations require access token; API/Webhook style integrations can sync with API key/webhook-only mode.
+    if (integration.authType === IntegrationAuthType.OAUTH2 && !hasAccessToken) {
       throw new BadRequestException('Integration is not authenticated. Please connect this integration first.');
+    }
+    if (
+      integration.authType !== IntegrationAuthType.OAUTH2 &&
+      !hasAccessToken &&
+      !hasApiCredentials &&
+      !isWebhookFirstProvider
+    ) {
+      throw new BadRequestException('Integration credentials are missing. Please connect this integration first.');
     }
 
     // For Google, allow sync even if expired if we have access token (it might still work)
     // For other providers, check expiry
     const isGoogle = integration.type === IntegrationType.GOOGLE;
-    const allowExpired = isGoogle && integration.credentials?.accessToken;
+    const allowExpired = isGoogle && hasAccessToken;
 
     // Relaxed check: Allow sync if active and not expired, even if error count is high
     // For Google, also allow if status is PENDING but we have access token
     const canSync = integration.status === IntegrationStatus.ACTIVE || 
-                   (isGoogle && integration.status === IntegrationStatus.PENDING && integration.credentials?.accessToken) ||
+                   (isGoogle && integration.status === IntegrationStatus.PENDING && hasAccessToken) ||
                    options?.force;
 
     if (!canSync) {

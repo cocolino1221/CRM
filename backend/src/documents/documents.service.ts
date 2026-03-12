@@ -331,10 +331,7 @@ export class DocumentsService {
       return configuredTemplates;
     }
 
-    const apiUrl = this.getFirstNonEmpty(
-      integration.config?.apiUrl,
-      integration.config?.baseUrl,
-    );
+    const apiUrl = this.resolveProviderBaseUrl(integration);
     if (!apiUrl) {
       return [];
     }
@@ -397,7 +394,7 @@ export class DocumentsService {
     }
 
     const integration = await this.findApiProviderIntegration(workspaceId, ['esemneaza'], true);
-    const apiUrl = this.getFirstNonEmpty(integration.config?.apiUrl, integration.config?.baseUrl);
+    const apiUrl = this.resolveProviderBaseUrl(integration);
     if (!apiUrl) {
       throw new BadRequestException('eSemneaza API URL is missing in integration config');
     }
@@ -460,17 +457,14 @@ export class DocumentsService {
       };
     }
 
-    const apiUrl = this.getFirstNonEmpty(
-      integration.config?.apiUrl,
-      integration.config?.baseUrl,
-    );
+    const apiUrl = this.resolveProviderBaseUrl(integration);
     if (!apiUrl) {
       return {
         imported: 0,
         updated: 0,
         skipped: 0,
         totalFetched: 0,
-        message: 'eSemneaza API URL is not configured. Webhook-only mode cannot import dashboard documents.',
+        message: 'eSemneaza API URL is not configured.',
       };
     }
 
@@ -1539,7 +1533,7 @@ export class DocumentsService {
       throw new BadRequestException('templateId or fileName is required');
     }
 
-    const apiUrl = this.getFirstNonEmpty(integration.config?.apiUrl, integration.config?.baseUrl);
+    const apiUrl = this.resolveProviderBaseUrl(integration);
     const endpoint = integration.config?.sendContractPath || '/api/v1/requests';
 
     const recipientPayload: Record<string, any> = {
@@ -2103,6 +2097,19 @@ export class DocumentsService {
       if (normalized) {
         return normalized;
       }
+    }
+    return undefined;
+  }
+
+  private resolveProviderBaseUrl(integration: Integration): string | undefined {
+    const providerKey = String(integration.config?.provider || integration.externalId || '').trim().toLowerCase();
+    const configured = this.getFirstNonEmpty(integration.config?.apiUrl, integration.config?.baseUrl);
+
+    if (configured) {
+      return configured;
+    }
+    if (providerKey === 'esemneaza') {
+      return 'https://app.esemneaza.ro';
     }
     return undefined;
   }
