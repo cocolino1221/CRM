@@ -10,6 +10,9 @@ import { Deal } from '../database/entities/deal.entity';
 import { Integration } from '../database/entities/integration.entity';
 import { PandaDocIntegrationHandler } from '../integrations/handlers/pandadoc.handler';
 import { DocuSignIntegrationHandler } from '../integrations/handlers/docusign.handler';
+import { EmailModule } from '../email/email.module';
+import { NotificationsModule } from '../notifications/notifications.module';
+import { WhatsAppModule } from '../integrations/whatsapp/whatsapp.module';
 
 @Module({
   imports: [
@@ -21,6 +24,9 @@ import { DocuSignIntegrationHandler } from '../integrations/handlers/docusign.ha
       Integration,
     ]),
     HttpModule,
+    EmailModule,
+    NotificationsModule,
+    WhatsAppModule,
   ],
   controllers: [DocumentsController],
   providers: [

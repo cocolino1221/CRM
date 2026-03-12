@@ -152,12 +152,14 @@ export class IntegrationsController {
   @ApiResponse({ status: 201, description: 'Integration installed successfully' })
   async install(
     @Req() req: AuthenticatedRequest,
-    @Body() dto: InstallIntegrationDto,
+    @Body() dto: any,
   ): Promise<{ integration: Integration; authUrl?: string; webhookUrl?: string }> {
+    const normalizedDto = this.normalizeInstallDto(dto);
+
     const integration = await this.integrationsService.install(
       req.user.workspaceId,
       req.user.id,
-      dto,
+      normalizedDto,
     );
 
     let authUrl: string | undefined;
@@ -182,7 +184,7 @@ export class IntegrationsController {
     }
 
     // For API key integrations, auto-test connection and activate if valid
-    if (dto.authType === IntegrationAuthType.API_KEY && (dto.credentials && Object.keys(dto.credentials).length > 0)) {
+    if (normalizedDto.authType === IntegrationAuthType.API_KEY && (normalizedDto.credentials && Object.keys(normalizedDto.credentials).length > 0)) {
       try {
         const testResult = await this.integrationsService.testConnection(integration.id, req.user.workspaceId);
         if (testResult.success) {
@@ -208,6 +210,55 @@ export class IntegrationsController {
     }
 
     return { integration, authUrl, webhookUrl };
+  }
+
+  private normalizeInstallDto(rawDto: any): InstallIntegrationDto {
+    const rawType = String(rawDto?.type || '').trim().toLowerCase();
+    const knownTypeValues = new Set<string>(Object.values(IntegrationType));
+    const knownAuthValues = new Set<string>(Object.values(IntegrationAuthType));
+
+    let normalizedType: IntegrationType;
+    let externalId = rawDto?.externalId ? String(rawDto.externalId).trim().toLowerCase() : undefined;
+    const config = { ...(rawDto?.config || {}) };
+
+    if (knownTypeValues.has(rawType)) {
+      normalizedType = rawType as IntegrationType;
+    } else {
+      // Backward compatibility for frontend cards that send provider slugs (e.g. "payfunnels")
+      // instead of enum values. Route them through the Custom API integration.
+      normalizedType = IntegrationType.API;
+      externalId = externalId || rawType;
+      if (!config.provider) {
+        config.provider = externalId;
+      }
+    }
+
+    if (normalizedType === IntegrationType.API) {
+      const provider = String(config.provider || externalId || '').toLowerCase().trim();
+      if (provider && !externalId) {
+        externalId = provider;
+      }
+      if (!config.provider && provider) {
+        config.provider = provider;
+      }
+      if (config.apiUrl && !config.baseUrl) {
+        config.baseUrl = config.apiUrl;
+      }
+    }
+
+    const rawAuthType = String(rawDto?.authType || '').trim().toLowerCase();
+    const normalizedAuthType: IntegrationAuthType =
+      (knownAuthValues.has(rawAuthType) ? rawAuthType : IntegrationAuthType.API_KEY) as IntegrationAuthType;
+
+    return {
+      ...rawDto,
+      type: normalizedType,
+      authType: normalizedAuthType,
+      externalId,
+      config,
+      credentials: rawDto?.credentials || {},
+      metadata: rawDto?.metadata || {},
+    };
   }
 
   @Patch(':id')

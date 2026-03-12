@@ -36,6 +36,7 @@ export const integrationIcons: Record<string, string> = {
   oblio: 'https://img.icons8.com/fluency/96/invoice.png',
   fgo: 'https://img.icons8.com/color/96/receipt.png',
   payfunnels: 'https://img.icons8.com/color/96/payment-method.png',
+  esemneaza: 'https://img.icons8.com/color/96/sign-document.png',
 
   // Social Media
   facebook: 'https://cdn.simpleicons.org/facebook/1877F2',

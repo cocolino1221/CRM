@@ -78,7 +78,7 @@ const normalizeTagAnalytics = (raw: any[]): TagAnalytics[] => {
 
 const normalizeFunnel = (raw: any): ConversionFunnel[] => {
   const stages = Array.isArray(raw?.stages) ? raw.stages : [];
-  return stages.map((stage) => ({
+  return stages.map((stage: any) => ({
     stage: String(stage?.stage || 'unknown'),
     count: toNumber(stage?.count),
     percentage: Math.max(0, Math.min(100, toNumber(stage?.percentage))),

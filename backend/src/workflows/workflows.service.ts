@@ -346,6 +346,11 @@ export class WorkflowsService {
       await this.triggerWorkflows(WorkflowTriggerType.DEAL_WON, data);
     });
 
+    // Listen for payment received event
+    this.eventEmitter.on('payment.received', async (data) => {
+      await this.triggerWorkflows(WorkflowTriggerType.PAYMENT_RECEIVED, data);
+    });
+
     // Add more event listeners as needed
   }
 

@@ -49,6 +49,7 @@ const getEmojiForIntegration = (type: string): string => {
     'manychat': '🤖',
     'webhook': '🔗',
     'api': '⚡',
+    'esemneaza': '🖊️',
   };
   return emojiMap[type.toLowerCase()] || '🔌';
 };
@@ -63,6 +64,23 @@ export default function IntegrationsPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [modalError, setModalError] = useState('');
   const [connectedIntegrations, setConnectedIntegrations] = useState<Record<string, any>>({});
+  const [showWebhookModal, setShowWebhookModal] = useState(false);
+  const [isWebhookSubmitting, setIsWebhookSubmitting] = useState(false);
+  const [webhookError, setWebhookError] = useState('');
+  const [webhookSuccess, setWebhookSuccess] = useState('');
+  const [webhookForm, setWebhookForm] = useState<{
+    integrationId: string;
+    url: string;
+    event: string;
+    secret: string;
+    headersJson: string;
+  }>({
+    integrationId: '',
+    url: '',
+    event: '*',
+    secret: '',
+    headersJson: '',
+  });
 
   // Typeform multi-form management
   const [typeformForms, setTypeformForms] = useState<any[]>([]);
@@ -444,6 +462,24 @@ export default function IntegrationsPage() {
       ],
     },
     {
+      id: 'esemneaza',
+      name: 'eSemneaza',
+      description: 'Trimite contracte la semnat direct din CRM si primeste status in timp real.',
+      category: 'payments',
+      icon: '🖊️',
+      logoUrl: integrationIcons.esemneaza || integrationIcons.pandadoc,
+      color: 'from-blue-600 to-cyan-600',
+      connected: false,
+      features: ['Trimitere contract', 'Link semnare', 'Webhook status semnat', 'Automatizare post-semnare'],
+      configFields: [
+        { name: 'apiUrl', label: 'API URL', type: 'url', required: true, placeholder: 'https://api.esemneaza.ro' },
+        { name: 'apiKey', label: 'API Key', type: 'password', required: true, placeholder: 'ESM_...' },
+        { name: 'sendContractPath', label: 'Send Contract Path', type: 'text', required: false, placeholder: '/contracts/send' },
+        { name: 'listTemplatesPath', label: 'Templates Path', type: 'text', required: false, placeholder: '/templates' },
+        { name: 'webhookSecret', label: 'Webhook Secret', type: 'password', required: false, placeholder: 'Secret pentru verificare webhook' },
+      ],
+    },
+    {
       id: 'payfunnels',
       name: 'PayFunnels',
       description: 'Payment and funnel management platform for online businesses and sales funnels.',
@@ -454,9 +490,11 @@ export default function IntegrationsPage() {
       connected: false,
       features: ['Funnel tracking', 'Payment processing', 'Conversion optimization', 'A/B testing'],
       configFields: [
+        { name: 'apiUrl', label: 'API URL', type: 'url', required: false, placeholder: 'https://api.payfunnels.com' },
         { name: 'apiKey', label: 'API Key', type: 'password', required: true, placeholder: 'Your PayFunnels API key' },
         { name: 'accountId', label: 'Account ID', type: 'text', required: true, placeholder: 'Your account ID' },
-        { name: 'webhookUrl', label: 'Webhook URL', type: 'url', required: false, placeholder: 'https://your-domain.com/webhook' },
+        { name: 'createPaymentPath', label: 'Create Payment Path', type: 'text', required: false, placeholder: '/payments/links' },
+        { name: 'webhookSecret', label: 'Webhook Secret', type: 'password', required: false, placeholder: 'Secret pentru verificare webhook' },
       ],
     },
 
@@ -667,8 +705,19 @@ export default function IntegrationsPage() {
         // Create a map of connected integrations by type
         const connectedMap: Record<string, any> = {};
         connected.forEach((int: any) => {
-          const typeKey = int.type.toLowerCase();
-          connectedMap[typeKey] = int;
+          const typeKey = String(int.type || '').toLowerCase();
+          const externalKey = String(int.externalId || '').toLowerCase();
+          const providerKey = String(int.config?.provider || '').toLowerCase();
+
+          if (typeKey) {
+            connectedMap[typeKey] = int;
+          }
+          if (externalKey) {
+            connectedMap[externalKey] = int;
+          }
+          if (providerKey) {
+            connectedMap[providerKey] = int;
+          }
         });
 
         setConnectedIntegrations(connectedMap);
@@ -676,16 +725,17 @@ export default function IntegrationsPage() {
         // Merge backend connection status into the static integrations list
         // (preserves static configFields which are more detailed than the generic fallback)
         setIntegrations(prev => prev.map(staticInt => {
-          const backendInt = available.find((b: any) => b.type.toLowerCase() === staticInt.id);
-          if (!backendInt) return staticInt;
+          const backendInt = available.find((b: any) => String(b.type || '').toLowerCase() === staticInt.id);
+          const connectedEntry = connectedMap[staticInt.id];
+          if (!backendInt && !connectedEntry) return staticInt;
           // Webhook-only integrations (typeform, manychat, calendly) work without active API key test — treat pending as connected
-          const isConnected = connectedMap[staticInt.id]
-            ? connectedMap[staticInt.id].status !== 'disabled' && connectedMap[staticInt.id].status !== 'expired' && connectedMap[staticInt.id].status !== 'suspended'
+          const isConnected = connectedEntry
+            ? connectedEntry.status !== 'disabled' && connectedEntry.status !== 'expired' && connectedEntry.status !== 'suspended'
             : false;
           return {
             ...staticInt,
             connected: isConnected,
-            status: connectedMap[staticInt.id]?.status,
+            status: connectedEntry?.status,
           };
         }));
       } catch (error) {
@@ -878,6 +928,28 @@ export default function IntegrationsPage() {
     setModalError('');
 
     try {
+      const knownBackendTypes = new Set([
+        'slack',
+        'google',
+        'microsoft',
+        'salesforce',
+        'hubspot',
+        'zoom',
+        'typeform',
+        'pandadoc',
+        'docusign',
+        'calendly',
+        'kajabi',
+        'whatsapp',
+        'manychat',
+        'webhook',
+        'api',
+      ]);
+
+      const integrationId = selectedIntegration.id.toLowerCase();
+      const backendType = knownBackendTypes.has(integrationId) ? integrationId : 'api';
+      const externalId = backendType === 'api' && integrationId !== 'api' ? integrationId : undefined;
+
       // Separate credential fields (API keys, tokens, secrets) from config fields
       const credentialFieldNames = ['apiToken', 'apiKey', 'accessToken', 'secretKey', 'authToken', 'secret', 'consumerKey', 'consumerSecret', 'clientSecret', 'apiSecret'];
       const credentials: Record<string, string> = {};
@@ -891,9 +963,19 @@ export default function IntegrationsPage() {
         }
       }
 
+      // Generic API integrations need a provider key and baseUrl for connection testing.
+      if (backendType === 'api') {
+        config.provider = integrationId;
+        if (config.apiUrl && !config.baseUrl) {
+          config.baseUrl = config.apiUrl;
+        }
+      }
+
       const response = await api.post('/integrations/install', {
-        type: selectedIntegration.id,
+        type: backendType,
         authType: 'api_key',
+        externalId,
+        name: selectedIntegration.name,
         config,
         credentials,
       });
@@ -904,8 +986,12 @@ export default function IntegrationsPage() {
 
       const connectedMap: Record<string, any> = {};
       connected.forEach((int: any) => {
-        const typeKey = int.type.toLowerCase();
-        connectedMap[typeKey] = int;
+        const typeKey = String(int.type || '').toLowerCase();
+        const externalKey = String(int.externalId || '').toLowerCase();
+        const providerKey = String(int.config?.provider || '').toLowerCase();
+        if (typeKey) connectedMap[typeKey] = int;
+        if (externalKey) connectedMap[externalKey] = int;
+        if (providerKey) connectedMap[providerKey] = int;
       });
 
       setConnectedIntegrations(connectedMap);
@@ -919,15 +1005,22 @@ export default function IntegrationsPage() {
       handleCloseModal();
 
       // Show success message with unique webhook URL
-      const integrationId = response.data?.id;
+      const createdIntegration = response.data?.integration || response.data;
+      const createdIntegrationId = createdIntegration?.id || connectedMap[integrationId]?.id;
       const apiUrl = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api/v1').replace('/api/v1', '');
       const needsWebhook = ['typeform', 'calendly', 'manychat'].includes(selectedIntegration.id);
 
       if (selectedIntegration.id === 'whatsapp') {
         const waWebhookUrl = `${apiUrl}/api/v1/integrations/whatsapp/webhook`;
         alert(`WhatsApp integration connected!\n\nWebhook URL for Meta for Developers:\n${waWebhookUrl}\n\nPaste this URL in Meta → App → WhatsApp → Configuration → Webhook URL.`);
-      } else if (integrationId && needsWebhook) {
-        const webhookUrl = `${apiUrl}/api/v1/integrations/webhooks/${integrationId}`;
+      } else if (selectedIntegration.id === 'esemneaza' && createdIntegrationId) {
+        const webhookUrl = `${apiUrl}/api/v1/documents/webhooks/esemneaza/${createdIntegrationId}`;
+        alert(`eSemneaza connected!\n\nWebhook URL:\n${webhookUrl}\n\nConfigure this URL in eSemneaza for signature status callbacks.`);
+      } else if (selectedIntegration.id === 'payfunnels' && createdIntegrationId) {
+        const webhookUrl = `${apiUrl}/api/v1/documents/webhooks/payfunnel/${createdIntegrationId}`;
+        alert(`PayFunnels connected!\n\nWebhook URL:\n${webhookUrl}\n\nConfigure this URL in PayFunnels for payment status callbacks.`);
+      } else if (createdIntegrationId && needsWebhook) {
+        const webhookUrl = `${apiUrl}/api/v1/integrations/webhooks/${createdIntegrationId}`;
         alert(`Integration connected!\n\nYour unique webhook URL:\n${webhookUrl}\n\nPaste this URL in ${selectedIntegration.name}'s webhook settings.`);
       } else {
         alert('Integration connected successfully!');
@@ -937,6 +1030,112 @@ export default function IntegrationsPage() {
       setModalError(err.response?.data?.message || 'Failed to connect integration');
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const getWebhookUrl = (integrationKey: string, record?: any): string | null => {
+    if (!record?.id) return null;
+    const baseUrl = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api/v1').replace('/api/v1', '');
+
+    if (integrationKey === 'esemneaza') {
+      return `${baseUrl}/api/v1/documents/webhooks/esemneaza/${record.id}`;
+    }
+    if (integrationKey === 'payfunnels') {
+      return `${baseUrl}/api/v1/documents/webhooks/payfunnel/${record.id}`;
+    }
+    if (['typeform', 'calendly', 'manychat'].includes(integrationKey)) {
+      return `${baseUrl}/api/v1/integrations/webhooks/${record.id}`;
+    }
+    return null;
+  };
+
+  const getConnectedIntegrationOptions = () => {
+    const unique = new Map<string, any>();
+    Object.values(connectedIntegrations).forEach((integration: any) => {
+      if (integration?.id && !unique.has(integration.id)) {
+        unique.set(integration.id, integration);
+      }
+    });
+    return Array.from(unique.values());
+  };
+
+  const connectedIntegrationOptions = getConnectedIntegrationOptions();
+
+  const openWebhookDocs = () => {
+    const apiBase = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api/v1').replace('/api/v1', '');
+    window.open(`${apiBase}/api/docs`, '_blank');
+  };
+
+  const openCreateWebhookModal = () => {
+    setWebhookError('');
+    setWebhookSuccess('');
+
+    if (connectedIntegrationOptions.length === 0) {
+      setModalError('Connect at least one integration before creating a custom webhook.');
+      return;
+    }
+
+    setWebhookForm((prev) => ({
+      ...prev,
+      integrationId: prev.integrationId || connectedIntegrationOptions[0].id,
+      event: prev.event || '*',
+    }));
+    setShowWebhookModal(true);
+  };
+
+  const handleWebhookFormChange = (key: keyof typeof webhookForm, value: string) => {
+    setWebhookForm((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const handleCreateWebhook = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setWebhookError('');
+    setWebhookSuccess('');
+
+    if (!webhookForm.integrationId || !webhookForm.url || !webhookForm.event) {
+      setWebhookError('Integration, URL and event are required.');
+      return;
+    }
+
+    let parsedHeaders: Record<string, string> | undefined;
+    if (webhookForm.headersJson.trim()) {
+      try {
+        const headersCandidate = JSON.parse(webhookForm.headersJson);
+        if (!headersCandidate || typeof headersCandidate !== 'object' || Array.isArray(headersCandidate)) {
+          setWebhookError('Headers must be a valid JSON object.');
+          return;
+        }
+        parsedHeaders = Object.fromEntries(
+          Object.entries(headersCandidate).map(([k, v]) => [String(k), String(v)]),
+        );
+      } catch {
+        setWebhookError('Headers JSON is invalid.');
+        return;
+      }
+    }
+
+    try {
+      setIsWebhookSubmitting(true);
+      const response = await api.post(`/integrations/${webhookForm.integrationId}/webhooks`, {
+        url: webhookForm.url.trim(),
+        event: webhookForm.event.trim(),
+        secret: webhookForm.secret.trim() || undefined,
+        headers: parsedHeaders,
+      });
+
+      setWebhookSuccess(`Webhook created: ${response.data?.id || 'success'}`);
+      setWebhookForm((prev) => ({
+        ...prev,
+        url: '',
+        event: '*',
+        secret: '',
+        headersJson: '',
+      }));
+    } catch (err: any) {
+      console.error('Failed to create webhook:', err);
+      setWebhookError(err.response?.data?.message || 'Failed to create webhook.');
+    } finally {
+      setIsWebhookSubmitting(false);
     }
   };
 
@@ -1115,17 +1314,143 @@ export default function IntegrationsPage() {
               Need a custom integration? Use webhooks to connect any service to your CRM.
             </p>
             <div className="flex gap-4">
-              <button className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-6 py-3 text-sm font-semibold text-white shadow-lg hover:shadow-xl transition-all">
+              <button
+                onClick={openWebhookDocs}
+                className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-6 py-3 text-sm font-semibold text-white shadow-lg hover:shadow-xl transition-all"
+              >
                 View Documentation
                 <ExternalLink className="h-4 w-4" />
               </button>
-              <button className="flex items-center gap-2 rounded-xl border border-gray-300 bg-white px-6 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50 transition-all">
+              <button
+                onClick={openCreateWebhookModal}
+                className="flex items-center gap-2 rounded-xl border border-gray-300 bg-white px-6 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50 transition-all"
+              >
                 Create Webhook
               </button>
             </div>
           </div>
         </div>
       </div>
+
+      {showWebhookModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm animate-fade-in">
+          <div className="relative w-full max-w-2xl mx-4 glass-effect rounded-2xl p-8 shadow-2xl animate-scale-in">
+            <button
+              onClick={() => setShowWebhookModal(false)}
+              className="absolute right-4 top-4 rounded-xl p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-all"
+            >
+              <X className="h-6 w-6" />
+            </button>
+
+            <div className="mb-6">
+              <h2 className="text-2xl font-bold text-gray-900">Create Custom Webhook</h2>
+              <p className="text-sm text-gray-600 mt-1">
+                Register a webhook endpoint to receive integration events.
+              </p>
+            </div>
+
+            <form onSubmit={handleCreateWebhook} className="space-y-4">
+              {webhookError && (
+                <div className="rounded-xl bg-red-50 border border-red-200 p-3 text-sm text-red-700">
+                  {webhookError}
+                </div>
+              )}
+              {webhookSuccess && (
+                <div className="rounded-xl bg-green-50 border border-green-200 p-3 text-sm text-green-700">
+                  {webhookSuccess}
+                </div>
+              )}
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">Connected Integration</label>
+                <select
+                  value={webhookForm.integrationId}
+                  onChange={(e) => handleWebhookFormChange('integrationId', e.target.value)}
+                  className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 transition-all outline-none"
+                  required
+                >
+                  <option value="">Select integration</option>
+                  {connectedIntegrationOptions.map((integration: any) => (
+                    <option key={integration.id} value={integration.id}>
+                      {integration.name} ({integration.type})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">Destination URL</label>
+                <input
+                  type="url"
+                  value={webhookForm.url}
+                  onChange={(e) => handleWebhookFormChange('url', e.target.value)}
+                  placeholder="https://your-system.com/webhooks/slackcrm"
+                  className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 transition-all outline-none"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">Event</label>
+                <input
+                  type="text"
+                  value={webhookForm.event}
+                  onChange={(e) => handleWebhookFormChange('event', e.target.value)}
+                  placeholder="* or payment.received"
+                  className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 transition-all outline-none"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">Secret (optional)</label>
+                <input
+                  type="text"
+                  value={webhookForm.secret}
+                  onChange={(e) => handleWebhookFormChange('secret', e.target.value)}
+                  placeholder="webhook secret"
+                  className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 transition-all outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">Headers JSON (optional)</label>
+                <textarea
+                  value={webhookForm.headersJson}
+                  onChange={(e) => handleWebhookFormChange('headersJson', e.target.value)}
+                  placeholder='{"X-Source":"crm"}'
+                  rows={3}
+                  className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 transition-all outline-none resize-none"
+                />
+              </div>
+
+              <div className="flex gap-4 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowWebhookModal(false)}
+                  className="flex-1 rounded-xl border border-gray-300 bg-white px-6 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50 transition-all"
+                >
+                  Close
+                </button>
+                <button
+                  type="submit"
+                  disabled={isWebhookSubmitting}
+                  className="flex-1 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-6 py-3 text-sm font-semibold text-white shadow-lg hover:shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                >
+                  {isWebhookSubmitting ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Creating...
+                    </>
+                  ) : (
+                    'Create Webhook'
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Configuration Modal */}
       {selectedIntegration && (
@@ -1158,8 +1483,24 @@ export default function IntegrationsPage() {
               </div>
             </div>
 
+            {/* Meta Embedded Signup for WhatsApp */}
+            {selectedIntegration.id === 'whatsapp' && (
+              <EmbeddedSignupSection
+                onSuccess={() => {
+                  handleCloseModal();
+                  window.location.reload();
+                }}
+                onError={(msg: string) => setModalError(msg)}
+              />
+            )}
+
             {/* Configuration Form */}
             <form onSubmit={handleSubmitConfig} className="space-y-6">
+              {selectedIntegration.id === 'whatsapp' && (
+                <div className="border-t border-gray-200 pt-4">
+                  <p className="text-xs text-gray-500 mb-3 font-medium uppercase tracking-wider">Or connect manually (Advanced)</p>
+                </div>
+              )}
               {/* Error Message */}
               {modalError && (
                 <div className="flex items-start gap-3 rounded-xl bg-red-50 border border-red-200 p-4">
@@ -1374,16 +1715,21 @@ export default function IntegrationsPage() {
             </div>
 
             {/* Webhook URL for webhook-based integrations (not WhatsApp — it has its own URL block above) */}
-            {['typeform', 'calendly', 'manychat'].includes(managingIntegration.id) && connectedIntegrations[managingIntegration.id]?.id && (
+            {getWebhookUrl(managingIntegration.id, connectedIntegrations[managingIntegration.id]) && (
               <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 mb-6">
                 <p className="text-xs font-semibold text-blue-800 mb-2">Your Webhook URL (unique to your workspace)</p>
                 <div className="flex items-center gap-2">
                   <code className="flex-1 text-xs bg-white border border-blue-200 rounded-lg px-3 py-2 text-blue-900 break-all">
-                    {(process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api/v1').replace('/api/v1', '')}/api/v1/integrations/webhooks/{connectedIntegrations[managingIntegration.id].id}
+                    {getWebhookUrl(managingIntegration.id, connectedIntegrations[managingIntegration.id])}
                   </code>
                   <button
                     type="button"
-                    onClick={() => navigator.clipboard?.writeText(`${(process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api/v1').replace('/api/v1', '')}/api/v1/integrations/webhooks/${connectedIntegrations[managingIntegration.id].id}`)}
+                    onClick={() => {
+                      const url = getWebhookUrl(managingIntegration.id, connectedIntegrations[managingIntegration.id]);
+                      if (url) {
+                        navigator.clipboard?.writeText(url);
+                      }
+                    }}
                     className="p-2 rounded-lg bg-white border border-blue-200 hover:bg-blue-100 transition-all"
                     title="Copy webhook URL"
                   >
@@ -1608,6 +1954,114 @@ export default function IntegrationsPage() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function EmbeddedSignupSection({ onSuccess, onError }: { onSuccess: () => void; onError: (msg: string) => void }) {
+  const [isLoading, setIsLoading] = useState(false);
+  const [config, setConfig] = useState<{ appId: string; configId: string; available: boolean } | null>(null);
+
+  useEffect(() => {
+    api.get('/integrations/whatsapp/embedded-signup-config')
+      .then(res => setConfig(res.data))
+      .catch(() => setConfig({ appId: '', configId: '', available: false }));
+  }, []);
+
+  const handleEmbeddedSignup = () => {
+    if (!config?.appId) {
+      onError('Meta App ID not configured on server. Please use manual setup below.');
+      return;
+    }
+
+    setIsLoading(true);
+
+    // Load Facebook SDK
+    const fbScript = document.getElementById('facebook-jssdk');
+    if (!fbScript) {
+      const script = document.createElement('script');
+      script.id = 'facebook-jssdk';
+      script.src = 'https://connect.facebook.net/en_US/sdk.js';
+      script.async = true;
+      script.defer = true;
+      script.onload = () => initFBAndLogin();
+      document.body.appendChild(script);
+    } else {
+      initFBAndLogin();
+    }
+
+    function initFBAndLogin() {
+      const FB = (window as any).FB;
+      if (!FB) {
+        setIsLoading(false);
+        onError('Failed to load Facebook SDK');
+        return;
+      }
+
+      FB.init({
+        appId: config!.appId,
+        cookie: true,
+        xfbml: true,
+        version: 'v21.0',
+      });
+
+      FB.login(
+        (response: any) => {
+          if (response.authResponse?.code) {
+            // Exchange code via backend
+            api.post('/integrations/whatsapp/embedded-signup', { code: response.authResponse.code })
+              .then((res) => {
+                setIsLoading(false);
+                if (res.data.success) {
+                  onSuccess();
+                } else {
+                  onError('Signup completed but integration creation failed');
+                }
+              })
+              .catch((err) => {
+                setIsLoading(false);
+                onError(err?.response?.data?.message || 'Failed to complete signup');
+              });
+          } else {
+            setIsLoading(false);
+            onError('WhatsApp signup was cancelled or failed');
+          }
+        },
+        {
+          config_id: config!.configId || undefined,
+          response_type: 'code',
+          override_default_response_type: true,
+          extras: {
+            setup: { business: { name: 'My Business' } },
+            featureType: 'only_waba_sharing',
+          },
+        },
+      );
+    }
+  };
+
+  if (!config) return null;
+  if (!config.available) return null;
+
+  return (
+    <div className="rounded-xl bg-green-50 border border-green-200 p-5">
+      <h3 className="text-sm font-semibold text-green-900 mb-2">Quick Setup with Meta</h3>
+      <p className="text-xs text-green-700 mb-4">
+        Connect your WhatsApp Business account instantly using Meta&apos;s Embedded Signup.
+        No need to manually copy tokens or IDs.
+      </p>
+      <button
+        onClick={handleEmbeddedSignup}
+        disabled={isLoading}
+        className="flex items-center gap-2 px-5 py-2.5 bg-green-600 text-white rounded-xl text-sm font-semibold hover:bg-green-700 disabled:opacity-50 transition-colors w-full justify-center"
+      >
+        {isLoading ? (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        ) : (
+          <Zap className="h-4 w-4" />
+        )}
+        {isLoading ? 'Connecting...' : 'Connect with WhatsApp'}
+      </button>
     </div>
   );
 }

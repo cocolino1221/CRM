@@ -6,6 +6,7 @@ import {
   Body,
   Param,
   Query,
+  Headers,
   UseGuards,
   Req,
   HttpCode,
@@ -15,6 +16,7 @@ import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagg
 import { DocumentsService } from './documents.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { DocumentStatus, DocumentProvider } from '../database/entities/document.entity';
+import { Public } from '../common/decorators/public.decorator';
 
 @ApiTags('documents')
 @ApiBearerAuth()
@@ -47,6 +49,46 @@ export class DocumentsController {
       dealId,
       createdById,
     });
+  }
+
+  @Get('esemneaza/templates')
+  @ApiOperation({ summary: 'Get available eSemneaza contract templates' })
+  @ApiResponse({ status: 200, description: 'Templates retrieved successfully' })
+  async getEsemneazaTemplates(@Req() req: any) {
+    return {
+      templates: await this.documentsService.getEsemneazaTemplates(req.user.workspaceId),
+    };
+  }
+
+  @Post('esemneaza')
+  @ApiOperation({ summary: 'Create and send document via eSemneaza' })
+  @ApiResponse({ status: 201, description: 'Document created successfully' })
+  async createFromEsemneaza(
+    @Req() req: any,
+    @Body() body: {
+      name: string;
+      templateId: string;
+      templateName?: string;
+      type: string;
+      contactId?: string;
+      dealId?: string;
+      recipient: {
+        email: string;
+        name: string;
+        phone?: string;
+      };
+      fields?: Record<string, any>;
+      autoSendPaymentLink?: boolean;
+      paymentAmount?: number;
+      paymentCurrency?: string;
+      paymentDescription?: string;
+    },
+  ) {
+    return this.documentsService.createFromEsemneaza(
+      req.user.workspaceId,
+      req.user.id,
+      body,
+    );
   }
 
   @Get(':id')
@@ -140,6 +182,28 @@ export class DocumentsController {
     );
   }
 
+  @Post(':id/payment-link')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Generate and send PayFunnels payment link for document' })
+  @ApiResponse({ status: 200, description: 'Payment link generated successfully' })
+  async generatePaymentLink(
+    @Req() req: any,
+    @Param('id') id: string,
+    @Body() body?: {
+      amount?: number;
+      currency?: string;
+      description?: string;
+      sendEmail?: boolean;
+    },
+  ) {
+    return this.documentsService.generatePaymentLinkForDocument(
+      req.user.workspaceId,
+      id,
+      req.user.id,
+      body,
+    );
+  }
+
   @Post(':id/void')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Void a document' })
@@ -177,5 +241,31 @@ export class DocumentsController {
   @ApiResponse({ status: 404, description: 'Document not found' })
   async deleteDocument(@Req() req: any, @Param('id') id: string) {
     await this.documentsService.deleteDocument(req.user.workspaceId, id);
+  }
+
+  @Public()
+  @Post('webhooks/esemneaza/:integrationId')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Receive eSemneaza webhook' })
+  @ApiResponse({ status: 200, description: 'Webhook processed' })
+  async handleEsemneazaWebhook(
+    @Param('integrationId') integrationId: string,
+    @Body() body: any,
+    @Headers() headers: Record<string, string | string[] | undefined>,
+  ) {
+    return this.documentsService.processEsemneazaWebhook(integrationId, body, headers);
+  }
+
+  @Public()
+  @Post('webhooks/payfunnel/:integrationId')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Receive PayFunnels webhook' })
+  @ApiResponse({ status: 200, description: 'Webhook processed' })
+  async handlePayfunnelWebhook(
+    @Param('integrationId') integrationId: string,
+    @Body() body: any,
+    @Headers() headers: Record<string, string | string[] | undefined>,
+  ) {
+    return this.documentsService.processPayfunnelWebhook(integrationId, body, headers);
   }
 }
