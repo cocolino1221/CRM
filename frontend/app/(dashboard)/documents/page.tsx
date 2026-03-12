@@ -50,6 +50,7 @@ interface CreateEsemneazaForm {
   name: string;
   type: string;
   templateId: string;
+  fileName: string;
   templateName: string;
   recipientName: string;
   recipientEmail: string;
@@ -79,12 +80,16 @@ export default function DocumentsPage() {
   const [syncError, setSyncError] = useState('');
   const [syncResult, setSyncResult] = useState<EsemneazaSyncResult | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [uploadingFile, setUploadingFile] = useState(false);
+  const [esemneazaSource, setEsemneazaSource] = useState<'template' | 'file'>('template');
+  const [uploadedFileLabel, setUploadedFileLabel] = useState('');
   const [createError, setCreateError] = useState('');
 
   const [form, setForm] = useState<CreateEsemneazaForm>({
     name: '',
     type: 'contract',
     templateId: '',
+    fileName: '',
     templateName: '',
     recipientName: '',
     recipientEmail: '',
@@ -94,6 +99,25 @@ export default function DocumentsPage() {
     paymentCurrency: 'EUR',
     autoSendPaymentLink: true,
   });
+
+  const resetCreateForm = () => {
+    setForm({
+      name: '',
+      type: 'contract',
+      templateId: '',
+      fileName: '',
+      templateName: '',
+      recipientName: '',
+      recipientEmail: '',
+      contactId: '',
+      dealId: '',
+      paymentAmount: '',
+      paymentCurrency: 'EUR',
+      autoSendPaymentLink: true,
+    });
+    setEsemneazaSource('template');
+    setUploadedFileLabel('');
+  };
 
   useEffect(() => {
     const initialize = async () => {
@@ -221,9 +245,40 @@ export default function DocumentsPage() {
     }));
   };
 
+  const handleUploadEsemneazaFile = async (file: File | null) => {
+    if (!file) return;
+    setCreateError('');
+
+    try {
+      setUploadingFile(true);
+      const formData = new FormData();
+      formData.append('file', file);
+      const response = await api.post('/documents/esemneaza/upload', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      });
+
+      setForm((prev) => ({
+        ...prev,
+        fileName: response.data?.fileName || '',
+        templateId: '',
+      }));
+      setUploadedFileLabel(response.data?.originalName || file.name);
+    } catch (error: any) {
+      console.error('Failed to upload eSemneaza file:', error);
+      setCreateError(error?.response?.data?.message || 'Nu am putut urca fisierul pentru eSemneaza.');
+    } finally {
+      setUploadingFile(false);
+    }
+  };
+
   const handleCreateEsemneaza = async () => {
     setCreateError('');
-    if (!form.name || !form.templateId || !form.recipientEmail || !form.recipientName) {
+    const hasTemplate = esemneazaSource === 'template' && !!form.templateId;
+    const hasFile = esemneazaSource === 'file' && !!form.fileName;
+
+    if (!form.name || !form.recipientEmail || !form.recipientName || (!hasTemplate && !hasFile)) {
       setCreateError('Completeaza toate campurile obligatorii.');
       return;
     }
@@ -233,7 +288,8 @@ export default function DocumentsPage() {
       await api.post('/documents/esemneaza', {
         name: form.name,
         type: form.type,
-        templateId: form.templateId,
+        templateId: hasTemplate ? form.templateId : undefined,
+        fileName: hasFile ? form.fileName : undefined,
         templateName: form.templateName || undefined,
         contactId: form.contactId || undefined,
         dealId: form.dealId || undefined,
@@ -247,19 +303,7 @@ export default function DocumentsPage() {
       });
 
       setShowCreateModal(false);
-      setForm({
-        name: '',
-        type: 'contract',
-        templateId: '',
-        templateName: '',
-        recipientName: '',
-        recipientEmail: '',
-        contactId: '',
-        dealId: '',
-        paymentAmount: '',
-        paymentCurrency: 'EUR',
-        autoSendPaymentLink: true,
-      });
+      resetCreateForm();
       await fetchDocuments();
     } catch (error: any) {
       console.error('Failed to create eSemneaza document:', error);
@@ -300,11 +344,26 @@ export default function DocumentsPage() {
             <button
               onClick={() => {
                 setCreateError('');
+                resetCreateForm();
+                setSelectedProvider('esemneaza');
+                setEsemneazaSource('template');
                 setShowCreateModal(true);
               }}
               className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
             >
               + Create Document
+            </button>
+            <button
+              onClick={() => {
+                setCreateError('');
+                resetCreateForm();
+                setSelectedProvider('esemneaza');
+                setEsemneazaSource('file');
+                setShowCreateModal(true);
+              }}
+              className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors"
+            >
+              Upload + Send
             </button>
           </div>
         </div>
@@ -498,7 +557,10 @@ export default function DocumentsPage() {
             <div className="flex items-center justify-between mb-6">
               <h2 className="text-2xl font-bold text-gray-900">Create Document</h2>
               <button
-                onClick={() => setShowCreateModal(false)}
+                onClick={() => {
+                  setShowCreateModal(false);
+                  resetCreateForm();
+                }}
                 className="text-gray-400 hover:text-gray-600"
               >
                 ✕
@@ -575,31 +637,80 @@ export default function DocumentsPage() {
                   </div>
 
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Template*</label>
-                    {loadingTemplates ? (
-                      <div className="text-sm text-gray-500">Loading templates...</div>
-                    ) : templates.length > 0 ? (
-                      <select
-                        className="w-full border border-gray-300 rounded-lg px-3 py-2"
-                        value={form.templateId}
-                        onChange={(e) => handleTemplateChange(e.target.value)}
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Document Source*</label>
+                    <div className="grid grid-cols-2 gap-3">
+                      <button
+                        type="button"
+                        onClick={() => setEsemneazaSource('template')}
+                        className={`rounded-lg border px-3 py-2 text-sm font-medium ${
+                          esemneazaSource === 'template'
+                            ? 'border-blue-600 bg-blue-50 text-blue-700'
+                            : 'border-gray-300 bg-white text-gray-700'
+                        }`}
                       >
-                        <option value="">Select template</option>
-                        {templates.map((template) => (
-                          <option key={template.id} value={template.id}>
-                            {template.name}
-                          </option>
-                        ))}
-                      </select>
-                    ) : (
-                      <input
-                        className="w-full border border-gray-300 rounded-lg px-3 py-2"
-                        value={form.templateId}
-                        onChange={(e) => handleFormChange('templateId', e.target.value)}
-                        placeholder="Template ID"
-                      />
-                    )}
+                        Use Template
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEsemneazaSource('file')}
+                        className={`rounded-lg border px-3 py-2 text-sm font-medium ${
+                          esemneazaSource === 'file'
+                            ? 'border-emerald-600 bg-emerald-50 text-emerald-700'
+                            : 'border-gray-300 bg-white text-gray-700'
+                        }`}
+                      >
+                        Upload File
+                      </button>
+                    </div>
                   </div>
+
+                  {esemneazaSource === 'template' ? (
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Template*</label>
+                      {loadingTemplates ? (
+                        <div className="text-sm text-gray-500">Loading templates...</div>
+                      ) : templates.length > 0 ? (
+                        <select
+                          className="w-full border border-gray-300 rounded-lg px-3 py-2"
+                          value={form.templateId}
+                          onChange={(e) => handleTemplateChange(e.target.value)}
+                        >
+                          <option value="">Select template</option>
+                          {templates.map((template) => (
+                            <option key={template.id} value={template.id}>
+                              {template.name}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <input
+                          className="w-full border border-gray-300 rounded-lg px-3 py-2"
+                          value={form.templateId}
+                          onChange={(e) => handleFormChange('templateId', e.target.value)}
+                          placeholder="Template ID"
+                        />
+                      )}
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Upload file (.pdf, .doc, .docx)*</label>
+                      <input
+                        type="file"
+                        accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                        onChange={(e) => handleUploadEsemneazaFile(e.target.files?.[0] || null)}
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 bg-white"
+                      />
+                      <div className="text-xs text-gray-500">
+                        Max 15MB. Fisierul este uploadat in eSemneaza, apoi trimis la semnat.
+                      </div>
+                      {uploadingFile && <div className="text-sm text-blue-600">Uploading file...</div>}
+                      {!uploadingFile && form.fileName && (
+                        <div className="text-sm text-emerald-700">
+                          Uploaded: {uploadedFileLabel || form.fileName}
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
@@ -677,17 +788,20 @@ export default function DocumentsPage() {
 
                   <div className="flex justify-end gap-3">
                     <button
-                      onClick={() => setShowCreateModal(false)}
+                      onClick={() => {
+                        setShowCreateModal(false);
+                        resetCreateForm();
+                      }}
                       className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
                     >
                       Cancel
                     </button>
                     <button
                       onClick={handleCreateEsemneaza}
-                      disabled={submitting}
+                      disabled={submitting || uploadingFile}
                       className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
                     >
-                      {submitting ? 'Creating...' : 'Create & Send'}
+                      {uploadingFile ? 'Uploading...' : submitting ? 'Creating...' : 'Create & Send'}
                     </button>
                   </div>
                 </div>

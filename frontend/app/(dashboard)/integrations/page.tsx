@@ -482,6 +482,7 @@ export default function IntegrationsPage() {
         },
         { name: 'apiKey', label: 'API Key', type: 'password', required: true, placeholder: 'ESM_...' },
         { name: 'sendContractPath', label: 'Send Contract Path', type: 'text', required: false, placeholder: '/api/v1/requests' },
+        { name: 'uploadFilePath', label: 'Upload File Path', type: 'text', required: false, placeholder: '/api/v1/files' },
         { name: 'listTemplatesPath', label: 'Templates Path', type: 'text', required: false, placeholder: '/api/v1/templates' },
         { name: 'listDocumentsPath', label: 'Documents Path', type: 'text', required: false, placeholder: '/api/v1/requests' },
         { name: 'requestDetailsPath', label: 'Request Details Path', type: 'text', required: false, placeholder: '/api/v1/requests/{requestId}' },

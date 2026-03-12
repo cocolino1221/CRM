@@ -10,6 +10,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, FindOptionsWhere, ILike } from 'typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { randomUUID } from 'crypto';
+import FormData from 'form-data';
 import { Document, DocumentStatus, DocumentProvider, DocumentType } from '../database/entities/document.entity';
 import { User } from '../database/entities/user.entity';
 import { Contact, ContactStatus } from '../database/entities/contact.entity';
@@ -38,7 +39,8 @@ export interface EsemneazaTemplate {
 
 export interface CreateEsemneazaDocumentInput {
   name: string;
-  templateId: string;
+  templateId?: string;
+  fileName?: string;
   templateName?: string;
   type: string;
   contactId?: string;
@@ -363,6 +365,86 @@ export class DocumentsService {
     } catch (error) {
       this.logger.warn(`Could not fetch eSemneaza templates from API: ${error.message}`);
       return [];
+    }
+  }
+
+  async uploadEsemneazaFile(
+    workspaceId: string,
+    file: Express.Multer.File,
+  ): Promise<{ fileName: string; originalName: string; size: number; mimeType: string }> {
+    if (!file) {
+      throw new BadRequestException('File is required');
+    }
+
+    const maxSize = 15 * 1024 * 1024;
+    if (file.size > maxSize) {
+      throw new BadRequestException('eSemneaza accepts files up to 15MB');
+    }
+
+    const allowedMimeTypes = new Set([
+      'application/pdf',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    ]);
+    const lowerOriginal = String(file.originalname || '').toLowerCase();
+    const allowedByExtension =
+      lowerOriginal.endsWith('.pdf') ||
+      lowerOriginal.endsWith('.doc') ||
+      lowerOriginal.endsWith('.docx');
+
+    if (!allowedMimeTypes.has(file.mimetype) && !allowedByExtension) {
+      throw new BadRequestException('Only PDF, DOC or DOCX files are allowed');
+    }
+
+    const integration = await this.findApiProviderIntegration(workspaceId, ['esemneaza'], true);
+    const apiUrl = this.getFirstNonEmpty(integration.config?.apiUrl, integration.config?.baseUrl);
+    if (!apiUrl) {
+      throw new BadRequestException('eSemneaza API URL is missing in integration config');
+    }
+
+    const endpoint = integration.config?.uploadFilePath || '/api/v1/files';
+    const form = new FormData();
+    form.append('file', file.buffer, {
+      filename: file.originalname || `contract-${Date.now()}.pdf`,
+      contentType: file.mimetype || 'application/octet-stream',
+    });
+
+    const authHeaders = this.buildProviderHeaders(integration);
+    delete authHeaders['Content-Type'];
+
+    try {
+      const response = await this.httpService.axiosRef.post(
+        this.buildProviderUrl(apiUrl, endpoint),
+        form,
+        {
+          headers: {
+            ...authHeaders,
+            ...form.getHeaders(),
+          },
+          maxBodyLength: Infinity,
+          maxContentLength: Infinity,
+        },
+      );
+
+      const uploadedFileName = this.getFirstNonEmpty(
+        response.data?.fileName,
+        response.data?.name,
+        response.data?.data?.fileName,
+      );
+
+      if (!uploadedFileName) {
+        throw new Error('Missing fileName in eSemneaza upload response');
+      }
+
+      return {
+        fileName: uploadedFileName,
+        originalName: file.originalname || uploadedFileName,
+        size: file.size,
+        mimeType: file.mimetype,
+      };
+    } catch (error) {
+      this.logger.error(`eSemneaza upload failed: ${error.message}`);
+      throw new BadRequestException(`eSemneaza upload failed: ${error.message}`);
     }
   }
 
@@ -728,6 +810,10 @@ export class DocumentsService {
     userId: string,
     data: CreateEsemneazaDocumentInput,
   ): Promise<Document> {
+    if (!data.templateId && !data.fileName) {
+      throw new BadRequestException('templateId or fileName is required');
+    }
+
     const integration = await this.findApiProviderIntegration(workspaceId, ['esemneaza'], true);
 
     let contact: Contact | null = null;
@@ -770,10 +856,12 @@ export class DocumentsService {
       contactId: data.contactId,
       dealId: data.dealId,
       integrationId: integration.id,
-      template: {
-        id: data.templateId,
-        name: data.templateName,
-      },
+      template: data.templateId
+        ? {
+            id: data.templateId,
+            name: data.templateName,
+          }
+        : undefined,
       recipients: [
         {
           email: data.recipient.email,
@@ -1447,6 +1535,10 @@ export class DocumentsService {
     workspaceId: string,
     userId: string,
   ): Promise<{ externalId: string; signingUrl: string; documentUrl?: string; raw?: any }> {
+    if (!data.templateId && !data.fileName) {
+      throw new BadRequestException('templateId or fileName is required');
+    }
+
     const apiUrl = this.getFirstNonEmpty(integration.config?.apiUrl, integration.config?.baseUrl);
     const endpoint = integration.config?.sendContractPath || '/api/v1/requests';
 
@@ -1471,8 +1563,7 @@ export class DocumentsService {
       recipientPayload.fields = rawFields;
     }
 
-    const payload = {
-      templateId: data.templateId,
+    const payload: Record<string, any> = {
       recipients: [recipientPayload],
       signInOrder: false,
       extractTags: false,
@@ -1480,6 +1571,12 @@ export class DocumentsService {
       senderName: integration.config?.senderName || undefined,
       tags: ['crm', workspaceId].filter(Boolean),
     };
+
+    if (data.templateId) {
+      payload.templateId = data.templateId;
+    } else if (data.fileName) {
+      payload.fileName = data.fileName;
+    }
 
     if (apiUrl) {
       try {

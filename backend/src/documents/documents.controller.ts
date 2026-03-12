@@ -7,12 +7,15 @@ import {
   Param,
   Query,
   Headers,
+  UploadedFile,
+  UseInterceptors,
   UseGuards,
   Req,
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiConsumes } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { DocumentsService } from './documents.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { DocumentStatus, DocumentProvider } from '../database/entities/document.entity';
@@ -67,6 +70,18 @@ export class DocumentsController {
     return this.documentsService.syncEsemneazaDocuments(req.user.workspaceId, req.user.id);
   }
 
+  @Post('esemneaza/upload')
+  @UseInterceptors(FileInterceptor('file'))
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({ summary: 'Upload document file to eSemneaza and get fileName' })
+  @ApiResponse({ status: 201, description: 'File uploaded to eSemneaza successfully' })
+  async uploadEsemneazaFile(
+    @Req() req: any,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    return this.documentsService.uploadEsemneazaFile(req.user.workspaceId, file);
+  }
+
   @Post('esemneaza')
   @ApiOperation({ summary: 'Create and send document via eSemneaza' })
   @ApiResponse({ status: 201, description: 'Document created successfully' })
@@ -74,7 +89,8 @@ export class DocumentsController {
     @Req() req: any,
     @Body() body: {
       name: string;
-      templateId: string;
+      templateId?: string;
+      fileName?: string;
       templateName?: string;
       type: string;
       contactId?: string;
