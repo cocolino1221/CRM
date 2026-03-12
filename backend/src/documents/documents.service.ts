@@ -1973,6 +1973,11 @@ export class DocumentsService {
       } else {
         headers['Authorization'] = `${authScheme} ${apiKey}`.trim();
       }
+
+      const providerKey = String(integration.config?.provider || integration.externalId || '').toLowerCase();
+      if (providerKey === 'esemneaza') {
+        headers['X-API-Key'] = headers['X-API-Key'] || apiKey;
+      }
     }
 
     return headers;
