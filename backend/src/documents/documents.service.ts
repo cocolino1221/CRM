@@ -1671,6 +1671,21 @@ export class DocumentsService {
         .trim();
 
     if (this.isSignedEvent(event)) {
+      const existingPaymentMetadata = {
+        ...((document.metadata?.payment as Record<string, any>) || {}),
+      };
+      const documentAlreadySigned = [DocumentStatus.SIGNED, DocumentStatus.COMPLETED].includes(document.status);
+      const postSignatureSequenceSent = !!existingPaymentMetadata.postSignatureSequenceSentAt;
+      if (documentAlreadySigned && postSignatureSequenceSent) {
+        document.addAuditEntry('esemneaza.signed_duplicate', 'webhook', { event });
+        await this.documentRepository.save(document);
+        return {
+          success: true,
+          message: 'Duplicate signed webhook ignored',
+          documentId: document.id,
+        };
+      }
+
       const targetContactStatus = this.resolveSignedContactStatus(
         integration.config?.signedContactStatus || integration.config?.contactStatusOnSigned,
       );
@@ -1731,16 +1746,18 @@ export class DocumentsService {
         email: effectivePaymentMetadata.deliveryChannels?.email !== false,
         whatsapp: effectivePaymentMetadata.deliveryChannels?.whatsapp !== false,
       };
-      let paymentLink: string | undefined;
+      let paymentLink: string | undefined = this.getFirstNonEmpty(effectivePaymentMetadata.paymentLink);
       if (autoSendPayment) {
         try {
-          const paymentDocument = await this.generatePaymentLinkForDocument(
-            integration.workspaceId,
-            savedDocument.id,
-            savedDocument.createdById || 'system',
-            { sendEmail: false, sendWhatsApp: false },
-          );
-          paymentLink = paymentDocument.metadata?.payment?.paymentLink;
+          if (!paymentLink) {
+            const paymentDocument = await this.generatePaymentLinkForDocument(
+              integration.workspaceId,
+              savedDocument.id,
+              savedDocument.createdById || 'system',
+              { sendEmail: false, sendWhatsApp: false },
+            );
+            paymentLink = paymentDocument.metadata?.payment?.paymentLink;
+          }
         } catch (error) {
           this.logger.error(`Auto payment link generation failed: ${error.message}`);
           await this.notifyDocumentStakeholders(savedDocument, {
@@ -1750,7 +1767,7 @@ export class DocumentsService {
         }
       }
 
-      await this.sendPostSignatureSequence({
+      const sequenceSent = await this.sendPostSignatureSequence({
         workspaceId: integration.workspaceId,
         document: savedDocument,
         email: signerEmailFromPayload || this.getPrimaryRecipient(savedDocument).email,
@@ -1760,6 +1777,18 @@ export class DocumentsService {
         sendEmail: paymentDeliveryChannels.email,
         sendWhatsApp: paymentDeliveryChannels.whatsapp,
       });
+
+      if (sequenceSent) {
+        savedDocument.metadata = {
+          ...savedDocument.metadata,
+          payment: {
+            ...((savedDocument.metadata?.payment as Record<string, any>) || {}),
+            postSignatureSequenceSentAt: new Date(),
+            postSignatureSequenceEvent: event,
+          },
+        };
+        await this.documentRepository.save(savedDocument);
+      }
 
       return {
         success: true,
@@ -2680,22 +2709,23 @@ export class DocumentsService {
     paymentLink?: string;
     sendEmail?: boolean;
     sendWhatsApp?: boolean;
-  }): Promise<void> {
+  }): Promise<boolean> {
     const paymentLink =
       params.paymentLink ||
       (params.document.metadata?.payment as Record<string, any> | undefined)?.paymentLink;
 
     if (!paymentLink) {
       this.logger.warn(`Post-signature sequence skipped for ${params.document.id}: missing payment link`);
-      return;
+      return false;
     }
 
     const greetingName = params.contactName ? `, ${params.contactName}` : '';
     const shouldSendEmail = params.sendEmail !== false;
     const shouldSendWhatsApp = params.sendWhatsApp !== false;
+    let sentAtLeastOne = false;
     const emailTarget = params.email?.trim();
     if (shouldSendEmail && emailTarget) {
-      await this.emailService.sendEmail({
+      const sentEmail = await this.emailService.sendEmail({
         to: emailTarget,
         subject: `Contract semnat - link plata pentru ${params.document.name}`,
         html: `
@@ -2707,6 +2737,9 @@ export class DocumentsService {
         `,
         text: `Contractul "${params.document.name}" a fost semnat. Finalizeaza plata aici: ${paymentLink}`,
       });
+      if (sentEmail) {
+        sentAtLeastOne = true;
+      }
     }
 
     const phoneTarget = params.phone?.trim();
@@ -2717,6 +2750,7 @@ export class DocumentsService {
           type: 'text',
           content: `Contractul "${params.document.name}" a fost semnat. Link plata: ${paymentLink}`,
         });
+        sentAtLeastOne = true;
       } catch (error) {
         this.logger.warn(`WhatsApp sequence failed for document ${params.document.id}: ${error.message}`);
         await this.notifyDocumentStakeholders(params.document, {
@@ -2729,6 +2763,8 @@ export class DocumentsService {
     if (shouldSendWhatsApp && !phoneTarget) {
       this.logger.warn(`WhatsApp sequence skipped for document ${params.document.id}: recipient phone missing`);
     }
+
+    return sentAtLeastOne;
   }
 
   private async fetchEsemneazaRequestsPayload(
