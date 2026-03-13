@@ -1329,11 +1329,22 @@ export class DocumentsService {
     }
 
     const paymentReference = String(paymentData.paymentReference || randomUUID());
+    const manualPaymentLinkUrl = this.getFirstNonEmpty(
+      options?.paymentLinkUrl,
+      paymentData.preferredLinkUrl,
+    );
+    const manualPaymentLinkName = this.getFirstNonEmpty(
+      options?.paymentLinkName,
+      paymentData.preferredLinkName,
+    );
 
-    const amount =
+    const amountCandidate =
       options?.amount ??
       (Number(paymentData.amount || 0) || Number(document.deal?.value || 0));
-    if (!amount || Number.isNaN(amount) || amount <= 0) {
+    const amount = Number.isFinite(amountCandidate) && amountCandidate > 0
+      ? Number(amountCandidate)
+      : undefined;
+    if (!manualPaymentLinkUrl && !amount) {
       throw new BadRequestException('Payment amount is required and must be greater than zero');
     }
 
@@ -1344,15 +1355,9 @@ export class DocumentsService {
       options?.description ||
       paymentData.description ||
       `Plata pentru contract ${document.name}`;
-
-    const manualPaymentLinkUrl = this.getFirstNonEmpty(
-      options?.paymentLinkUrl,
-      paymentData.preferredLinkUrl,
-    );
-    const manualPaymentLinkName = this.getFirstNonEmpty(
-      options?.paymentLinkName,
-      paymentData.preferredLinkName,
-    );
+    const finalAmount =
+      amount ||
+      (Number(paymentData.amount || 0) > 0 ? Number(paymentData.amount) : undefined);
 
     const recipient = this.getPrimaryRecipient(document);
     if (!recipient?.email) {
@@ -1379,7 +1384,7 @@ export class DocumentsService {
       paymentLink = await this.createPayfunnelPaymentLink(
         payfunnelIntegration,
         {
-          amount,
+          amount: amount as number,
           currency,
           description,
           customerEmail: recipient.email,
@@ -1400,7 +1405,7 @@ export class DocumentsService {
         ...paymentData,
         provider: 'payfunnels',
         status: 'pending',
-        amount,
+        ...(finalAmount ? { amount: finalAmount } : {}),
         currency,
         description,
         paymentLink: paymentLink.url,
@@ -1412,7 +1417,7 @@ export class DocumentsService {
       },
     };
     document.addAuditEntry(manualPaymentLinkUrl ? 'payfunnels.link_selected' : 'payfunnels.link_created', userId, {
-      amount,
+      amount: finalAmount,
       currency,
       paymentReference,
       externalPaymentId: paymentLink.externalPaymentId,
