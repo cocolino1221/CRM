@@ -59,6 +59,10 @@ interface CreateEsemneazaForm {
   paymentAmount: string;
   paymentCurrency: string;
   autoSendPaymentLink: boolean;
+  paymentLinkMode: 'generate' | 'manual' | 'payfunnel';
+  paymentLinkUrl: string;
+  selectedPayfunnelLinkUrl: string;
+  selectedPayfunnelLinkName: string;
 }
 
 interface EsemneazaSyncResult {
@@ -75,6 +79,15 @@ interface TemplatePaymentAutomationRule {
   amount?: number;
   currency?: string;
   description?: string;
+  paymentLinkUrl?: string;
+  paymentLinkName?: string;
+}
+
+interface PayfunnelLinkOption {
+  id: string;
+  name: string;
+  url: string;
+  source?: 'integration_config' | 'payfunnel_api';
 }
 
 export default function DocumentsPage() {
@@ -91,6 +104,10 @@ export default function DocumentsPage() {
     paymentAmount: '',
     paymentCurrency: 'EUR',
     autoSendPaymentLink: true,
+    paymentLinkMode: 'generate',
+    paymentLinkUrl: '',
+    selectedPayfunnelLinkUrl: '',
+    selectedPayfunnelLinkName: '',
   };
 
   const [documents, setDocuments] = useState<Document[]>([]);
@@ -106,6 +123,8 @@ export default function DocumentsPage() {
   const [syncResult, setSyncResult] = useState<EsemneazaSyncResult | null>(null);
   const [templateAutomationError, setTemplateAutomationError] = useState('');
   const [templateAutomationRules, setTemplateAutomationRules] = useState<TemplatePaymentAutomationRule[]>([]);
+  const [payfunnelLinks, setPayfunnelLinks] = useState<PayfunnelLinkOption[]>([]);
+  const [loadingPayfunnelLinks, setLoadingPayfunnelLinks] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [uploadingFile, setUploadingFile] = useState(false);
   const [esemneazaSource, setEsemneazaSource] = useState<'template' | 'file'>('template');
@@ -116,6 +135,13 @@ export default function DocumentsPage() {
   const [sendingReminder, setSendingReminder] = useState(false);
   const [signingDocumentId, setSigningDocumentId] = useState('');
   const [createError, setCreateError] = useState('');
+  const [showSendPaymentModal, setShowSendPaymentModal] = useState(false);
+  const [sendPaymentDocument, setSendPaymentDocument] = useState<Document | null>(null);
+  const [sendPaymentMode, setSendPaymentMode] = useState<'generate' | 'manual' | 'payfunnel'>('generate');
+  const [sendPaymentManualUrl, setSendPaymentManualUrl] = useState('');
+  const [sendPaymentSelectedLinkUrl, setSendPaymentSelectedLinkUrl] = useState('');
+  const [sendPaymentSelectedLinkName, setSendPaymentSelectedLinkName] = useState('');
+  const [sendingPayment, setSendingPayment] = useState(false);
 
   const [form, setForm] = useState<CreateEsemneazaForm>(initialCreateForm);
 
@@ -131,6 +157,7 @@ export default function DocumentsPage() {
       await fetchDocuments();
       await fetchEsemneazaTemplates();
       await fetchTemplateAutomationRules();
+      await fetchPayfunnelLinkOptions();
     };
     initialize();
   }, []);
@@ -138,6 +165,7 @@ export default function DocumentsPage() {
   useEffect(() => {
     if (showCreateModal && selectedProvider === 'esemneaza') {
       fetchEsemneazaTemplates();
+      fetchPayfunnelLinkOptions();
     }
   }, [showCreateModal, selectedProvider]);
 
@@ -163,6 +191,19 @@ export default function DocumentsPage() {
       setTemplates([]);
     } finally {
       setLoadingTemplates(false);
+    }
+  };
+
+  const fetchPayfunnelLinkOptions = async () => {
+    try {
+      setLoadingPayfunnelLinks(true);
+      const response = await api.get('/documents/payfunnel/link-options');
+      setPayfunnelLinks(Array.isArray(response.data?.links) ? response.data.links : []);
+    } catch (error: any) {
+      console.error('Failed to fetch PayFunnels links:', error);
+      setPayfunnelLinks([]);
+    } finally {
+      setLoadingPayfunnelLinks(false);
     }
   };
 
@@ -282,7 +323,8 @@ export default function DocumentsPage() {
       const hasAmount = typeof next.amount === 'number' && Number.isFinite(next.amount) && next.amount > 0;
       const hasCurrency = !!String(next.currency || '').trim();
       const hasDescription = !!String(next.description || '').trim();
-      const shouldKeep = next.autoSendPaymentLink || hasAmount || hasCurrency || hasDescription;
+      const hasPaymentLinkUrl = !!String(next.paymentLinkUrl || '').trim();
+      const shouldKeep = next.autoSendPaymentLink || hasAmount || hasCurrency || hasDescription || hasPaymentLinkUrl;
       if (!shouldKeep) {
         return prev.filter((rule) => rule.templateId !== normalizedTemplateId);
       }
@@ -306,6 +348,8 @@ export default function DocumentsPage() {
         amount: rule.amount,
         currency: rule.currency,
         description: rule.description,
+        paymentLinkUrl: rule.paymentLinkUrl,
+        paymentLinkName: rule.paymentLinkName,
       }));
       const response = await api.post('/documents/esemneaza/template-automation', {
         rules: payloadRules,
@@ -337,6 +381,18 @@ export default function DocumentsPage() {
           ? String(rule.amount)
           : '',
       paymentCurrency: rule?.currency || initialCreateForm.paymentCurrency,
+      paymentLinkMode: rule?.paymentLinkUrl
+        ? (payfunnelLinks.some((link) => link.url === rule.paymentLinkUrl) ? 'payfunnel' : 'manual')
+        : 'generate',
+      paymentLinkUrl:
+        rule?.paymentLinkUrl && !payfunnelLinks.some((link) => link.url === rule.paymentLinkUrl)
+          ? rule.paymentLinkUrl
+          : '',
+      selectedPayfunnelLinkUrl:
+        rule?.paymentLinkUrl && payfunnelLinks.some((link) => link.url === rule.paymentLinkUrl)
+          ? rule.paymentLinkUrl
+          : '',
+      selectedPayfunnelLinkName: rule?.paymentLinkName || '',
     }));
   };
 
@@ -357,6 +413,18 @@ export default function DocumentsPage() {
           ? String(rule.amount)
           : '',
       paymentCurrency: rule?.currency || initialCreateForm.paymentCurrency,
+      paymentLinkMode: rule?.paymentLinkUrl
+        ? (payfunnelLinks.some((link) => link.url === rule.paymentLinkUrl) ? 'payfunnel' : 'manual')
+        : 'generate',
+      paymentLinkUrl:
+        rule?.paymentLinkUrl && !payfunnelLinks.some((link) => link.url === rule.paymentLinkUrl)
+          ? rule.paymentLinkUrl
+          : '',
+      selectedPayfunnelLinkUrl:
+        rule?.paymentLinkUrl && payfunnelLinks.some((link) => link.url === rule.paymentLinkUrl)
+          ? rule.paymentLinkUrl
+          : '',
+      selectedPayfunnelLinkName: rule?.paymentLinkName || '',
     });
     setShowCreateModal(true);
   };
@@ -399,8 +467,31 @@ export default function DocumentsPage() {
       return;
     }
 
+    if (form.autoSendPaymentLink && form.paymentLinkMode === 'manual' && !form.paymentLinkUrl.trim()) {
+      setCreateError('Completeaza linkul manual pentru plata.');
+      return;
+    }
+    if (form.autoSendPaymentLink && form.paymentLinkMode === 'payfunnel' && !form.selectedPayfunnelLinkUrl) {
+      setCreateError('Selecteaza un link din PayFunnels.');
+      return;
+    }
+
     try {
       setSubmitting(true);
+      const selectedPayfunnelLink = payfunnelLinks.find((link) => link.url === form.selectedPayfunnelLinkUrl);
+      const chosenPaymentLinkUrl = !form.autoSendPaymentLink
+        ? undefined
+        : form.paymentLinkMode === 'manual'
+          ? (form.paymentLinkUrl.trim() || undefined)
+          : form.paymentLinkMode === 'payfunnel'
+            ? (form.selectedPayfunnelLinkUrl || undefined)
+            : undefined;
+      const chosenPaymentLinkName = !form.autoSendPaymentLink
+        ? undefined
+        : form.paymentLinkMode === 'payfunnel'
+          ? (selectedPayfunnelLink?.name || form.selectedPayfunnelLinkName || undefined)
+          : undefined;
+
       await api.post('/documents/esemneaza', {
         name: form.name,
         type: form.type,
@@ -416,6 +507,8 @@ export default function DocumentsPage() {
         autoSendPaymentLink: form.autoSendPaymentLink,
         paymentAmount: form.paymentAmount ? Number(form.paymentAmount) : undefined,
         paymentCurrency: form.paymentCurrency || 'EUR',
+        paymentLinkUrl: chosenPaymentLinkUrl,
+        paymentLinkName: chosenPaymentLinkName,
       });
 
       setShowCreateModal(false);
@@ -429,13 +522,48 @@ export default function DocumentsPage() {
     }
   };
 
+  const openSendPaymentModal = (doc: Document) => {
+    setSendPaymentDocument(doc);
+    setSendPaymentMode('generate');
+    setSendPaymentManualUrl('');
+    setSendPaymentSelectedLinkUrl('');
+    setSendPaymentSelectedLinkName('');
+    setShowSendPaymentModal(true);
+  };
+
   const handleGeneratePaymentLink = async (documentId: string) => {
     try {
-      await api.post(`/documents/${documentId}/payment-link`);
+      setSendingPayment(true);
+      const selectedLink = payfunnelLinks.find((link) => link.url === sendPaymentSelectedLinkUrl);
+      if (sendPaymentMode === 'manual' && !sendPaymentManualUrl.trim()) {
+        alert('Completeaza linkul manual de plata.');
+        return;
+      }
+      if (sendPaymentMode === 'payfunnel' && !sendPaymentSelectedLinkUrl) {
+        alert('Selecteaza un link PayFunnels.');
+        return;
+      }
+      const paymentLinkUrl =
+        sendPaymentMode === 'manual'
+          ? (sendPaymentManualUrl.trim() || undefined)
+          : sendPaymentMode === 'payfunnel'
+            ? (sendPaymentSelectedLinkUrl || undefined)
+            : undefined;
+
+      await api.post(`/documents/${documentId}/payment-link`, {
+        paymentLinkUrl,
+        paymentLinkName: sendPaymentMode === 'payfunnel'
+          ? (selectedLink?.name || sendPaymentSelectedLinkName || undefined)
+          : undefined,
+      });
+      setShowSendPaymentModal(false);
+      setSendPaymentDocument(null);
       await fetchDocuments();
     } catch (error) {
       console.error('Failed to generate payment link:', error);
-      alert('Nu am putut genera link-ul de plata.');
+      alert('Nu am putut genera/salva link-ul de plata.');
+    } finally {
+      setSendingPayment(false);
     }
   };
 
@@ -618,6 +746,7 @@ export default function DocumentsPage() {
                   <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Auto plata</th>
                   <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Suma</th>
                   <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Moneda</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Link plata</th>
                   <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Action</th>
                 </tr>
               </thead>
@@ -673,6 +802,39 @@ export default function DocumentsPage() {
                           className="w-20 border border-gray-300 rounded px-2 py-1 text-xs"
                           placeholder="EUR"
                         />
+                      </td>
+                      <td className="px-4 py-2 min-w-[260px]">
+                        <div className="space-y-1">
+                          <select
+                            className="w-full border border-gray-300 rounded px-2 py-1 text-xs"
+                            value={rule?.paymentLinkUrl || ''}
+                            onChange={(e) => {
+                              const selectedUrl = e.target.value;
+                              const selectedLink = payfunnelLinks.find((link) => link.url === selectedUrl);
+                              upsertTemplatePaymentRule(template.id, {
+                                paymentLinkUrl: selectedUrl || undefined,
+                                paymentLinkName: selectedLink?.name || undefined,
+                              });
+                            }}
+                          >
+                            <option value="">Genereaza automat</option>
+                            {payfunnelLinks.map((link) => (
+                              <option key={`${template.id}-${link.id}-${link.url}`} value={link.url}>
+                                {link.name}
+                              </option>
+                            ))}
+                          </select>
+                          <input
+                            className="w-full border border-gray-300 rounded px-2 py-1 text-xs"
+                            value={rule?.paymentLinkUrl || ''}
+                            onChange={(e) =>
+                              upsertTemplatePaymentRule(template.id, {
+                                paymentLinkUrl: e.target.value.trim() || undefined,
+                              })
+                            }
+                            placeholder="sau link manual https://..."
+                          />
+                        </div>
                       </td>
                       <td className="px-4 py-2 text-right">
                         <button
@@ -796,7 +958,7 @@ export default function DocumentsPage() {
                           )}
                           {canGeneratePaymentLink && (
                             <button
-                              onClick={() => handleGeneratePaymentLink(doc.id)}
+                              onClick={() => openSendPaymentModal(doc)}
                               className="text-indigo-600 hover:text-indigo-900"
                             >
                               Send Payment
@@ -849,6 +1011,87 @@ export default function DocumentsPage() {
                 className="px-4 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 disabled:opacity-50"
               >
                 {sendingReminder ? 'Sending...' : 'Send Reminder'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showSendPaymentModal && sendPaymentDocument && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-lg w-full p-6">
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">Trimite Link Plata</h3>
+            <p className="text-sm text-gray-600 mb-4">
+              Document: <span className="font-medium text-gray-900">{sendPaymentDocument.name}</span>
+            </p>
+
+            <label className="block text-sm font-medium text-gray-700 mb-1">Sursa link</label>
+            <select
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-3"
+              value={sendPaymentMode}
+              onChange={(e) => setSendPaymentMode(e.target.value as 'generate' | 'manual' | 'payfunnel')}
+            >
+              <option value="generate">Genereaza automat din PayFunnels API</option>
+              <option value="payfunnel">Alege link existent din PayFunnels</option>
+              <option value="manual">Introdu link manual</option>
+            </select>
+
+            {sendPaymentMode === 'payfunnel' && (
+              <div className="mb-3">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Link PayFunnels</label>
+                <select
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2"
+                  value={sendPaymentSelectedLinkUrl}
+                  onChange={(e) => {
+                    const selectedUrl = e.target.value;
+                    const selectedLink = payfunnelLinks.find((link) => link.url === selectedUrl);
+                    setSendPaymentSelectedLinkUrl(selectedUrl);
+                    setSendPaymentSelectedLinkName(selectedLink?.name || '');
+                  }}
+                >
+                  <option value="">Selecteaza link</option>
+                  {payfunnelLinks.map((link) => (
+                    <option key={`send-${link.id}-${link.url}`} value={link.url}>
+                      {link.name}
+                    </option>
+                  ))}
+                </select>
+                {loadingPayfunnelLinks && (
+                  <p className="text-xs text-gray-500 mt-1">Incarc link-uri PayFunnels...</p>
+                )}
+              </div>
+            )}
+
+            {sendPaymentMode === 'manual' && (
+              <div className="mb-3">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Link plata manual</label>
+                <input
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2"
+                  value={sendPaymentManualUrl}
+                  onChange={(e) => setSendPaymentManualUrl(e.target.value)}
+                  placeholder="https://..."
+                />
+              </div>
+            )}
+
+            <div className="flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowSendPaymentModal(false);
+                  setSendPaymentDocument(null);
+                }}
+                className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => sendPaymentDocument?.id && handleGeneratePaymentLink(sendPaymentDocument.id)}
+                disabled={sendingPayment}
+                className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50"
+              >
+                {sendingPayment ? 'Sending...' : 'Send Payment'}
               </button>
             </div>
           </div>
@@ -1089,6 +1332,64 @@ export default function DocumentsPage() {
                     />
                     Trimite automat link de plata dupa semnare
                   </label>
+
+                  {form.autoSendPaymentLink && (
+                    <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 space-y-3">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Sursa link plata</label>
+                        <select
+                          className="w-full border border-gray-300 rounded-lg px-3 py-2"
+                          value={form.paymentLinkMode}
+                          onChange={(e) => handleFormChange('paymentLinkMode', e.target.value as CreateEsemneazaForm['paymentLinkMode'])}
+                        >
+                          <option value="generate">Genereaza automat din PayFunnels API</option>
+                          <option value="payfunnel">Alege link existent din PayFunnels</option>
+                          <option value="manual">Introdu link manual</option>
+                        </select>
+                      </div>
+
+                      {form.paymentLinkMode === 'payfunnel' && (
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Link PayFunnels</label>
+                          <select
+                            className="w-full border border-gray-300 rounded-lg px-3 py-2"
+                            value={form.selectedPayfunnelLinkUrl}
+                            onChange={(e) => {
+                              const selectedUrl = e.target.value;
+                              const selectedLink = payfunnelLinks.find((link) => link.url === selectedUrl);
+                              setForm((prev) => ({
+                                ...prev,
+                                selectedPayfunnelLinkUrl: selectedUrl,
+                                selectedPayfunnelLinkName: selectedLink?.name || '',
+                              }));
+                            }}
+                          >
+                            <option value="">Selecteaza link</option>
+                            {payfunnelLinks.map((link) => (
+                              <option key={`${link.id}-${link.url}`} value={link.url}>
+                                {link.name}
+                              </option>
+                            ))}
+                          </select>
+                          {loadingPayfunnelLinks && (
+                            <p className="text-xs text-gray-500 mt-1">Incarc link-uri din PayFunnels...</p>
+                          )}
+                        </div>
+                      )}
+
+                      {form.paymentLinkMode === 'manual' && (
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Link plata manual</label>
+                          <input
+                            className="w-full border border-gray-300 rounded-lg px-3 py-2"
+                            value={form.paymentLinkUrl}
+                            onChange={(e) => handleFormChange('paymentLinkUrl', e.target.value)}
+                            placeholder="https://..."
+                          />
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   <div className="flex justify-end gap-3">
                     <button

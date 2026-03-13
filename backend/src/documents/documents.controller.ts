@@ -82,6 +82,8 @@ export class DocumentsController {
         amount?: number;
         currency?: string;
         description?: string;
+        paymentLinkUrl?: string;
+        paymentLinkName?: string;
       }>;
     },
   ) {
@@ -89,6 +91,13 @@ export class DocumentsController {
       req.user.workspaceId,
       body?.rules || [],
     );
+  }
+
+  @Get('payfunnel/link-options')
+  @ApiOperation({ summary: 'Get available PayFunnels links for manual selection' })
+  @ApiResponse({ status: 200, description: 'PayFunnels links retrieved successfully' })
+  async getPayfunnelLinkOptions(@Req() req: any) {
+    return this.documentsService.getPayfunnelLinkOptions(req.user.workspaceId);
   }
 
   @Get('esemneaza/requests')
@@ -202,6 +211,8 @@ export class DocumentsController {
       paymentAmount?: number;
       paymentCurrency?: string;
       paymentDescription?: string;
+      paymentLinkUrl?: string;
+      paymentLinkName?: string;
     },
   ) {
     return this.documentsService.createFromEsemneaza(
@@ -314,6 +325,8 @@ export class DocumentsController {
       currency?: string;
       description?: string;
       sendEmail?: boolean;
+      paymentLinkUrl?: string;
+      paymentLinkName?: string;
     },
   ) {
     return this.documentsService.generatePaymentLinkForDocument(

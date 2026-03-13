@@ -55,6 +55,8 @@ export interface CreateEsemneazaDocumentInput {
   paymentAmount?: number;
   paymentCurrency?: string;
   paymentDescription?: string;
+  paymentLinkUrl?: string;
+  paymentLinkName?: string;
 }
 
 export interface EsemneazaSyncResult {
@@ -79,6 +81,15 @@ export interface EsemneazaTemplatePaymentAutomationRule {
   amount?: number;
   currency?: string;
   description?: string;
+  paymentLinkUrl?: string;
+  paymentLinkName?: string;
+}
+
+export interface PayfunnelLinkOption {
+  id: string;
+  name: string;
+  url: string;
+  source: 'integration_config' | 'payfunnel_api';
 }
 
 @Injectable()
@@ -401,6 +412,12 @@ export class DocumentsService {
       amount?: number;
       currency?: string;
       description?: string;
+      paymentLinkUrl?: string;
+      paymentLinkName?: string;
+      linkUrl?: string;
+      url?: string;
+      linkName?: string;
+      name?: string;
     }>,
   ): Promise<{ rules: EsemneazaTemplatePaymentAutomationRule[] }> {
     const integration = await this.findApiProviderIntegration(workspaceId, ['esemneaza'], true);
@@ -421,6 +438,8 @@ export class DocumentsService {
           : undefined;
         const currencyRaw = String(row?.currency || '').trim().toUpperCase();
         const descriptionRaw = String(row?.description || '').trim();
+        const paymentLinkUrlRaw = this.getFirstNonEmpty(row?.paymentLinkUrl, row?.linkUrl, row?.url);
+        const paymentLinkNameRaw = this.getFirstNonEmpty(row?.paymentLinkName, row?.linkName, row?.name);
 
         return {
           templateId,
@@ -428,6 +447,8 @@ export class DocumentsService {
           ...(amount ? { amount } : {}),
           ...(currencyRaw ? { currency: currencyRaw } : {}),
           ...(descriptionRaw ? { description: descriptionRaw } : {}),
+          ...(paymentLinkUrlRaw ? { paymentLinkUrl: paymentLinkUrlRaw } : {}),
+          ...(paymentLinkNameRaw ? { paymentLinkName: paymentLinkNameRaw } : {}),
         };
       })
       .filter((row): row is EsemneazaTemplatePaymentAutomationRule => !!row);
@@ -439,6 +460,64 @@ export class DocumentsService {
     await this.integrationRepository.save(integration);
 
     return { rules: normalizedRules };
+  }
+
+  async getPayfunnelLinkOptions(workspaceId: string): Promise<{ links: PayfunnelLinkOption[] }> {
+    const integration = await this.findApiProviderIntegration(workspaceId, ['payfunnels', 'payfunnel']);
+    if (!integration) {
+      return { links: [] };
+    }
+
+    const configuredLinks = this.extractConfiguredPayfunnelLinks(integration);
+    let apiLinks: PayfunnelLinkOption[] = [];
+
+    const apiUrl = this.getFirstNonEmpty(integration.config?.apiUrl, integration.config?.baseUrl);
+    if (apiUrl) {
+      const endpoint = String(integration.config?.listPaymentLinksPath || '/payments/links');
+      try {
+        const response = await this.httpService.axiosRef.get(
+          this.buildProviderUrl(apiUrl, endpoint),
+          {
+            headers: this.buildProviderHeaders(integration),
+          },
+        );
+
+        const rows = this.extractApiRows(response.data, ['links', 'items', 'results', 'data']);
+        apiLinks = rows
+          .map((row: any): PayfunnelLinkOption | null => {
+            const url = this.getFirstNonEmpty(
+              row?.url,
+              row?.paymentUrl,
+              row?.checkoutUrl,
+              row?.link,
+              row?.data?.url,
+              row?.data?.paymentUrl,
+              row?.data?.checkoutUrl,
+            );
+            if (!url) return null;
+
+            return {
+              id: this.getFirstNonEmpty(row?.id, row?.linkId, row?.uuid, row?.slug, url) as string,
+              name: this.getFirstNonEmpty(row?.name, row?.title, row?.label, row?.slug, url) as string,
+              url,
+              source: 'payfunnel_api' as const,
+            };
+          })
+          .filter((row): row is PayfunnelLinkOption => row !== null);
+      } catch (error) {
+        this.logger.warn(`Could not fetch PayFunnels link options: ${this.extractHttpErrorMessage(error)}`);
+      }
+    }
+
+    const merged = new Map<string, PayfunnelLinkOption>();
+    [...configuredLinks, ...apiLinks].forEach((link) => {
+      const key = `${link.id}:${link.url}`.toLowerCase();
+      if (!merged.has(key)) {
+        merged.set(key, link);
+      }
+    });
+
+    return { links: Array.from(merged.values()) };
   }
 
   async uploadEsemneazaFile(
@@ -1152,6 +1231,16 @@ export class DocumentsService {
       data.paymentDescription ||
       templatePaymentRule?.description ||
       `Plata pentru contract ${data.name}`;
+    const preferredPaymentLinkUrl =
+      this.getFirstNonEmpty(
+        data.paymentLinkUrl,
+        templatePaymentRule?.paymentLinkUrl,
+      );
+    const preferredPaymentLinkName =
+      this.getFirstNonEmpty(
+        data.paymentLinkName,
+        templatePaymentRule?.paymentLinkName,
+      );
 
     const document = this.documentRepository.create({
       workspaceId,
@@ -1192,6 +1281,8 @@ export class DocumentsService {
           amount: paymentAmount,
           currency: paymentCurrency,
           description: paymentDescription,
+          ...(preferredPaymentLinkUrl ? { preferredLinkUrl: preferredPaymentLinkUrl } : {}),
+          ...(preferredPaymentLinkName ? { preferredLinkName: preferredPaymentLinkName } : {}),
         },
       },
       sentAt: new Date(),
@@ -1220,6 +1311,8 @@ export class DocumentsService {
       currency?: string;
       description?: string;
       sendEmail?: boolean;
+      paymentLinkUrl?: string;
+      paymentLinkName?: string;
     },
   ): Promise<Document> {
     const document = await this.documentRepository.findOne({
@@ -1235,11 +1328,6 @@ export class DocumentsService {
       return document;
     }
 
-    const payfunnelIntegration = await this.findApiProviderIntegration(
-      workspaceId,
-      ['payfunnels', 'payfunnel'],
-      true,
-    );
     const paymentReference = String(paymentData.paymentReference || randomUUID());
 
     const amount =
@@ -1257,27 +1345,54 @@ export class DocumentsService {
       paymentData.description ||
       `Plata pentru contract ${document.name}`;
 
+    const manualPaymentLinkUrl = this.getFirstNonEmpty(
+      options?.paymentLinkUrl,
+      paymentData.preferredLinkUrl,
+    );
+    const manualPaymentLinkName = this.getFirstNonEmpty(
+      options?.paymentLinkName,
+      paymentData.preferredLinkName,
+    );
+
     const recipient = this.getPrimaryRecipient(document);
     if (!recipient?.email) {
       throw new BadRequestException('Document recipient email is required to send payment link');
     }
 
-    const paymentLink = await this.createPayfunnelPaymentLink(
-      payfunnelIntegration,
-      {
-        amount,
-        currency,
-        description,
-        customerEmail: recipient.email,
-        customerName: recipient.name || document.contact?.fullName,
-        metadata: {
-          workspaceId,
-          documentId: document.id,
-          dealId: document.dealId,
-          paymentReference,
+    let paymentLink: { url: string; externalPaymentId?: string; raw?: any };
+    if (manualPaymentLinkUrl) {
+      const isHttp = /^https?:\/\//i.test(manualPaymentLinkUrl);
+      if (!isHttp) {
+        throw new BadRequestException('Payment link URL must start with http:// or https://');
+      }
+      paymentLink = {
+        url: manualPaymentLinkUrl,
+        externalPaymentId: paymentData.externalPaymentId,
+        raw: { mode: 'manual_link' },
+      };
+    } else {
+      const payfunnelIntegration = await this.findApiProviderIntegration(
+        workspaceId,
+        ['payfunnels', 'payfunnel'],
+        true,
+      );
+      paymentLink = await this.createPayfunnelPaymentLink(
+        payfunnelIntegration,
+        {
+          amount,
+          currency,
+          description,
+          customerEmail: recipient.email,
+          customerName: recipient.name || document.contact?.fullName,
+          metadata: {
+            workspaceId,
+            documentId: document.id,
+            dealId: document.dealId,
+            paymentReference,
+          },
         },
-      },
-    );
+      );
+    }
 
     document.metadata = {
       ...document.metadata,
@@ -1289,16 +1404,19 @@ export class DocumentsService {
         currency,
         description,
         paymentLink: paymentLink.url,
+        ...(manualPaymentLinkName ? { preferredLinkName: manualPaymentLinkName } : {}),
+        ...(manualPaymentLinkUrl ? { preferredLinkUrl: manualPaymentLinkUrl } : {}),
         paymentReference,
         externalPaymentId: paymentLink.externalPaymentId,
         updatedAt: new Date(),
       },
     };
-    document.addAuditEntry('payfunnels.link_created', userId, {
+    document.addAuditEntry(manualPaymentLinkUrl ? 'payfunnels.link_selected' : 'payfunnels.link_created', userId, {
       amount,
       currency,
       paymentReference,
       externalPaymentId: paymentLink.externalPaymentId,
+      paymentLinkUrl: paymentLink.url,
     });
 
     const saved = await this.documentRepository.save(document);
@@ -1550,6 +1668,8 @@ export class DocumentsService {
               amount: currentPaymentMetadata.amount ?? templatePaymentRule.amount,
               currency: currentPaymentMetadata.currency || templatePaymentRule.currency,
               description: currentPaymentMetadata.description || templatePaymentRule.description,
+              preferredLinkUrl: currentPaymentMetadata.preferredLinkUrl || templatePaymentRule.paymentLinkUrl,
+              preferredLinkName: currentPaymentMetadata.preferredLinkName || templatePaymentRule.paymentLinkName,
             },
           };
           await this.documentRepository.save(savedDocument);
@@ -1997,7 +2117,7 @@ export class DocumentsService {
         }
 
         const rawAmount =
-          row?.amount !== null && row?.amount !== undefined && row?.amount !== ''
+          row?.amount !== null && row?.amount !== undefined
             ? Number(row.amount)
             : undefined;
         const amount = Number.isFinite(rawAmount as number) && (rawAmount as number) > 0
@@ -2005,6 +2125,8 @@ export class DocumentsService {
           : undefined;
         const currency = String(row?.currency || '').trim().toUpperCase();
         const description = String(row?.description || '').trim();
+        const paymentLinkUrl = this.getFirstNonEmpty(row?.paymentLinkUrl, row?.linkUrl, row?.url);
+        const paymentLinkName = this.getFirstNonEmpty(row?.paymentLinkName, row?.linkName, row?.name);
 
         return {
           templateId,
@@ -2012,9 +2134,40 @@ export class DocumentsService {
           ...(amount ? { amount } : {}),
           ...(currency ? { currency } : {}),
           ...(description ? { description } : {}),
+          ...(paymentLinkUrl ? { paymentLinkUrl } : {}),
+          ...(paymentLinkName ? { paymentLinkName } : {}),
         } as EsemneazaTemplatePaymentAutomationRule;
       })
       .filter((row): row is EsemneazaTemplatePaymentAutomationRule => !!row);
+  }
+
+  private extractConfiguredPayfunnelLinks(integration: Integration): PayfunnelLinkOption[] {
+    const rows = this.normalizeListInput(
+      integration.config?.paymentLinks ||
+      integration.config?.predefinedPaymentLinks ||
+      integration.config?.links,
+    );
+
+    return rows
+      .map((row: any): PayfunnelLinkOption | null => {
+        const url = this.getFirstNonEmpty(
+          row?.url,
+          row?.paymentUrl,
+          row?.checkoutUrl,
+          row?.link,
+        );
+        if (!url) return null;
+
+        const id = this.getFirstNonEmpty(row?.id, row?.linkId, row?.slug, url) as string;
+        const name = this.getFirstNonEmpty(row?.name, row?.title, row?.label, id) as string;
+        return {
+          id,
+          name,
+          url,
+          source: 'integration_config' as const,
+        };
+      })
+      .filter((row): row is PayfunnelLinkOption => row !== null);
   }
 
   private findEsemneazaTemplatePaymentRule(
