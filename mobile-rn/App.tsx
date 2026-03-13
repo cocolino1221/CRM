@@ -92,6 +92,11 @@ export default function App() {
           return;
         }
         (navigationRef as any).navigate('Leads');
+        return;
+      }
+
+      if (link.startsWith('/documents')) {
+        (navigationRef as any).navigate('Documents');
       }
     });
 

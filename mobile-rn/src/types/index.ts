@@ -116,3 +116,32 @@ export interface Notification {
   metadata?: any;
   createdAt: string;
 }
+
+export interface DocumentPaymentMetadata {
+  status?: string;
+  amount?: number;
+  currency?: string;
+  paymentLink?: string;
+  failureReason?: string;
+}
+
+export interface Document {
+  id: string;
+  name: string;
+  type: string;
+  status: string;
+  provider: string;
+  createdAt: string;
+  sentAt?: string;
+  signedAt?: string;
+  signingUrl?: string;
+  recipients?: Array<{
+    email?: string;
+    name?: string;
+    status?: string;
+  }>;
+  metadata?: {
+    provider?: string;
+    payment?: DocumentPaymentMetadata;
+  };
+}

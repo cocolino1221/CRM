@@ -1806,6 +1806,7 @@ export class DocumentsService {
       payload?.data?.reason ||
       '',
     ).trim();
+    const payerName = this.resolvePaymentPayerName(document, payload);
 
     const isPaid = this.isPaymentSuccess(statusRaw, eventName);
     const isFailed = this.isPaymentFailure(statusRaw, eventName);
@@ -1839,11 +1840,17 @@ export class DocumentsService {
 
       await this.notifyDocumentStakeholders(document, {
         title: 'Plata confirmata',
-        message: `Documentul "${document.name}" a fost marcat ca platit.`,
+        message: `${payerName} a platit pentru "${document.name}".`,
       });
 
       return { success: true, message: 'Payment marked as paid', documentId: document.id };
     }
+
+    const inferredFailureReason =
+      normalizedFailureReason ||
+      (statusRaw.includes('insufficient') || eventName.includes('insufficient')
+        ? 'Fonduri insuficiente'
+        : 'Plata esuata');
 
     if (isFailed) {
       document.metadata = {
@@ -1852,7 +1859,7 @@ export class DocumentsService {
           ...paymentMetadata,
           status: 'failed',
           failedAt: new Date(),
-          failureReason: normalizedFailureReason || 'Payment failed',
+          failureReason: inferredFailureReason,
           externalPaymentId: externalPaymentId || paymentMetadata.externalPaymentId,
           paymentReference: paymentReference || paymentMetadata.paymentReference,
           rawPayload: payload,
@@ -1867,7 +1874,7 @@ export class DocumentsService {
 
       await this.notifyDocumentStakeholders(document, {
         title: 'Plata esuata',
-        message: `Plata pentru "${document.name}" a esuat${normalizedFailureReason ? `: ${normalizedFailureReason}` : '.'}`,
+        message: `${payerName} nu a platit pentru "${document.name}"${inferredFailureReason ? `: ${inferredFailureReason}` : '.'}`,
       });
 
       return { success: true, message: 'Payment marked as failed', documentId: document.id };
@@ -3077,6 +3084,26 @@ export class DocumentsService {
       email: document.recipients[0]?.email,
       name: document.recipients[0]?.name,
     };
+  }
+
+  private resolvePaymentPayerName(document: Document, payload: any): string {
+    return (
+      this.getFirstNonEmpty(
+        payload?.customerName,
+        payload?.customer?.name,
+        payload?.customer?.fullName,
+        payload?.payerName,
+        payload?.data?.customerName,
+        payload?.data?.customer?.name,
+        payload?.data?.customer?.fullName,
+        document.contact?.fullName,
+        this.getPrimaryRecipient(document)?.name,
+        payload?.customerEmail,
+        payload?.customer?.email,
+        payload?.data?.customerEmail,
+        this.getPrimaryRecipient(document)?.email,
+      ) || 'Clientul'
+    );
   }
 
   private async notifyDocumentStakeholders(
