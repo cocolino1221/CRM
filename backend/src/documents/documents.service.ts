@@ -73,6 +73,14 @@ export interface EsemneazaRequestSummary {
   completedAt?: string | null;
 }
 
+export interface EsemneazaTemplatePaymentAutomationRule {
+  templateId: string;
+  autoSendPaymentLink: boolean;
+  amount?: number;
+  currency?: string;
+  description?: string;
+}
+
 @Injectable()
 export class DocumentsService {
   private readonly logger = new Logger(DocumentsService.name);
@@ -371,6 +379,66 @@ export class DocumentsService {
       this.logger.warn(`Could not fetch eSemneaza templates from API: ${error.message}`);
       return [];
     }
+  }
+
+  async getEsemneazaTemplatePaymentAutomation(
+    workspaceId: string,
+  ): Promise<{ rules: EsemneazaTemplatePaymentAutomationRule[] }> {
+    const integration = await this.findApiProviderIntegration(workspaceId, ['esemneaza']);
+    if (!integration) {
+      return { rules: [] };
+    }
+    return {
+      rules: this.extractEsemneazaTemplatePaymentRules(integration),
+    };
+  }
+
+  async updateEsemneazaTemplatePaymentAutomation(
+    workspaceId: string,
+    rules: Array<{
+      templateId: string;
+      autoSendPaymentLink?: boolean;
+      amount?: number;
+      currency?: string;
+      description?: string;
+    }>,
+  ): Promise<{ rules: EsemneazaTemplatePaymentAutomationRule[] }> {
+    const integration = await this.findApiProviderIntegration(workspaceId, ['esemneaza'], true);
+
+    const normalizedRules: EsemneazaTemplatePaymentAutomationRule[] = (Array.isArray(rules) ? rules : [])
+      .map((row) => {
+        const templateId = String(row?.templateId || '').trim();
+        if (!templateId) {
+          return null;
+        }
+
+        const rawAmount =
+          row?.amount !== null && row?.amount !== undefined
+            ? Number(row.amount)
+            : undefined;
+        const amount = Number.isFinite(rawAmount as number) && (rawAmount as number) > 0
+          ? Number(rawAmount)
+          : undefined;
+        const currencyRaw = String(row?.currency || '').trim().toUpperCase();
+        const descriptionRaw = String(row?.description || '').trim();
+
+        return {
+          templateId,
+          autoSendPaymentLink: row?.autoSendPaymentLink === true,
+          ...(amount ? { amount } : {}),
+          ...(currencyRaw ? { currency: currencyRaw } : {}),
+          ...(descriptionRaw ? { description: descriptionRaw } : {}),
+        };
+      })
+      .filter((row): row is EsemneazaTemplatePaymentAutomationRule => !!row);
+
+    integration.config = {
+      ...(integration.config || {}),
+      templatePaymentAutomation: normalizedRules,
+    };
+    await this.integrationRepository.save(integration);
+
+    return { rules: normalizedRules };
   }
 
   async uploadEsemneazaFile(
@@ -1066,10 +1134,24 @@ export class DocumentsService {
 
     const signingResult = await this.createEsemneazaSigningRequest(integration, data, workspaceId, userId);
 
+    const templatePaymentRule = this.findEsemneazaTemplatePaymentRule(integration, data.templateId);
+    const resolvedAutoSendPaymentLink =
+      typeof data.autoSendPaymentLink === 'boolean'
+        ? data.autoSendPaymentLink
+        : (templatePaymentRule?.autoSendPaymentLink ?? true);
     const paymentAmount =
       data.paymentAmount ??
+      templatePaymentRule?.amount ??
       ((typeof deal?.value === 'number' ? Number(deal.value) : Number(deal?.value || 0)) || 0);
-    const paymentCurrency = data.paymentCurrency || deal?.currency || 'EUR';
+    const paymentCurrency =
+      data.paymentCurrency ||
+      templatePaymentRule?.currency ||
+      deal?.currency ||
+      'EUR';
+    const paymentDescription =
+      data.paymentDescription ||
+      templatePaymentRule?.description ||
+      `Plata pentru contract ${data.name}`;
 
     const document = this.documentRepository.create({
       workspaceId,
@@ -1105,11 +1187,11 @@ export class DocumentsService {
         providerPayload: signingResult.raw || {},
         payment: {
           provider: 'payfunnels',
-          autoSendOnSign: data.autoSendPaymentLink !== false,
+          autoSendOnSign: resolvedAutoSendPaymentLink,
           status: 'awaiting_signature',
           amount: paymentAmount,
           currency: paymentCurrency,
-          description: data.paymentDescription || `Plata pentru contract ${data.name}`,
+          description: paymentDescription,
         },
       },
       sentAt: new Date(),
@@ -1450,7 +1532,34 @@ export class DocumentsService {
         message: `Documentul "${savedDocument.name}" a fost semnat.`,
       });
 
-      const autoSendPayment = (savedDocument.metadata?.payment as any)?.autoSendOnSign !== false;
+      const currentPaymentMetadata = {
+        ...((savedDocument.metadata?.payment as Record<string, any>) || {}),
+      };
+      const hasExplicitAutoSendFlag = typeof currentPaymentMetadata.autoSendOnSign === 'boolean';
+      if (!hasExplicitAutoSendFlag) {
+        const templatePaymentRule = this.findEsemneazaTemplatePaymentRule(
+          integration,
+          savedDocument.template?.id,
+        );
+        if (templatePaymentRule) {
+          savedDocument.metadata = {
+            ...savedDocument.metadata,
+            payment: {
+              ...currentPaymentMetadata,
+              autoSendOnSign: templatePaymentRule.autoSendPaymentLink,
+              amount: currentPaymentMetadata.amount ?? templatePaymentRule.amount,
+              currency: currentPaymentMetadata.currency || templatePaymentRule.currency,
+              description: currentPaymentMetadata.description || templatePaymentRule.description,
+            },
+          };
+          await this.documentRepository.save(savedDocument);
+        }
+      }
+
+      const effectivePaymentMetadata = {
+        ...((savedDocument.metadata?.payment as Record<string, any>) || {}),
+      };
+      const autoSendPayment = effectivePaymentMetadata.autoSendOnSign === true;
       let paymentLink: string | undefined;
       if (autoSendPayment) {
         try {
@@ -1870,6 +1979,56 @@ export class DocumentsService {
         description: row.description ? String(row.description) : undefined,
       }))
       .filter((row: EsemneazaTemplate) => !!row.id && !!row.name);
+  }
+
+  private extractEsemneazaTemplatePaymentRules(
+    integration: Integration,
+  ): EsemneazaTemplatePaymentAutomationRule[] {
+    const rows = this.normalizeListInput(
+      integration.config?.templatePaymentAutomation ||
+      integration.config?.templateAutomationRules,
+    );
+
+    return rows
+      .map((row: any) => {
+        const templateId = String(row?.templateId || row?.id || '').trim();
+        if (!templateId) {
+          return null;
+        }
+
+        const rawAmount =
+          row?.amount !== null && row?.amount !== undefined && row?.amount !== ''
+            ? Number(row.amount)
+            : undefined;
+        const amount = Number.isFinite(rawAmount as number) && (rawAmount as number) > 0
+          ? Number(rawAmount)
+          : undefined;
+        const currency = String(row?.currency || '').trim().toUpperCase();
+        const description = String(row?.description || '').trim();
+
+        return {
+          templateId,
+          autoSendPaymentLink: row?.autoSendPaymentLink === true,
+          ...(amount ? { amount } : {}),
+          ...(currency ? { currency } : {}),
+          ...(description ? { description } : {}),
+        } as EsemneazaTemplatePaymentAutomationRule;
+      })
+      .filter((row): row is EsemneazaTemplatePaymentAutomationRule => !!row);
+  }
+
+  private findEsemneazaTemplatePaymentRule(
+    integration: Integration,
+    templateId?: string,
+  ): EsemneazaTemplatePaymentAutomationRule | undefined {
+    const normalizedTemplateId = String(templateId || '').trim();
+    if (!normalizedTemplateId) {
+      return undefined;
+    }
+
+    return this.extractEsemneazaTemplatePaymentRules(integration).find(
+      (rule) => rule.templateId === normalizedTemplateId,
+    );
   }
 
   private async createEsemneazaSigningRequest(

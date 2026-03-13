@@ -69,6 +69,14 @@ interface EsemneazaSyncResult {
   message?: string;
 }
 
+interface TemplatePaymentAutomationRule {
+  templateId: string;
+  autoSendPaymentLink: boolean;
+  amount?: number;
+  currency?: string;
+  description?: string;
+}
+
 export default function DocumentsPage() {
   const initialCreateForm: CreateEsemneazaForm = {
     name: '',
@@ -91,9 +99,13 @@ export default function DocumentsPage() {
   const [selectedProvider, setSelectedProvider] = useState<'pandadoc' | 'docusign' | 'esemneaza'>('esemneaza');
   const [templates, setTemplates] = useState<EsemneazaTemplate[]>([]);
   const [loadingTemplates, setLoadingTemplates] = useState(false);
+  const [loadingTemplateAutomation, setLoadingTemplateAutomation] = useState(false);
+  const [savingTemplateAutomation, setSavingTemplateAutomation] = useState(false);
   const [syncingEsemneaza, setSyncingEsemneaza] = useState(false);
   const [syncError, setSyncError] = useState('');
   const [syncResult, setSyncResult] = useState<EsemneazaSyncResult | null>(null);
+  const [templateAutomationError, setTemplateAutomationError] = useState('');
+  const [templateAutomationRules, setTemplateAutomationRules] = useState<TemplatePaymentAutomationRule[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [uploadingFile, setUploadingFile] = useState(false);
   const [esemneazaSource, setEsemneazaSource] = useState<'template' | 'file'>('template');
@@ -118,6 +130,7 @@ export default function DocumentsPage() {
       await syncEsemneazaDocuments(true);
       await fetchDocuments();
       await fetchEsemneazaTemplates();
+      await fetchTemplateAutomationRules();
     };
     initialize();
   }, []);
@@ -150,6 +163,21 @@ export default function DocumentsPage() {
       setTemplates([]);
     } finally {
       setLoadingTemplates(false);
+    }
+  };
+
+  const fetchTemplateAutomationRules = async () => {
+    try {
+      setLoadingTemplateAutomation(true);
+      setTemplateAutomationError('');
+      const response = await api.get('/documents/esemneaza/template-automation');
+      setTemplateAutomationRules(Array.isArray(response.data?.rules) ? response.data.rules : []);
+    } catch (error: any) {
+      console.error('Failed to fetch template payment automation:', error);
+      setTemplateAutomationError(error?.response?.data?.message || 'Nu am putut incarca regulile de automatizare.');
+      setTemplateAutomationRules([]);
+    } finally {
+      setLoadingTemplateAutomation(false);
     }
   };
 
@@ -228,20 +256,92 @@ export default function DocumentsPage() {
     return provider;
   };
 
+  const getTemplatePaymentRule = (templateId?: string) => {
+    const normalizedTemplateId = String(templateId || '').trim();
+    if (!normalizedTemplateId) return undefined;
+    return templateAutomationRules.find((rule) => rule.templateId === normalizedTemplateId);
+  };
+
+  const upsertTemplatePaymentRule = (
+    templateId: string,
+    patch: Partial<TemplatePaymentAutomationRule>,
+  ) => {
+    const normalizedTemplateId = String(templateId || '').trim();
+    if (!normalizedTemplateId) return;
+
+    setTemplateAutomationRules((prev) => {
+      const index = prev.findIndex((rule) => rule.templateId === normalizedTemplateId);
+      const current: TemplatePaymentAutomationRule =
+        index >= 0 ? prev[index] : { templateId: normalizedTemplateId, autoSendPaymentLink: false };
+      const next: TemplatePaymentAutomationRule = {
+        ...current,
+        ...patch,
+        templateId: normalizedTemplateId,
+      };
+
+      const hasAmount = typeof next.amount === 'number' && Number.isFinite(next.amount) && next.amount > 0;
+      const hasCurrency = !!String(next.currency || '').trim();
+      const hasDescription = !!String(next.description || '').trim();
+      const shouldKeep = next.autoSendPaymentLink || hasAmount || hasCurrency || hasDescription;
+      if (!shouldKeep) {
+        return prev.filter((rule) => rule.templateId !== normalizedTemplateId);
+      }
+
+      if (index >= 0) {
+        const copy = [...prev];
+        copy[index] = next;
+        return copy;
+      }
+      return [...prev, next];
+    });
+  };
+
+  const saveTemplatePaymentAutomation = async () => {
+    try {
+      setSavingTemplateAutomation(true);
+      setTemplateAutomationError('');
+      const payloadRules = templateAutomationRules.map((rule) => ({
+        templateId: rule.templateId,
+        autoSendPaymentLink: rule.autoSendPaymentLink === true,
+        amount: rule.amount,
+        currency: rule.currency,
+        description: rule.description,
+      }));
+      const response = await api.post('/documents/esemneaza/template-automation', {
+        rules: payloadRules,
+      });
+      setTemplateAutomationRules(Array.isArray(response.data?.rules) ? response.data.rules : []);
+      alert('Regulile de plata pe template au fost salvate.');
+    } catch (error: any) {
+      console.error('Failed to save template payment automation:', error);
+      setTemplateAutomationError(error?.response?.data?.message || 'Nu am putut salva regulile de automatizare.');
+    } finally {
+      setSavingTemplateAutomation(false);
+    }
+  };
+
   const handleFormChange = (key: keyof CreateEsemneazaForm, value: string | boolean) => {
     setForm((prev) => ({ ...prev, [key]: value }));
   };
 
   const handleTemplateChange = (value: string) => {
     const selectedTemplate = templates.find((t) => t.id === value);
+    const rule = getTemplatePaymentRule(value);
     setForm((prev) => ({
       ...prev,
       templateId: value,
       templateName: selectedTemplate?.name || prev.templateName,
+      autoSendPaymentLink: rule ? rule.autoSendPaymentLink : initialCreateForm.autoSendPaymentLink,
+      paymentAmount:
+        rule && typeof rule.amount === 'number' && Number.isFinite(rule.amount)
+          ? String(rule.amount)
+          : '',
+      paymentCurrency: rule?.currency || initialCreateForm.paymentCurrency,
     }));
   };
 
   const openCreateFromTemplate = (template: EsemneazaTemplate) => {
+    const rule = getTemplatePaymentRule(template.id);
     setCreateError('');
     setSelectedProvider('esemneaza');
     setEsemneazaSource('template');
@@ -251,6 +351,12 @@ export default function DocumentsPage() {
       name: template.name || '',
       templateId: template.id,
       templateName: template.name,
+      autoSendPaymentLink: rule ? rule.autoSendPaymentLink : initialCreateForm.autoSendPaymentLink,
+      paymentAmount:
+        rule && typeof rule.amount === 'number' && Number.isFinite(rule.amount)
+          ? String(rule.amount)
+          : '',
+      paymentCurrency: rule?.currency || initialCreateForm.paymentCurrency,
     });
     setShowCreateModal(true);
   };
@@ -467,18 +573,36 @@ export default function DocumentsPage() {
         <div className="flex items-center justify-between mb-3">
           <div>
             <h3 className="text-lg font-semibold text-gray-900">eSemneaza Templates</h3>
-            <p className="text-sm text-gray-600">Template-uri aduse din dashboard-ul eSemneaza</p>
+            <p className="text-sm text-gray-600">Template-uri aduse din dashboard-ul eSemneaza + reguli automate de plata</p>
           </div>
-          <button
-            onClick={fetchEsemneazaTemplates}
-            disabled={loadingTemplates}
-            className="px-3 py-2 text-sm bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-60"
-          >
-            {loadingTemplates ? 'Loading...' : 'Refresh templates'}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={saveTemplatePaymentAutomation}
+              disabled={savingTemplateAutomation || loadingTemplateAutomation}
+              className="px-3 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-60"
+            >
+              {savingTemplateAutomation ? 'Saving...' : 'Save rules'}
+            </button>
+            <button
+              onClick={async () => {
+                await fetchEsemneazaTemplates();
+                await fetchTemplateAutomationRules();
+              }}
+              disabled={loadingTemplates || loadingTemplateAutomation}
+              className="px-3 py-2 text-sm bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-60"
+            >
+              {loadingTemplates || loadingTemplateAutomation ? 'Loading...' : 'Refresh templates'}
+            </button>
+          </div>
         </div>
 
-        {loadingTemplates ? (
+        {templateAutomationError && (
+          <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+            {templateAutomationError}
+          </div>
+        )}
+
+        {loadingTemplates || loadingTemplateAutomation ? (
           <div className="text-sm text-gray-500">Loading templates...</div>
         ) : templates.length === 0 ? (
           <div className="text-sm text-gray-500">
@@ -491,25 +615,77 @@ export default function DocumentsPage() {
                 <tr>
                   <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Template</th>
                   <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ID</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Auto plata</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Suma</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Moneda</th>
                   <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Action</th>
                 </tr>
               </thead>
               <tbody>
-                {templates.map((template) => (
-                  <tr key={template.id} className="border-b border-gray-100 last:border-b-0">
-                    <td className="px-4 py-2 text-sm text-gray-900">{template.name}</td>
-                    <td className="px-4 py-2 text-xs text-gray-600">{template.id}</td>
-                    <td className="px-4 py-2 text-right">
-                      <button
-                        type="button"
-                        onClick={() => openCreateFromTemplate(template)}
-                        className="px-3 py-1.5 text-xs font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700"
-                      >
-                        Select & Send
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                {templates.map((template) => {
+                  const rule = getTemplatePaymentRule(template.id);
+                  return (
+                    <tr key={template.id} className="border-b border-gray-100 last:border-b-0">
+                      <td className="px-4 py-2 text-sm text-gray-900">{template.name}</td>
+                      <td className="px-4 py-2 text-xs text-gray-600">{template.id}</td>
+                      <td className="px-4 py-2">
+                        <label className="inline-flex items-center gap-2 text-xs text-gray-700">
+                          <input
+                            type="checkbox"
+                            checked={rule?.autoSendPaymentLink === true}
+                            onChange={(e) =>
+                              upsertTemplatePaymentRule(template.id, {
+                                autoSendPaymentLink: e.target.checked,
+                                currency: rule?.currency || 'EUR',
+                              })
+                            }
+                          />
+                          Auto
+                        </label>
+                      </td>
+                      <td className="px-4 py-2">
+                        <input
+                          type="number"
+                          min="0"
+                          value={rule?.amount ?? ''}
+                          onChange={(e) => {
+                            const raw = e.target.value;
+                            const amount = raw ? Number(raw) : undefined;
+                            upsertTemplatePaymentRule(template.id, {
+                              amount:
+                                typeof amount === 'number' && Number.isFinite(amount) && amount > 0
+                                  ? amount
+                                  : undefined,
+                            });
+                          }}
+                          className="w-24 border border-gray-300 rounded px-2 py-1 text-xs"
+                          placeholder="1000"
+                        />
+                      </td>
+                      <td className="px-4 py-2">
+                        <input
+                          value={rule?.currency || 'EUR'}
+                          onChange={(e) =>
+                            upsertTemplatePaymentRule(template.id, {
+                              currency: e.target.value.toUpperCase(),
+                            })
+                          }
+                          className="w-20 border border-gray-300 rounded px-2 py-1 text-xs"
+                          placeholder="EUR"
+                        />
+                      </td>
+                      <td className="px-4 py-2 text-right">
+                        <button
+                          type="button"
+                          onClick={() => openCreateFromTemplate(template)}
+                          className="px-3 py-1.5 text-xs font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700"
+                        >
+                          Select & Send
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

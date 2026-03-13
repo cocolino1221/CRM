@@ -63,6 +63,34 @@ export class DocumentsController {
     };
   }
 
+  @Get('esemneaza/template-automation')
+  @ApiOperation({ summary: 'Get template-based payment automation rules for eSemneaza' })
+  @ApiResponse({ status: 200, description: 'Template automation rules retrieved successfully' })
+  async getEsemneazaTemplateAutomation(@Req() req: any) {
+    return this.documentsService.getEsemneazaTemplatePaymentAutomation(req.user.workspaceId);
+  }
+
+  @Post('esemneaza/template-automation')
+  @ApiOperation({ summary: 'Save template-based payment automation rules for eSemneaza' })
+  @ApiResponse({ status: 200, description: 'Template automation rules saved successfully' })
+  async saveEsemneazaTemplateAutomation(
+    @Req() req: any,
+    @Body() body: {
+      rules: Array<{
+        templateId: string;
+        autoSendPaymentLink?: boolean;
+        amount?: number;
+        currency?: string;
+        description?: string;
+      }>;
+    },
+  ) {
+    return this.documentsService.updateEsemneazaTemplatePaymentAutomation(
+      req.user.workspaceId,
+      body?.rules || [],
+    );
+  }
+
   @Get('esemneaza/requests')
   @ApiOperation({ summary: 'List eSemneaza sign requests' })
   @ApiResponse({ status: 200, description: 'Sign requests retrieved successfully' })
