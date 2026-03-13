@@ -57,6 +57,8 @@ export interface CreateEsemneazaDocumentInput {
   paymentDescription?: string;
   paymentLinkUrl?: string;
   paymentLinkName?: string;
+  sendPaymentEmail?: boolean;
+  sendPaymentWhatsApp?: boolean;
 }
 
 export interface EsemneazaSyncResult {
@@ -1241,6 +1243,8 @@ export class DocumentsService {
         data.paymentLinkName,
         templatePaymentRule?.paymentLinkName,
       );
+    const sendPaymentEmail = data.sendPaymentEmail !== false;
+    const sendPaymentWhatsApp = data.sendPaymentWhatsApp !== false;
 
     const document = this.documentRepository.create({
       workspaceId,
@@ -1265,6 +1269,7 @@ export class DocumentsService {
         {
           email: data.recipient.email,
           name: data.recipient.name,
+          ...(data.recipient.phone ? { phone: data.recipient.phone } : {}),
           role: 'signer',
           status: 'sent',
           sentAt: new Date(),
@@ -1281,6 +1286,10 @@ export class DocumentsService {
           amount: paymentAmount,
           currency: paymentCurrency,
           description: paymentDescription,
+          deliveryChannels: {
+            email: sendPaymentEmail,
+            whatsapp: sendPaymentWhatsApp,
+          },
           ...(preferredPaymentLinkUrl ? { preferredLinkUrl: preferredPaymentLinkUrl } : {}),
           ...(preferredPaymentLinkName ? { preferredLinkName: preferredPaymentLinkName } : {}),
         },
@@ -1311,6 +1320,7 @@ export class DocumentsService {
       currency?: string;
       description?: string;
       sendEmail?: boolean;
+      sendWhatsApp?: boolean;
       paymentLinkUrl?: string;
       paymentLinkName?: string;
     },
@@ -1427,6 +1437,7 @@ export class DocumentsService {
     const saved = await this.documentRepository.save(document);
 
     const shouldSendEmail = options?.sendEmail !== false;
+    const shouldSendWhatsApp = options?.sendWhatsApp === true;
     if (shouldSendEmail && paymentLink.url) {
       await this.emailService.sendEmail({
         to: recipient.email,
@@ -1441,9 +1452,40 @@ export class DocumentsService {
       });
     }
 
+    if (shouldSendWhatsApp && paymentLink.url) {
+      const phoneTarget = this.getFirstNonEmpty(recipient.phone, document.contact?.phone);
+      if (!phoneTarget) {
+        if (!shouldSendEmail) {
+          throw new BadRequestException('Recipient phone is required to send payment link via WhatsApp');
+        }
+        this.logger.warn(`Payment link WhatsApp skipped for ${document.id}: recipient phone is missing`);
+      } else {
+        try {
+          await this.whatsAppService.sendMessageForWorkspace(workspaceId, {
+            to: phoneTarget,
+            type: 'text',
+            content: `Contractul "${saved.name}" a fost semnat. Link plata: ${paymentLink.url}`,
+          });
+        } catch (error) {
+          if (!shouldSendEmail) {
+            throw new BadRequestException(`WhatsApp send failed: ${error.message}`);
+          }
+          this.logger.warn(`Payment link WhatsApp failed for ${document.id}: ${error.message}`);
+          await this.notifyDocumentStakeholders(saved, {
+            title: 'WhatsApp netrimis',
+            message: `Linkul de plata a fost generat, dar mesajul WhatsApp nu a fost trimis: ${error.message}`,
+          });
+        }
+      }
+    }
+
+    const anyChannelSent = shouldSendEmail || shouldSendWhatsApp;
+
     await this.notifyDocumentStakeholders(saved, {
-      title: 'Link de plata trimis',
-      message: `A fost generat si trimis linkul de plata pentru documentul "${saved.name}".`,
+      title: anyChannelSent ? 'Link de plata trimis' : 'Link de plata generat',
+      message: anyChannelSent
+        ? `A fost generat si trimis linkul de plata pentru documentul "${saved.name}".`
+        : `A fost generat linkul de plata pentru documentul "${saved.name}".`,
     });
 
     return saved;
@@ -1685,6 +1727,10 @@ export class DocumentsService {
         ...((savedDocument.metadata?.payment as Record<string, any>) || {}),
       };
       const autoSendPayment = effectivePaymentMetadata.autoSendOnSign === true;
+      const paymentDeliveryChannels = {
+        email: effectivePaymentMetadata.deliveryChannels?.email !== false,
+        whatsapp: effectivePaymentMetadata.deliveryChannels?.whatsapp !== false,
+      };
       let paymentLink: string | undefined;
       if (autoSendPayment) {
         try {
@@ -1692,7 +1738,7 @@ export class DocumentsService {
             integration.workspaceId,
             savedDocument.id,
             savedDocument.createdById || 'system',
-            { sendEmail: false },
+            { sendEmail: false, sendWhatsApp: false },
           );
           paymentLink = paymentDocument.metadata?.payment?.paymentLink;
         } catch (error) {
@@ -1711,6 +1757,8 @@ export class DocumentsService {
         phone: resolvedContact?.phone || signerPhoneFromPayload,
         contactName: resolvedContact?.fullName || this.getPrimaryRecipient(savedDocument).name,
         paymentLink,
+        sendEmail: paymentDeliveryChannels.email,
+        sendWhatsApp: paymentDeliveryChannels.whatsapp,
       });
 
       return {
@@ -2630,6 +2678,8 @@ export class DocumentsService {
     phone?: string;
     contactName?: string;
     paymentLink?: string;
+    sendEmail?: boolean;
+    sendWhatsApp?: boolean;
   }): Promise<void> {
     const paymentLink =
       params.paymentLink ||
@@ -2641,8 +2691,10 @@ export class DocumentsService {
     }
 
     const greetingName = params.contactName ? `, ${params.contactName}` : '';
+    const shouldSendEmail = params.sendEmail !== false;
+    const shouldSendWhatsApp = params.sendWhatsApp !== false;
     const emailTarget = params.email?.trim();
-    if (emailTarget) {
+    if (shouldSendEmail && emailTarget) {
       await this.emailService.sendEmail({
         to: emailTarget,
         subject: `Contract semnat - link plata pentru ${params.document.name}`,
@@ -2658,7 +2710,7 @@ export class DocumentsService {
     }
 
     const phoneTarget = params.phone?.trim();
-    if (phoneTarget) {
+    if (shouldSendWhatsApp && phoneTarget) {
       try {
         await this.whatsAppService.sendMessageForWorkspace(params.workspaceId, {
           to: phoneTarget,
@@ -2672,6 +2724,10 @@ export class DocumentsService {
           message: `Contractul este semnat, dar mesajul WhatsApp nu a fost trimis: ${error.message}`,
         });
       }
+    }
+
+    if (shouldSendWhatsApp && !phoneTarget) {
+      this.logger.warn(`WhatsApp sequence skipped for document ${params.document.id}: recipient phone missing`);
     }
   }
 
@@ -3081,13 +3137,19 @@ export class DocumentsService {
     return `${url}${url.includes('?') ? '&' : '?'}${query}`;
   }
 
-  private getPrimaryRecipient(document: Document): { email?: string; name?: string } {
+  private getPrimaryRecipient(document: Document): { email?: string; name?: string; phone?: string } {
     if (!Array.isArray(document.recipients) || document.recipients.length === 0) {
-      return { email: document.contact?.email, name: document.contact?.fullName };
+      return {
+        email: document.contact?.email,
+        name: document.contact?.fullName,
+        phone: document.contact?.phone,
+      };
     }
+    const firstRecipient = document.recipients[0] as Record<string, any>;
     return {
-      email: document.recipients[0]?.email,
-      name: document.recipients[0]?.name,
+      email: firstRecipient?.email,
+      name: firstRecipient?.name,
+      phone: this.getFirstNonEmpty(firstRecipient?.phone, document.contact?.phone),
     };
   }
 

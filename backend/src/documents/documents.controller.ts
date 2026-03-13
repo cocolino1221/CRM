@@ -213,6 +213,8 @@ export class DocumentsController {
       paymentDescription?: string;
       paymentLinkUrl?: string;
       paymentLinkName?: string;
+      sendPaymentEmail?: boolean;
+      sendPaymentWhatsApp?: boolean;
     },
   ) {
     return this.documentsService.createFromEsemneaza(
@@ -325,6 +327,7 @@ export class DocumentsController {
       currency?: string;
       description?: string;
       sendEmail?: boolean;
+      sendWhatsApp?: boolean;
       paymentLinkUrl?: string;
       paymentLinkName?: string;
     },

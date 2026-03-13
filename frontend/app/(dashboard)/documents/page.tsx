@@ -54,11 +54,14 @@ interface CreateEsemneazaForm {
   templateName: string;
   recipientName: string;
   recipientEmail: string;
+  recipientPhone: string;
   contactId: string;
   dealId: string;
   paymentAmount: string;
   paymentCurrency: string;
   autoSendPaymentLink: boolean;
+  autoSendViaEmail: boolean;
+  autoSendViaWhatsApp: boolean;
   paymentLinkMode: 'generate' | 'manual' | 'payfunnel';
   paymentLinkUrl: string;
   selectedPayfunnelLinkUrl: string;
@@ -99,11 +102,14 @@ export default function DocumentsPage() {
     templateName: '',
     recipientName: '',
     recipientEmail: '',
+    recipientPhone: '',
     contactId: '',
     dealId: '',
     paymentAmount: '',
     paymentCurrency: 'EUR',
     autoSendPaymentLink: true,
+    autoSendViaEmail: true,
+    autoSendViaWhatsApp: true,
     paymentLinkMode: 'generate',
     paymentLinkUrl: '',
     selectedPayfunnelLinkUrl: '',
@@ -141,6 +147,8 @@ export default function DocumentsPage() {
   const [sendPaymentManualUrl, setSendPaymentManualUrl] = useState('');
   const [sendPaymentSelectedLinkUrl, setSendPaymentSelectedLinkUrl] = useState('');
   const [sendPaymentSelectedLinkName, setSendPaymentSelectedLinkName] = useState('');
+  const [sendPaymentViaEmail, setSendPaymentViaEmail] = useState(true);
+  const [sendPaymentViaWhatsApp, setSendPaymentViaWhatsApp] = useState(false);
   const [sendingPayment, setSendingPayment] = useState(false);
 
   const [form, setForm] = useState<CreateEsemneazaForm>(initialCreateForm);
@@ -475,6 +483,14 @@ export default function DocumentsPage() {
       setCreateError('Selecteaza un link din PayFunnels.');
       return;
     }
+    if (form.autoSendPaymentLink && !form.autoSendViaEmail && !form.autoSendViaWhatsApp) {
+      setCreateError('Alege cel putin un canal de trimitere: Email sau WhatsApp.');
+      return;
+    }
+    if (form.autoSendPaymentLink && form.autoSendViaWhatsApp && !form.recipientPhone.trim() && !form.contactId.trim()) {
+      setCreateError('Pentru trimitere pe WhatsApp completeaza Recipient Phone sau selecteaza Contact ID cu telefon.');
+      return;
+    }
 
     try {
       setSubmitting(true);
@@ -503,8 +519,11 @@ export default function DocumentsPage() {
         recipient: {
           name: form.recipientName,
           email: form.recipientEmail,
+          phone: form.recipientPhone.trim() || undefined,
         },
         autoSendPaymentLink: form.autoSendPaymentLink,
+        sendPaymentEmail: form.autoSendViaEmail,
+        sendPaymentWhatsApp: form.autoSendViaWhatsApp,
         paymentAmount: form.paymentAmount ? Number(form.paymentAmount) : undefined,
         paymentCurrency: form.paymentCurrency || 'EUR',
         paymentLinkUrl: chosenPaymentLinkUrl,
@@ -528,6 +547,8 @@ export default function DocumentsPage() {
     setSendPaymentManualUrl('');
     setSendPaymentSelectedLinkUrl('');
     setSendPaymentSelectedLinkName('');
+    setSendPaymentViaEmail(true);
+    setSendPaymentViaWhatsApp(false);
     setShowSendPaymentModal(true);
   };
 
@@ -543,6 +564,10 @@ export default function DocumentsPage() {
         alert('Selecteaza un link PayFunnels.');
         return;
       }
+      if (!sendPaymentViaEmail && !sendPaymentViaWhatsApp) {
+        alert('Alege cel putin un canal: Email sau WhatsApp.');
+        return;
+      }
       const paymentLinkUrl =
         sendPaymentMode === 'manual'
           ? (sendPaymentManualUrl.trim() || undefined)
@@ -551,6 +576,8 @@ export default function DocumentsPage() {
             : undefined;
 
       await api.post(`/documents/${documentId}/payment-link`, {
+        sendEmail: sendPaymentViaEmail,
+        sendWhatsApp: sendPaymentViaWhatsApp,
         paymentLinkUrl,
         paymentLinkName: sendPaymentMode === 'payfunnel'
           ? (selectedLink?.name || sendPaymentSelectedLinkName || undefined)
@@ -1074,6 +1101,28 @@ export default function DocumentsPage() {
               </div>
             )}
 
+            <div className="mb-3 rounded-lg border border-gray-200 bg-gray-50 p-3">
+              <label className="block text-sm font-medium text-gray-700 mb-2">Trimite prin</label>
+              <div className="flex flex-wrap gap-4">
+                <label className="inline-flex items-center gap-2 text-sm text-gray-700">
+                  <input
+                    type="checkbox"
+                    checked={sendPaymentViaEmail}
+                    onChange={(e) => setSendPaymentViaEmail(e.target.checked)}
+                  />
+                  Email
+                </label>
+                <label className="inline-flex items-center gap-2 text-sm text-gray-700">
+                  <input
+                    type="checkbox"
+                    checked={sendPaymentViaWhatsApp}
+                    onChange={(e) => setSendPaymentViaWhatsApp(e.target.checked)}
+                  />
+                  WhatsApp
+                </label>
+              </div>
+            </div>
+
             <div className="flex justify-end gap-3">
               <button
                 type="button"
@@ -1259,7 +1308,7 @@ export default function DocumentsPage() {
                     </div>
                   )}
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">Recipient Name*</label>
                       <input
@@ -1277,6 +1326,15 @@ export default function DocumentsPage() {
                         value={form.recipientEmail}
                         onChange={(e) => handleFormChange('recipientEmail', e.target.value)}
                         placeholder="client@email.com"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Recipient Phone (optional)</label>
+                      <input
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2"
+                        value={form.recipientPhone}
+                        onChange={(e) => handleFormChange('recipientPhone', e.target.value)}
+                        placeholder="+407..."
                       />
                     </div>
                   </div>
@@ -1388,6 +1446,33 @@ export default function DocumentsPage() {
                           />
                         </div>
                       )}
+
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Canal trimitere link</label>
+                        <div className="flex flex-wrap gap-4">
+                          <label className="inline-flex items-center gap-2 text-sm text-gray-700">
+                            <input
+                              type="checkbox"
+                              checked={form.autoSendViaEmail}
+                              onChange={(e) => handleFormChange('autoSendViaEmail', e.target.checked)}
+                            />
+                            Email
+                          </label>
+                          <label className="inline-flex items-center gap-2 text-sm text-gray-700">
+                            <input
+                              type="checkbox"
+                              checked={form.autoSendViaWhatsApp}
+                              onChange={(e) => handleFormChange('autoSendViaWhatsApp', e.target.checked)}
+                            />
+                            WhatsApp
+                          </label>
+                        </div>
+                        {form.autoSendViaWhatsApp && (
+                          <p className="text-xs text-gray-500 mt-1">
+                            Pentru WhatsApp ai nevoie de telefon pe contact sau in campul Recipient Phone.
+                          </p>
+                        )}
+                      </div>
                     </div>
                   )}
 

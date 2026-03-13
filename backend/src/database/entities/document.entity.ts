@@ -140,6 +140,7 @@ export class Document extends WorkspaceEntity {
   recipients?: Array<{
     email: string;
     name?: string;
+    phone?: string;
     role?: string;
     order?: number;
     status?: 'pending' | 'sent' | 'viewed' | 'signed' | 'declined';
