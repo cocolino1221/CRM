@@ -2036,7 +2036,7 @@ export class DocumentsService {
     data: CreateEsemneazaDocumentInput,
     workspaceId: string,
     userId: string,
-  ): Promise<{ externalId: string; signingUrl: string; documentUrl?: string; raw?: any }> {
+  ): Promise<{ externalId: string; signingUrl?: string; documentUrl?: string; raw?: any }> {
     if (!data.templateId && !data.fileName) {
       throw new BadRequestException('templateId or fileName is required');
     }
@@ -2090,32 +2090,137 @@ export class DocumentsService {
           },
         );
 
-        const externalId = String(
-          response.data?.id ||
-          response.data?.requestId ||
-          response.data?.documentId ||
-          response.data?.contractId ||
-          response.data?.uuid ||
-          '',
-        ).trim();
-        const signingUrl = String(
-          response.data?.recipients?.[0]?.signUrl ||
-          response.data?.recipients?.[0]?.phoneUrl ||
-          response.data?.signingUrl ||
-          response.data?.signUrl ||
-          response.data?.url ||
-          '',
-        ).trim();
+        const responseData = response.data || {};
+        const externalId = this.getFirstNonEmpty(
+          responseData?.id,
+          responseData?.requestId,
+          responseData?.documentId,
+          responseData?.contractId,
+          responseData?.uuid,
+          responseData?.data?.id,
+          responseData?.data?.requestId,
+          responseData?.data?.documentId,
+          responseData?.data?.contractId,
+          responseData?.request?.id,
+          responseData?.request?.requestId,
+          responseData?.request?.documentId,
+          responseData?.request?.contractId,
+          responseData?.result?.id,
+          responseData?.result?.requestId,
+        );
 
-        if (!externalId || !signingUrl) {
-          throw new Error('eSemneaza response missing document id or signing URL');
+        if (!externalId) {
+          throw new Error('eSemneaza response missing document id');
+        }
+
+        const createRecipients = [
+          ...(Array.isArray(responseData?.recipients) ? responseData.recipients : []),
+          ...(Array.isArray(responseData?.data?.recipients) ? responseData.data.recipients : []),
+          ...(Array.isArray(responseData?.request?.recipients) ? responseData.request.recipients : []),
+          ...(Array.isArray(responseData?.document?.recipients) ? responseData.document.recipients : []),
+        ];
+        const normalizedRecipientEmail = String(data?.recipient?.email || '').trim().toLowerCase();
+        const matchingRecipient = createRecipients.find(
+          (recipient: any) =>
+            String(recipient?.email || '').trim().toLowerCase() === normalizedRecipientEmail,
+        );
+        const firstRecipient = matchingRecipient || createRecipients[0];
+
+        let signingUrl = this.getFirstNonEmpty(
+          firstRecipient?.signUrl,
+          firstRecipient?.signingUrl,
+          firstRecipient?.sign_url,
+          firstRecipient?.signing_url,
+          firstRecipient?.phoneUrl,
+          firstRecipient?.url,
+          responseData?.signingUrl,
+          responseData?.signUrl,
+          responseData?.signing_url,
+          responseData?.sign_url,
+          responseData?.url,
+          responseData?.data?.signingUrl,
+          responseData?.data?.signUrl,
+          responseData?.data?.signing_url,
+          responseData?.data?.sign_url,
+          responseData?.data?.url,
+          responseData?.request?.signingUrl,
+          responseData?.request?.signUrl,
+          responseData?.request?.url,
+        );
+
+        if (!signingUrl) {
+          const detailsPathTemplate = String(
+            integration.config?.requestDetailsPath || '/api/v1/requests/{requestId}',
+          );
+          const detailsPath = detailsPathTemplate.includes('{requestId}')
+            ? detailsPathTemplate.replace('{requestId}', encodeURIComponent(externalId))
+            : `${detailsPathTemplate.replace(/\/+$/, '')}/${encodeURIComponent(externalId)}`;
+
+          try {
+            const detailsResponse = await this.httpService.axiosRef.get(
+              this.buildProviderUrl(apiUrl, detailsPath),
+              {
+                headers: this.buildProviderHeaders(integration),
+              },
+            );
+            const detailsData = detailsResponse.data || {};
+            const detailRecipients = [
+              ...(Array.isArray(detailsData?.recipients) ? detailsData.recipients : []),
+              ...(Array.isArray(detailsData?.data?.recipients) ? detailsData.data.recipients : []),
+            ];
+            const detailMatchingRecipient = detailRecipients.find(
+              (recipient: any) =>
+                String(recipient?.email || '').trim().toLowerCase() === normalizedRecipientEmail,
+            );
+            const detailFirstRecipient = detailMatchingRecipient || detailRecipients[0];
+            signingUrl = this.getFirstNonEmpty(
+              detailFirstRecipient?.signUrl,
+              detailFirstRecipient?.signingUrl,
+              detailFirstRecipient?.sign_url,
+              detailFirstRecipient?.signing_url,
+              detailFirstRecipient?.phoneUrl,
+              detailFirstRecipient?.url,
+              detailsData?.signingUrl,
+              detailsData?.signUrl,
+              detailsData?.signing_url,
+              detailsData?.sign_url,
+              detailsData?.url,
+            );
+          } catch (detailsError) {
+            this.logger.warn(
+              `Could not resolve eSemneaza signing URL from details for request ${externalId}: ${this.extractHttpErrorMessage(detailsError)}`,
+            );
+          }
+        }
+
+        if (!signingUrl) {
+          const signingBaseUrl = this.getFirstNonEmpty(
+            integration.config?.signingBaseUrl,
+            integration.config?.appUrl,
+          );
+          if (signingBaseUrl) {
+            signingUrl = `${signingBaseUrl.replace(/\/$/, '')}/${externalId}`;
+          }
+        }
+
+        if (!signingUrl) {
+          this.logger.warn(
+            `eSemneaza create response missing signing URL for request ${externalId}. Document will be created without direct sign link.`,
+          );
         }
 
         return {
           externalId,
           signingUrl,
-          documentUrl: response.data?.documentUrl || response.data?.docUrl,
-          raw: response.data,
+          documentUrl: this.getFirstNonEmpty(
+            responseData?.documentUrl,
+            responseData?.docUrl,
+            responseData?.data?.documentUrl,
+            responseData?.data?.docUrl,
+            responseData?.request?.documentUrl,
+            responseData?.request?.docUrl,
+          ),
+          raw: responseData,
         };
       } catch (error) {
         this.logger.error(`Failed to create eSemneaza signing request: ${error.message}`);
