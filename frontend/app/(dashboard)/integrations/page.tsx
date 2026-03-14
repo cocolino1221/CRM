@@ -88,6 +88,32 @@ export default function IntegrationsPage() {
   const [newFormId, setNewFormId] = useState('');
   const [newFormName, setNewFormName] = useState('');
   const [isLoadingForms, setIsLoadingForms] = useState(false);
+  const credentialFieldNames = ['apiToken', 'apiKey', 'accessToken', 'secretKey', 'authToken', 'secret', 'consumerKey', 'consumerSecret', 'clientSecret', 'apiSecret'];
+
+  const buildConnectedIntegrationMap = (rows: any[]): Record<string, any> => {
+    const sortedRows = [...rows].sort((a, b) => {
+      const aTime = new Date(a?.updatedAt || a?.createdAt || 0).getTime();
+      const bTime = new Date(b?.updatedAt || b?.createdAt || 0).getTime();
+      return bTime - aTime;
+    });
+
+    const map: Record<string, any> = {};
+    sortedRows.forEach((int: any) => {
+      const keys = [
+        String(int?.type || '').toLowerCase(),
+        String(int?.externalId || '').toLowerCase(),
+        String(int?.config?.provider || '').toLowerCase(),
+      ].filter(Boolean);
+
+      keys.forEach((key) => {
+        if (!map[key]) {
+          map[key] = int;
+        }
+      });
+    });
+
+    return map;
+  };
 
   const [integrations, setIntegrations] = useState<Integration[]>([
     // Communication
@@ -506,11 +532,22 @@ export default function IntegrationsPage() {
           type: 'url',
           required: false,
           placeholder: 'https://api.payfunnels.com',
-          helpText: 'Optional pentru modul webhook-only. Daca nu ai API URL, lasa campul gol.',
+          helpText: 'Optional doar daca folosesti exclusiv webhook-uri. Pentru import si creare linkuri din CRM, completeaza API URL.',
+        },
+        {
+          name: 'checkoutBaseUrl',
+          label: 'Checkout Base URL',
+          type: 'url',
+          required: false,
+          placeholder: 'https://app.payfunnels.com',
+          helpText: 'Necesar daca nu folosesti API URL, ca fallback pentru generarea linkurilor de plata din CRM.',
         },
         { name: 'apiKey', label: 'API Key', type: 'password', required: true, placeholder: 'Your PayFunnels API key' },
         { name: 'accountId', label: 'Account ID', type: 'text', required: true, placeholder: 'Your account ID' },
         { name: 'createPaymentPath', label: 'Create Payment Path', type: 'text', required: false, placeholder: '/payments/links' },
+        { name: 'listPaymentsPath', label: 'List Payments Path', type: 'text', required: false, placeholder: '/payments' },
+        { name: 'listSubscriptionsPath', label: 'List Subscriptions Path', type: 'text', required: false, placeholder: '/subscriptions' },
+        { name: 'listPaymentLinksPath', label: 'List Payment Links Path', type: 'text', required: false, placeholder: '/payments/links' },
         { name: 'webhookSecret', label: 'Webhook Secret', type: 'password', required: false, placeholder: 'Secret pentru verificare webhook' },
       ],
     },
@@ -719,23 +756,7 @@ export default function IntegrationsPage() {
         const connectedResponse = await api.get('/integrations');
         const connected = connectedResponse.data.integrations || [];
 
-        // Create a map of connected integrations by type
-        const connectedMap: Record<string, any> = {};
-        connected.forEach((int: any) => {
-          const typeKey = String(int.type || '').toLowerCase();
-          const externalKey = String(int.externalId || '').toLowerCase();
-          const providerKey = String(int.config?.provider || '').toLowerCase();
-
-          if (typeKey) {
-            connectedMap[typeKey] = int;
-          }
-          if (externalKey) {
-            connectedMap[externalKey] = int;
-          }
-          if (providerKey) {
-            connectedMap[providerKey] = int;
-          }
-        });
+        const connectedMap = buildConnectedIntegrationMap(connected);
 
         setConnectedIntegrations(connectedMap);
 
@@ -771,12 +792,26 @@ export default function IntegrationsPage() {
     return matchesSearch && matchesFilter;
   });
 
+  const buildPrefilledConfigData = (integration: Integration, existing?: any): Record<string, string> => {
+    const result: Record<string, string> = {};
+    const fields = integration.configFields || [];
+    for (const field of fields) {
+      const fromConfig = existing?.config?.[field.name];
+      const fromCredentials = existing?.credentials?.[field.name];
+      const fromMetadata = existing?.metadata?.[field.name];
+      const value = fromConfig ?? fromCredentials ?? fromMetadata ?? '';
+      result[field.name] = value === null || value === undefined ? '' : String(value);
+    }
+    return result;
+  };
+
   const handleConnect = async (integration: Integration) => {
     // If already connected, show manage modal
     const existing = connectedIntegrations[integration.id];
 
     if (integration.connected && existing) {
       setManagingIntegration(integration);
+      setConfigData(buildPrefilledConfigData(integration, existing));
       // Fetch Typeform forms if applicable
       if (integration.id === 'typeform' && existing.id) {
         setIsLoadingForms(true);
@@ -936,6 +971,81 @@ export default function IntegrationsPage() {
     setConfigData({ ...configData, [fieldName]: value });
   };
 
+  const handleSaveManagedConfig = async () => {
+    if (!managingIntegration) return;
+
+    const existing = connectedIntegrations[managingIntegration.id];
+    if (!existing?.id) {
+      setModalError('Integration not found. Please reconnect this integration.');
+      return;
+    }
+
+    const requiredMissing = (managingIntegration.configFields || [])
+      .filter((field) => field.required && !String(configData[field.name] || '').trim())
+      .map((field) => field.label);
+    if (requiredMissing.length > 0) {
+      setModalError(`Completeaza campurile obligatorii: ${requiredMissing.join(', ')}`);
+      return;
+    }
+
+    setIsSubmitting(true);
+    setModalError('');
+
+    try {
+      const credentials: Record<string, string> = {};
+      const config: Record<string, string> = {};
+
+      for (const [key, value] of Object.entries(configData)) {
+        if (credentialFieldNames.includes(key)) {
+          credentials[key] = value;
+        } else {
+          config[key] = value;
+        }
+      }
+
+      const integrationId = managingIntegration.id.toLowerCase();
+      const isApiIntegration = String(existing?.type || '').toLowerCase() === 'api';
+      if (isApiIntegration) {
+        config.provider = String(existing?.config?.provider || existing?.externalId || integrationId).toLowerCase();
+        if (Object.prototype.hasOwnProperty.call(configData, 'apiUrl')) {
+          config.baseUrl = String(configData.apiUrl || '').trim();
+        } else if (config.apiUrl && !config.baseUrl) {
+          config.baseUrl = config.apiUrl;
+        }
+      }
+
+      await api.patch(`/integrations/${existing.id}`, {
+        config,
+        credentials,
+      });
+
+      const connectedResponse = await api.get('/integrations');
+      const connected = connectedResponse.data.integrations || [];
+      const connectedMap = buildConnectedIntegrationMap(connected);
+      setConnectedIntegrations(connectedMap);
+
+      const refreshedEntry = connectedMap[managingIntegration.id];
+      setIntegrations((prevIntegrations) =>
+        prevIntegrations.map((int) =>
+          int.id === managingIntegration.id
+            ? {
+                ...int,
+                connected: true,
+                status: refreshedEntry?.status || int.status,
+              }
+            : int,
+        ),
+      );
+
+      alert('Configurarea integrarii a fost salvata.');
+    } catch (err: any) {
+      console.error('Failed to save integration config:', err);
+      setModalError(err.response?.data?.message || 'Failed to save integration configuration');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   const handleSubmitConfig = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -968,7 +1078,6 @@ export default function IntegrationsPage() {
       const externalId = backendType === 'api' && integrationId !== 'api' ? integrationId : undefined;
 
       // Separate credential fields (API keys, tokens, secrets) from config fields
-      const credentialFieldNames = ['apiToken', 'apiKey', 'accessToken', 'secretKey', 'authToken', 'secret', 'consumerKey', 'consumerSecret', 'clientSecret', 'apiSecret'];
       const credentials: Record<string, string> = {};
       const config: Record<string, string> = {};
 
@@ -1001,15 +1110,7 @@ export default function IntegrationsPage() {
       const connectedResponse = await api.get('/integrations');
       const connected = connectedResponse.data.integrations || [];
 
-      const connectedMap: Record<string, any> = {};
-      connected.forEach((int: any) => {
-        const typeKey = String(int.type || '').toLowerCase();
-        const externalKey = String(int.externalId || '').toLowerCase();
-        const providerKey = String(int.config?.provider || '').toLowerCase();
-        if (typeKey) connectedMap[typeKey] = int;
-        if (externalKey) connectedMap[externalKey] = int;
-        if (providerKey) connectedMap[providerKey] = int;
-      });
+      const connectedMap = buildConnectedIntegrationMap(connected);
 
       setConnectedIntegrations(connectedMap);
 
@@ -1911,6 +2012,75 @@ export default function IntegrationsPage() {
                     </div>
                   </div>
                 )}
+              </div>
+            )}
+
+            {managingIntegration.configFields && managingIntegration.configFields.length > 0 && (
+              <div className="rounded-xl border border-gray-200 bg-white p-4 mb-6">
+                <div className="flex items-center justify-between gap-3 mb-3">
+                  <h4 className="text-sm font-semibold text-gray-900">Integration Configuration</h4>
+                  <button
+                    type="button"
+                    onClick={handleSaveManagedConfig}
+                    disabled={isSubmitting}
+                    className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isSubmitting ? 'Saving...' : 'Save Configuration'}
+                  </button>
+                </div>
+
+                <div className="space-y-3">
+                  {managingIntegration.configFields.map((field) => (
+                    <div key={field.name}>
+                      <label htmlFor={`manage-${field.name}`} className="block text-xs font-semibold text-gray-700 mb-1">
+                        {field.label}
+                        {field.required && <span className="text-red-500 ml-1">*</span>}
+                      </label>
+                      {field.type === 'textarea' ? (
+                        <textarea
+                          id={`manage-${field.name}`}
+                          required={field.required}
+                          disabled={isSubmitting}
+                          value={configData[field.name] || ''}
+                          onChange={(e) => handleConfigChange(field.name, e.target.value)}
+                          placeholder={field.placeholder}
+                          rows={3}
+                          className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 outline-none disabled:bg-gray-50 disabled:cursor-not-allowed"
+                        />
+                      ) : field.type === 'select' ? (
+                        <select
+                          id={`manage-${field.name}`}
+                          required={field.required}
+                          disabled={isSubmitting}
+                          value={configData[field.name] || ''}
+                          onChange={(e) => handleConfigChange(field.name, e.target.value)}
+                          className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 outline-none disabled:bg-gray-50 disabled:cursor-not-allowed"
+                        >
+                          <option value="">Select...</option>
+                          {field.options?.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <input
+                          id={`manage-${field.name}`}
+                          type={field.type}
+                          required={field.required}
+                          disabled={isSubmitting}
+                          value={configData[field.name] || ''}
+                          onChange={(e) => handleConfigChange(field.name, e.target.value)}
+                          placeholder={field.placeholder}
+                          className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 outline-none disabled:bg-gray-50 disabled:cursor-not-allowed"
+                        />
+                      )}
+                      {field.helpText && (
+                        <p className="mt-1 text-[11px] text-gray-500">{field.helpText}</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
 
