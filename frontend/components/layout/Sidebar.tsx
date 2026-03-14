@@ -25,6 +25,9 @@ import {
   ChevronLeft,
   KanbanSquare,
   FolderOpen,
+  ScrollText,
+  Mail,
+  CreditCard,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { authService } from '@/lib/auth';
@@ -42,9 +45,13 @@ const allNavigation = [
   { name: 'Tasks', href: '/tasks', icon: CheckSquare, color: 'from-yellow-500 to-orange-500' },
   { name: 'Automation', href: '/automation', icon: Bot, color: 'from-violet-500 to-fuchsia-500' },
   { name: 'Analytics', href: '/analytics', icon: BarChart3, color: 'from-indigo-500 to-purple-500' },
+  { name: 'Logs', href: '/logs', icon: ScrollText, color: 'from-rose-500 to-pink-500', adminOnly: true },
   { name: 'Documents', href: '/documents', icon: FolderOpen, color: 'from-amber-500 to-orange-500' },
+  { name: 'Payments', href: '/payments', icon: CreditCard, color: 'from-emerald-500 to-teal-500' },
+  { name: 'Campaigns', href: '/email-campaigns', icon: Mail, color: 'from-sky-500 to-indigo-500' },
   { name: 'Integrations', href: '/integrations', icon: Zap, color: 'from-pink-500 to-rose-500' },
   { name: 'Settings', href: '/settings', icon: Settings, color: 'from-slate-500 to-gray-500' },
+  { name: 'Admin', href: '/admin', icon: Shield, color: 'from-red-500 to-rose-600', superAdminOnly: true },
 ];
 
 interface SidebarProps {
@@ -65,8 +72,11 @@ export default function Sidebar({ isOpen = true, onClose, isCollapsed = false, o
 
   // Filter navigation based on user role
   const navigation = allNavigation.filter(item => {
+    if ((item as any).superAdminOnly) {
+      return userRole === 'super_admin';
+    }
     if (item.adminOnly) {
-      return userRole === 'admin';
+      return userRole === 'admin' || userRole === 'super_admin';
     }
     return true;
   });
