@@ -2369,6 +2369,16 @@ export class DocumentsService {
         this.logger.error(`Payment side effects failed for document ${document.id}: ${error.message}`);
       }
 
+      this.eventEmitter.emit('payment.received', {
+        workspaceId: integration.workspaceId,
+        documentId: document.id,
+        dealId: document.dealId,
+        amount: Number(payload?.amount || payload?.data?.amount || paymentMetadata.amount || 0),
+        currency: payload?.currency || payload?.data?.currency || paymentMetadata.currency,
+        status: 'failed',
+        failureReason: inferredFailureReason,
+      });
+
       await this.notifyDocumentStakeholders(document, {
         title: 'Plata esuata',
         message: `${payerName} nu a platit pentru "${document.name}"${inferredFailureReason ? `: ${inferredFailureReason}` : '.'}`,

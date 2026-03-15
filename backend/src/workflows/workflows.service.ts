@@ -182,6 +182,9 @@ export class WorkflowsService {
       case WorkflowActionType.CREATE_DEAL:
         return this.executeCreateDealAction(action, triggerData, workspaceId);
 
+      case WorkflowActionType.UPDATE_DEAL_STAGE:
+        return this.executeUpdateDealStageAction(action, triggerData, workspaceId);
+
       case WorkflowActionType.UPDATE_CONTACT:
         return this.executeUpdateContactAction(action, triggerData, workspaceId);
 
@@ -269,6 +272,31 @@ export class WorkflowsService {
     this.logger.log(`Deal created via workflow: ${deal.id} - ${deal.title}`);
 
     return { success: true, dealId: deal.id, title: deal.title, value: deal.value };
+  }
+
+  private async executeUpdateDealStageAction(action: any, triggerData: any, workspaceId: string): Promise<any> {
+    const { dealId, stage } = action.config || {};
+    const resolvedDealId =
+      dealId ||
+      triggerData.dealId ||
+      triggerData.deal?.id;
+
+    if (!resolvedDealId) {
+      throw new Error('Cannot update deal stage: no deal ID available');
+    }
+
+    if (!stage) {
+      throw new Error('Cannot update deal stage: stage is required');
+    }
+
+    const updatedDeal = await this.dealsService.updateStage(workspaceId, resolvedDealId, stage);
+    this.logger.log(`Deal updated via workflow: ${updatedDeal.id} -> ${updatedDeal.stage}`);
+
+    return {
+      success: true,
+      dealId: updatedDeal.id,
+      stage: updatedDeal.stage,
+    };
   }
 
   private async executeUpdateContactAction(action: any, triggerData: any, workspaceId: string): Promise<any> {

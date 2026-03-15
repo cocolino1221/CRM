@@ -36,6 +36,7 @@ export enum WorkflowActionType {
   SEND_SMS = 'send_sms',
   CREATE_TASK = 'create_task',
   CREATE_DEAL = 'create_deal',
+  UPDATE_DEAL_STAGE = 'update_deal_stage',
   UPDATE_CONTACT = 'update_contact',
   ADD_TAG = 'add_tag',
   SEND_WEBHOOK = 'send_webhook',

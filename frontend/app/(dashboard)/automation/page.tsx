@@ -42,6 +42,88 @@ interface Workflow {
   createdAt: string;
 }
 
+const triggerOptions = [
+  { value: 'contact.created', label: 'New Contact Created' },
+  { value: 'contact.updated', label: 'Contact Updated' },
+  { value: 'deal.created', label: 'New Deal Created' },
+  { value: 'deal.updated', label: 'Deal Updated' },
+  { value: 'deal.won', label: 'Deal Won' },
+  { value: 'deal.lost', label: 'Deal Lost' },
+  { value: 'task.created', label: 'Task Created' },
+  { value: 'task.completed', label: 'Task Completed' },
+  { value: 'form.submitted', label: 'Form Submitted' },
+  { value: 'email.received', label: 'Email Received' },
+  { value: 'payment.received', label: 'Payment Updated' },
+  { value: 'webhook', label: 'Webhook' },
+  { value: 'schedule', label: 'Scheduled (Cron)' },
+] as const;
+
+const dealStageOptions = [
+  { value: 'lead', label: 'Lead' },
+  { value: 'qualified', label: 'Qualified' },
+  { value: 'proposal', label: 'Proposal' },
+  { value: 'negotiation', label: 'Negotiation' },
+  { value: 'closed_won', label: 'Closed Won' },
+  { value: 'closed_lost', label: 'Closed Lost' },
+] as const;
+
+const conditionOperatorOptions = [
+  { value: 'equals', label: 'Equals' },
+  { value: 'not_equals', label: 'Not Equals' },
+  { value: 'contains', label: 'Contains' },
+  { value: 'greater_than', label: 'Greater Than' },
+  { value: 'less_than', label: 'Less Than' },
+] as const;
+
+const crmWorkflowPresets = [
+  {
+    id: 'payment-paid-close-won',
+    name: 'Payment succeeded -> close deal as won',
+    description: 'When a payment is confirmed, move the related deal to Closed Won.',
+    triggerType: 'payment.received',
+    actions: [
+      {
+        id: '1',
+        type: 'update_deal_stage',
+        config: { stage: 'closed_won' },
+        condition: { field: 'status', operator: 'equals', value: 'paid' },
+      },
+    ],
+  },
+  {
+    id: 'payment-failed-close-lost',
+    name: 'Payment failed -> move deal to lost',
+    description: 'When a payment fails, move the related deal to Closed Lost.',
+    triggerType: 'payment.received',
+    actions: [
+      {
+        id: '1',
+        type: 'update_deal_stage',
+        config: { stage: 'closed_lost' },
+        condition: { field: 'status', operator: 'equals', value: 'failed' },
+      },
+    ],
+  },
+  {
+    id: 'payment-failed-task',
+    name: 'Payment failed -> create follow-up task',
+    description: 'Create a task for the sales team when payment fails.',
+    triggerType: 'payment.received',
+    actions: [
+      {
+        id: '1',
+        type: 'create_task',
+        config: {
+          title: 'Follow up failed payment',
+          description: 'Check the client and retry payment for this deal.',
+          priority: 'high',
+        },
+        condition: { field: 'status', operator: 'equals', value: 'failed' },
+      },
+    ],
+  },
+] as const;
+
 interface Page {
   id: string;
   name: string;
@@ -215,7 +297,69 @@ export default function AutomationPage() {
   };
 
   const updateActionType = (id: string, type: string) => {
-    setActions(actions.map(a => a.id === id ? { ...a, type } : a));
+    setActions(actions.map((a) => {
+      if (a.id !== id) return a;
+
+      const nextConfig =
+        type === 'update_deal_stage'
+          ? { stage: 'closed_won' }
+          : type === 'create_task'
+            ? { title: '', description: '', priority: 'medium' }
+            : type === 'send_email'
+              ? { subject: '', body: '' }
+              : {};
+
+      return { ...a, type, config: nextConfig };
+    }));
+  };
+
+  const updateActionConfig = (id: string, key: string, value: any) => {
+    setActions(actions.map((a) => (
+      a.id === id
+        ? { ...a, config: { ...(a.config || {}), [key]: value } }
+        : a
+    )));
+  };
+
+  const updateActionCondition = (id: string, key: string, value: any) => {
+    setActions(actions.map((a) => (
+      a.id === id
+        ? {
+            ...a,
+            condition: {
+              field: 'status',
+              operator: 'equals',
+              value: '',
+              ...(a.condition || {}),
+              [key]: value,
+            },
+          }
+        : a
+    )));
+  };
+
+  const toggleActionCondition = (id: string, enabled: boolean) => {
+    setActions(actions.map((a) => {
+      if (a.id !== id) return a;
+      if (!enabled) {
+        const clone = { ...a };
+        delete clone.condition;
+        return clone;
+      }
+      return {
+        ...a,
+        condition: a.condition || { field: 'status', operator: 'equals', value: 'paid' },
+      };
+    }));
+  };
+
+  const applyPreset = (preset: typeof crmWorkflowPresets[number]) => {
+    setWorkflowName(preset.name);
+    setWorkflowDescription(preset.description);
+    setTriggerType(preset.triggerType);
+    setActions(preset.actions.map((action) => ({ ...action, config: { ...action.config }, condition: action.condition ? { ...action.condition } : undefined })));
+    setEditingWorkflowId(null);
+    setShowCreateModal(true);
   };
 
   const [pages] = useState<Page[]>([]);
@@ -1003,10 +1147,10 @@ export default function AutomationPage() {
                       <Users className="h-3.5 w-3.5" />
                       <span>{template.uses.toLocaleString()} uses</span>
                     </div>
-                    <button className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-all text-sm font-semibold">
+                  <button className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-all text-sm font-semibold">
                       Use Template
                       <ArrowRight className="h-4 w-4" />
-                    </button>
+                  </button>
                   </div>
                 </div>
               );
@@ -1039,6 +1183,23 @@ export default function AutomationPage() {
             </div>
 
             <div className="p-6 space-y-6">
+              <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+                <div className="text-sm font-semibold text-emerald-900 mb-3">CRM Quick Starts</div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  {crmWorkflowPresets.map((preset) => (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      onClick={() => applyPreset(preset)}
+                      className="text-left rounded-xl border border-emerald-200 bg-white p-4 hover:border-emerald-400 hover:shadow-md transition-all"
+                    >
+                      <div className="text-sm font-semibold text-gray-900">{preset.name}</div>
+                      <div className="text-xs text-gray-600 mt-1">{preset.description}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               {/* Workflow Name */}
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-2">
@@ -1077,19 +1238,15 @@ export default function AutomationPage() {
                   onChange={(e) => setTriggerType(e.target.value)}
                   className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all"
                 >
-                  <option value="contact.created">New Contact Created</option>
-                  <option value="contact.updated">Contact Updated</option>
-                  <option value="deal.created">New Deal Created</option>
-                  <option value="deal.updated">Deal Updated</option>
-                  <option value="deal.won">Deal Won</option>
-                  <option value="deal.lost">Deal Lost</option>
-                  <option value="task.created">Task Created</option>
-                  <option value="task.completed">Task Completed</option>
-                  <option value="form.submitted">Form Submitted</option>
-                  <option value="email.received">Email Received</option>
-                  <option value="webhook">Webhook</option>
-                  <option value="schedule">Scheduled (Cron)</option>
+                  {triggerOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
                 </select>
+                <p className="mt-2 text-xs text-gray-500">
+                  Pentru flow-uri de CRM pe plata, foloseste trigger-ul `Payment Updated` si conditii pe `status = paid` sau `status = failed`.
+                </p>
               </div>
 
               {/* Actions */}
@@ -1099,25 +1256,159 @@ export default function AutomationPage() {
                 </label>
                 <div className="space-y-3">
                   {actions.map((action, index) => (
-                    <div key={action.id} className="flex items-center gap-3">
-                      <div className="flex-1 flex items-center gap-3 p-4 border border-gray-300 rounded-xl bg-gray-50">
-                        <span className="text-sm font-semibold text-gray-600">#{index + 1}</span>
-                        <select
-                          value={action.type}
-                          onChange={(e) => updateActionType(action.id, e.target.value)}
-                          className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
-                        >
-                          <option value="send_email">Send Email</option>
-                          <option value="send_sms">Send SMS</option>
-                          <option value="create_task">Create Task</option>
-                          <option value="create_deal">Create Deal</option>
-                          <option value="update_contact">Update Contact</option>
-                          <option value="add_tag">Add Tag</option>
-                          <option value="send_webhook">Send Webhook</option>
-                          <option value="wait">Wait/Delay</option>
-                          <option value="ai_agent">AI Agent</option>
-                          <option value="create_invoice">Create Invoice</option>
-                        </select>
+                    <div key={action.id} className="flex items-start gap-3">
+                      <div className="flex-1 p-4 border border-gray-300 rounded-xl bg-gray-50 space-y-4">
+                        <div className="flex items-center gap-3">
+                          <span className="text-sm font-semibold text-gray-600">#{index + 1}</span>
+                          <select
+                            value={action.type}
+                            onChange={(e) => updateActionType(action.id, e.target.value)}
+                            className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+                          >
+                            <option value="send_email">Send Email</option>
+                            <option value="send_sms">Send SMS</option>
+                            <option value="create_task">Create Task</option>
+                            <option value="create_deal">Create Deal</option>
+                            <option value="update_deal_stage">Move Deal Stage</option>
+                            <option value="update_contact">Update Contact</option>
+                            <option value="add_tag">Add Tag</option>
+                            <option value="send_webhook">Send Webhook</option>
+                            <option value="wait">Wait/Delay</option>
+                            <option value="ai_agent">AI Agent</option>
+                            <option value="create_invoice">Create Invoice</option>
+                          </select>
+                        </div>
+
+                        {action.type === 'update_deal_stage' && (
+                          <div>
+                            <label className="block text-xs font-semibold text-gray-700 mb-1">
+                              Move Deal To
+                            </label>
+                            <select
+                              value={action.config?.stage || 'closed_won'}
+                              onChange={(e) => updateActionConfig(action.id, 'stage', e.target.value)}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+                            >
+                              {dealStageOptions.map((option) => (
+                                <option key={option.value} value={option.value}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
+
+                        {action.type === 'create_task' && (
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <div className="md:col-span-2">
+                              <label className="block text-xs font-semibold text-gray-700 mb-1">Task Title</label>
+                              <input
+                                value={action.config?.title || ''}
+                                onChange={(e) => updateActionConfig(action.id, 'title', e.target.value)}
+                                placeholder="Follow up payment issue"
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                              />
+                            </div>
+                            <div className="md:col-span-2">
+                              <label className="block text-xs font-semibold text-gray-700 mb-1">Description</label>
+                              <textarea
+                                value={action.config?.description || ''}
+                                onChange={(e) => updateActionConfig(action.id, 'description', e.target.value)}
+                                rows={3}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-xs font-semibold text-gray-700 mb-1">Priority</label>
+                              <select
+                                value={action.config?.priority || 'medium'}
+                                onChange={(e) => updateActionConfig(action.id, 'priority', e.target.value)}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                              >
+                                <option value="low">Low</option>
+                                <option value="medium">Medium</option>
+                                <option value="high">High</option>
+                                <option value="urgent">Urgent</option>
+                              </select>
+                            </div>
+                          </div>
+                        )}
+
+                        {action.type === 'send_email' && (
+                          <div className="space-y-3">
+                            <div>
+                              <label className="block text-xs font-semibold text-gray-700 mb-1">Subject</label>
+                              <input
+                                value={action.config?.subject || ''}
+                                onChange={(e) => updateActionConfig(action.id, 'subject', e.target.value)}
+                                placeholder="Payment update"
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-xs font-semibold text-gray-700 mb-1">Body</label>
+                              <textarea
+                                value={action.config?.body || ''}
+                                onChange={(e) => updateActionConfig(action.id, 'body', e.target.value)}
+                                rows={4}
+                                placeholder="Hi {{contact.name}}, your payment status is {{status}}"
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                              />
+                            </div>
+                          </div>
+                        )}
+
+                        <div className="rounded-xl border border-dashed border-gray-300 bg-white p-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <div>
+                              <div className="text-xs font-semibold text-gray-800">Run only if condition matches</div>
+                              <div className="text-[11px] text-gray-500">Useful for paid vs failed payment flows.</div>
+                            </div>
+                            <input
+                              type="checkbox"
+                              checked={!!action.condition}
+                              onChange={(e) => toggleActionCondition(action.id, e.target.checked)}
+                              className="h-4 w-4"
+                            />
+                          </div>
+
+                          {action.condition && (
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3">
+                              <div>
+                                <label className="block text-xs font-semibold text-gray-700 mb-1">Field</label>
+                                <input
+                                  value={action.condition.field || ''}
+                                  onChange={(e) => updateActionCondition(action.id, 'field', e.target.value)}
+                                  placeholder="status"
+                                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-xs font-semibold text-gray-700 mb-1">Operator</label>
+                                <select
+                                  value={action.condition.operator || 'equals'}
+                                  onChange={(e) => updateActionCondition(action.id, 'operator', e.target.value)}
+                                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                                >
+                                  {conditionOperatorOptions.map((option) => (
+                                    <option key={option.value} value={option.value}>
+                                      {option.label}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                              <div>
+                                <label className="block text-xs font-semibold text-gray-700 mb-1">Value</label>
+                                <input
+                                  value={action.condition.value || ''}
+                                  onChange={(e) => updateActionCondition(action.id, 'value', e.target.value)}
+                                  placeholder="paid"
+                                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                                />
+                              </div>
+                            </div>
+                          )}
+                        </div>
                       </div>
                       {actions.length > 1 && (
                         <button

@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Put,
+  Patch,
   Delete,
   Body,
   Param,
@@ -79,6 +80,18 @@ export class WorkflowsController {
   @ApiResponse({ status: 200, description: 'Workflow updated successfully' })
   @ApiResponse({ status: 404, description: 'Workflow not found' })
   async update(
+    @Param('id') id: string,
+    @Req() req: AuthenticatedRequest,
+    @Body() updateWorkflowDto: UpdateWorkflowDto,
+  ) {
+    return this.workflowsService.update(id, req.user.workspaceId, updateWorkflowDto);
+  }
+
+  @Patch(':id')
+  @ApiOperation({ summary: 'Partially update workflow' })
+  @ApiResponse({ status: 200, description: 'Workflow updated successfully' })
+  @ApiResponse({ status: 404, description: 'Workflow not found' })
+  async patchUpdate(
     @Param('id') id: string,
     @Req() req: AuthenticatedRequest,
     @Body() updateWorkflowDto: UpdateWorkflowDto,
