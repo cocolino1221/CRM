@@ -150,6 +150,7 @@ export default function DocumentsPage() {
   const [sendPaymentViaEmail, setSendPaymentViaEmail] = useState(true);
   const [sendPaymentViaWhatsApp, setSendPaymentViaWhatsApp] = useState(false);
   const [sendingPayment, setSendingPayment] = useState(false);
+  const [deletingDocumentId, setDeletingDocumentId] = useState('');
 
   const [form, setForm] = useState<CreateEsemneazaForm>(initialCreateForm);
 
@@ -284,8 +285,18 @@ export default function DocumentsPage() {
     if (key === 'paid') return 'bg-green-100 text-green-800';
     if (key === 'failed') return 'bg-red-100 text-red-800';
     if (key === 'pending') return 'bg-yellow-100 text-yellow-800';
+    if (key === 'awaiting_payment') return 'bg-amber-100 text-amber-800';
     if (key === 'awaiting_signature') return 'bg-blue-100 text-blue-800';
     return 'bg-gray-100 text-gray-700';
+  };
+
+  const normalizeDocumentPaymentStatus = (documentStatus: string, paymentStatus?: string) => {
+    const paymentKey = String(paymentStatus || '').toLowerCase();
+    const documentKey = String(documentStatus || '').toLowerCase();
+    if (paymentKey === 'awaiting_signature' && (documentKey === 'signed' || documentKey === 'completed')) {
+      return 'awaiting_payment';
+    }
+    return paymentStatus;
   };
 
   const getProviderKey = (doc: Document) => {
@@ -639,6 +650,31 @@ export default function DocumentsPage() {
     }
   };
 
+  const handleDeleteDocument = async (doc: Document) => {
+    const recipientInfo = doc.recipients?.[0]?.email || doc.contact?.email;
+    const confirmMessage = [
+      `Stergi documentul "${doc.name}"?`,
+      recipientInfo ? `Destinatar: ${recipientInfo}` : '',
+      'Aceasta actiune sterge documentul si scoate automat tranzactia asociata din Payments.',
+    ]
+      .filter(Boolean)
+      .join('\n');
+
+    if (!window.confirm(confirmMessage)) {
+      return;
+    }
+
+    try {
+      setDeletingDocumentId(doc.id);
+      await api.delete(`/documents/${doc.id}`);
+      await fetchDocuments();
+    } catch (error: any) {
+      alert(error?.response?.data?.message || 'Nu am putut sterge documentul.');
+    } finally {
+      setDeletingDocumentId('');
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gray-50 p-8">
       <div className="mb-8">
@@ -913,6 +949,7 @@ export default function DocumentsPage() {
                 {documents.map((doc) => {
                   const providerKey = getProviderKey(doc);
                   const paymentStatus = doc.metadata?.payment?.status;
+                  const normalizedPaymentStatus = normalizeDocumentPaymentStatus(doc.status, paymentStatus);
                   const paymentLink = doc.metadata?.payment?.paymentLink;
                   const isEsemneazaDoc = providerKey === 'esemneaza';
                   const canSignByApi =
@@ -920,7 +957,7 @@ export default function DocumentsPage() {
                     !['signed', 'completed', 'declined', 'voided', 'expired'].includes(String(doc.status || '').toLowerCase());
                   const canGeneratePaymentLink =
                     (doc.status === 'signed' || doc.status === 'completed') &&
-                    paymentStatus !== 'paid';
+                    normalizedPaymentStatus !== 'paid';
 
                   return (
                     <tr key={doc.id} className="hover:bg-gray-50">
@@ -937,8 +974,8 @@ export default function DocumentsPage() {
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="flex flex-col gap-1">
-                          <span className={`px-2 py-1 inline-flex w-fit text-xs font-semibold rounded-full ${getPaymentStatusColor(paymentStatus)}`}>
-                            {paymentStatus || 'n/a'}
+                          <span className={`px-2 py-1 inline-flex w-fit text-xs font-semibold rounded-full ${getPaymentStatusColor(normalizedPaymentStatus)}`}>
+                            {normalizedPaymentStatus || 'n/a'}
                           </span>
                           {doc.metadata?.payment?.failureReason && (
                             <span className="text-xs text-red-600">{doc.metadata.payment.failureReason}</span>
@@ -991,6 +1028,13 @@ export default function DocumentsPage() {
                               Send Payment
                             </button>
                           )}
+                          <button
+                            onClick={() => handleDeleteDocument(doc)}
+                            disabled={deletingDocumentId === doc.id}
+                            className="text-red-600 hover:text-red-800 disabled:opacity-50"
+                          >
+                            {deletingDocumentId === doc.id ? 'Deleting...' : 'Delete'}
+                          </button>
                         </div>
                       </td>
                     </tr>
