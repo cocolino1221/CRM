@@ -52,13 +52,32 @@ interface PaymentsResponse {
 interface PayfunnelPaymentItem {
   id: string;
   status: PaymentStatus;
+  title?: string;
+  description?: string;
   rawStatus?: string;
   failureReason?: string;
   amount?: number;
   currency?: string;
+  taxAmount?: number;
+  processingFeeAmount?: number;
+  setupFeeAmount?: number;
+  refundAmount?: number;
+  quantity?: number;
   customerName?: string;
+  customerId?: string;
   customerEmail?: string;
+  paymentMethodType?: string;
+  cardLast4?: string;
+  productNames?: string[];
   subscriptionId?: string;
+  subscriptionStatus?: string;
+  subscriptionPlanName?: string;
+  subscriptionStartedAt?: string;
+  subscriptionEndsAt?: string;
+  subscriptionPaidPayments?: number;
+  subscriptionRemainingPayments?: number;
+  subscriptionTotalPayments?: number;
+  paymentLinkId?: string;
   paymentLinkName?: string;
   paymentUrl?: string;
   createdAt?: string;
@@ -68,15 +87,32 @@ interface PayfunnelPaymentItem {
 interface PayfunnelSubscriptionItem {
   id: string;
   status?: string;
+  title?: string;
   customerName?: string;
+  customerId?: string;
   customerEmail?: string;
   planName?: string;
   interval?: string;
+  paymentType?: string;
   amount?: number;
+  chargeAmount?: number;
   currency?: string;
+  totalCollectedAmount?: number;
+  totalSubscriptionAmount?: number;
+  totalDueAmount?: number;
+  totalMaxPayment?: number;
   startedAt?: string;
   nextBillingAt?: string;
+  currentPeriodStartAt?: string;
+  currentPeriodEndAt?: string;
+  trialEndsAt?: string;
+  expiresAt?: string;
+  lastPaymentAt?: string;
   canceledAt?: string;
+  paidPayments?: number;
+  failedPayments?: number;
+  remainingPayments?: number;
+  totalPayments?: number;
 }
 
 interface PayfunnelLinkItem {
@@ -151,6 +187,7 @@ export default function PaymentsPage() {
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [total, setTotal] = useState(0);
+  const [deletingPaymentDocumentId, setDeletingPaymentDocumentId] = useState<string | null>(null);
   const [payfunnelData, setPayfunnelData] = useState<PayfunnelDashboardResponse>({
     connected: false,
     apiEnabled: false,
@@ -195,7 +232,7 @@ export default function PaymentsPage() {
       setSummary({ total: 0, paid: 0, failed: 0, pending: 0 });
       setTotal(0);
       setTotalPages(1);
-      setError(err?.response?.data?.message || 'Nu am putut incarca platile din PayFunnels.');
+      setError(err?.response?.data?.message || 'Nu am putut incarca platile.');
     } finally {
       if (!silent) {
         setLoading(false);
@@ -229,7 +266,7 @@ export default function PaymentsPage() {
         subscriptions: [],
         links: [],
       });
-      setPayfunnelError(err?.response?.data?.message || 'Nu am putut citi datele din PayFunnels.');
+      setPayfunnelError(err?.response?.data?.message || 'Nu am putut citi datele de plata.');
     } finally {
       if (!silent) {
         setLoadingPayfunnel(false);
@@ -244,6 +281,30 @@ export default function PaymentsPage() {
   useEffect(() => {
     fetchPayfunnelDashboard();
   }, []);
+
+  const deletePaymentEntry = async (row: PaymentItem, deleteDocument: boolean) => {
+    const deleteQuestion = deleteDocument
+      ? `Stergi contractul "${row.documentName}" si tranzactia din Payments?`
+      : `Scoti tranzactia pentru "${row.documentName}" din Payments (contractul ramane)?`;
+    if (!window.confirm(deleteQuestion)) {
+      return;
+    }
+
+    setDeletingPaymentDocumentId(row.documentId);
+    setError('');
+    try {
+      await api.delete(`/documents/payments/${row.documentId}`, {
+        params: {
+          deleteDocument: deleteDocument ? 'true' : 'false',
+        },
+      });
+      await Promise.all([fetchPayments(true), fetchPayfunnelDashboard(true)]);
+    } catch (err: any) {
+      setError(err?.response?.data?.message || 'Nu am putut sterge tranzactia.');
+    } finally {
+      setDeletingPaymentDocumentId(null);
+    }
+  };
 
   const statusLabel = useMemo<Record<PaymentStatus, string>>(
     () => ({
@@ -264,7 +325,7 @@ export default function PaymentsPage() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Payments</h1>
-          <p className="text-sm text-gray-600 mt-1">Plati sincronizate din fluxul documentelor + PayFunnels webhook.</p>
+          <p className="text-sm text-gray-600 mt-1">Plati sincronizate din fluxul documentelor + webhook.</p>
         </div>
         <button
           onClick={() => {
@@ -286,16 +347,16 @@ export default function PaymentsPage() {
       <div className="rounded-xl border border-indigo-200 bg-indigo-50/40 p-4 space-y-4">
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-2">
           <div>
-            <h2 className="text-lg font-semibold text-indigo-900">PayFunnels Dashboard Import</h2>
+            <h2 className="text-lg font-semibold text-indigo-900">Dashboard Import</h2>
             <p className="text-xs text-indigo-700 mt-1">
-              Plati, subscriptions si payment links aduse direct din integrarea PayFunnels conectata.
+              Plati, subscriptions si payment links aduse direct din integrarea conectata.
             </p>
           </div>
           <button
             onClick={() => fetchPayfunnelDashboard()}
             className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-sm hover:bg-indigo-700 transition-colors"
           >
-            Sync PayFunnels
+            Sync
           </button>
         </div>
 
@@ -321,7 +382,7 @@ export default function PaymentsPage() {
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div className="rounded-lg border border-indigo-100 bg-white p-3">
-            <div className="text-xs text-gray-500">PayFunnels payments</div>
+            <div className="text-xs text-gray-500">Transactions</div>
             <div className="text-xl font-bold text-gray-900">{loadingPayfunnel ? '...' : payfunnelData.payments.length}</div>
           </div>
           <div className="rounded-lg border border-indigo-100 bg-white p-3">
@@ -342,7 +403,7 @@ export default function PaymentsPage() {
               </div>
               <div className="max-h-80 overflow-auto">
                 {payfunnelData.payments.length === 0 ? (
-                  <div className="p-3 text-xs text-gray-500">Nu exista tranzactii returnate de PayFunnels.</div>
+                  <div className="p-3 text-xs text-gray-500">Nu exista tranzactii returnate.</div>
                 ) : (
                   payfunnelData.payments.map((item) => (
                     <div key={item.id} className="p-3 border-b border-gray-100 last:border-b-0">
@@ -352,11 +413,35 @@ export default function PaymentsPage() {
                           {statusLabel[item.status]}
                         </span>
                       </div>
+                      {item.title && <div className="text-[11px] text-gray-600 mt-1">Title: {item.title}</div>}
                       <div className="text-xs text-gray-500 mt-1">{formatCurrency(item.amount, item.currency)}</div>
                       <div className="text-[11px] text-gray-500 mt-1">ID: {item.id}</div>
+                      {item.customerId && <div className="text-[11px] text-gray-500">Customer ID: {item.customerId}</div>}
                       {item.rawStatus && <div className="text-[11px] text-gray-500">Raw status: {item.rawStatus}</div>}
+                      {item.paymentMethodType && <div className="text-[11px] text-gray-500">Method: {item.paymentMethodType}</div>}
+                      {item.cardLast4 && <div className="text-[11px] text-gray-500">Card: **** {item.cardLast4}</div>}
+                      {item.subscriptionId && <div className="text-[11px] text-gray-500">Subscription ID: {item.subscriptionId}</div>}
+                      {item.subscriptionPlanName && <div className="text-[11px] text-gray-500">Plan: {item.subscriptionPlanName}</div>}
+                      {item.subscriptionStatus && <div className="text-[11px] text-gray-500">Subscription status: {item.subscriptionStatus}</div>}
+                      <div className="text-[11px] text-gray-500">
+                        Subscription payments: {item.subscriptionPaidPayments ?? '-'} / {item.subscriptionTotalPayments ?? '-'}
+                      </div>
+                      {item.subscriptionRemainingPayments !== undefined && (
+                        <div className="text-[11px] text-gray-500">Remaining payments: {item.subscriptionRemainingPayments}</div>
+                      )}
+                      {item.productNames && item.productNames.length > 0 && (
+                        <div className="text-[11px] text-gray-500">Products: {item.productNames.join(', ')}</div>
+                      )}
+                      {item.quantity !== undefined && <div className="text-[11px] text-gray-500">Quantity: {item.quantity}</div>}
+                      {(item.taxAmount !== undefined || item.processingFeeAmount !== undefined || item.setupFeeAmount !== undefined || item.refundAmount !== undefined) && (
+                        <div className="text-[11px] text-gray-500">
+                          Tax: {formatCurrency(item.taxAmount, item.currency)} | Proc fee: {formatCurrency(item.processingFeeAmount, item.currency)} | Setup fee: {formatCurrency(item.setupFeeAmount, item.currency)} | Refund: {formatCurrency(item.refundAmount, item.currency)}
+                        </div>
+                      )}
                       {item.failureReason && <div className="text-[11px] text-rose-600">Fail reason: {item.failureReason}</div>}
                       <div className="text-[11px] text-gray-500">Created: {formatDate(item.createdAt)}</div>
+                      <div className="text-[11px] text-gray-500">Subscription start: {formatDate(item.subscriptionStartedAt)}</div>
+                      <div className="text-[11px] text-gray-500">Subscription end: {formatDate(item.subscriptionEndsAt)}</div>
                       {item.paidAt && <div className="text-[11px] text-emerald-700">Paid: {formatDate(item.paidAt)}</div>}
                     </div>
                   ))
@@ -370,15 +455,36 @@ export default function PaymentsPage() {
               </div>
               <div className="max-h-80 overflow-auto">
                 {payfunnelData.subscriptions.length === 0 ? (
-                  <div className="p-3 text-xs text-gray-500">Nu exista subscriptions returnate de PayFunnels.</div>
+                  <div className="p-3 text-xs text-gray-500">Nu exista subscriptions returnate.</div>
                 ) : (
                   payfunnelData.subscriptions.map((item) => (
                     <div key={item.id} className="p-3 border-b border-gray-100 last:border-b-0">
-                      <div className="text-xs font-semibold text-gray-900 truncate">{item.planName || item.id}</div>
+                      <div className="text-xs font-semibold text-gray-900 truncate">{item.planName || item.title || item.id}</div>
                       <div className="text-[11px] text-gray-500 mt-1">{item.customerName || item.customerEmail || '-'}</div>
+                      {item.customerId && <div className="text-[11px] text-gray-500">Customer ID: {item.customerId}</div>}
                       <div className="text-[11px] text-gray-500">{formatCurrency(item.amount, item.currency)}</div>
+                      {item.chargeAmount !== undefined && <div className="text-[11px] text-gray-500">Charge amount: {formatCurrency(item.chargeAmount, item.currency)}</div>}
                       <div className="text-[11px] text-gray-500">Status: {item.status || '-'}</div>
+                      {item.paymentType && <div className="text-[11px] text-gray-500">Payment type: {item.paymentType}</div>}
+                      {item.interval && <div className="text-[11px] text-gray-500">Interval: {item.interval}</div>}
+                      <div className="text-[11px] text-gray-500">Started: {formatDate(item.startedAt)}</div>
+                      <div className="text-[11px] text-gray-500">Current period start: {formatDate(item.currentPeriodStartAt)}</div>
+                      <div className="text-[11px] text-gray-500">Current period end: {formatDate(item.currentPeriodEndAt)}</div>
+                      <div className="text-[11px] text-gray-500">Trial ends: {formatDate(item.trialEndsAt)}</div>
                       <div className="text-[11px] text-gray-500">Next billing: {formatDate(item.nextBillingAt)}</div>
+                      <div className="text-[11px] text-gray-500">Last payment: {formatDate(item.lastPaymentAt)}</div>
+                      <div className="text-[11px] text-gray-500">Expires: {formatDate(item.expiresAt)}</div>
+                      <div className="text-[11px] text-gray-500">Canceled: {formatDate(item.canceledAt)}</div>
+                      <div className="text-[11px] text-gray-500">
+                        Payments made: {item.paidPayments ?? '-'} / {item.totalPayments ?? item.totalMaxPayment ?? '-'}
+                      </div>
+                      {item.failedPayments !== undefined && <div className="text-[11px] text-gray-500">Failed payments: {item.failedPayments}</div>}
+                      {item.remainingPayments !== undefined && <div className="text-[11px] text-gray-500">Remaining payments: {item.remainingPayments}</div>}
+                      {(item.totalCollectedAmount !== undefined || item.totalSubscriptionAmount !== undefined || item.totalDueAmount !== undefined) && (
+                        <div className="text-[11px] text-gray-500">
+                          Collected: {formatCurrency(item.totalCollectedAmount, item.currency)} | Total: {formatCurrency(item.totalSubscriptionAmount, item.currency)} | Due: {formatCurrency(item.totalDueAmount, item.currency)}
+                        </div>
+                      )}
                     </div>
                   ))
                 )}
@@ -391,7 +497,7 @@ export default function PaymentsPage() {
               </div>
               <div className="max-h-80 overflow-auto">
                 {payfunnelData.links.length === 0 ? (
-                  <div className="p-3 text-xs text-gray-500">Nu exista links in PayFunnels.</div>
+                  <div className="p-3 text-xs text-gray-500">Nu exista links.</div>
                 ) : (
                   payfunnelData.links.map((item) => (
                     <div key={`${item.id}-${item.url}`} className="p-3 border-b border-gray-100 last:border-b-0">
@@ -543,6 +649,22 @@ export default function PaymentsPage() {
                             Deschide link plata
                           </a>
                         )}
+                        <button
+                          type="button"
+                          disabled={deletingPaymentDocumentId === row.documentId}
+                          onClick={() => deletePaymentEntry(row, false)}
+                          className="text-left text-xs text-amber-700 hover:text-amber-900 disabled:opacity-50"
+                        >
+                          Scoate din payments
+                        </button>
+                        <button
+                          type="button"
+                          disabled={deletingPaymentDocumentId === row.documentId}
+                          onClick={() => deletePaymentEntry(row, true)}
+                          className="text-left text-xs text-rose-600 hover:text-rose-800 disabled:opacity-50"
+                        >
+                          Sterge contract + payment
+                        </button>
                       </div>
                     </td>
                   </tr>

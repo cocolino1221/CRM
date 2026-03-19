@@ -143,13 +143,32 @@ export interface PaymentsListResult {
 export interface PayfunnelDashboardPayment {
   id: string;
   status: 'paid' | 'failed' | 'pending';
+  paymentReference?: string;
+  title?: string;
+  description?: string;
   rawStatus?: string;
   failureReason?: string;
   amount?: number;
   currency?: string;
+  taxAmount?: number;
+  processingFeeAmount?: number;
+  setupFeeAmount?: number;
+  refundAmount?: number;
+  quantity?: number;
   customerName?: string;
+  customerId?: string;
   customerEmail?: string;
+  paymentMethodType?: string;
+  cardLast4?: string;
+  productNames?: string[];
   subscriptionId?: string;
+  subscriptionStatus?: string;
+  subscriptionPlanName?: string;
+  subscriptionStartedAt?: string;
+  subscriptionEndsAt?: string;
+  subscriptionPaidPayments?: number;
+  subscriptionRemainingPayments?: number;
+  subscriptionTotalPayments?: number;
   paymentLinkId?: string;
   paymentLinkName?: string;
   paymentUrl?: string;
@@ -160,15 +179,32 @@ export interface PayfunnelDashboardPayment {
 export interface PayfunnelDashboardSubscription {
   id: string;
   status?: string;
+  title?: string;
   customerName?: string;
+  customerId?: string;
   customerEmail?: string;
   planName?: string;
   interval?: string;
+  paymentType?: string;
   amount?: number;
+  chargeAmount?: number;
   currency?: string;
+  totalCollectedAmount?: number;
+  totalSubscriptionAmount?: number;
+  totalDueAmount?: number;
+  totalMaxPayment?: number;
   startedAt?: string;
   nextBillingAt?: string;
+  currentPeriodStartAt?: string;
+  currentPeriodEndAt?: string;
+  trialEndsAt?: string;
+  expiresAt?: string;
+  lastPaymentAt?: string;
   canceledAt?: string;
+  paidPayments?: number;
+  failedPayments?: number;
+  remainingPayments?: number;
+  totalPayments?: number;
 }
 
 export interface PayfunnelDashboardLink {
@@ -193,6 +229,8 @@ export interface PayfunnelDashboardResult {
 @Injectable()
 export class DocumentsService {
   private readonly logger = new Logger(DocumentsService.name);
+  private readonly payfunnelPaymentsRefreshAtByWorkspace = new Map<string, number>();
+  private readonly payfunnelPaymentsRefreshCooldownMs = 45_000;
 
   constructor(
     @InjectRepository(Document)
@@ -284,6 +322,8 @@ export class DocumentsService {
     const limit = Number.isFinite(parsedLimit) && parsedLimit > 0
       ? Math.min(Math.floor(parsedLimit), 100)
       : 25;
+    await this.maybeRefreshPayfunnelPayments(workspaceId);
+
     const skip = (page - 1) * limit;
     const search = String(options?.search || '').trim();
     const statusFilter = this.normalizePaymentFilter(options?.status);
@@ -794,7 +834,7 @@ export class DocumentsService {
       return {
         connected: true,
         apiEnabled: false,
-        message: 'Webhook-only mode: afisez platile si linkurile locale din CRM. Pentru import complet PayFunnels, seteaza API URL sau path-uri absolute (https://...).',
+        message: 'Webhook-only mode: afisez platile si linkurile locale din CRM. Pentru import complet, seteaza API URL sau path-uri absolute (https://...).',
         payments: localSnapshot.payments,
         subscriptions: [],
         links: Array.from(mergedLinksMap.values()),
@@ -851,25 +891,25 @@ export class DocumentsService {
       }),
     ]);
 
-    const apiPayments = paymentsRows
+    const apiPayments = this.deduplicatePayfunnelPayments(paymentsRows
       .map((row: any) => this.parsePayfunnelPaymentRow(row))
-      .filter((row): row is PayfunnelDashboardPayment => !!row);
+      .filter((row): row is PayfunnelDashboardPayment => !!row));
 
-    const subscriptions = subscriptionRows
+    const subscriptions = this.deduplicatePayfunnelSubscriptions(subscriptionRows
       .map((row: any) => this.parsePayfunnelSubscriptionRow(row))
-      .filter((row): row is PayfunnelDashboardSubscription => !!row);
+      .filter((row): row is PayfunnelDashboardSubscription => !!row));
 
-    const apiLinks = linksRows
+    const apiLinks = this.deduplicatePayfunnelLinks(linksRows
       .map((row: any) => this.parsePayfunnelLinkRow(row, 'payfunnel_api'))
-      .filter((row): row is PayfunnelDashboardLink => !!row);
+      .filter((row): row is PayfunnelDashboardLink => !!row));
 
-    const mergedPaymentsMap = new Map<string, PayfunnelDashboardPayment>();
-    [...localSnapshot.payments, ...apiPayments].forEach((payment) => {
-      const key = `${payment.id}:${payment.createdAt || ''}:${payment.status}`;
-      if (!mergedPaymentsMap.has(key)) {
-        mergedPaymentsMap.set(key, payment);
-      }
-    });
+    const enrichedApiPayments = this.deduplicatePayfunnelPayments(
+      this.attachPayfunnelSubscriptionDataToPayments(apiPayments, subscriptions),
+    );
+    const mergedPayments = this.deduplicatePayfunnelPayments([
+      ...localSnapshot.payments,
+      ...enrichedApiPayments,
+    ]);
 
     const mergedLinksMap = new Map<string, PayfunnelDashboardLink>();
     [...configuredLinks, ...localSnapshot.links, ...apiLinks].forEach((link) => {
@@ -879,14 +919,146 @@ export class DocumentsService {
       }
     });
 
+    try {
+      await this.reconcilePayfunnelPaymentsWithDocuments(workspaceId, mergedPayments);
+    } catch (error) {
+      this.logger.warn(`PayFunnels reconciliation skipped: ${error.message}`);
+    }
+
     return {
       connected: true,
       apiEnabled: true,
       ...(errors.length > 0 ? { errors } : {}),
-      payments: Array.from(mergedPaymentsMap.values()),
+      payments: mergedPayments,
       subscriptions,
       links: Array.from(mergedLinksMap.values()),
     };
+  }
+
+  private async reconcilePayfunnelPaymentsWithDocuments(
+    workspaceId: string,
+    payments: PayfunnelDashboardPayment[],
+  ): Promise<void> {
+    if (!Array.isArray(payments) || payments.length === 0) {
+      return;
+    }
+
+    const candidates = payments.filter((payment) => payment.status === 'paid' || payment.status === 'failed');
+    for (const payment of candidates) {
+      const paymentReference = String(payment.paymentReference || '').trim();
+      const externalPaymentId = String(payment.id || '').trim();
+      const customerEmail = this.normalizeEmail(payment.customerEmail);
+      if (!paymentReference && !externalPaymentId && !customerEmail) {
+        continue;
+      }
+
+      let document = await this.findPayfunnelDocumentByPaymentIdentifiers(
+        workspaceId,
+        paymentReference,
+        externalPaymentId,
+        payment.paymentLinkId,
+      );
+      if (!document && customerEmail) {
+        document = await this.findLatestPayfunnelDocumentByEmail(workspaceId, customerEmail);
+      }
+
+      if (!document) {
+        continue;
+      }
+      if (this.isPaymentSuppressedForDocument(document)) {
+        continue;
+      }
+
+      const paymentMetadata = { ...(document.metadata?.payment || {}) } as Record<string, any>;
+      const currentStatus = this.normalizePaymentStatus(paymentMetadata.status);
+      const subscriptionSnapshot = this.buildPaymentSubscriptionMetadata(payment);
+
+      const metadataPatch: Record<string, any> = {
+        ...(paymentReference ? { paymentReference } : {}),
+        ...(externalPaymentId ? { externalPaymentId } : {}),
+        ...(customerEmail ? { customerEmail } : {}),
+        ...subscriptionSnapshot,
+      };
+      const hasMetadataChanges = this.hasPaymentMetadataPatchChanges(paymentMetadata, metadataPatch);
+
+      if (currentStatus === payment.status && !hasMetadataChanges) {
+        continue;
+      }
+
+      if (currentStatus === payment.status) {
+        document.metadata = {
+          ...document.metadata,
+          payment: {
+            ...paymentMetadata,
+            ...metadataPatch,
+            reconciledFrom: 'payfunnel_dashboard',
+            reconciledAt: new Date(),
+          },
+        };
+        document.addAuditEntry('payfunnels.metadata.reconciled', 'sync', {
+          source: 'payfunnel.dashboard',
+          paymentReference,
+          externalPaymentId,
+          customerEmail,
+        });
+        await this.documentRepository.save(document);
+        continue;
+      }
+
+      if (payment.status === 'paid') {
+        document.metadata = {
+          ...document.metadata,
+          payment: {
+            ...paymentMetadata,
+            ...metadataPatch,
+            status: 'paid',
+            paidAt: payment.paidAt ? new Date(payment.paidAt) : new Date(),
+            reconciledFrom: 'payfunnel_dashboard',
+            reconciledAt: new Date(),
+          },
+        };
+        document.addAuditEntry('payfunnels.paid.reconciled', 'sync', {
+          source: 'payfunnel.dashboard',
+          paymentReference,
+          externalPaymentId,
+        });
+        await this.documentRepository.save(document);
+        await this.applyPaymentStatusSideEffects(document, 'paid');
+        await this.notifyPaymentCompletedAudience(document, {
+          title: 'Plata confirmata',
+          message: `${payment.customerName || 'Clientul'} a platit pentru "${document.name}".`,
+          link: '/payments',
+        });
+        continue;
+      }
+
+      const failureReason = payment.failureReason || 'Plata esuata';
+      document.metadata = {
+        ...document.metadata,
+        payment: {
+          ...paymentMetadata,
+          ...metadataPatch,
+          status: 'failed',
+          failedAt: new Date(),
+          failureReason,
+          reconciledFrom: 'payfunnel_dashboard',
+          reconciledAt: new Date(),
+        },
+      };
+      document.addAuditEntry('payfunnels.failed.reconciled', 'sync', {
+        source: 'payfunnel.dashboard',
+        paymentReference,
+        externalPaymentId,
+        reason: failureReason,
+      });
+      await this.documentRepository.save(document);
+      await this.applyPaymentStatusSideEffects(document, 'failed', failureReason);
+      await this.notifyDocumentStakeholders(document, {
+        title: 'Plata esuata',
+        message: `${payment.customerName || 'Clientul'} nu a platit pentru "${document.name}"${failureReason ? `: ${failureReason}` : '.'}`,
+        link: '/payments',
+      });
+    }
   }
 
   async uploadEsemneazaFile(
@@ -1771,6 +1943,8 @@ export class DocumentsService {
             documentId: document.id,
             dealId: document.dealId,
             paymentReference,
+            createdById: userId,
+            customerEmail: recipient.email,
           },
         },
       );
@@ -2066,10 +2240,27 @@ export class DocumentsService {
       }
 
       document.markAsCompleted();
+      const signedPaymentMetadata = { ...existingPaymentMetadata };
+      const paymentStatusBeforeSign = String(signedPaymentMetadata.status || '').trim().toLowerCase();
+      if (
+        !paymentStatusBeforeSign ||
+        [
+          'awaiting_signature',
+          'signature_pending',
+          'pending_signature',
+          'sent',
+        ].includes(paymentStatusBeforeSign)
+      ) {
+        signedPaymentMetadata.status = 'awaiting_payment';
+      }
+      if (!signedPaymentMetadata.awaitingPaymentSince) {
+        signedPaymentMetadata.awaitingPaymentSince = new Date().toISOString();
+      }
       document.metadata = {
         ...document.metadata,
         provider: 'esemneaza',
         providerEvent: event,
+        payment: signedPaymentMetadata,
       };
       document.addAuditEntry('esemneaza.signed', 'webhook', { event });
       const savedDocument = await this.documentRepository.save(document);
@@ -2191,29 +2382,96 @@ export class DocumentsService {
     headers: Record<string, string | string[] | undefined>,
   ): Promise<{ success: boolean; message: string; documentId?: string }> {
     const integration = await this.assertProviderIntegration(integrationId, ['payfunnels', 'payfunnel']);
-    this.verifyWebhookSecret(integration, headers, ['x-payfunnel-token', 'x-webhook-token']);
+    this.verifyWebhookSecret(integration, headers, [
+      'x-payfunnel-token',
+      'x-payfunnels-token',
+      'x-pf-token',
+      'x-pf-webhook-token',
+      'x-webhook-token',
+      'x-pf-signature',
+      'x-payfunnel-signature',
+      'x-payfunnels-signature',
+    ]);
 
-    const eventName = String(payload?.event || payload?.type || '').toLowerCase();
+    const scopes = this.collectPayfunnelWebhookScopes(payload);
+    const metadataScopes = this.extractPayfunnelWebhookMetadataScopes(scopes);
+    const scopeValues = (picker: (scope: Record<string, any>) => any): any[] => scopes.map(picker);
+
+    const eventName = String(
+      this.getFirstNonEmpty(
+        ...scopeValues((scope) => scope?.event),
+        ...scopeValues((scope) => scope?.type),
+        ...scopeValues((scope) => scope?.eventName),
+        ...scopeValues((scope) => scope?.eventType),
+        ...scopeValues((scope) => scope?.name),
+        ...scopeValues((scope) => scope?.action),
+        ...scopeValues((scope) => scope?.kind),
+      ) || '',
+    ).toLowerCase();
     const statusRaw = String(
-      payload?.status ||
-      payload?.paymentStatus ||
-      payload?.data?.status ||
-      payload?.data?.paymentStatus ||
-      eventName,
+      this.getFirstNonEmpty(
+        ...scopeValues((scope) => scope?.status),
+        ...scopeValues((scope) => scope?.paymentStatus),
+        ...scopeValues((scope) => scope?.transactionStatus),
+        ...scopeValues((scope) => scope?.orderStatus),
+        ...scopeValues((scope) => scope?.payment_state),
+        ...scopeValues((scope) => scope?.state),
+        ...scopeValues((scope) => scope?.result),
+        ...scopeValues((scope) => scope?.payment?.status),
+        ...scopeValues((scope) => scope?.transaction?.status),
+        ...scopeValues((scope) => scope?.order?.status),
+        eventName,
+      ) || '',
     ).toLowerCase();
 
-    const metadata = payload?.metadata || payload?.data?.metadata || {};
-    const documentId = String(metadata?.documentId || payload?.documentId || payload?.data?.documentId || '').trim();
+    const documentId = String(
+      this.getFirstNonEmpty(
+        ...metadataScopes.map((scope) => scope?.documentId),
+        ...metadataScopes.map((scope) => scope?.crmDocumentId),
+        ...scopeValues((scope) => scope?.documentId),
+        ...scopeValues((scope) => scope?.crmDocumentId),
+      ) || '',
+    ).trim();
     const paymentReference = String(
-      metadata?.paymentReference ||
-      payload?.paymentReference ||
-      payload?.reference ||
-      payload?.data?.paymentReference ||
-      '',
+      this.getFirstNonEmpty(
+        ...metadataScopes.map((scope) => scope?.paymentReference),
+        ...metadataScopes.map((scope) => scope?.reference),
+        ...metadataScopes.map((scope) => scope?.transactionReference),
+        ...metadataScopes.map((scope) => scope?.orderReference),
+        ...scopeValues((scope) => scope?.paymentReference),
+        ...scopeValues((scope) => scope?.reference),
+        ...scopeValues((scope) => scope?.transactionReference),
+        ...scopeValues((scope) => scope?.orderReference),
+        ...scopeValues((scope) => scope?.invoiceNumber),
+        ...scopeValues((scope) => scope?.payment?.reference),
+        ...scopeValues((scope) => scope?.transaction?.reference),
+      ) || '',
     ).trim();
     const externalPaymentId = String(
-      payload?.paymentId || payload?.id || payload?.data?.paymentId || payload?.data?.id || '',
+      this.getFirstNonEmpty(
+        ...metadataScopes.map((scope) => scope?.externalPaymentId),
+        ...metadataScopes.map((scope) => scope?.paymentId),
+        ...metadataScopes.map((scope) => scope?.transactionId),
+        ...scopeValues((scope) => scope?.paymentId),
+        ...scopeValues((scope) => scope?.transactionId),
+        ...scopeValues((scope) => scope?.chargeId),
+        ...scopeValues((scope) => scope?.id),
+        ...scopeValues((scope) => scope?.payment?.id),
+        ...scopeValues((scope) => scope?.transaction?.id),
+        ...scopeValues((scope) => scope?.order?.id),
+      ) || '',
     ).trim();
+    const paymentLinkId = String(
+      this.getFirstNonEmpty(
+        ...metadataScopes.map((scope) => scope?.paymentLinkId),
+        ...metadataScopes.map((scope) => scope?.linkId),
+        ...scopeValues((scope) => scope?.paymentLinkId),
+        ...scopeValues((scope) => scope?.linkId),
+        ...scopeValues((scope) => scope?.paymentLink?.id),
+        ...scopeValues((scope) => scope?.paymentLink?.linkId),
+      ) || '',
+    ).trim();
+    const customerEmail = this.extractPaymentCustomerEmail(payload);
 
     let document: Document | null = null;
     if (documentId) {
@@ -2223,76 +2481,101 @@ export class DocumentsService {
       });
     }
 
-    if (!document && paymentReference) {
-      document = await this.documentRepository
-        .createQueryBuilder('document')
-        .leftJoinAndSelect('document.deal', 'deal')
-        .leftJoinAndSelect('document.contact', 'contact')
-        .where('document.workspaceId = :workspaceId', { workspaceId: integration.workspaceId })
-        .andWhere(`document.metadata->'payment'->>'paymentReference' = :paymentReference`, { paymentReference })
-        .getOne();
+    if (!document) {
+      document = await this.findPayfunnelDocumentByPaymentIdentifiers(
+        integration.workspaceId,
+        paymentReference,
+        externalPaymentId,
+        paymentLinkId,
+      );
     }
 
-    if (!document && externalPaymentId) {
-      document = await this.documentRepository
-        .createQueryBuilder('document')
-        .leftJoinAndSelect('document.deal', 'deal')
-        .leftJoinAndSelect('document.contact', 'contact')
-        .where('document.workspaceId = :workspaceId', { workspaceId: integration.workspaceId })
-        .andWhere(`document.metadata->'payment'->>'externalPaymentId' = :externalPaymentId`, { externalPaymentId })
-        .getOne();
+    if (!document && customerEmail) {
+      document = await this.findLatestPayfunnelDocumentByEmail(integration.workspaceId, customerEmail);
+    }
+
+    if (document && this.isPaymentSuppressedForDocument(document)) {
+      this.logger.log(
+        `PayFunnels webhook ignored for payment-suppressed document ${document.id} (workspace=${integration.workspaceId})`,
+      );
+      return { success: true, message: 'Document payment sync suppressed', documentId: document.id };
     }
 
     if (!document) {
       if (this.isPaymentSuccess(statusRaw, eventName) || this.isPaymentFailure(statusRaw, eventName)) {
         const payerName = this.getFirstNonEmpty(
-          payload?.customerName,
-          payload?.customer?.name,
-          payload?.customer?.fullName,
-          payload?.payerName,
-          payload?.data?.customerName,
-          payload?.data?.customer?.name,
-          payload?.data?.customer?.fullName,
-          payload?.customerEmail,
-          payload?.customer?.email,
-          payload?.data?.customerEmail,
+          ...scopeValues((scope) => scope?.customerName),
+          ...scopeValues((scope) => scope?.customer?.name),
+          ...scopeValues((scope) => scope?.customer?.fullName),
+          ...scopeValues((scope) => scope?.payerName),
+          ...scopeValues((scope) => scope?.customerEmail),
+          ...scopeValues((scope) => scope?.customer?.email),
         ) || 'Clientul';
 
         const inferredFailureReason = String(
-          payload?.failureReason ||
-          payload?.reason ||
-          payload?.data?.failureReason ||
-          payload?.data?.reason ||
-          '',
+          this.getFirstNonEmpty(
+            ...scopeValues((scope) => scope?.failureReason),
+            ...scopeValues((scope) => scope?.declineReason),
+            ...scopeValues((scope) => scope?.reason),
+            ...scopeValues((scope) => scope?.errorMessage),
+            ...scopeValues((scope) => scope?.message),
+          ) || '',
         ).trim();
 
         const isPaidWithoutDocument = this.isPaymentSuccess(statusRaw, eventName);
+        const inferredUserId = this.getFirstNonEmpty(
+          ...scopeValues((scope) => scope?.createdById),
+          ...metadataScopes.map((scope) => scope?.createdById),
+        );
         await this.notifyWorkspacePaymentTransaction(integration.workspaceId, {
           title: isPaidWithoutDocument ? 'Plata primita (fara contract asociat)' : 'Plata esuata (fara contract asociat)',
           message: isPaidWithoutDocument
             ? `${payerName} a platit in PayFunnels, dar tranzactia nu este legata de un contract in CRM.`
             : `${payerName} a avut o plata esuata in PayFunnels${inferredFailureReason ? `: ${inferredFailureReason}` : '.'}`,
+          userId: inferredUserId ? String(inferredUserId) : undefined,
+          notifyLeadership: isPaidWithoutDocument,
           metadata: {
             source: 'payfunnel.webhook',
             status: isPaidWithoutDocument ? 'paid' : 'failed',
             paymentReference,
             externalPaymentId,
+            paymentLinkId,
+            customerEmail,
             payload,
           },
         });
+        this.logger.warn(
+          `PayFunnels webhook payment without matching document (workspace=${integration.workspaceId}, status=${statusRaw || eventName || 'unknown'}, reference=${paymentReference || '-'}, paymentId=${externalPaymentId || '-'}, linkId=${paymentLinkId || '-'}, email=${customerEmail || '-'})`,
+        );
       }
       return { success: true, message: 'Document not found for payment webhook' };
     }
 
     const paymentMetadata = { ...(document.metadata?.payment || {}) } as Record<string, any>;
     const normalizedFailureReason = String(
-      payload?.failureReason ||
-      payload?.reason ||
-      payload?.data?.failureReason ||
-      payload?.data?.reason ||
-      '',
+      this.getFirstNonEmpty(
+        ...scopeValues((scope) => scope?.failureReason),
+        ...scopeValues((scope) => scope?.declineReason),
+        ...scopeValues((scope) => scope?.reason),
+        ...scopeValues((scope) => scope?.errorMessage),
+        ...scopeValues((scope) => scope?.message),
+      ) || '',
     ).trim();
     const payerName = this.resolvePaymentPayerName(document, payload);
+    const subscriptionSnapshot = this.extractWebhookSubscriptionMetadata(payload);
+    const parsedAmount = this.parseNumberValue(
+      ...scopeValues((scope) => scope?.amount),
+      ...scopeValues((scope) => scope?.totalAmountPaid),
+      ...scopeValues((scope) => scope?.chargedAmount),
+      ...scopeValues((scope) => scope?.chargeAmount),
+      paymentMetadata.amount,
+    );
+    const parsedCurrency = this.getFirstNonEmpty(
+      ...scopeValues((scope) => scope?.currency),
+      ...scopeValues((scope) => scope?.currencyCode),
+      ...scopeValues((scope) => scope?.amount?.currency),
+      paymentMetadata.currency,
+    );
 
     const isPaid = this.isPaymentSuccess(statusRaw, eventName);
     const isFailed = this.isPaymentFailure(statusRaw, eventName);
@@ -2306,6 +2589,11 @@ export class DocumentsService {
           paidAt: new Date(),
           externalPaymentId: externalPaymentId || paymentMetadata.externalPaymentId,
           paymentReference: paymentReference || paymentMetadata.paymentReference,
+          customerEmail: customerEmail || paymentMetadata.customerEmail,
+          paymentLinkId: paymentLinkId || paymentMetadata.paymentLinkId,
+          ...(parsedAmount !== undefined ? { amount: parsedAmount } : {}),
+          ...(parsedCurrency ? { currency: String(parsedCurrency).toUpperCase() } : {}),
+          ...subscriptionSnapshot,
           rawPayload: payload,
         },
       };
@@ -2324,12 +2612,12 @@ export class DocumentsService {
         workspaceId: integration.workspaceId,
         documentId: document.id,
         dealId: document.dealId,
-        amount: Number(payload?.amount || payload?.data?.amount || paymentMetadata.amount || 0),
-        currency: payload?.currency || payload?.data?.currency || paymentMetadata.currency,
+        amount: Number(parsedAmount || 0),
+        currency: parsedCurrency,
         status: 'paid',
       });
 
-      await this.notifyDocumentStakeholders(document, {
+      await this.notifyPaymentCompletedAudience(document, {
         title: 'Plata confirmata',
         message: `${payerName} a platit pentru "${document.name}".`,
         link: '/payments',
@@ -2354,6 +2642,11 @@ export class DocumentsService {
           failureReason: inferredFailureReason,
           externalPaymentId: externalPaymentId || paymentMetadata.externalPaymentId,
           paymentReference: paymentReference || paymentMetadata.paymentReference,
+          customerEmail: customerEmail || paymentMetadata.customerEmail,
+          paymentLinkId: paymentLinkId || paymentMetadata.paymentLinkId,
+          ...(parsedAmount !== undefined ? { amount: parsedAmount } : {}),
+          ...(parsedCurrency ? { currency: String(parsedCurrency).toUpperCase() } : {}),
+          ...subscriptionSnapshot,
           rawPayload: payload,
         },
       };
@@ -2373,8 +2666,8 @@ export class DocumentsService {
         workspaceId: integration.workspaceId,
         documentId: document.id,
         dealId: document.dealId,
-        amount: Number(payload?.amount || payload?.data?.amount || paymentMetadata.amount || 0),
-        currency: payload?.currency || payload?.data?.currency || paymentMetadata.currency,
+        amount: Number(parsedAmount || 0),
+        currency: parsedCurrency,
         status: 'failed',
         failureReason: inferredFailureReason,
       });
@@ -2388,6 +2681,9 @@ export class DocumentsService {
       return { success: true, message: 'Payment marked as failed', documentId: document.id };
     }
 
+    this.logger.log(
+      `PayFunnels webhook ignored (workspace=${integration.workspaceId}, document=${document.id}, event=${eventName || '-'}, status=${statusRaw || '-'})`,
+    );
     return { success: true, message: 'Payment webhook ignored', documentId: document.id };
   }
 
@@ -2552,6 +2848,56 @@ export class DocumentsService {
   async deleteDocument(workspaceId: string, documentId: string): Promise<void> {
     const document = await this.findOne(workspaceId, documentId);
     await this.documentRepository.remove(document);
+  }
+
+  async deletePaymentTransaction(
+    workspaceId: string,
+    userId: string,
+    documentId: string,
+    options?: { deleteDocument?: boolean },
+  ): Promise<{ success: boolean; deletedDocument: boolean; documentId: string; message: string }> {
+    const document = await this.findOne(workspaceId, documentId);
+    const shouldDeleteDocument = options?.deleteDocument === true;
+
+    if (shouldDeleteDocument) {
+      await this.documentRepository.remove(document);
+      return {
+        success: true,
+        deletedDocument: true,
+        documentId,
+        message: 'Contractul si tranzactia au fost sterse.',
+      };
+    }
+
+    const currentMetadata = { ...(document.metadata || {}) } as Record<string, any>;
+    const paymentMetadata = { ...((currentMetadata.payment as Record<string, any>) || {}) };
+    if (!currentMetadata.payment && !this.isPaymentSuppressedForDocument(document)) {
+      throw new BadRequestException('Documentul nu are o tranzactie activa in payments.');
+    }
+
+    delete currentMetadata.payment;
+    currentMetadata.paymentSuppressed = true;
+    currentMetadata.paymentSuppressedAt = new Date().toISOString();
+    currentMetadata.paymentSuppressedBy = userId;
+    currentMetadata.paymentSuppressedSnapshot = {
+      ...paymentMetadata,
+    };
+
+    document.metadata = currentMetadata;
+    document.addAuditEntry('payfunnels.transaction.removed', userId, {
+      suppressed: true,
+      paymentReference: paymentMetadata?.paymentReference,
+      externalPaymentId: paymentMetadata?.externalPaymentId,
+      reason: 'manual_from_payments',
+    });
+    await this.documentRepository.save(document);
+
+    return {
+      success: true,
+      deletedDocument: false,
+      documentId,
+      message: 'Tranzactia a fost scoasa din payments.',
+    };
   }
 
   private async findApiProviderIntegration(
@@ -3308,6 +3654,13 @@ export class DocumentsService {
         '/payments',
         '/transactions',
         '/orders',
+        '/api/v1/payments',
+        '/api/v1/transactions',
+        '/api/v1/orders',
+        '/v1/payments',
+        '/v1/transactions',
+        '/external-api/v1/payments',
+        '/external-api/v1/transactions',
       ],
       subscriptions: [
         config.listSubscriptionsPath,
@@ -3321,6 +3674,10 @@ export class DocumentsService {
         '/subscriptions',
         '/memberships',
         '/recurring/subscriptions',
+        '/api/v1/subscriptions',
+        '/api/v1/memberships',
+        '/v1/subscriptions',
+        '/external-api/v1/subscriptions',
       ],
       links: [
         config.listPaymentLinksPath,
@@ -3328,12 +3685,22 @@ export class DocumentsService {
         config.listLinksPath,
         endpoints.listPaymentLinksPath,
         endpoints.paymentLinks,
+        endpoints.paymentlinks,
         endpoints.links,
         credentials.listPaymentLinksPath,
         credentials.paymentLinksPath,
+        '/paymentlinks',
         '/payments/links',
         '/payment-links',
         '/links',
+        '/api/v1/paymentlinks',
+        '/api/v1/payments/links',
+        '/api/v1/payment-links',
+        '/api/v1/links',
+        '/v1/paymentlinks',
+        '/v1/payments/links',
+        '/external-api/v1/paymentlinks',
+        '/external-api/v1/payment-links',
       ],
     };
 
@@ -3413,6 +3780,7 @@ export class DocumentsService {
     }
 
     let lastError: any;
+    let firstSuccessfulRows: any[] | null = null;
     for (const endpoint of cleanedEndpoints) {
       const baseUrl = this.buildProviderUrl(apiUrl, endpoint);
       const urlsToTry = [
@@ -3422,10 +3790,18 @@ export class DocumentsService {
 
       for (const url of urlsToTry) {
         try {
-          const response = await this.httpService.axiosRef.get(url, {
-            headers: this.buildProviderHeaders(integration),
-          });
-          return this.extractApiRows(response.data, keys);
+          const rows = await this.fetchProviderRowsWithPagination(
+            integration,
+            url,
+            keys,
+            queryParams,
+          );
+          if (rows.length > 0) {
+            return rows;
+          }
+          if (firstSuccessfulRows === null) {
+            firstSuccessfulRows = rows;
+          }
         } catch (error) {
           lastError = error;
           const status = (error as any)?.response?.status;
@@ -3437,7 +3813,276 @@ export class DocumentsService {
       }
     }
 
+    if (firstSuccessfulRows !== null) {
+      return firstSuccessfulRows;
+    }
+
     throw lastError || new Error('Could not fetch provider rows');
+  }
+
+  private async fetchProviderRowsWithPagination(
+    integration: Integration,
+    initialUrl: string,
+    keys: string[],
+    queryParams?: Record<string, string | number | undefined>,
+  ): Promise<any[]> {
+    const maxRowsRaw = Number(
+      integration.config?.payfunnelImportMaxRows ||
+      integration.config?.importMaxRows ||
+      integration.credentials?.payfunnelImportMaxRows ||
+      integration.credentials?.importMaxRows ||
+      queryParams?.limit ||
+      2000,
+    );
+    const maxRows =
+      Number.isFinite(maxRowsRaw) && maxRowsRaw > 0
+        ? Math.min(Math.floor(maxRowsRaw), 10000)
+        : 2000;
+    const maxPagesRaw = Number(
+      integration.config?.payfunnelImportMaxPages ||
+      integration.config?.importMaxPages ||
+      integration.credentials?.payfunnelImportMaxPages ||
+      integration.credentials?.importMaxPages ||
+      25,
+    );
+    const maxPages =
+      Number.isFinite(maxPagesRaw) && maxPagesRaw > 0
+        ? Math.min(Math.floor(maxPagesRaw), 100)
+        : 25;
+
+    const rows: any[] = [];
+    const visitedUrls = new Set<string>();
+    const headers = this.buildProviderHeaders(integration);
+    let currentUrl = initialUrl;
+    let fallbackPage = 1;
+
+    for (let iteration = 0; iteration < maxPages; iteration += 1) {
+      if (!currentUrl || visitedUrls.has(currentUrl)) {
+        break;
+      }
+      visitedUrls.add(currentUrl);
+
+      const response = await this.httpService.axiosRef.get(currentUrl, { headers });
+      const payload = response.data;
+      const chunk = this.extractApiRows(payload, keys);
+      if (chunk.length > 0) {
+        rows.push(...chunk);
+      }
+      if (rows.length >= maxRows) {
+        break;
+      }
+
+      const nextByUrl = this.resolvePaginationNextUrl(payload, currentUrl);
+      if (nextByUrl && !visitedUrls.has(nextByUrl)) {
+        currentUrl = nextByUrl;
+        continue;
+      }
+
+      const nextCursor = this.extractPaginationNextCursor(payload);
+      if (nextCursor) {
+        const nextCursorUrl = this.removeQueryParam(
+          this.upsertQueryParam(currentUrl, 'cursor', nextCursor),
+          'page',
+        );
+        if (nextCursorUrl && !visitedUrls.has(nextCursorUrl)) {
+          currentUrl = nextCursorUrl;
+          continue;
+        }
+      }
+
+      const payloadCurrentPage = this.extractPaginationCurrentPage(payload);
+      const payloadTotalPages = this.extractPaginationTotalPages(payload);
+      if (payloadCurrentPage !== undefined) {
+        fallbackPage = payloadCurrentPage;
+      }
+
+      const hasMore = this.extractPaginationHasMore(payload);
+      const shouldPageForward =
+        hasMore === true ||
+        (payloadCurrentPage !== undefined &&
+          payloadTotalPages !== undefined &&
+          payloadCurrentPage < payloadTotalPages);
+      if (shouldPageForward) {
+        const nextPage = Math.max(fallbackPage + 1, 2);
+        const nextPageUrl = this.removeQueryParam(
+          this.upsertQueryParam(currentUrl, 'page', String(nextPage)),
+          'cursor',
+        );
+        if (nextPageUrl && !visitedUrls.has(nextPageUrl)) {
+          fallbackPage = nextPage;
+          currentUrl = nextPageUrl;
+          continue;
+        }
+      }
+
+      break;
+    }
+
+    if (rows.length <= maxRows) {
+      return rows;
+    }
+    return rows.slice(0, maxRows);
+  }
+
+  private resolvePaginationNextUrl(payload: any, currentUrl: string): string | undefined {
+    const nextValue = this.getFirstNonEmpty(
+      payload?.next,
+      payload?.nextUrl,
+      payload?.next_url,
+      payload?.nextPage,
+      payload?.next_page_url,
+      payload?.pagination?.next,
+      payload?.pagination?.nextUrl,
+      payload?.pagination?.next_url,
+      payload?.pagination?.nextPage,
+      payload?.meta?.next,
+      payload?.meta?.nextUrl,
+      payload?.meta?.next_url,
+      payload?.links?.next,
+      payload?.links?.next?.href,
+      payload?.data?.next,
+      payload?.data?.nextUrl,
+      payload?.data?.next_url,
+      payload?.data?.nextPage,
+      payload?.data?.pagination?.next,
+      payload?.data?.links?.next,
+      payload?.data?.links?.next?.href,
+    );
+    return this.normalizePaginationNextUrl(nextValue, currentUrl);
+  }
+
+  private normalizePaginationNextUrl(nextValue: any, currentUrl: string): string | undefined {
+    const raw = String(nextValue || '').trim();
+    if (!raw) {
+      return undefined;
+    }
+    const normalized = raw.toLowerCase();
+    if (['null', 'undefined', 'false', '0', '#'].includes(normalized)) {
+      return undefined;
+    }
+
+    try {
+      return new URL(raw, currentUrl).toString();
+    } catch {
+      return undefined;
+    }
+  }
+
+  private extractPaginationNextCursor(payload: any): string | undefined {
+    const rawCursor = this.getFirstNonEmpty(
+      payload?.nextCursor,
+      payload?.next_cursor,
+      payload?.cursor?.next,
+      payload?.pagination?.nextCursor,
+      payload?.pagination?.next_cursor,
+      payload?.meta?.nextCursor,
+      payload?.meta?.next_cursor,
+      payload?.data?.nextCursor,
+      payload?.data?.next_cursor,
+      payload?.data?.pagination?.nextCursor,
+      payload?.data?.meta?.nextCursor,
+    );
+    const cursor = String(rawCursor || '').trim();
+    if (!cursor || ['null', 'undefined'].includes(cursor.toLowerCase())) {
+      return undefined;
+    }
+    return cursor;
+  }
+
+  private extractPaginationCurrentPage(payload: any): number | undefined {
+    const value = this.parseIntegerValue(
+      payload?.page,
+      payload?.currentPage,
+      payload?.current_page,
+      payload?.pagination?.page,
+      payload?.pagination?.currentPage,
+      payload?.pagination?.current_page,
+      payload?.meta?.page,
+      payload?.meta?.currentPage,
+      payload?.meta?.current_page,
+      payload?.data?.page,
+      payload?.data?.currentPage,
+      payload?.data?.current_page,
+    );
+    return value !== undefined && value > 0 ? value : undefined;
+  }
+
+  private extractPaginationTotalPages(payload: any): number | undefined {
+    const value = this.parseIntegerValue(
+      payload?.totalPages,
+      payload?.total_pages,
+      payload?.lastPage,
+      payload?.last_page,
+      payload?.pagination?.totalPages,
+      payload?.pagination?.total_pages,
+      payload?.pagination?.lastPage,
+      payload?.pagination?.last_page,
+      payload?.meta?.totalPages,
+      payload?.meta?.total_pages,
+      payload?.meta?.lastPage,
+      payload?.meta?.last_page,
+      payload?.data?.totalPages,
+      payload?.data?.total_pages,
+      payload?.data?.lastPage,
+      payload?.data?.last_page,
+    );
+    return value !== undefined && value > 0 ? value : undefined;
+  }
+
+  private extractPaginationHasMore(payload: any): boolean | undefined {
+    return this.parseBooleanLike(
+      payload?.hasMore,
+      payload?.has_more,
+      payload?.pagination?.hasMore,
+      payload?.pagination?.has_more,
+      payload?.pagination?.hasNext,
+      payload?.pagination?.has_next,
+      payload?.meta?.hasMore,
+      payload?.meta?.has_more,
+      payload?.data?.hasMore,
+      payload?.data?.has_more,
+      payload?.data?.pagination?.hasMore,
+      payload?.data?.pagination?.has_more,
+    );
+  }
+
+  private parseBooleanLike(...values: any[]): boolean | undefined {
+    for (const value of values) {
+      if (value === null || value === undefined || value === '') {
+        continue;
+      }
+      if (typeof value === 'boolean') {
+        return value;
+      }
+      const normalized = String(value).trim().toLowerCase();
+      if (['true', '1', 'yes'].includes(normalized)) {
+        return true;
+      }
+      if (['false', '0', 'no'].includes(normalized)) {
+        return false;
+      }
+    }
+    return undefined;
+  }
+
+  private upsertQueryParam(url: string, key: string, value: string): string {
+    try {
+      const parsed = new URL(url);
+      parsed.searchParams.set(key, value);
+      return parsed.toString();
+    } catch {
+      return url;
+    }
+  }
+
+  private removeQueryParam(url: string, key: string): string {
+    try {
+      const parsed = new URL(url);
+      parsed.searchParams.delete(key);
+      return parsed.toString();
+    } catch {
+      return url;
+    }
   }
 
   private parseNumberValue(...values: any[]): number | undefined {
@@ -3455,6 +4100,21 @@ export class DocumentsService {
     return undefined;
   }
 
+  private parseIntegerValue(...values: any[]): number | undefined {
+    const numeric = this.parseNumberValue(...values);
+    if (numeric === undefined) {
+      return undefined;
+    }
+    if (!Number.isFinite(numeric)) {
+      return undefined;
+    }
+    const rounded = Math.trunc(numeric);
+    if (rounded < 0) {
+      return undefined;
+    }
+    return rounded;
+  }
+
   private normalizeDateString(...values: any[]): string | undefined {
     for (const value of values) {
       if (!value) continue;
@@ -3469,6 +4129,49 @@ export class DocumentsService {
         }
       }
       if (typeof value === 'string') {
+        const normalized = value.trim();
+        const mmDdYyyyMatch = normalized.match(/^(\d{2})-(\d{2})-(\d{4})$/);
+        if (mmDdYyyyMatch) {
+          const month = Number(mmDdYyyyMatch[1]);
+          const day = Number(mmDdYyyyMatch[2]);
+          const year = Number(mmDdYyyyMatch[3]);
+          if (
+            Number.isFinite(month) &&
+            Number.isFinite(day) &&
+            Number.isFinite(year) &&
+            month >= 1 &&
+            month <= 12 &&
+            day >= 1 &&
+            day <= 31
+          ) {
+            const byMdY = new Date(Date.UTC(year, month - 1, day));
+            if (!Number.isNaN(byMdY.getTime())) {
+              return byMdY.toISOString();
+            }
+          }
+        }
+
+        const yyyyMmDdMatch = normalized.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+        if (yyyyMmDdMatch) {
+          const year = Number(yyyyMmDdMatch[1]);
+          const month = Number(yyyyMmDdMatch[2]);
+          const day = Number(yyyyMmDdMatch[3]);
+          if (
+            Number.isFinite(month) &&
+            Number.isFinite(day) &&
+            Number.isFinite(year) &&
+            month >= 1 &&
+            month <= 12 &&
+            day >= 1 &&
+            day <= 31
+          ) {
+            const byYmd = new Date(Date.UTC(year, month - 1, day));
+            if (!Number.isNaN(byYmd.getTime())) {
+              return byYmd.toISOString();
+            }
+          }
+        }
+
         const parsed = new Date(value);
         if (!Number.isNaN(parsed.getTime())) {
           return parsed.toISOString();
@@ -3483,11 +4186,14 @@ export class DocumentsService {
       row?.id,
       row?.paymentId,
       row?.transactionId,
+      row?.transaction?.id,
       row?.orderId,
       row?.uuid,
+      row?._id,
       row?.data?.id,
       row?.data?.paymentId,
       row?.data?.transactionId,
+      row?.data?.transaction?.id,
       row?.data?.orderId,
     );
     if (!id) return null;
@@ -3495,75 +4201,291 @@ export class DocumentsService {
     const rawStatus = this.getFirstNonEmpty(
       row?.status,
       row?.paymentStatus,
+      row?.transactionStatus,
+      row?.orderStatus,
+      row?.payment_state,
+      row?.result,
       row?.state,
       row?.data?.status,
       row?.data?.paymentStatus,
+      row?.data?.transactionStatus,
+      row?.data?.orderStatus,
+      row?.data?.payment_state,
+      row?.data?.result,
       row?.data?.state,
     );
     const amount = this.parseNumberValue(
       row?.amount,
+      row?.totalAmountPaid,
+      row?.total_amount_paid,
+      row?.chargeAmount,
+      row?.chargedAmount,
+      row?.amountPaid,
+      row?.paidAmount,
+      row?.totalAmount,
+      row?.grossAmount,
+      row?.netAmount,
       row?.total,
       row?.value,
       row?.price,
+      row?.transaction?.amount,
+      row?.transaction?.total,
       row?.data?.amount,
+      row?.data?.totalAmountPaid,
+      row?.data?.total_amount_paid,
+      row?.data?.chargeAmount,
+      row?.data?.chargedAmount,
+      row?.data?.amountPaid,
+      row?.data?.paidAmount,
+      row?.data?.totalAmount,
+      row?.data?.grossAmount,
+      row?.data?.netAmount,
       row?.data?.total,
       row?.data?.value,
+      row?.data?.transaction?.amount,
     );
+    const productRows = [
+      ...(Array.isArray(row?.products) ? row.products : []),
+      ...(Array.isArray(row?.items) ? row.items : []),
+      ...(Array.isArray(row?.lineItems) ? row.lineItems : []),
+      ...(Array.isArray(row?.data?.products) ? row.data.products : []),
+      ...(Array.isArray(row?.data?.items) ? row.data.items : []),
+      ...(Array.isArray(row?.data?.lineItems) ? row.data.lineItems : []),
+    ];
+    const productNames = Array.from(new Set(
+      productRows
+        .map((entry: any) => this.getFirstNonEmpty(entry?.name, entry?.title, entry?.label, entry?.productName))
+        .filter((entry): entry is string => !!entry),
+    ));
 
     return {
       id,
       status: this.normalizePaymentStatus(rawStatus),
+      paymentReference: this.getFirstNonEmpty(
+        row?.paymentReference,
+        row?.reference,
+        row?.transactionReference,
+        row?.invoiceNumber,
+        row?.orderNumber,
+        row?.orderReference,
+        row?.metadata?.paymentReference,
+        row?.metadata?.orderId,
+        row?.transaction?.reference,
+        row?.data?.paymentReference,
+        row?.data?.reference,
+        row?.data?.transactionReference,
+        row?.data?.invoiceNumber,
+        row?.data?.orderNumber,
+        row?.data?.metadata?.paymentReference,
+        row?.data?.transaction?.reference,
+        row?.data?.invoiceId,
+      ),
+      title: this.getFirstNonEmpty(
+        row?.title,
+        row?.paymentTitle,
+        row?.descriptionTitle,
+        row?.data?.title,
+        row?.data?.paymentTitle,
+      ),
+      description: this.getFirstNonEmpty(
+        row?.description,
+        row?.details,
+        row?.data?.description,
+        row?.data?.details,
+      ),
       rawStatus,
       failureReason: this.getFirstNonEmpty(
         row?.failureReason,
         row?.declineReason,
         row?.reason,
         row?.errorMessage,
+        row?.message,
         row?.data?.failureReason,
         row?.data?.declineReason,
         row?.data?.reason,
         row?.data?.errorMessage,
+        row?.data?.message,
       ),
       amount,
       currency: this.getFirstNonEmpty(
         row?.currency,
+        row?.currencyCode,
+        row?.amount?.currency,
+        row?.transaction?.currency,
         row?.data?.currency,
+        row?.data?.currencyCode,
+        row?.data?.amount?.currency,
+        row?.data?.transaction?.currency,
         row?.customer?.currency,
+      ),
+      taxAmount: this.parseNumberValue(
+        row?.taxAmount,
+        row?.tax,
+        row?.data?.taxAmount,
+        row?.data?.tax,
+      ),
+      processingFeeAmount: this.parseNumberValue(
+        row?.processingFeeAmount,
+        row?.processingFees,
+        row?.fees,
+        row?.data?.processingFeeAmount,
+        row?.data?.processingFees,
+        row?.data?.fees,
+      ),
+      setupFeeAmount: this.parseNumberValue(
+        row?.setupFeeAmount,
+        row?.setupFee,
+        row?.oneTimeSetupFeeAmount,
+        row?.data?.setupFeeAmount,
+        row?.data?.setupFee,
+        row?.data?.oneTimeSetupFeeAmount,
+      ),
+      refundAmount: this.parseNumberValue(
+        row?.refundAmount,
+        row?.refundedAmount,
+        row?.data?.refundAmount,
+        row?.data?.refundedAmount,
+      ),
+      quantity: this.parseIntegerValue(
+        row?.quantity,
+        row?.qty,
+        row?.data?.quantity,
+        row?.data?.qty,
       ),
       customerName: this.getFirstNonEmpty(
         row?.customerName,
         row?.customer?.name,
         row?.customer?.fullName,
+        row?.billingName,
+        row?.billing?.name,
+        row?.payerName,
         row?.buyerName,
         row?.data?.customerName,
         row?.data?.customer?.name,
+        row?.data?.billingName,
+        row?.data?.billing?.name,
+        row?.data?.payerName,
       ),
-      customerEmail: this.getFirstNonEmpty(
+      customerId: this.getFirstNonEmpty(
+        row?.customerId,
+        row?.customer?.id,
+        row?.payerId,
+        row?.data?.customerId,
+        row?.data?.customer?.id,
+        row?.data?.payerId,
+      ),
+      customerEmail: this.normalizeEmail(this.getFirstNonEmpty(
         row?.customerEmail,
         row?.email,
+        row?.billingEmail,
+        row?.billing?.email,
+        row?.payerEmail,
         row?.customer?.email,
+        row?.customer?.contact?.email,
         row?.data?.customerEmail,
         row?.data?.email,
+        row?.data?.billingEmail,
+        row?.data?.billing?.email,
+        row?.data?.payerEmail,
         row?.data?.customer?.email,
+        row?.data?.customer?.contact?.email,
+      )),
+      paymentMethodType: this.getFirstNonEmpty(
+        row?.paymentMethodType,
+        row?.paymentMethod?.type,
+        row?.method,
+        row?.data?.paymentMethodType,
+        row?.data?.paymentMethod?.type,
+        row?.data?.method,
       ),
+      cardLast4: this.getFirstNonEmpty(
+        row?.cardLast4,
+        row?.paymentMethod?.card?.last4,
+        row?.paymentMethod?.last4,
+        row?.data?.cardLast4,
+        row?.data?.paymentMethod?.card?.last4,
+        row?.data?.paymentMethod?.last4,
+      ),
+      ...(productNames.length > 0 ? { productNames } : {}),
       subscriptionId: this.getFirstNonEmpty(
         row?.subscriptionId,
         row?.subscription?.id,
+        row?.membershipId,
         row?.data?.subscriptionId,
         row?.data?.subscription?.id,
+        row?.data?.membershipId,
+      ),
+      subscriptionStatus: this.getFirstNonEmpty(
+        row?.subscriptionStatus,
+        row?.subscription?.status,
+        row?.subscription?.state,
+        row?.data?.subscriptionStatus,
+        row?.data?.subscription?.status,
+      ),
+      subscriptionPlanName: this.getFirstNonEmpty(
+        row?.subscriptionPlanName,
+        row?.subscription?.planName,
+        row?.subscription?.plan?.name,
+        row?.data?.subscriptionPlanName,
+        row?.data?.subscription?.planName,
+        row?.data?.subscription?.plan?.name,
+      ),
+      subscriptionStartedAt: this.normalizeDateString(
+        row?.subscriptionStartedAt,
+        row?.subscription?.startedAt,
+        row?.subscription?.startDate,
+        row?.data?.subscriptionStartedAt,
+        row?.data?.subscription?.startedAt,
+      ),
+      subscriptionEndsAt: this.normalizeDateString(
+        row?.subscriptionEndsAt,
+        row?.subscription?.expiresAt,
+        row?.subscription?.currentPeriodEndAt,
+        row?.subscription?.canceledAt,
+        row?.data?.subscriptionEndsAt,
+        row?.data?.subscription?.expiresAt,
+      ),
+      subscriptionPaidPayments: this.parseIntegerValue(
+        row?.subscriptionPaidPayments,
+        row?.subscription?.paidPayments,
+        row?.subscription?.paymentsMade,
+        row?.data?.subscriptionPaidPayments,
+        row?.data?.subscription?.paidPayments,
+      ),
+      subscriptionRemainingPayments: this.parseIntegerValue(
+        row?.subscriptionRemainingPayments,
+        row?.subscription?.remainingPayments,
+        row?.subscription?.paymentsRemaining,
+        row?.data?.subscriptionRemainingPayments,
+        row?.data?.subscription?.remainingPayments,
+      ),
+      subscriptionTotalPayments: this.parseIntegerValue(
+        row?.subscriptionTotalPayments,
+        row?.subscription?.totalPayments,
+        row?.subscription?.installments,
+        row?.data?.subscriptionTotalPayments,
+        row?.data?.subscription?.totalPayments,
       ),
       paymentLinkId: this.getFirstNonEmpty(
         row?.paymentLinkId,
         row?.linkId,
+        row?.paymentLink?.linkId,
+        row?.checkoutId,
         row?.paymentLink?.id,
         row?.data?.paymentLinkId,
         row?.data?.linkId,
+        row?.data?.paymentLink?.linkId,
+        row?.data?.checkoutId,
       ),
       paymentLinkName: this.getFirstNonEmpty(
         row?.paymentLinkName,
         row?.paymentLink?.name,
+        row?.paymentLink?.title,
         row?.linkName,
+        row?.title,
         row?.data?.paymentLinkName,
+        row?.data?.paymentLink?.name,
+        row?.data?.paymentLink?.title,
         row?.data?.linkName,
       ),
       paymentUrl: this.getFirstNonEmpty(
@@ -3578,17 +4500,34 @@ export class DocumentsService {
       createdAt: this.normalizeDateString(
         row?.createdAt,
         row?.created_at,
+        row?.created,
+        row?.createdOn,
+        row?.createdDate,
         row?.date,
         row?.timestamp,
         row?.data?.createdAt,
         row?.data?.created_at,
+        row?.data?.created,
+        row?.data?.createdOn,
+        row?.data?.createdDate,
       ),
       paidAt: this.normalizeDateString(
         row?.paidAt,
         row?.completedAt,
+        row?.capturedAt,
+        row?.settledAt,
+        row?.successAt,
+        row?.paidDate,
         row?.updatedAt,
+        row?.updated_at,
         row?.data?.paidAt,
         row?.data?.completedAt,
+        row?.data?.capturedAt,
+        row?.data?.settledAt,
+        row?.data?.successAt,
+        row?.data?.paidDate,
+        row?.data?.updatedAt,
+        row?.data?.updated_at,
       ),
     };
   }
@@ -3598,12 +4537,155 @@ export class DocumentsService {
       row?.id,
       row?.subscriptionId,
       row?.membershipId,
+      row?.subscription?.id,
       row?.uuid,
+      row?._id,
       row?.data?.id,
       row?.data?.subscriptionId,
       row?.data?.membershipId,
+      row?.data?.subscription?.id,
     );
     if (!id) return null;
+
+    const totalPayments = this.parseIntegerValue(
+      row?.totalPayments,
+      row?.paymentsTotal,
+      row?.totalMaxPayment,
+      row?.installments,
+      row?.installmentsTotal,
+      row?.installmentsCount,
+      row?.billingCycles,
+      row?.cyclesTotal,
+      row?.totalCycles,
+      row?.numberOfPayments,
+      row?.plan?.installments,
+      row?.plan?.paymentsCount,
+      row?.stats?.totalPayments,
+      row?.statistics?.totalPayments,
+      row?.summary?.totalPayments,
+      row?.data?.totalPayments,
+      row?.data?.paymentsTotal,
+      row?.data?.totalMaxPayment,
+      row?.data?.installments,
+      row?.data?.installmentsTotal,
+      row?.data?.plan?.installments,
+      row?.data?.stats?.totalPayments,
+      row?.data?.statistics?.totalPayments,
+      row?.data?.summary?.totalPayments,
+    );
+    const paidPayments = this.parseIntegerValue(
+      row?.paidPayments,
+      row?.paymentsMade,
+      row?.completedPayments,
+      row?.successfulPayments,
+      row?.successfulCharges,
+      row?.chargesPaid,
+      row?.installmentsPaid,
+      row?.stats?.paidPayments,
+      row?.statistics?.paidPayments,
+      row?.summary?.paidPayments,
+      row?.data?.paidPayments,
+      row?.data?.paymentsMade,
+      row?.data?.completedPayments,
+      row?.data?.successfulPayments,
+      row?.data?.installmentsPaid,
+      row?.data?.stats?.paidPayments,
+      row?.data?.statistics?.paidPayments,
+      row?.data?.summary?.paidPayments,
+    );
+    const failedPayments = this.parseIntegerValue(
+      row?.failedPayments,
+      row?.paymentsFailed,
+      row?.failedCharges,
+      row?.declinedPayments,
+      row?.stats?.failedPayments,
+      row?.statistics?.failedPayments,
+      row?.summary?.failedPayments,
+      row?.data?.failedPayments,
+      row?.data?.paymentsFailed,
+      row?.data?.failedCharges,
+      row?.data?.declinedPayments,
+      row?.data?.stats?.failedPayments,
+      row?.data?.statistics?.failedPayments,
+      row?.data?.summary?.failedPayments,
+    );
+    const remainingPaymentsRaw = this.parseIntegerValue(
+      row?.remainingPayments,
+      row?.paymentsRemaining,
+      row?.installmentsRemaining,
+      row?.remainingInstallments,
+      row?.cyclesLeft,
+      row?.leftPayments,
+      row?.stats?.remainingPayments,
+      row?.statistics?.remainingPayments,
+      row?.summary?.remainingPayments,
+      row?.data?.remainingPayments,
+      row?.data?.paymentsRemaining,
+      row?.data?.installmentsRemaining,
+      row?.data?.remainingInstallments,
+      row?.data?.cyclesLeft,
+      row?.data?.leftPayments,
+      row?.data?.stats?.remainingPayments,
+      row?.data?.statistics?.remainingPayments,
+      row?.data?.summary?.remainingPayments,
+    );
+    const amountPerCharge = this.parseNumberValue(
+      row?.chargeAmount,
+      row?.amount,
+      row?.price,
+      row?.data?.chargeAmount,
+      row?.data?.amount,
+      row?.data?.price,
+    );
+    const totalCollectedAmount = this.parseNumberValue(
+      row?.totalCollectedAmount,
+      row?.collectedAmount,
+      row?.data?.totalCollectedAmount,
+      row?.data?.collectedAmount,
+    );
+    const totalDueAmount = this.parseNumberValue(
+      row?.totalDueAmount,
+      row?.dueAmount,
+      row?.data?.totalDueAmount,
+      row?.data?.dueAmount,
+    );
+    const inferredPaidFromCollectedAmount =
+      amountPerCharge !== undefined &&
+      amountPerCharge > 0 &&
+      totalCollectedAmount !== undefined
+        ? Math.max(Math.trunc(totalCollectedAmount / amountPerCharge), 0)
+        : undefined;
+    const inferredRemainingFromDueAmount =
+      amountPerCharge !== undefined &&
+      amountPerCharge > 0 &&
+      totalDueAmount !== undefined
+        ? Math.max(Math.trunc(totalDueAmount / amountPerCharge), 0)
+        : undefined;
+    const totalMaxPayment = this.parseIntegerValue(
+      row?.totalMaxPayment,
+      row?.maxPayments,
+      row?.maxInstallments,
+      row?.data?.totalMaxPayment,
+      row?.data?.maxPayments,
+      row?.data?.maxInstallments,
+    );
+    const effectiveTotalPayments = totalPayments ?? totalMaxPayment;
+    const inferredPaidPayments =
+      paidPayments !== undefined
+        ? paidPayments
+        : inferredPaidFromCollectedAmount !== undefined
+          ? inferredPaidFromCollectedAmount
+          : effectiveTotalPayments !== undefined && remainingPaymentsRaw !== undefined
+            ? Math.max(effectiveTotalPayments - remainingPaymentsRaw, 0)
+            : undefined;
+    const remainingPayments =
+      remainingPaymentsRaw !== undefined
+        ? remainingPaymentsRaw
+        : inferredRemainingFromDueAmount !== undefined
+          ? inferredRemainingFromDueAmount
+          : effectiveTotalPayments !== undefined && inferredPaidPayments !== undefined
+            ? Math.max(effectiveTotalPayments - inferredPaidPayments, 0)
+            : undefined;
 
     return {
       id,
@@ -3611,68 +4693,182 @@ export class DocumentsService {
         row?.status,
         row?.state,
         row?.subscriptionStatus,
+        row?.subscription?.status,
+        row?.subscription?.state,
         row?.data?.status,
         row?.data?.state,
+        row?.data?.subscriptionStatus,
+        row?.data?.subscription?.status,
+      ),
+      title: this.getFirstNonEmpty(
+        row?.title,
+        row?.name,
+        row?.planName,
+        row?.data?.title,
+        row?.data?.name,
       ),
       customerName: this.getFirstNonEmpty(
         row?.customerName,
         row?.customer?.name,
         row?.customer?.fullName,
+        row?.billingName,
+        row?.payerName,
         row?.subscriberName,
         row?.data?.customerName,
         row?.data?.customer?.name,
+        row?.data?.billingName,
+        row?.data?.payerName,
       ),
-      customerEmail: this.getFirstNonEmpty(
+      customerEmail: this.normalizeEmail(this.getFirstNonEmpty(
         row?.customerEmail,
         row?.email,
+        row?.billingEmail,
+        row?.payerEmail,
         row?.customer?.email,
         row?.subscriberEmail,
         row?.data?.customerEmail,
         row?.data?.email,
+        row?.data?.billingEmail,
+        row?.data?.payerEmail,
         row?.data?.customer?.email,
+      )),
+      customerId: this.getFirstNonEmpty(
+        row?.customerId,
+        row?.customer?.id,
+        row?.subscriberId,
+        row?.data?.customerId,
+        row?.data?.customer?.id,
+        row?.data?.subscriberId,
       ),
       planName: this.getFirstNonEmpty(
         row?.planName,
         row?.plan?.name,
         row?.productName,
+        row?.title,
         row?.name,
         row?.data?.planName,
+        row?.data?.title,
         row?.data?.plan?.name,
       ),
       interval: this.getFirstNonEmpty(
         row?.interval,
         row?.billingCycle,
+        row?.paymentType,
         row?.period,
         row?.data?.interval,
         row?.data?.billingCycle,
+        row?.data?.paymentType,
+      ),
+      paymentType: this.getFirstNonEmpty(
+        row?.paymentType,
+        row?.type,
+        row?.data?.paymentType,
+        row?.data?.type,
       ),
       amount: this.parseNumberValue(
         row?.amount,
+        row?.chargeAmount,
         row?.price,
         row?.plan?.amount,
         row?.data?.amount,
+        row?.data?.chargeAmount,
         row?.data?.price,
         row?.data?.plan?.amount,
       ),
+      chargeAmount: this.parseNumberValue(
+        row?.chargeAmount,
+        row?.data?.chargeAmount,
+      ),
       currency: this.getFirstNonEmpty(
         row?.currency,
+        row?.currencyCode,
         row?.plan?.currency,
         row?.data?.currency,
+        row?.data?.currencyCode,
         row?.data?.plan?.currency,
       ),
+      totalCollectedAmount,
+      totalSubscriptionAmount: this.parseNumberValue(
+        row?.totalSubscriptionAmount,
+        row?.subscriptionAmount,
+        row?.data?.totalSubscriptionAmount,
+        row?.data?.subscriptionAmount,
+      ),
+      totalDueAmount,
+      totalMaxPayment,
       startedAt: this.normalizeDateString(
         row?.startedAt,
         row?.startDate,
+        row?.created,
         row?.createdAt,
         row?.data?.startedAt,
         row?.data?.startDate,
+        row?.data?.created,
+        row?.data?.createdAt,
       ),
       nextBillingAt: this.normalizeDateString(
         row?.nextBillingAt,
         row?.nextChargeAt,
         row?.renewAt,
+        row?.nextPaymentAt,
+        row?.nextPaymentDate,
         row?.data?.nextBillingAt,
         row?.data?.nextChargeAt,
+        row?.data?.renewAt,
+        row?.data?.nextPaymentAt,
+        row?.data?.nextPaymentDate,
+      ),
+      currentPeriodStartAt: this.normalizeDateString(
+        row?.currentPeriodStartAt,
+        row?.currentPeriodStart,
+        row?.periodStartAt,
+        row?.periodStart,
+        row?.billingPeriodStart,
+        row?.data?.currentPeriodStartAt,
+        row?.data?.currentPeriodStart,
+        row?.data?.periodStartAt,
+        row?.data?.periodStart,
+      ),
+      currentPeriodEndAt: this.normalizeDateString(
+        row?.currentPeriodEndAt,
+        row?.currentPeriodEnd,
+        row?.periodEndAt,
+        row?.periodEnd,
+        row?.billingPeriodEnd,
+        row?.data?.currentPeriodEndAt,
+        row?.data?.currentPeriodEnd,
+        row?.data?.periodEndAt,
+        row?.data?.periodEnd,
+      ),
+      trialEndsAt: this.normalizeDateString(
+        row?.trialEndsAt,
+        row?.trialEndAt,
+        row?.trialEnd,
+        row?.data?.trialEndsAt,
+        row?.data?.trialEndAt,
+        row?.data?.trialEnd,
+      ),
+      expiresAt: this.normalizeDateString(
+        row?.expiresAt,
+        row?.expiryAt,
+        row?.expiryDate,
+        row?.endDate,
+        row?.endsAt,
+        row?.endedAt,
+        row?.data?.expiresAt,
+        row?.data?.expiryAt,
+        row?.data?.expiryDate,
+        row?.data?.endDate,
+        row?.data?.endsAt,
+        row?.data?.endedAt,
+      ),
+      lastPaymentAt: this.normalizeDateString(
+        row?.lastPaymentAt,
+        row?.lastPaidAt,
+        row?.latestPaymentAt,
+        row?.data?.lastPaymentAt,
+        row?.data?.lastPaidAt,
+        row?.data?.latestPaymentAt,
       ),
       canceledAt: this.normalizeDateString(
         row?.canceledAt,
@@ -3681,7 +4877,323 @@ export class DocumentsService {
         row?.data?.canceledAt,
         row?.data?.cancelledAt,
       ),
+      paidPayments: inferredPaidPayments,
+      failedPayments,
+      remainingPayments,
+      totalPayments: effectiveTotalPayments,
     };
+  }
+
+  private attachPayfunnelSubscriptionDataToPayments(
+    payments: PayfunnelDashboardPayment[],
+    subscriptions: PayfunnelDashboardSubscription[],
+  ): PayfunnelDashboardPayment[] {
+    if (!Array.isArray(payments) || payments.length === 0 || !Array.isArray(subscriptions) || subscriptions.length === 0) {
+      return payments;
+    }
+
+    const subscriptionsById = new Map<string, PayfunnelDashboardSubscription>();
+    const subscriptionsByEmail = new Map<string, PayfunnelDashboardSubscription>();
+
+    for (const subscription of subscriptions) {
+      const subscriptionId = String(subscription.id || '').trim();
+      if (subscriptionId) {
+        subscriptionsById.set(subscriptionId, subscription);
+      }
+
+      const normalizedEmail = this.normalizeEmail(subscription.customerEmail);
+      if (!normalizedEmail) {
+        continue;
+      }
+
+      const existing = subscriptionsByEmail.get(normalizedEmail);
+      if (!existing) {
+        subscriptionsByEmail.set(normalizedEmail, subscription);
+        continue;
+      }
+
+      const currentTs = this.parseDateToTimestamp(
+        this.getFirstNonEmpty(
+          subscription.nextBillingAt,
+          subscription.currentPeriodEndAt,
+          subscription.expiresAt,
+          subscription.startedAt,
+        ),
+      );
+      const existingTs = this.parseDateToTimestamp(
+        this.getFirstNonEmpty(
+          existing.nextBillingAt,
+          existing.currentPeriodEndAt,
+          existing.expiresAt,
+          existing.startedAt,
+        ),
+      );
+      if (currentTs >= existingTs) {
+        subscriptionsByEmail.set(normalizedEmail, subscription);
+      }
+    }
+
+    return payments.map((payment) => {
+      const subscriptionById = payment.subscriptionId
+        ? subscriptionsById.get(String(payment.subscriptionId).trim())
+        : undefined;
+      const normalizedPaymentEmail = this.normalizeEmail(payment.customerEmail);
+      const subscriptionByEmail = normalizedPaymentEmail
+        ? subscriptionsByEmail.get(normalizedPaymentEmail)
+        : undefined;
+      const matchedSubscription = subscriptionById || subscriptionByEmail;
+      if (!matchedSubscription) {
+        return payment;
+      }
+
+      const inferredSubscriptionEnd = this.getFirstNonEmpty(
+        matchedSubscription.expiresAt,
+        matchedSubscription.currentPeriodEndAt,
+        matchedSubscription.canceledAt,
+      );
+
+      return {
+        ...payment,
+        subscriptionId: payment.subscriptionId || matchedSubscription.id,
+        subscriptionStatus: payment.subscriptionStatus || matchedSubscription.status,
+        subscriptionPlanName: payment.subscriptionPlanName || matchedSubscription.planName,
+        subscriptionStartedAt: payment.subscriptionStartedAt || matchedSubscription.startedAt,
+        subscriptionEndsAt: payment.subscriptionEndsAt || inferredSubscriptionEnd,
+        subscriptionPaidPayments:
+          payment.subscriptionPaidPayments !== undefined
+            ? payment.subscriptionPaidPayments
+            : matchedSubscription.paidPayments,
+        subscriptionRemainingPayments:
+          payment.subscriptionRemainingPayments !== undefined
+            ? payment.subscriptionRemainingPayments
+            : matchedSubscription.remainingPayments,
+        subscriptionTotalPayments:
+          payment.subscriptionTotalPayments !== undefined
+            ? payment.subscriptionTotalPayments
+            : matchedSubscription.totalPayments,
+      };
+    });
+  }
+
+  private deduplicatePayfunnelPayments(rows: PayfunnelDashboardPayment[]): PayfunnelDashboardPayment[] {
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return [];
+    }
+
+    const merged = new Map<string, PayfunnelDashboardPayment>();
+    for (const row of rows) {
+      const key = this.getFirstNonEmpty(
+        row.id,
+        row.paymentReference,
+        `${this.normalizeEmail(row.customerEmail) || 'unknown'}:${row.createdAt || ''}:${row.status}:${row.amount ?? ''}`,
+      ) as string;
+
+      const existing = merged.get(key);
+      if (!existing) {
+        merged.set(key, row);
+        continue;
+      }
+      merged.set(key, this.pickPreferredPayfunnelPayment(existing, row));
+    }
+
+    return Array.from(merged.values()).sort((a, b) => {
+      const tsA = this.parseDateToTimestamp(
+        this.getFirstNonEmpty(a.paidAt, a.createdAt, a.subscriptionEndsAt),
+      );
+      const tsB = this.parseDateToTimestamp(
+        this.getFirstNonEmpty(b.paidAt, b.createdAt, b.subscriptionEndsAt),
+      );
+      return tsB - tsA;
+    });
+  }
+
+  private deduplicatePayfunnelSubscriptions(rows: PayfunnelDashboardSubscription[]): PayfunnelDashboardSubscription[] {
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return [];
+    }
+
+    const merged = new Map<string, PayfunnelDashboardSubscription>();
+    for (const row of rows) {
+      const key = this.getFirstNonEmpty(
+        row.id,
+        `${this.normalizeEmail(row.customerEmail) || 'unknown'}:${row.planName || ''}:${row.startedAt || ''}`,
+      ) as string;
+      const existing = merged.get(key);
+      if (!existing) {
+        merged.set(key, row);
+        continue;
+      }
+      const currentScore = this.countNonEmptyValues(row);
+      const existingScore = this.countNonEmptyValues(existing);
+      if (currentScore >= existingScore) {
+        merged.set(key, { ...existing, ...row });
+      }
+    }
+
+    return Array.from(merged.values()).sort((a, b) => {
+      const tsA = this.parseDateToTimestamp(
+        this.getFirstNonEmpty(a.nextBillingAt, a.expiresAt, a.startedAt),
+      );
+      const tsB = this.parseDateToTimestamp(
+        this.getFirstNonEmpty(b.nextBillingAt, b.expiresAt, b.startedAt),
+      );
+      return tsB - tsA;
+    });
+  }
+
+  private deduplicatePayfunnelLinks(rows: PayfunnelDashboardLink[]): PayfunnelDashboardLink[] {
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return [];
+    }
+
+    const merged = new Map<string, PayfunnelDashboardLink>();
+    for (const row of rows) {
+      const key = `${row.id}:${row.url}`.toLowerCase();
+      const existing = merged.get(key);
+      if (!existing) {
+        merged.set(key, row);
+        continue;
+      }
+
+      const currentScore = this.countNonEmptyValues(row);
+      const existingScore = this.countNonEmptyValues(existing);
+      if (currentScore >= existingScore) {
+        merged.set(key, { ...existing, ...row });
+      }
+    }
+
+    return Array.from(merged.values()).sort((a, b) => {
+      const tsA = this.parseDateToTimestamp(a.createdAt);
+      const tsB = this.parseDateToTimestamp(b.createdAt);
+      return tsB - tsA;
+    });
+  }
+
+  private pickPreferredPayfunnelPayment(
+    existing: PayfunnelDashboardPayment,
+    incoming: PayfunnelDashboardPayment,
+  ): PayfunnelDashboardPayment {
+    const statusRank: Record<PayfunnelDashboardPayment['status'], number> = {
+      paid: 3,
+      failed: 2,
+      pending: 1,
+    };
+    const existingRank = statusRank[existing.status] || 0;
+    const incomingRank = statusRank[incoming.status] || 0;
+    if (incomingRank > existingRank) {
+      return { ...existing, ...incoming };
+    }
+    if (incomingRank < existingRank) {
+      return { ...incoming, ...existing };
+    }
+
+    const existingScore = this.countNonEmptyValues(existing);
+    const incomingScore = this.countNonEmptyValues(incoming);
+    if (incomingScore > existingScore) {
+      return { ...existing, ...incoming };
+    }
+    if (incomingScore < existingScore) {
+      return { ...incoming, ...existing };
+    }
+
+    const existingTs = this.parseDateToTimestamp(
+      this.getFirstNonEmpty(existing.paidAt, existing.createdAt, existing.subscriptionEndsAt),
+    );
+    const incomingTs = this.parseDateToTimestamp(
+      this.getFirstNonEmpty(incoming.paidAt, incoming.createdAt, incoming.subscriptionEndsAt),
+    );
+    if (incomingTs >= existingTs) {
+      return { ...existing, ...incoming };
+    }
+    return { ...incoming, ...existing };
+  }
+
+  private countNonEmptyValues(value: Record<string, any>): number {
+    if (!value || typeof value !== 'object') {
+      return 0;
+    }
+    return Object.values(value).filter((entry) => {
+      if (entry === null || entry === undefined) {
+        return false;
+      }
+      if (typeof entry === 'string') {
+        return entry.trim() !== '';
+      }
+      if (Array.isArray(entry)) {
+        return entry.length > 0;
+      }
+      return true;
+    }).length;
+  }
+
+  private buildPaymentSubscriptionMetadata(payment: PayfunnelDashboardPayment): Record<string, any> {
+    const snapshot: Record<string, any> = {};
+    const subscriptionId = String(payment.subscriptionId || '').trim();
+    if (subscriptionId) {
+      snapshot.subscriptionId = subscriptionId;
+    }
+    const subscriptionStatus = String(payment.subscriptionStatus || '').trim();
+    if (subscriptionStatus) {
+      snapshot.subscriptionStatus = subscriptionStatus;
+    }
+    const subscriptionPlanName = String(payment.subscriptionPlanName || '').trim();
+    if (subscriptionPlanName) {
+      snapshot.subscriptionPlanName = subscriptionPlanName;
+    }
+
+    const subscriptionStartedAt = this.normalizeDateString(payment.subscriptionStartedAt);
+    if (subscriptionStartedAt) {
+      snapshot.subscriptionStartedAt = subscriptionStartedAt;
+    }
+    const subscriptionEndsAt = this.normalizeDateString(payment.subscriptionEndsAt);
+    if (subscriptionEndsAt) {
+      snapshot.subscriptionEndsAt = subscriptionEndsAt;
+    }
+
+    if (payment.subscriptionPaidPayments !== undefined) {
+      snapshot.subscriptionPaidPayments = payment.subscriptionPaidPayments;
+    }
+    if (payment.subscriptionRemainingPayments !== undefined) {
+      snapshot.subscriptionRemainingPayments = payment.subscriptionRemainingPayments;
+    }
+    if (payment.subscriptionTotalPayments !== undefined) {
+      snapshot.subscriptionTotalPayments = payment.subscriptionTotalPayments;
+    }
+
+    return snapshot;
+  }
+
+  private hasPaymentMetadataPatchChanges(
+    currentMetadata: Record<string, any>,
+    patch: Record<string, any>,
+  ): boolean {
+    const entries = Object.entries(patch).filter(([, value]) => value !== undefined && value !== null);
+    if (entries.length === 0) {
+      return false;
+    }
+
+    for (const [key, nextValue] of entries) {
+      const currentValue = currentMetadata?.[key];
+      if (typeof nextValue === 'number') {
+        const currentNumber = Number(currentValue);
+        if (!Number.isFinite(currentNumber) || currentNumber !== nextValue) {
+          return true;
+        }
+        continue;
+      }
+
+      if (String(currentValue ?? '').trim() !== String(nextValue).trim()) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  private parseDateToTimestamp(value?: string): number {
+    if (!value) return 0;
+    const ts = new Date(value).getTime();
+    return Number.isFinite(ts) ? ts : 0;
   }
 
   private parsePayfunnelLinkRow(
@@ -3692,10 +5204,16 @@ export class DocumentsService {
       row?.url,
       row?.paymentUrl,
       row?.checkoutUrl,
+      row?.checkout_url,
       row?.link,
+      row?.shortUrl,
+      row?.short_url,
       row?.data?.url,
       row?.data?.paymentUrl,
       row?.data?.checkoutUrl,
+      row?.data?.checkout_url,
+      row?.data?.shortUrl,
+      row?.data?.short_url,
     );
     if (!url) return null;
 
@@ -3763,6 +5281,14 @@ export class DocumentsService {
         currency: this.getFirstNonEmpty(payment.currency, document.deal?.currency, 'EUR'),
         customerName,
         customerEmail,
+        subscriptionId: this.getFirstNonEmpty(payment.subscriptionId),
+        subscriptionStatus: this.getFirstNonEmpty(payment.subscriptionStatus),
+        subscriptionPlanName: this.getFirstNonEmpty(payment.subscriptionPlanName),
+        subscriptionStartedAt: this.normalizeDateString(payment.subscriptionStartedAt),
+        subscriptionEndsAt: this.normalizeDateString(payment.subscriptionEndsAt),
+        subscriptionPaidPayments: this.parseIntegerValue(payment.subscriptionPaidPayments),
+        subscriptionRemainingPayments: this.parseIntegerValue(payment.subscriptionRemainingPayments),
+        subscriptionTotalPayments: this.parseIntegerValue(payment.subscriptionTotalPayments),
         paymentLinkId: this.getFirstNonEmpty(payment.paymentLinkId),
         paymentLinkName: this.getFirstNonEmpty(payment.preferredLinkName),
         paymentUrl: paymentLink,
@@ -3830,10 +5356,10 @@ export class DocumentsService {
 
   private normalizePaymentStatus(rawStatus?: string): 'paid' | 'failed' | 'pending' {
     const normalized = String(rawStatus || '').trim().toLowerCase();
-    if (/(paid|succeeded|success|completed)/.test(normalized)) {
+    if (/(paid|succeeded|success|completed|approved|captured|settled|confirmed)/.test(normalized)) {
       return 'paid';
     }
-    if (/(failed|declined|insufficient|canceled|cancelled|error)/.test(normalized)) {
+    if (/(failed|declined|insufficient|canceled|cancelled|error|rejected|refused|voided|chargeback)/.test(normalized)) {
       return 'failed';
     }
     return 'pending';
@@ -3943,24 +5469,76 @@ export class DocumentsService {
     }
   }
 
+  private async maybeRefreshPayfunnelPayments(workspaceId: string): Promise<void> {
+    const now = Date.now();
+    const lastRefresh = this.payfunnelPaymentsRefreshAtByWorkspace.get(workspaceId) || 0;
+    if (now - lastRefresh < this.payfunnelPaymentsRefreshCooldownMs) {
+      return;
+    }
+
+    this.payfunnelPaymentsRefreshAtByWorkspace.set(workspaceId, now);
+
+    try {
+      await this.getPayfunnelDashboardData(workspaceId);
+    } catch (error) {
+      this.logger.warn(`PayFunnels refresh before payments list failed for workspace ${workspaceId}: ${error.message}`);
+    }
+  }
+
   private extractApiRows(payload: any, keys: string[]): any[] {
     if (!payload) return [];
     if (Array.isArray(payload)) return payload;
 
-    for (const key of keys) {
-      const value = payload?.[key];
-      if (Array.isArray(value)) return value;
-      if (value && typeof value === 'object') {
-        if (Array.isArray(value.items)) return value.items;
-        if (Array.isArray(value.results)) return value.results;
-        if (Array.isArray(value.data)) return value.data;
-      }
-    }
+    const searchKeys = Array.from(new Set([
+      ...keys,
+      'items',
+      'results',
+      'data',
+      'rows',
+      'records',
+      'transactions',
+      'payments',
+      'orders',
+      'subscriptions',
+      'memberships',
+      'links',
+      'paymentLinks',
+      'paymentlinks',
+      'docs',
+      'list',
+    ]));
 
-    if (Array.isArray(payload?.data)) return payload.data;
-    if (payload?.data && typeof payload.data === 'object') {
-      if (Array.isArray(payload.data.items)) return payload.data.items;
-      if (Array.isArray(payload.data.results)) return payload.data.results;
+    const queue: any[] = [payload];
+    const visited = new Set<any>();
+
+    while (queue.length > 0) {
+      const current = queue.shift();
+      if (!current || typeof current !== 'object' || visited.has(current)) {
+        continue;
+      }
+      visited.add(current);
+
+      for (const key of searchKeys) {
+        const value = current?.[key];
+        if (Array.isArray(value)) {
+          return value;
+        }
+      }
+
+      const wrapperValues = [
+        current?.data,
+        current?.result,
+        current?.results,
+        current?.payload,
+        current?.response,
+        current?.meta,
+        current?.pagination,
+      ];
+      for (const entry of wrapperValues) {
+        if (entry && typeof entry === 'object') {
+          queue.push(entry);
+        }
+      }
     }
 
     return [];
@@ -4181,6 +5759,11 @@ export class DocumentsService {
       integration.credentials?.apiToken ||
       integration.config?.apiKey ||
       integration.config?.token;
+    const accessToken =
+      integration.credentials?.accessToken ||
+      integration.credentials?.bearerToken ||
+      integration.config?.accessToken ||
+      integration.config?.bearerToken;
 
     if (apiKey) {
       // PayFunnels classic API keys must be sent using the vendor-specific header.
@@ -4200,6 +5783,10 @@ export class DocumentsService {
       if (providerKey === 'esemneaza') {
         headers['X-API-Key'] = headers['X-API-Key'] || apiKey;
       }
+    }
+
+    if ((providerKey === 'payfunnels' || providerKey === 'payfunnel') && accessToken) {
+      headers['Authorization'] = `Bearer ${accessToken}`;
     }
 
     return headers;
@@ -4230,6 +5817,249 @@ export class DocumentsService {
       }
     }
     return undefined;
+  }
+
+  private normalizeEmail(value?: string): string | undefined {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (!normalized || !normalized.includes('@')) {
+      return undefined;
+    }
+    return normalized;
+  }
+
+  private collectPayfunnelWebhookScopes(payload: any): Array<Record<string, any>> {
+    const scopes = [
+      payload,
+      payload?.data,
+      payload?.payment,
+      payload?.transaction,
+      payload?.order,
+      payload?.eventData,
+      payload?.object,
+      payload?.resource,
+      payload?.body,
+      payload?.data?.payment,
+      payload?.data?.transaction,
+      payload?.data?.order,
+      payload?.data?.eventData,
+      payload?.data?.object,
+      payload?.data?.resource,
+      payload?.data?.body,
+      payload?.transaction?.data,
+      payload?.payment?.data,
+      payload?.order?.data,
+    ];
+    const result: Array<Record<string, any>> = [];
+    for (const scope of scopes) {
+      if (!scope || typeof scope !== 'object' || Array.isArray(scope)) {
+        continue;
+      }
+      if (!result.includes(scope)) {
+        result.push(scope);
+      }
+    }
+    return result;
+  }
+
+  private extractPayfunnelWebhookMetadataScopes(scopes: Array<Record<string, any>>): Array<Record<string, any>> {
+    const metadata: Array<Record<string, any>> = [];
+    for (const scope of scopes) {
+      const source = scope?.metadata;
+      if (!source || typeof source !== 'object' || Array.isArray(source)) {
+        continue;
+      }
+      if (!metadata.includes(source)) {
+        metadata.push(source);
+      }
+    }
+    return metadata;
+  }
+
+  private extractPaymentCustomerEmail(payload: any): string | undefined {
+    const scopes = this.collectPayfunnelWebhookScopes(payload);
+    const metadataScopes = this.extractPayfunnelWebhookMetadataScopes(scopes);
+    return this.normalizeEmail(
+      this.getFirstNonEmpty(
+        ...scopes.map((scope) => scope?.customerEmail),
+        ...scopes.map((scope) => scope?.email),
+        ...scopes.map((scope) => scope?.billingEmail),
+        ...scopes.map((scope) => scope?.payerEmail),
+        ...scopes.map((scope) => scope?.buyerEmail),
+        ...scopes.map((scope) => scope?.customer?.email),
+        ...scopes.map((scope) => scope?.customer?.contact?.email),
+        ...scopes.map((scope) => scope?.payer?.email),
+        ...metadataScopes.map((scope) => scope?.customerEmail),
+        ...metadataScopes.map((scope) => scope?.email),
+      ),
+    );
+  }
+
+  private extractWebhookSubscriptionMetadata(payload: any): Record<string, any> {
+    const scopes = this.collectPayfunnelWebhookScopes(payload);
+    const metadataScopes = this.extractPayfunnelWebhookMetadataScopes(scopes);
+    const scopeValues = (picker: (scope: Record<string, any>) => any): any[] => scopes.map(picker);
+
+    const snapshot: Record<string, any> = {};
+    const subscriptionId = this.getFirstNonEmpty(
+      ...scopeValues((scope) => scope?.subscriptionId),
+      ...scopeValues((scope) => scope?.subscription?.id),
+      ...metadataScopes.map((scope) => scope?.subscriptionId),
+    );
+    if (subscriptionId) {
+      snapshot.subscriptionId = subscriptionId;
+    }
+
+    const subscriptionStatus = this.getFirstNonEmpty(
+      ...scopeValues((scope) => scope?.subscriptionStatus),
+      ...scopeValues((scope) => scope?.subscription?.status),
+      ...scopeValues((scope) => scope?.subscription?.state),
+    );
+    if (subscriptionStatus) {
+      snapshot.subscriptionStatus = subscriptionStatus;
+    }
+
+    const subscriptionPlanName = this.getFirstNonEmpty(
+      ...scopeValues((scope) => scope?.subscriptionPlanName),
+      ...scopeValues((scope) => scope?.subscription?.planName),
+      ...scopeValues((scope) => scope?.subscription?.plan?.name),
+    );
+    if (subscriptionPlanName) {
+      snapshot.subscriptionPlanName = subscriptionPlanName;
+    }
+
+    const subscriptionStartedAt = this.normalizeDateString(
+      ...scopeValues((scope) => scope?.subscriptionStartedAt),
+      ...scopeValues((scope) => scope?.subscription?.startedAt),
+      ...scopeValues((scope) => scope?.subscription?.startDate),
+    );
+    if (subscriptionStartedAt) {
+      snapshot.subscriptionStartedAt = subscriptionStartedAt;
+    }
+
+    const subscriptionEndsAt = this.normalizeDateString(
+      ...scopeValues((scope) => scope?.subscriptionEndsAt),
+      ...scopeValues((scope) => scope?.subscription?.expiresAt),
+      ...scopeValues((scope) => scope?.subscription?.currentPeriodEndAt),
+      ...scopeValues((scope) => scope?.subscription?.canceledAt),
+    );
+    if (subscriptionEndsAt) {
+      snapshot.subscriptionEndsAt = subscriptionEndsAt;
+    }
+
+    const subscriptionPaidPayments = this.parseIntegerValue(
+      ...scopeValues((scope) => scope?.subscriptionPaidPayments),
+      ...scopeValues((scope) => scope?.subscription?.paidPayments),
+      ...scopeValues((scope) => scope?.subscription?.paymentsMade),
+    );
+    if (subscriptionPaidPayments !== undefined) {
+      snapshot.subscriptionPaidPayments = subscriptionPaidPayments;
+    }
+
+    const subscriptionRemainingPayments = this.parseIntegerValue(
+      ...scopeValues((scope) => scope?.subscriptionRemainingPayments),
+      ...scopeValues((scope) => scope?.subscription?.remainingPayments),
+      ...scopeValues((scope) => scope?.subscription?.paymentsRemaining),
+    );
+    if (subscriptionRemainingPayments !== undefined) {
+      snapshot.subscriptionRemainingPayments = subscriptionRemainingPayments;
+    }
+
+    const subscriptionTotalPayments = this.parseIntegerValue(
+      ...scopeValues((scope) => scope?.subscriptionTotalPayments),
+      ...scopeValues((scope) => scope?.subscription?.totalPayments),
+      ...scopeValues((scope) => scope?.subscription?.installments),
+    );
+    if (subscriptionTotalPayments !== undefined) {
+      snapshot.subscriptionTotalPayments = subscriptionTotalPayments;
+    }
+
+    return snapshot;
+  }
+
+  private async findPayfunnelDocumentByPaymentIdentifiers(
+    workspaceId: string,
+    paymentReference?: string,
+    externalPaymentId?: string,
+    paymentLinkId?: string,
+  ): Promise<Document | null> {
+    const normalizedReference = String(paymentReference || '').trim().toLowerCase();
+    const normalizedExternalPaymentId = String(externalPaymentId || '').trim().toLowerCase();
+    const normalizedPaymentLinkId = String(paymentLinkId || '').trim().toLowerCase();
+    if (!normalizedReference && !normalizedExternalPaymentId && !normalizedPaymentLinkId) {
+      return null;
+    }
+
+    const query = this.documentRepository
+      .createQueryBuilder('document')
+      .leftJoinAndSelect('document.contact', 'contact')
+      .leftJoinAndSelect('document.deal', 'deal')
+      .where('document.workspaceId = :workspaceId', { workspaceId })
+      .andWhere(`LOWER(COALESCE(document.metadata->>'paymentSuppressed', 'false')) <> 'true'`);
+
+    const clauses: string[] = [];
+    const params: Record<string, string> = {};
+    if (normalizedReference) {
+      clauses.push(`LOWER(COALESCE(document.metadata->'payment'->>'paymentReference', '')) = :paymentReference`);
+      params.paymentReference = normalizedReference;
+    }
+    if (normalizedExternalPaymentId) {
+      clauses.push(`LOWER(COALESCE(document.metadata->'payment'->>'externalPaymentId', '')) = :externalPaymentId`);
+      params.externalPaymentId = normalizedExternalPaymentId;
+    }
+    if (normalizedPaymentLinkId) {
+      clauses.push(`LOWER(COALESCE(document.metadata->'payment'->>'paymentLinkId', '')) = :paymentLinkId`);
+      params.paymentLinkId = normalizedPaymentLinkId;
+    }
+    if (clauses.length === 0) {
+      return null;
+    }
+    query.andWhere(`(${clauses.join(' OR ')})`, params);
+    query
+      .orderBy('document.updatedAt', 'DESC')
+      .addOrderBy('document.createdAt', 'DESC');
+
+    return query.getOne();
+  }
+
+  private async findLatestPayfunnelDocumentByEmail(
+    workspaceId: string,
+    email?: string,
+  ): Promise<Document | null> {
+    const normalizedEmail = this.normalizeEmail(email);
+    if (!normalizedEmail) {
+      return null;
+    }
+
+    return this.documentRepository
+      .createQueryBuilder('document')
+      .leftJoinAndSelect('document.contact', 'contact')
+      .leftJoinAndSelect('document.deal', 'deal')
+      .where('document.workspaceId = :workspaceId', { workspaceId })
+      .andWhere(`LOWER(COALESCE(document.metadata->>'paymentSuppressed', 'false')) <> 'true'`)
+      .andWhere(
+        `(
+          LOWER(COALESCE(contact.email, '')) = :email
+          OR LOWER(COALESCE(document.metadata->'payment'->>'customerEmail', '')) = :email
+          OR EXISTS (
+            SELECT 1
+            FROM jsonb_array_elements(COALESCE(document.recipients, '[]'::jsonb)) AS recipient
+            WHERE LOWER(TRIM(COALESCE(recipient->>'email', ''))) = :email
+          )
+        )`,
+        { email: normalizedEmail },
+      )
+      .orderBy(`CASE WHEN document.metadata ? 'payment' THEN 0 ELSE 1 END`, 'ASC')
+      .addOrderBy('document.updatedAt', 'DESC')
+      .addOrderBy('document.createdAt', 'DESC')
+      .getOne();
+  }
+
+  private isPaymentSuppressedForDocument(document: Document): boolean {
+    const metadata = (document.metadata || {}) as Record<string, any>;
+    if (metadata?.paymentSuppressed === true) {
+      return true;
+    }
+    return String(metadata?.paymentSuppressed || '').trim().toLowerCase() === 'true';
   }
 
   private extractHttpErrorMessage(error: any): string {
@@ -4361,31 +6191,101 @@ export class DocumentsService {
     );
   }
 
-  private async notifyWorkspacePaymentTransaction(
-    workspaceId: string,
-    payload: { title: string; message: string; metadata?: Record<string, any> },
+  private async notifyPaymentCompletedAudience(
+    document: Document,
+    payload: { title: string; message: string; link?: string },
   ): Promise<void> {
-    const recipients = await this.userRepository
-      .createQueryBuilder('user')
-      .select(['user.id'])
-      .where('user.workspaceId = :workspaceId', { workspaceId })
-      .andWhere('user.status = :status', { status: UserStatus.ACTIVE })
-      .andWhere('user.role IN (:...roles)', {
-        roles: [UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.MANAGER],
-      })
-      .getMany();
-
-    if (!recipients.length) {
+    const audienceIds = await this.getPaymentCompletionAudienceUserIds(
+      document.workspaceId,
+      document.createdById,
+    );
+    if (audienceIds.length === 0) {
       return;
     }
 
     await Promise.allSettled(
-      recipients.map((user) =>
+      audienceIds.map((userId) =>
+        this.notificationsService.create(document.workspaceId, {
+          type: NotificationType.SYSTEM,
+          title: payload.title,
+          message: payload.message,
+          userId,
+          link: payload.link || '/payments',
+          metadata: {
+            documentId: document.id,
+            dealId: document.dealId,
+            contactId: document.contactId,
+            paymentStatus: 'paid',
+          },
+        }),
+      ),
+    );
+  }
+
+  private async getPaymentCompletionAudienceUserIds(
+    workspaceId: string,
+    primaryUserId?: string,
+  ): Promise<string[]> {
+    const leadershipRoles = [UserRole.CLOSER, UserRole.MANAGER, UserRole.ADMIN, UserRole.SUPER_ADMIN];
+    const candidates = await this.userRepository
+      .createQueryBuilder('user')
+      .select(['user.id'])
+      .where('user.workspaceId = :workspaceId', { workspaceId })
+      .andWhere('user.status = :status', { status: UserStatus.ACTIVE })
+      .andWhere('user.role IN (:...roles)', { roles: leadershipRoles })
+      .getMany();
+
+    const ids = new Set<string>(candidates.map((user) => String(user.id)));
+    const normalizedPrimary = String(primaryUserId || '').trim();
+    if (normalizedPrimary) {
+      ids.add(normalizedPrimary);
+    }
+    return Array.from(ids);
+  }
+
+  private async notifyWorkspacePaymentTransaction(
+    workspaceId: string,
+    payload: {
+      title: string;
+      message: string;
+      userId?: string;
+      notifyLeadership?: boolean;
+      metadata?: Record<string, any>;
+    },
+  ): Promise<void> {
+    const normalizedUserId = String(payload.userId || '').trim();
+    const recipients = new Set<string>();
+
+    if (normalizedUserId) {
+      const recipient = await this.userRepository.findOne({
+        where: {
+          id: normalizedUserId,
+          workspaceId,
+          status: UserStatus.ACTIVE,
+        },
+        select: ['id'],
+      });
+      if (recipient) {
+        recipients.add(recipient.id);
+      }
+    }
+
+    if (payload.notifyLeadership) {
+      const leadershipIds = await this.getPaymentCompletionAudienceUserIds(workspaceId, normalizedUserId);
+      leadershipIds.forEach((userId) => recipients.add(userId));
+    }
+
+    if (recipients.size === 0) {
+      return;
+    }
+
+    await Promise.allSettled(
+      Array.from(recipients).map((userId) =>
         this.notificationsService.create(workspaceId, {
           type: NotificationType.SYSTEM,
           title: payload.title,
           message: payload.message,
-          userId: user.id,
+          userId,
           link: '/payments',
           metadata: payload.metadata,
         }),
@@ -4394,28 +6294,21 @@ export class DocumentsService {
   }
 
   private async getStakeholderUserIds(document: Document): Promise<string[]> {
-    const ids = new Set<string>();
-    if (document.createdById) ids.add(document.createdById);
-
-    let dealOwnerId = document.deal?.ownerId;
-    if (!dealOwnerId && document.dealId) {
-      const deal = await this.dealRepository.findOne({
-        where: { id: document.dealId, workspaceId: document.workspaceId },
-      });
-      dealOwnerId = deal?.ownerId;
+    const createdById = String(document.createdById || '').trim();
+    if (!createdById) {
+      return [];
     }
-    if (dealOwnerId) ids.add(dealOwnerId);
 
-    let contactOwnerId = document.contact?.ownerId;
-    if (!contactOwnerId && document.contactId) {
-      const contact = await this.contactRepository.findOne({
-        where: { id: document.contactId, workspaceId: document.workspaceId },
-      });
-      contactOwnerId = contact?.ownerId;
-    }
-    if (contactOwnerId) ids.add(contactOwnerId);
+    const sender = await this.userRepository.findOne({
+      where: {
+        id: createdById,
+        workspaceId: document.workspaceId,
+        status: UserStatus.ACTIVE,
+      },
+      select: ['id'],
+    });
 
-    return [...ids];
+    return sender ? [sender.id] : [];
   }
 
   private verifyWebhookSecret(
@@ -4484,13 +6377,13 @@ export class DocumentsService {
   }
 
   private isPaymentSuccess(status: string, eventName: string): boolean {
-    return ['paid', 'succeeded', 'success', 'completed'].some(
+    return ['paid', 'succeeded', 'success', 'completed', 'approved', 'captured', 'settled', 'confirmed'].some(
       (token) => status.includes(token) || eventName.includes(token),
     );
   }
 
   private isPaymentFailure(status: string, eventName: string): boolean {
-    return ['failed', 'declined', 'insufficient', 'canceled', 'cancelled', 'error'].some(
+    return ['failed', 'declined', 'insufficient', 'canceled', 'cancelled', 'error', 'rejected', 'refused', 'voided', 'chargeback'].some(
       (token) => status.includes(token) || eventName.includes(token),
     );
   }

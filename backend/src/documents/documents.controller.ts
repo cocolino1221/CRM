@@ -100,6 +100,13 @@ export class DocumentsController {
     return this.documentsService.getPayfunnelLinkOptions(req.user.workspaceId);
   }
 
+  @Get('payfunnel/dashboard')
+  @ApiOperation({ summary: 'Get PayFunnels payments, subscriptions and payment links' })
+  @ApiResponse({ status: 200, description: 'PayFunnels dashboard data retrieved successfully' })
+  async getPayfunnelDashboard(@Req() req: any) {
+    return this.documentsService.getPayfunnelDashboardData(req.user.workspaceId);
+  }
+
   @Get('esemneaza/requests')
   @ApiOperation({ summary: 'List eSemneaza sign requests' })
   @ApiResponse({ status: 200, description: 'Sign requests retrieved successfully' })
@@ -222,6 +229,43 @@ export class DocumentsController {
       req.user.id,
       body,
     );
+  }
+
+  @Get('payments')
+  @ApiOperation({ summary: 'Get document payments from PayFunnels metadata' })
+  @ApiResponse({ status: 200, description: 'Payments retrieved successfully' })
+  async getPayments(
+    @Req() req: any,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('search') search?: string,
+    @Query('status') status?: 'paid' | 'failed' | 'pending',
+  ) {
+    const parsedPage = Number(page);
+    const parsedLimit = Number(limit);
+    return this.documentsService.findPayments(req.user.workspaceId, {
+      page: Number.isFinite(parsedPage) ? parsedPage : undefined,
+      limit: Number.isFinite(parsedLimit) ? parsedLimit : undefined,
+      search,
+      status,
+    });
+  }
+
+  @Delete('payments/:documentId')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Remove a payment transaction from CRM payments list' })
+  @ApiResponse({ status: 200, description: 'Payment transaction removed successfully' })
+  async deletePaymentTransaction(
+    @Req() req: any,
+    @Param('documentId') documentId: string,
+    @Query('deleteDocument') deleteDocument?: string,
+  ) {
+    const shouldDeleteDocument = ['1', 'true', 'yes', 'on'].includes(
+      String(deleteDocument || '').trim().toLowerCase(),
+    );
+    return this.documentsService.deletePaymentTransaction(req.user.workspaceId, req.user.id, documentId, {
+      deleteDocument: shouldDeleteDocument,
+    });
   }
 
   @Get(':id')
