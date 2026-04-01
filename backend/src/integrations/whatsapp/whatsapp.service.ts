@@ -1,4 +1,4 @@
-import { Injectable, Logger, BadRequestException } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException, NotFoundException } from '@nestjs/common';
 import { OnEvent, EventEmitter2 } from '@nestjs/event-emitter';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
@@ -108,6 +108,20 @@ interface AutoSendRule extends AutoSendConfig {
   id: string;
   name: string;
   priority: number;
+}
+
+interface CampaignRecipient {
+  phone: string;
+  firstName?: string;
+  lastName?: string;
+}
+
+interface CampaignFilter {
+  tags?: string[];
+  status?: string[];
+  source?: string[];
+  selectedContactIds?: string[];
+  recipients?: CampaignRecipient[];
 }
 
 @Injectable()
@@ -320,6 +334,50 @@ export class WhatsAppService {
     return value
       .map((entry: any) => String(entry || '').trim())
       .filter((entry: string) => entry.length > 0);
+  }
+
+  private normalizeCampaignRecipients(value: any): CampaignRecipient[] {
+    if (!Array.isArray(value)) return [];
+    const byPhone = new Map<string, CampaignRecipient>();
+
+    for (const recipient of value) {
+      const rawPhone = String(recipient?.phone || '').trim();
+      if (!rawPhone) continue;
+
+      const normalizedPhone = normalizePhoneE164(rawPhone) || rawPhone.replace(/[^0-9+]/g, '').trim();
+      const dedupeKey = normalizePhoneDigits(normalizedPhone) || normalizePhoneDigits(rawPhone);
+      if (!dedupeKey || dedupeKey.length < 7) continue;
+
+      byPhone.set(dedupeKey, {
+        phone: normalizedPhone || rawPhone,
+        firstName: String(recipient?.firstName || '').trim() || undefined,
+        lastName: String(recipient?.lastName || '').trim() || undefined,
+      });
+    }
+
+    return Array.from(byPhone.values());
+  }
+
+  private normalizeCampaignFilter(value: any): CampaignFilter {
+    if (!value || typeof value !== 'object') return {};
+    const selectedContactIds: string[] = Array.isArray(value.selectedContactIds)
+      ? Array.from(
+          new Set(
+            value.selectedContactIds
+              .map((id: any) => String(id || '').trim())
+              .filter((id: string) => id.length > 0),
+          ),
+        )
+      : [];
+    const recipients = this.normalizeCampaignRecipients(value.recipients);
+
+    return {
+      tags: this.sanitizeStringArray(value.tags),
+      status: this.sanitizeStringArray(value.status),
+      source: this.sanitizeStringArray(value.source),
+      selectedContactIds,
+      recipients,
+    };
   }
 
   private sanitizeAutoSendConfig(config: any): AutoSendConfig {
@@ -1508,44 +1566,98 @@ export class WhatsAppService {
    */
   async broadcastTemplate(
     workspaceId: string,
-    filter: { tags?: string[]; status?: string[]; source?: string[]; selectedContactIds?: string[] },
+    filter: CampaignFilter,
     template: { name: string; language: string; params?: any[] },
   ): Promise<{ total: number; sent: number; failed: number; results: any[] }> {
+    const normalizedFilter = this.normalizeCampaignFilter(filter);
+    const directRecipients = normalizedFilter.recipients || [];
+    const results: any[] = [];
+    let sent = 0;
+    let failed = 0;
+
+    if (directRecipients.length > 0) {
+      for (const recipient of directRecipients) {
+        const phone = normalizePhoneE164(recipient.phone) || recipient.phone.replace(/[^0-9+]/g, '');
+        if (!phone) {
+          results.push({
+            phone: recipient.phone,
+            success: false,
+            error: 'Invalid phone',
+          });
+          failed++;
+          continue;
+        }
+
+        try {
+          const msgResult = await this.sendTemplateMessageForWorkspace(
+            workspaceId,
+            phone,
+            template.name,
+            template.language,
+            template.params || [],
+          );
+          const msgId = msgResult?.messages?.[0]?.id;
+          await this.saveOutboundActivity(phone, `[Broadcast template: ${template.name}]`, 'template', workspaceId, '', msgId);
+          results.push({
+            phone,
+            firstName: recipient.firstName,
+            lastName: recipient.lastName,
+            success: true,
+          });
+          sent++;
+        } catch (err: any) {
+          results.push({
+            phone,
+            firstName: recipient.firstName,
+            lastName: recipient.lastName,
+            success: false,
+            error: err?.message || 'Send failed',
+          });
+          failed++;
+        }
+
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+
+      this.logger.log(`Broadcast "${template.name}" to direct list: ${sent}/${directRecipients.length} in workspace ${workspaceId}`);
+      return { total: directRecipients.length, sent, failed, results };
+    }
+
     const where: any = { workspaceId };
-    const selectedIds = Array.isArray(filter.selectedContactIds)
-      ? Array.from(new Set(filter.selectedContactIds.filter(Boolean)))
-      : [];
-    if (filter.status?.length) where.status = In(filter.status);
-    if (filter.source?.length) where.source = In(filter.source);
+    const selectedIds = normalizedFilter.selectedContactIds || [];
+    if (normalizedFilter.status?.length) where.status = In(normalizedFilter.status);
+    if (normalizedFilter.source?.length) where.source = In(normalizedFilter.source);
     if (selectedIds.length) where.id = In(selectedIds);
 
     let contacts = await this.contactRepository.find({ where, take: 1000 });
 
     // Filter by tags in memory (simple-array columns don't support SQL LIKE easily)
-    if (filter.tags?.length) {
+    if (normalizedFilter.tags?.length) {
       contacts = contacts.filter(c => {
         const contactTags = c.tags || [];
-        return filter.tags!.every(t => contactTags.includes(t));
+        return normalizedFilter.tags!.every(t => contactTags.includes(t));
       });
     }
 
     // Only contacts that have a phone number
     contacts = contacts.filter(c => c.phone);
 
-    const results: any[] = [];
-    let sent = 0;
-    let failed = 0;
-
     for (const contact of contacts) {
       const phone = normalizePhoneE164(contact.phone) || contact.phone!.replace(/[^0-9+]/g, '');
       try {
-        const msgResult = await this.sendTemplateMessage(phone, template.name, template.language, template.params || []);
+        const msgResult = await this.sendTemplateMessageForWorkspace(
+          workspaceId,
+          phone,
+          template.name,
+          template.language,
+          template.params || [],
+        );
         const msgId = msgResult?.messages?.[0]?.id;
         await this.saveOutboundActivity(phone, `[Broadcast template: ${template.name}]`, 'template', workspaceId, contact.ownerId || '', msgId);
         results.push({ phone, contactId: contact.id, success: true });
         sent++;
-      } catch (err) {
-        results.push({ phone, contactId: contact.id, success: false, error: err.message });
+      } catch (err: any) {
+        results.push({ phone, contactId: contact.id, success: false, error: err?.message || 'Send failed' });
         failed++;
       }
       await new Promise(resolve => setTimeout(resolve, 50));
@@ -1619,14 +1731,20 @@ export class WhatsAppService {
 
       if (options.sendTemplate) {
         try {
-          const msgResult = await this.sendTemplateMessage(phone, options.sendTemplate.name, options.sendTemplate.language, options.sendTemplate.params || []);
+          const msgResult = await this.sendTemplateMessageForWorkspace(
+            workspaceId,
+            phone,
+            options.sendTemplate.name,
+            options.sendTemplate.language,
+            options.sendTemplate.params || [],
+          );
           const msgId = msgResult?.messages?.[0]?.id;
           await this.saveOutboundActivity(phone, `[CSV import template: ${options.sendTemplate.name}]`, 'template', workspaceId, ownerId, msgId);
           resultEntry.sent = true;
           sent++;
-        } catch (err) {
+        } catch (err: any) {
           resultEntry.sent = false;
-          resultEntry.sendError = err.message;
+          resultEntry.sendError = err?.message || 'Send failed';
           failed++;
         }
         await new Promise(resolve => setTimeout(resolve, 50));
@@ -2092,14 +2210,15 @@ export class WhatsAppService {
     campaign: { name: string; templateName: string; language: string; filter: any },
   ): Promise<any> {
     const integration = await this.findIntegrationForWorkspace(workspaceId);
-    if (!integration) throw new Error('WhatsApp integration not found');
+    if (!integration) throw new BadRequestException('WhatsApp integration not found');
+    const normalizedFilter = this.normalizeCampaignFilter(campaign.filter || {});
 
     const newCampaign = {
       id: `camp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
       name: campaign.name,
       templateName: campaign.templateName,
       language: campaign.language,
-      filter: campaign.filter || {},
+      filter: normalizedFilter,
       status: 'draft',
       createdAt: new Date().toISOString(),
       sentAt: null,
@@ -2116,21 +2235,32 @@ export class WhatsAppService {
 
   async previewCampaignAudience(
     workspaceId: string,
-    filter: { tags?: string[]; status?: string[]; source?: string[]; selectedContactIds?: string[] },
+    filter: CampaignFilter,
   ): Promise<{ count: number; sample: Array<{ id: string; name: string; phone: string }> }> {
+    const normalizedFilter = this.normalizeCampaignFilter(filter || {});
+    const directRecipients = normalizedFilter.recipients || [];
+    if (directRecipients.length > 0) {
+      return {
+        count: directRecipients.length,
+        sample: directRecipients.slice(0, 10).map((recipient, index) => ({
+          id: `manual_${index + 1}`,
+          name: `${recipient.firstName || ''} ${recipient.lastName || ''}`.trim() || 'Direct recipient',
+          phone: recipient.phone,
+        })),
+      };
+    }
+
     const where: any = { workspaceId };
-    const selectedIds = Array.isArray(filter.selectedContactIds)
-      ? Array.from(new Set(filter.selectedContactIds.filter(Boolean)))
-      : [];
-    if (filter.status?.length) where.status = In(filter.status);
-    if (filter.source?.length) where.source = In(filter.source);
+    const selectedIds = normalizedFilter.selectedContactIds || [];
+    if (normalizedFilter.status?.length) where.status = In(normalizedFilter.status);
+    if (normalizedFilter.source?.length) where.source = In(normalizedFilter.source);
     if (selectedIds.length) where.id = In(selectedIds);
 
     let contacts = await this.contactRepository.find({ where, take: 1000 });
-    if (filter.tags?.length) {
+    if (normalizedFilter.tags?.length) {
       contacts = contacts.filter(c => {
         const contactTags = c.tags || [];
-        return filter.tags!.every(t => contactTags.includes(t));
+        return normalizedFilter.tags!.every(t => contactTags.includes(t));
       });
     }
     contacts = contacts.filter(c => c.phone);
@@ -2147,12 +2277,12 @@ export class WhatsAppService {
 
   async sendCampaign(workspaceId: string, campaignId: string): Promise<any> {
     const integration = await this.findIntegrationForWorkspace(workspaceId);
-    if (!integration) throw new Error('WhatsApp integration not found');
+    if (!integration) throw new BadRequestException('WhatsApp integration not found');
 
     const campaigns: any[] = integration.config?.campaigns || [];
     const campaign = campaigns.find((c: any) => c.id === campaignId);
-    if (!campaign) throw new Error('Campaign not found');
-    if (campaign.status === 'sent') throw new Error('Campaign already sent');
+    if (!campaign) throw new NotFoundException('Campaign not found');
+    if (campaign.status === 'sent') throw new BadRequestException('Campaign already sent');
 
     campaign.status = 'sending';
     await this.integrationRepository.save(integration);
@@ -2175,9 +2305,9 @@ export class WhatsAppService {
 
       this.logger.log(`Campaign "${campaign.name}" sent: ${results.sent}/${results.total}`);
       return { ...campaign, detailedResults: results.results };
-    } catch (err) {
+    } catch (err: any) {
       campaign.status = 'failed';
-      campaign.results = { error: err.message };
+      campaign.results = { error: this.getErrorMessage(err) };
       await this.integrationRepository.save(integration);
       throw err;
     }

@@ -74,6 +74,14 @@ interface WhatsAppAudiencePreview {
   sample: Array<{ id: string; name: string; phone: string }>;
 }
 
+type WhatsAppAudienceMode = 'crm_filters' | 'direct_list';
+
+interface CampaignRecipient {
+  phone: string;
+  firstName?: string;
+  lastName?: string;
+}
+
 interface CsvImportRow {
   phone: string;
   firstName?: string;
@@ -115,6 +123,23 @@ const csvFirstNameHeaders = ['first_name', 'firstname', 'first', 'name', 'prenum
 const csvLastNameHeaders = ['last_name', 'lastname', 'last', 'surname', 'nume'];
 
 const normalizeCsvHeader = (value: string) => value.toLowerCase().trim().replace(/\s+/g, '_');
+const normalizeRecipientKey = (phone: string) => phone.replace(/[^0-9+]/g, '').trim();
+
+const dedupeRecipients = (rows: CampaignRecipient[]): CampaignRecipient[] => {
+  const byPhone = new Map<string, CampaignRecipient>();
+  for (const row of rows) {
+    const rawPhone = String(row.phone || '').trim();
+    if (!rawPhone) continue;
+    const key = normalizeRecipientKey(rawPhone);
+    if (!key || key.length < 7) continue;
+    byPhone.set(key, {
+      phone: rawPhone,
+      firstName: String(row.firstName || '').trim() || undefined,
+      lastName: String(row.lastName || '').trim() || undefined,
+    });
+  }
+  return Array.from(byPhone.values());
+};
 
 export default function EmailCampaignsPage() {
   const [activeChannel, setActiveChannel] = useState<CampaignChannel>('email');
@@ -142,6 +167,10 @@ export default function EmailCampaignsPage() {
   const [audiencePreview, setAudiencePreview] = useState<WhatsAppAudiencePreview | null>(null);
   const [isPreviewingAudience, setIsPreviewingAudience] = useState(false);
   const [whatsAppFormError, setWhatsAppFormError] = useState('');
+  const [whatsAppAudienceMode, setWhatsAppAudienceMode] = useState<WhatsAppAudienceMode>('crm_filters');
+  const [manualRecipients, setManualRecipients] = useState<CampaignRecipient[]>([]);
+  const [manualRecipientsInput, setManualRecipientsInput] = useState('');
+  const [manualRecipientsError, setManualRecipientsError] = useState('');
   const [isCreatingWhatsAppCampaign, setIsCreatingWhatsAppCampaign] = useState(false);
   const [isSendingWhatsAppCampaign, setIsSendingWhatsAppCampaign] = useState<string | null>(null);
 
@@ -283,13 +312,97 @@ export default function EmailCampaignsPage() {
     setAudiencePreview(null);
   };
 
+  const addManualRecipientsFromInput = () => {
+    const chunks = manualRecipientsInput
+      .split(/[\n,;]+/)
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+
+    if (!chunks.length) {
+      setManualRecipientsError('Paste at least one phone number');
+      return;
+    }
+
+    const rows = chunks.map((phone) => ({ phone }));
+    const merged = dedupeRecipients([...manualRecipients, ...rows]);
+
+    if (!merged.length) {
+      setManualRecipientsError('No valid phone numbers found');
+      return;
+    }
+
+    setManualRecipients(merged);
+    setManualRecipientsInput('');
+    setManualRecipientsError('');
+    setAudiencePreview(null);
+  };
+
+  const removeManualRecipient = (phone: string) => {
+    const keyToRemove = normalizeRecipientKey(phone);
+    setManualRecipients((prev) => prev.filter((recipient) => normalizeRecipientKey(recipient.phone) !== keyToRemove));
+    setAudiencePreview(null);
+  };
+
+  const handleManualRecipientsCsv = (file: File) => {
+    Papa.parse<Record<string, unknown>>(file, {
+      header: true,
+      skipEmptyLines: true,
+      complete: (result) => {
+        const fields = Array.isArray(result.meta.fields) ? result.meta.fields : [];
+        const headerMap = new Map<string, string>();
+        for (const field of fields) {
+          headerMap.set(normalizeCsvHeader(field), field);
+        }
+
+        const phoneHeader = csvPhoneHeaders.map((candidate) => headerMap.get(candidate)).find(Boolean);
+        const firstNameHeader = csvFirstNameHeaders.map((candidate) => headerMap.get(candidate)).find(Boolean);
+        const lastNameHeader = csvLastNameHeaders.map((candidate) => headerMap.get(candidate)).find(Boolean);
+
+        if (!phoneHeader) {
+          setManualRecipientsError('CSV must contain a phone column (phone, telefon, number, mobile)');
+          return;
+        }
+
+        const rows: CampaignRecipient[] = [];
+        for (const row of result.data || []) {
+          const phone = String(row[phoneHeader] ?? '').trim();
+          if (!phone) continue;
+          const firstName = firstNameHeader ? String(row[firstNameHeader] ?? '').trim() : '';
+          const lastName = lastNameHeader ? String(row[lastNameHeader] ?? '').trim() : '';
+          rows.push({
+            phone,
+            firstName: firstName || undefined,
+            lastName: lastName || undefined,
+          });
+        }
+
+        const merged = dedupeRecipients([...manualRecipients, ...rows]);
+        if (!merged.length) {
+          setManualRecipientsError('No valid recipients found in CSV');
+          return;
+        }
+
+        setManualRecipients(merged);
+        setManualRecipientsError('');
+        setAudiencePreview(null);
+      },
+      error: (error) => {
+        setManualRecipientsError(`Failed to parse CSV: ${error.message}`);
+      },
+    });
+  };
+
   const previewWhatsAppAudience = async () => {
+    const payload = whatsAppAudienceMode === 'direct_list'
+      ? { recipients: manualRecipients }
+      : {
+          tags: whatsAppTags.length ? whatsAppTags : undefined,
+          status: whatsAppStatuses.length ? whatsAppStatuses : undefined,
+        };
+
     setIsPreviewingAudience(true);
     try {
-      const res = await api.post('/integrations/whatsapp/campaigns/preview-audience', {
-        tags: whatsAppTags.length ? whatsAppTags : undefined,
-        status: whatsAppStatuses.length ? whatsAppStatuses : undefined,
-      });
+      const res = await api.post('/integrations/whatsapp/campaigns/preview-audience', payload);
       setAudiencePreview(res.data);
     } catch (err) {
       console.error('Failed to preview WhatsApp audience', err);
@@ -306,6 +419,10 @@ export default function EmailCampaignsPage() {
     setWhatsAppStatuses([]);
     setAudiencePreview(null);
     setWhatsAppFormError('');
+    setWhatsAppAudienceMode('crm_filters');
+    setManualRecipients([]);
+    setManualRecipientsInput('');
+    setManualRecipientsError('');
     setShowWhatsAppForm(false);
     if (approvedTemplates[0]) {
       setWhatsAppTemplate(approvedTemplates[0].name);
@@ -325,18 +442,26 @@ export default function EmailCampaignsPage() {
       setWhatsAppFormError('Template is required');
       return;
     }
+    if (whatsAppAudienceMode === 'direct_list' && manualRecipients.length === 0) {
+      setWhatsAppFormError('Add at least one recipient for direct list sending');
+      return;
+    }
 
     setIsCreatingWhatsAppCampaign(true);
     setWhatsAppFormError('');
     try {
+      const filterPayload = whatsAppAudienceMode === 'direct_list'
+        ? { recipients: manualRecipients }
+        : {
+            tags: whatsAppTags.length ? whatsAppTags : undefined,
+            status: whatsAppStatuses.length ? whatsAppStatuses : undefined,
+          };
+
       const createRes = await api.post('/integrations/whatsapp/campaigns', {
         name: whatsAppName.trim(),
         templateName: whatsAppTemplate.trim(),
         language: whatsAppLanguage.trim() || 'en_US',
-        filter: {
-          tags: whatsAppTags.length ? whatsAppTags : undefined,
-          status: whatsAppStatuses.length ? whatsAppStatuses : undefined,
-        },
+        filter: filterPayload,
       });
 
       const createdCampaign = createRes.data as WhatsAppCampaign;
@@ -716,61 +841,180 @@ export default function EmailCampaignsPage() {
                     </div>
 
                     <div>
-                      <label className="block text-xs font-medium text-gray-700 mb-1">Filter by Tags</label>
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="text"
-                          value={whatsAppTagInput}
-                          onChange={(e) => setWhatsAppTagInput(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              e.preventDefault();
-                              addTag();
-                            }
-                          }}
-                          placeholder="type tag and press Enter"
-                          className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
-                        />
+                      <label className="block text-xs font-medium text-gray-700 mb-1">Audience source</label>
+                      <div className="inline-flex rounded-xl border border-gray-200 bg-white p-1">
                         <button
                           type="button"
-                          onClick={addTag}
-                          className="px-3 py-2 rounded-xl border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-100"
+                          onClick={() => {
+                            setWhatsAppAudienceMode('crm_filters');
+                            setAudiencePreview(null);
+                          }}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                            whatsAppAudienceMode === 'crm_filters'
+                              ? 'bg-green-600 text-white'
+                              : 'text-gray-600 hover:bg-gray-100'
+                          }`}
                         >
-                          Add
+                          CRM filters
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setWhatsAppAudienceMode('direct_list');
+                            setAudiencePreview(null);
+                          }}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                            whatsAppAudienceMode === 'direct_list'
+                              ? 'bg-green-600 text-white'
+                              : 'text-gray-600 hover:bg-gray-100'
+                          }`}
+                        >
+                          Direct list (no CRM save)
                         </button>
                       </div>
-                      {whatsAppTags.length > 0 && (
-                        <div className="flex flex-wrap gap-1.5 mt-2">
-                          {whatsAppTags.map((tag) => (
-                            <span key={tag} className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">
-                              {tag}
-                              <button onClick={() => setWhatsAppTags((prev) => prev.filter((entry) => entry !== tag))}>
-                                <X className="h-3 w-3" />
-                              </button>
-                            </span>
-                          ))}
-                        </div>
-                      )}
                     </div>
 
-                    <div>
-                      <label className="block text-xs font-medium text-gray-700 mb-1">Filter by Contact Status</label>
-                      <div className="flex flex-wrap gap-1.5">
-                        {allStatuses.map((status) => (
-                          <button
-                            key={status}
-                            onClick={() => toggleWhatsAppStatus(status)}
-                            className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
-                              whatsAppStatuses.includes(status)
-                                ? 'bg-green-600 text-white'
-                                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                            }`}
-                          >
-                            {status}
-                          </button>
-                        ))}
+                    {whatsAppAudienceMode === 'crm_filters' ? (
+                      <>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-700 mb-1">Filter by Tags</label>
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="text"
+                              value={whatsAppTagInput}
+                              onChange={(e) => setWhatsAppTagInput(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.preventDefault();
+                                  addTag();
+                                }
+                              }}
+                              placeholder="type tag and press Enter"
+                              className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                            />
+                            <button
+                              type="button"
+                              onClick={addTag}
+                              className="px-3 py-2 rounded-xl border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-100"
+                            >
+                              Add
+                            </button>
+                          </div>
+                          {whatsAppTags.length > 0 && (
+                            <div className="flex flex-wrap gap-1.5 mt-2">
+                              {whatsAppTags.map((tag) => (
+                                <span key={tag} className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">
+                                  {tag}
+                                  <button onClick={() => setWhatsAppTags((prev) => prev.filter((entry) => entry !== tag))}>
+                                    <X className="h-3 w-3" />
+                                  </button>
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-medium text-gray-700 mb-1">Filter by Contact Status</label>
+                          <div className="flex flex-wrap gap-1.5">
+                            {allStatuses.map((status) => (
+                              <button
+                                key={status}
+                                onClick={() => toggleWhatsAppStatus(status)}
+                                className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                                  whatsAppStatuses.includes(status)
+                                    ? 'bg-green-600 text-white'
+                                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                                }`}
+                              >
+                                {status}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="space-y-3 rounded-xl border border-gray-200 bg-white p-3">
+                        <div>
+                          <label className="block text-xs font-medium text-gray-700 mb-1">Phone list (one per line)</label>
+                          <textarea
+                            value={manualRecipientsInput}
+                            onChange={(e) => setManualRecipientsInput(e.target.value)}
+                            placeholder="+40712345678&#10;+40722111222"
+                            rows={4}
+                            className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                          />
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={addManualRecipientsFromInput}
+                              className="px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-medium text-gray-700 hover:bg-gray-100"
+                            >
+                              Add numbers
+                            </button>
+                            <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-dashed border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-100">
+                              CSV list
+                              <input
+                                type="file"
+                                accept=".csv,text/csv"
+                                className="hidden"
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0];
+                                  if (file) handleManualRecipientsCsv(file);
+                                }}
+                              />
+                            </label>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setManualRecipients([]);
+                                setAudiencePreview(null);
+                              }}
+                              className="px-3 py-1.5 rounded-lg text-xs font-medium text-gray-500 hover:text-red-600"
+                            >
+                              Clear list
+                            </button>
+                          </div>
+                          {manualRecipientsError && <p className="text-xs text-red-600 mt-2">{manualRecipientsError}</p>}
+                        </div>
+
+                        <div>
+                          <p className="text-xs font-medium text-gray-700 mb-1">Selected recipients: {manualRecipients.length}</p>
+                          {manualRecipients.length === 0 ? (
+                            <p className="text-xs text-gray-400">No recipients added yet.</p>
+                          ) : (
+                            <div className="max-h-36 overflow-y-auto rounded-lg border border-gray-100">
+                              <table className="w-full text-xs">
+                                <thead className="bg-gray-50 sticky top-0">
+                                  <tr>
+                                    <th className="text-left px-2 py-1 font-medium text-gray-500">Phone</th>
+                                    <th className="text-left px-2 py-1 font-medium text-gray-500">Name</th>
+                                    <th className="text-right px-2 py-1 font-medium text-gray-500">Remove</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-gray-100">
+                                  {manualRecipients.map((recipient) => (
+                                    <tr key={normalizeRecipientKey(recipient.phone)}>
+                                      <td className="px-2 py-1.5 font-mono">{recipient.phone}</td>
+                                      <td className="px-2 py-1.5">{`${recipient.firstName || ''} ${recipient.lastName || ''}`.trim() || '-'}</td>
+                                      <td className="px-2 py-1.5 text-right">
+                                        <button
+                                          type="button"
+                                          onClick={() => removeManualRecipient(recipient.phone)}
+                                          className="text-gray-400 hover:text-red-500"
+                                        >
+                                          <X className="h-3.5 w-3.5 inline-block" />
+                                        </button>
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                        </div>
                       </div>
-                    </div>
+                    )}
 
                     <div className="flex items-center gap-3">
                       <button
@@ -784,7 +1028,7 @@ export default function EmailCampaignsPage() {
                       </button>
                       {audiencePreview && (
                         <p className="text-sm font-semibold text-green-700">
-                          {audiencePreview.count} contacts matched
+                          {audiencePreview.count} {whatsAppAudienceMode === 'direct_list' ? 'recipients ready' : 'contacts matched'}
                         </p>
                       )}
                     </div>
