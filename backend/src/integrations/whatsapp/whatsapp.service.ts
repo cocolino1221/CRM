@@ -515,24 +515,69 @@ export class WhatsAppService {
   }
 
   private async findIntegrationForPhone(phoneNumberId: string): Promise<Integration | null> {
-    // Accept any non-disabled/non-expired integration — ACTIVE, PENDING, ERROR all work
+    const normalizedPhoneNumberId = String(phoneNumberId || '').trim();
+    if (!normalizedPhoneNumberId) return null;
+
     const integrations = await this.integrationRepository.find({
       where: { type: IntegrationType.WHATSAPP },
+      order: { createdAt: 'ASC' },
     });
 
-    const usable = integrations.filter((integration) => this.isIntegrationUsable(integration));
-
-    // First try exact match on phoneNumberId
-    for (const integration of usable) {
+    const exactMatches = integrations.filter((integration) => {
       const storedId = this.getCredentials(this.getIntegrationCredentials(integration), false).phoneNumberId;
-      if (storedId && storedId === phoneNumberId) return integration;
+      return !!storedId && storedId === normalizedPhoneNumberId;
+    });
+
+    if (!exactMatches.length) return null;
+
+    const usableMatches = exactMatches.filter((integration) => this.isIntegrationUsable(integration));
+    if (usableMatches.length === 1) return usableMatches[0];
+
+    if (usableMatches.length > 1) {
+      const conflictedWorkspaces = Array.from(new Set(usableMatches.map((integration) => integration.workspaceId)));
+      this.logger.error(
+        `[WebhookRouting] phoneNumberId "${normalizedPhoneNumberId}" is connected to multiple active workspaces: ${conflictedWorkspaces.join(', ')}`,
+      );
+      return null;
     }
 
-    // Fall back to first usable integration
-    if (usable.length > 0) return usable[0];
+    return null;
+  }
 
-    // Last resort: any WhatsApp integration
-    return integrations[0] || null;
+  private async assertPhoneNumbersAvailableForWorkspace(
+    workspaceId: string,
+    phoneNumberIds: string[],
+  ): Promise<void> {
+    const requestedPhoneNumberIds = new Set(
+      phoneNumberIds
+        .map((phoneNumberId) => String(phoneNumberId || '').trim())
+        .filter((phoneNumberId) => phoneNumberId.length > 0),
+    );
+
+    if (!requestedPhoneNumberIds.size) return;
+
+    const integrations = await this.integrationRepository.find({
+      where: { type: IntegrationType.WHATSAPP },
+      order: { createdAt: 'ASC' },
+    });
+
+    const conflicts = new Map<string, string>();
+    for (const integration of integrations) {
+      if (integration.workspaceId === workspaceId) continue;
+      if (!this.isIntegrationUsable(integration)) continue;
+
+      const storedPhoneNumberId = this.getCredentials(this.getIntegrationCredentials(integration), false).phoneNumberId;
+      if (!storedPhoneNumberId || !requestedPhoneNumberIds.has(storedPhoneNumberId)) continue;
+
+      conflicts.set(storedPhoneNumberId, integration.workspaceId);
+    }
+
+    if (conflicts.size > 0) {
+      const conflictedNumbers = Array.from(conflicts.keys()).join(', ');
+      throw new BadRequestException(
+        `WhatsApp number(s) already connected to another workspace: ${conflictedNumbers}`,
+      );
+    }
   }
 
   private async findContactByPhone(workspaceId: string, phone?: string): Promise<Contact | null> {
@@ -3222,6 +3267,11 @@ export class WhatsAppService {
       this.logger.error(`[EmbeddedSignup] WABA fetch failed: ${err.message}`);
       throw new BadRequestException('Failed to retrieve WhatsApp account info: ' + err.message);
     }
+
+    await this.assertPhoneNumbersAvailableForWorkspace(
+      workspaceId,
+      phones.map((phone) => phone.id),
+    );
 
     // 3. Subscribe the WABA to our app's webhooks
     try {
