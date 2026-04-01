@@ -127,12 +127,6 @@ export default function IntegrationsPage() {
       color: 'from-green-500 to-emerald-500',
       connected: false,
       features: ['Bulk messaging', 'Template messages', 'Two-way chat', 'Media sharing'],
-      configFields: [
-        { name: 'phoneNumberId', label: 'Phone Number ID', type: 'text', required: true, placeholder: '1234567890123456', helpText: 'Found in Meta for Developers → Your App → WhatsApp → API Setup' },
-        { name: 'accessToken', label: 'Access Token', type: 'password', required: true, placeholder: 'EAAxxxxxxxx...', helpText: 'Permanent access token from Meta App Settings → System Users' },
-        { name: 'verifyToken', label: 'Verify Token', type: 'text', required: true, placeholder: 'my-secret-verify-token', helpText: 'A string you choose — enter the same value in Meta webhook settings' },
-        { name: 'wabaId', label: 'WABA ID (optional)', type: 'text', required: false, placeholder: '123456789012345', helpText: 'WhatsApp Business Account ID — needed for template management. Found in Meta Business Suite → Settings → Business Account.' },
-      ],
     },
     {
       id: 'twilio',
@@ -542,8 +536,30 @@ export default function IntegrationsPage() {
           placeholder: 'https://app.payfunnels.com',
           helpText: 'Necesar daca nu folosesti API URL, ca fallback pentru generarea linkurilor de plata din CRM.',
         },
-        { name: 'apiKey', label: 'API Key', type: 'password', required: true, placeholder: 'Your PayFunnels API key' },
-        { name: 'accountId', label: 'Account ID', type: 'text', required: true, placeholder: 'Your account ID' },
+        {
+          name: 'apiKey',
+          label: 'API Key (x-pf-api-key)',
+          type: 'password',
+          required: false,
+          placeholder: 'Your PayFunnels API key',
+          helpText: 'Optional if you use Bearer access token authentication.',
+        },
+        {
+          name: 'accessToken',
+          label: 'Access Token (Bearer)',
+          type: 'password',
+          required: false,
+          placeholder: 'Bearer token',
+          helpText: 'Optional if you authenticate only with API key header.',
+        },
+        {
+          name: 'accountId',
+          label: 'Account ID (optional)',
+          type: 'text',
+          required: false,
+          placeholder: 'Your account ID',
+          helpText: 'Optional. Leave empty if your API key/token is already scoped to one account.',
+        },
         { name: 'createPaymentPath', label: 'Create Payment Path', type: 'text', required: false, placeholder: '/payments/links' },
         { name: 'listPaymentsPath', label: 'List Payments Path', type: 'text', required: false, placeholder: '/payments' },
         { name: 'listSubscriptionsPath', label: 'List Subscriptions Path', type: 'text', required: false, placeholder: '/subscriptions' },
@@ -792,6 +808,8 @@ export default function IntegrationsPage() {
     return matchesSearch && matchesFilter;
   });
 
+  const showManualConfigForm = Boolean(selectedIntegration && selectedIntegration.id !== 'whatsapp');
+
   const buildPrefilledConfigData = (integration: Integration, existing?: any): Record<string, string> => {
     const result: Record<string, string> = {};
     const fields = integration.configFields || [];
@@ -886,6 +904,7 @@ export default function IntegrationsPage() {
 
     // For manual config integrations, show modal
     setSelectedIntegration(integration);
+    setModalError('');
     setConfigData({});
   };
 
@@ -964,6 +983,7 @@ export default function IntegrationsPage() {
 
   const handleCloseModal = () => {
     setSelectedIntegration(null);
+    setModalError('');
     setConfigData({});
   };
 
@@ -1050,6 +1070,14 @@ export default function IntegrationsPage() {
     e.preventDefault();
 
     if (!selectedIntegration) return;
+    if (selectedIntegration.id === 'payfunnels') {
+      const apiKey = String(configData.apiKey || '').trim();
+      const accessToken = String(configData.accessToken || '').trim();
+      if (!apiKey && !accessToken) {
+        setModalError('Pentru PayFunnels trebuie sa completezi API Key sau Access Token.');
+        return;
+      }
+    }
 
     setIsSubmitting(true);
     setModalError('');
@@ -1130,7 +1158,7 @@ export default function IntegrationsPage() {
 
       if (selectedIntegration.id === 'whatsapp') {
         const waWebhookUrl = `${apiUrl}/api/v1/integrations/whatsapp/webhook`;
-        alert(`WhatsApp integration connected!\n\nWebhook URL for Meta for Developers:\n${waWebhookUrl}\n\nPaste this URL in Meta → App → WhatsApp → Configuration → Webhook URL.`);
+        alert(`WhatsApp integration connected!\n\nWebhook URL:\n${waWebhookUrl}`);
       } else if (selectedIntegration.id === 'esemneaza' && createdIntegrationId) {
         const webhookUrl = `${apiUrl}/api/v1/documents/webhooks/esemneaza/${createdIntegrationId}`;
         alert(`eSemneaza connected!\n\nWebhook URL:\n${webhookUrl}\n\nConfigure this URL in eSemneaza for signature status callbacks.`);
@@ -1601,7 +1629,7 @@ export default function IntegrationsPage() {
               </div>
             </div>
 
-            {/* Meta Embedded Signup for WhatsApp */}
+            {/* Quick Signup for WhatsApp */}
             {selectedIntegration.id === 'whatsapp' && (
               <EmbeddedSignupSection
                 onSuccess={() => {
@@ -1612,139 +1640,136 @@ export default function IntegrationsPage() {
               />
             )}
 
-            {/* Configuration Form */}
-            <form onSubmit={handleSubmitConfig} className="space-y-6">
-              {selectedIntegration.id === 'whatsapp' && (
-                <div className="border-t border-gray-200 pt-4">
-                  <p className="text-xs text-gray-500 mb-3 font-medium uppercase tracking-wider">Or connect manually (Advanced)</p>
+            {/* Error Message */}
+            {modalError && (
+              <div className="mt-5 flex items-start gap-3 rounded-xl bg-red-50 border border-red-200 p-4">
+                <AlertCircle className="h-5 w-5 text-red-600 mt-0.5" />
+                <div className="flex-1">
+                  <p className="text-sm font-semibold text-red-900">Connection Failed</p>
+                  <p className="text-sm text-red-700 mt-1">{modalError}</p>
                 </div>
-              )}
-              {/* Error Message */}
-              {modalError && (
-                <div className="flex items-start gap-3 rounded-xl bg-red-50 border border-red-200 p-4">
-                  <AlertCircle className="h-5 w-5 text-red-600 mt-0.5" />
-                  <div className="flex-1">
-                    <p className="text-sm font-semibold text-red-900">Connection Failed</p>
-                    <p className="text-sm text-red-700 mt-1">{modalError}</p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setModalError('')}
-                    className="text-red-400 hover:text-red-600 transition-colors"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
-                </div>
-              )}
-
-              {selectedIntegration.configFields?.map((field) => (
-                <div key={field.name}>
-                  <label htmlFor={field.name} className="block text-sm font-semibold text-gray-700 mb-2">
-                    {field.label}
-                    {field.required && <span className="text-red-500 ml-1">*</span>}
-                  </label>
-                  <div className="relative">
-                    {field.type === 'text' && <Key className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />}
-                    {field.type === 'password' && <Lock className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />}
-                    {field.type === 'url' && <LinkIcon className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />}
-
-                    {field.type === 'textarea' ? (
-                      <textarea
-                        id={field.name}
-                        required={field.required}
-                        disabled={isSubmitting}
-                        value={configData[field.name] || ''}
-                        onChange={(e) => handleConfigChange(field.name, e.target.value)}
-                        placeholder={field.placeholder}
-                        rows={4}
-                        className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 transition-all outline-none resize-none disabled:bg-gray-50 disabled:cursor-not-allowed"
-                      />
-                    ) : field.type === 'select' ? (
-                      <select
-                        id={field.name}
-                        required={field.required}
-                        disabled={isSubmitting}
-                        value={configData[field.name] || ''}
-                        onChange={(e) => handleConfigChange(field.name, e.target.value)}
-                        className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 transition-all outline-none disabled:bg-gray-50 disabled:cursor-not-allowed"
-                      >
-                        <option value="">Select...</option>
-                        {field.options?.map((option) => (
-                          <option key={option.value} value={option.value}>
-                            {option.label}
-                          </option>
-                        ))}
-                      </select>
-                    ) : (
-                      <input
-                        id={field.name}
-                        type={field.type}
-                        required={field.required}
-                        disabled={isSubmitting}
-                        value={configData[field.name] || ''}
-                        onChange={(e) => handleConfigChange(field.name, e.target.value)}
-                        placeholder={field.placeholder}
-                        className={`w-full py-3 rounded-xl border border-gray-300 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 transition-all outline-none disabled:bg-gray-50 disabled:cursor-not-allowed ${
-                          field.type === 'text' || field.type === 'password' || field.type === 'url' ? 'pl-12 pr-4' : 'px-4'
-                        }`}
-                      />
-                    )}
-                  </div>
-                  {field.helpText && (
-                    <p className="mt-2 text-xs text-gray-500">{field.helpText}</p>
-                  )}
-                </div>
-              ))}
-
-              {/* WhatsApp webhook setup info */}
-              {managingIntegration?.id === 'whatsapp' && (
-                <div className="rounded-xl border border-green-200 bg-green-50 p-4">
-                  <p className="text-xs font-semibold text-green-800 mb-2">Webhook URL for Meta for Developers</p>
-                  <div className="flex items-center gap-2">
-                    <code className="flex-1 text-xs bg-white border border-green-200 rounded-lg px-3 py-2 text-green-900 break-all">
-                      {(process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api/v1').replace('/api/v1', '')}/api/v1/integrations/whatsapp/webhook
-                    </code>
-                    <button
-                      type="button"
-                      onClick={() => navigator.clipboard?.writeText(`${(process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api/v1').replace('/api/v1', '')}/api/v1/integrations/whatsapp/webhook`)}
-                      className="p-2 rounded-lg bg-white border border-green-200 hover:bg-green-100 transition-all"
-                      title="Copy webhook URL"
-                    >
-                      <Copy className="h-4 w-4 text-green-700" />
-                    </button>
-                  </div>
-                  <p className="text-xs text-green-700 mt-2">
-                    Go to <strong>Meta for Developers → App → WhatsApp → Configuration</strong> and paste this URL as the Callback URL. Set the Verify Token to match what you enter above.
-                  </p>
-                </div>
-              )}
-
-              {/* Action Buttons */}
-              <div className="flex gap-4 pt-4">
                 <button
                   type="button"
-                  onClick={handleCloseModal}
-                  disabled={isSubmitting}
-                  className="flex-1 rounded-xl border border-gray-300 bg-white px-6 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                  onClick={() => setModalError('')}
+                  className="text-red-400 hover:text-red-600 transition-colors"
                 >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={isSubmitting}
-                  className="flex-1 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-6 py-3 text-sm font-semibold text-white shadow-lg hover:shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                >
-                  {isSubmitting ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      Connecting...
-                    </>
-                  ) : (
-                    `Connect ${selectedIntegration.name}`
-                  )}
+                  <X className="h-4 w-4" />
                 </button>
               </div>
-            </form>
+            )}
+
+            {/* Configuration Form */}
+            {showManualConfigForm && (
+              <form onSubmit={handleSubmitConfig} className="space-y-6 mt-5">
+                {selectedIntegration.configFields?.map((field) => (
+                  <div key={field.name}>
+                    <label htmlFor={field.name} className="block text-sm font-semibold text-gray-700 mb-2">
+                      {field.label}
+                      {field.required && <span className="text-red-500 ml-1">*</span>}
+                    </label>
+                    <div className="relative">
+                      {field.type === 'text' && <Key className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />}
+                      {field.type === 'password' && <Lock className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />}
+                      {field.type === 'url' && <LinkIcon className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />}
+
+                      {field.type === 'textarea' ? (
+                        <textarea
+                          id={field.name}
+                          required={field.required}
+                          disabled={isSubmitting}
+                          value={configData[field.name] || ''}
+                          onChange={(e) => handleConfigChange(field.name, e.target.value)}
+                          placeholder={field.placeholder}
+                          rows={4}
+                          className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 transition-all outline-none resize-none disabled:bg-gray-50 disabled:cursor-not-allowed"
+                        />
+                      ) : field.type === 'select' ? (
+                        <select
+                          id={field.name}
+                          required={field.required}
+                          disabled={isSubmitting}
+                          value={configData[field.name] || ''}
+                          onChange={(e) => handleConfigChange(field.name, e.target.value)}
+                          className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 transition-all outline-none disabled:bg-gray-50 disabled:cursor-not-allowed"
+                        >
+                          <option value="">Select...</option>
+                          {field.options?.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <input
+                          id={field.name}
+                          type={field.type}
+                          required={field.required}
+                          disabled={isSubmitting}
+                          value={configData[field.name] || ''}
+                          onChange={(e) => handleConfigChange(field.name, e.target.value)}
+                          placeholder={field.placeholder}
+                          className={`w-full py-3 rounded-xl border border-gray-300 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 transition-all outline-none disabled:bg-gray-50 disabled:cursor-not-allowed ${
+                            field.type === 'text' || field.type === 'password' || field.type === 'url' ? 'pl-12 pr-4' : 'px-4'
+                          }`}
+                        />
+                      )}
+                    </div>
+                    {field.helpText && (
+                      <p className="mt-2 text-xs text-gray-500">{field.helpText}</p>
+                    )}
+                  </div>
+                ))}
+
+                {/* WhatsApp webhook setup info */}
+                {selectedIntegration.id === 'whatsapp' && (
+                  <div className="rounded-xl border border-green-200 bg-green-50 p-4">
+                    <p className="text-xs font-semibold text-green-800 mb-2">Webhook URL (advanced setup)</p>
+                    <div className="flex items-center gap-2">
+                      <code className="flex-1 text-xs bg-white border border-green-200 rounded-lg px-3 py-2 text-green-900 break-all">
+                        {(process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api/v1').replace('/api/v1', '')}/api/v1/integrations/whatsapp/webhook
+                      </code>
+                      <button
+                        type="button"
+                        onClick={() => navigator.clipboard?.writeText(`${(process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api/v1').replace('/api/v1', '')}/api/v1/integrations/whatsapp/webhook`)}
+                        className="p-2 rounded-lg bg-white border border-green-200 hover:bg-green-100 transition-all"
+                        title="Copy webhook URL"
+                      >
+                        <Copy className="h-4 w-4 text-green-700" />
+                      </button>
+                    </div>
+                    <p className="text-xs text-green-700 mt-2">
+                      Paste this callback URL in your WhatsApp webhook settings and use the same verify token configured above.
+                    </p>
+                  </div>
+                )}
+
+                {/* Action Buttons */}
+                <div className="flex gap-4 pt-4">
+                  <button
+                    type="button"
+                    onClick={handleCloseModal}
+                    disabled={isSubmitting}
+                    className="flex-1 rounded-xl border border-gray-300 bg-white px-6 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isSubmitting}
+                    className="flex-1 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-6 py-3 text-sm font-semibold text-white shadow-lg hover:shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  >
+                    {isSubmitting ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Connecting...
+                      </>
+                    ) : (
+                      `Connect ${selectedIntegration.name}`
+                    )}
+                  </button>
+                </div>
+              </form>
+            )}
           </div>
         </div>
       )}
@@ -2157,7 +2182,7 @@ function EmbeddedSignupSection({ onSuccess, onError }: { onSuccess: () => void; 
 
   const handleEmbeddedSignup = () => {
     if (!config?.appId) {
-      onError('Meta App ID not configured on server. Please use manual setup below.');
+      onError('Quick setup is not configured on server. Contact support to enable Meta Embedded Signup.');
       return;
     }
 
@@ -2227,15 +2252,31 @@ function EmbeddedSignupSection({ onSuccess, onError }: { onSuccess: () => void; 
     }
   };
 
-  if (!config) return null;
-  if (!config.available) return null;
+  if (!config) {
+    return (
+      <div className="rounded-xl bg-green-50 border border-green-200 p-5">
+        <p className="text-xs text-green-800">Loading WhatsApp quick setup...</p>
+      </div>
+    );
+  }
+
+  if (!config.available) {
+    return (
+      <div className="rounded-xl bg-amber-50 border border-amber-200 p-5">
+        <h3 className="text-sm font-semibold text-amber-900 mb-2">Quick Setup Not Available</h3>
+        <p className="text-xs text-amber-800">
+          Quick setup is not enabled for this server yet. Contact support to activate Meta Embedded Signup.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="rounded-xl bg-green-50 border border-green-200 p-5">
-      <h3 className="text-sm font-semibold text-green-900 mb-2">Quick Setup with Meta</h3>
+      <h3 className="text-sm font-semibold text-green-900 mb-2">Quick WhatsApp Setup</h3>
       <p className="text-xs text-green-700 mb-4">
-        Connect your WhatsApp Business account instantly using Meta&apos;s Embedded Signup.
-        No need to manually copy tokens or IDs.
+        Connect your WhatsApp Business account in one step.
+        No manual token copy is needed.
       </p>
       <button
         onClick={handleEmbeddedSignup}
@@ -2247,7 +2288,7 @@ function EmbeddedSignupSection({ onSuccess, onError }: { onSuccess: () => void; 
         ) : (
           <Zap className="h-4 w-4" />
         )}
-        {isLoading ? 'Connecting...' : 'Connect with WhatsApp'}
+        {isLoading ? 'Connecting...' : 'Start quick setup'}
       </button>
     </div>
   );
