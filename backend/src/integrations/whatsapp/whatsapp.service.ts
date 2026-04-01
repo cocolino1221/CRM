@@ -124,6 +124,11 @@ interface CampaignFilter {
   recipients?: CampaignRecipient[];
 }
 
+interface BroadcastContext {
+  campaignId?: string;
+  campaignName?: string;
+}
+
 @Injectable()
 export class WhatsAppService {
   private readonly logger = new Logger(WhatsAppService.name);
@@ -1568,6 +1573,7 @@ export class WhatsAppService {
     workspaceId: string,
     filter: CampaignFilter,
     template: { name: string; language: string; params?: any[] },
+    context?: BroadcastContext,
   ): Promise<{ total: number; sent: number; failed: number; results: any[] }> {
     const normalizedFilter = this.normalizeCampaignFilter(filter);
     const directRecipients = normalizedFilter.recipients || [];
@@ -1597,7 +1603,14 @@ export class WhatsAppService {
             template.params || [],
           );
           const msgId = msgResult?.messages?.[0]?.id;
-          await this.saveOutboundActivity(phone, `[Broadcast template: ${template.name}]`, 'template', workspaceId, '', msgId);
+          await this.saveOutboundActivity(phone, `[Broadcast template: ${template.name}]`, 'template', workspaceId, '', msgId, {
+            ...(context?.campaignId || context?.campaignName ? {
+              campaignId: context?.campaignId,
+              campaignName: context?.campaignName,
+              isCampaign: true,
+              campaignAudienceType: 'direct_list',
+            } : {}),
+          });
           results.push({
             phone,
             firstName: recipient.firstName,
@@ -1653,7 +1666,14 @@ export class WhatsAppService {
           template.params || [],
         );
         const msgId = msgResult?.messages?.[0]?.id;
-        await this.saveOutboundActivity(phone, `[Broadcast template: ${template.name}]`, 'template', workspaceId, contact.ownerId || '', msgId);
+        await this.saveOutboundActivity(phone, `[Broadcast template: ${template.name}]`, 'template', workspaceId, contact.ownerId || '', msgId, {
+          ...(context?.campaignId || context?.campaignName ? {
+            campaignId: context?.campaignId,
+            campaignName: context?.campaignName,
+            isCampaign: true,
+            campaignAudienceType: 'crm_filters',
+          } : {}),
+        });
         results.push({ phone, contactId: contact.id, success: true });
         sent++;
       } catch (err: any) {
@@ -2292,6 +2312,7 @@ export class WhatsAppService {
         workspaceId,
         campaign.filter || {},
         { name: campaign.templateName, language: campaign.language },
+        { campaignId: campaign.id, campaignName: campaign.name },
       );
 
       campaign.status = 'sent';

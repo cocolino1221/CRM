@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   MessageCircle, Send, Search, Phone, User, RefreshCw, Clock,
   CheckCheck, Check, Loader2, Settings, Plus, Smile, Paperclip,
@@ -25,6 +25,10 @@ interface WhatsAppActivity {
     waId?: string;
     messageType?: string;
     messageStatus?: 'sent' | 'delivered' | 'read' | 'failed';
+    campaignId?: string;
+    campaignName?: string;
+    isCampaign?: boolean;
+    campaignAudienceType?: 'direct_list' | 'crm_filters';
     senderIntegrationId?: string;
     senderPhoneNumberId?: string;
     senderPhoneDisplay?: string;
@@ -64,6 +68,10 @@ interface Conversation {
   messages: WhatsAppActivity[];
   unreadCount: number;
   lastInboundTime: string | null;
+  hasCampaignMessages: boolean;
+  campaignIds: string[];
+  campaignNames: string[];
+  primaryCampaignName: string | null;
   assignment?: ConvAssignment;
 }
 
@@ -596,7 +604,8 @@ export default function WhatsAppPage() {
   const [sendError, setSendError] = useState('');
   const [senderAccounts, setSenderAccounts] = useState<WhatsAppSenderAccount[]>([]);
   const [selectedSenderId, setSelectedSenderId] = useState('');
-  const [convFilter, setConvFilter] = useState<'all' | 'unread' | 'assigned'>('all');
+  const [convFilter, setConvFilter] = useState<'all' | 'unread' | 'assigned' | 'campaign'>('all');
+  const [campaignConversationFilter, setCampaignConversationFilter] = useState('all');
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Mobile layout: 'list' shows conv list, 'chat' shows selected chat
@@ -881,11 +890,27 @@ export default function WhatsAppPage() {
             waId, contactName, contactId: act.contact?.id || null, contactSource, phone,
             lastMessage: act.description || '', lastMessageTime: act.occurredAt,
             messageCount: 0, messages: [], unreadCount: 0, lastInboundTime: null,
+            hasCampaignMessages: false, campaignIds: [], campaignNames: [], primaryCampaignName: null,
           });
         }
         const conv = convMap.get(waId)!;
         if (!conv.contactSource && contactSource) {
           conv.contactSource = contactSource;
+        }
+        const campaignId = String(act.metadata?.campaignId || '').trim();
+        const campaignName = String(act.metadata?.campaignName || '').trim();
+        const isCampaignMessage = act.metadata?.isCampaign === true || !!campaignId || !!campaignName;
+        if (isCampaignMessage) {
+          conv.hasCampaignMessages = true;
+          if (campaignId && !conv.campaignIds.includes(campaignId)) {
+            conv.campaignIds.push(campaignId);
+          }
+          if (campaignName && !conv.campaignNames.includes(campaignName)) {
+            conv.campaignNames.push(campaignName);
+          }
+          if (!conv.primaryCampaignName && campaignName) {
+            conv.primaryCampaignName = campaignName;
+          }
         }
         conv.messages.push(act);
         conv.messageCount++;
@@ -1522,11 +1547,37 @@ export default function WhatsAppPage() {
     return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
   };
 
+  const availableCampaignNames = useMemo(() => {
+    const names = new Set<string>();
+    for (const conv of conversations) {
+      for (const campaignName of conv.campaignNames || []) {
+        if (campaignName) names.add(campaignName);
+      }
+    }
+    return Array.from(names).sort((a, b) => a.localeCompare(b));
+  }, [conversations]);
+
+  useEffect(() => {
+    if (campaignConversationFilter === 'all') return;
+    if (availableCampaignNames.includes(campaignConversationFilter)) return;
+    setCampaignConversationFilter('all');
+  }, [availableCampaignNames, campaignConversationFilter]);
+
   const filteredConversations = conversations.filter(c => {
-    const matchesSearch = c.contactName.toLowerCase().includes(search.toLowerCase()) || c.phone.includes(search);
+    const normalizedSearch = search.toLowerCase().trim();
+    const matchesSearch = !normalizedSearch
+      || c.contactName.toLowerCase().includes(normalizedSearch)
+      || c.phone.includes(search)
+      || c.campaignNames.some((campaignName) => campaignName.toLowerCase().includes(normalizedSearch));
     if (!matchesSearch) return false;
     if (convFilter === 'unread') return c.unreadCount > 0;
     if (convFilter === 'assigned') return !!assignments[c.waId];
+    if (convFilter === 'campaign') {
+      if (!c.hasCampaignMessages) return false;
+      if (campaignConversationFilter !== 'all') {
+        return c.campaignNames.includes(campaignConversationFilter);
+      }
+    }
     return true;
   });
 
@@ -2417,14 +2468,30 @@ export default function WhatsAppPage() {
               className="w-full pl-9 pr-4 py-1.5 text-sm bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:border-green-400 focus:ring-2 focus:ring-green-100" />
           </div>
           {/* Filter tabs */}
-          <div className="flex gap-1">
-            {(['all', 'unread', 'assigned'] as const).map(f => (
+          <div className="flex flex-wrap gap-1">
+            {(['all', 'unread', 'assigned', 'campaign'] as const).map(f => (
               <button key={f} onClick={() => setConvFilter(f)}
                 className={`px-2.5 py-1 text-xs font-medium rounded-full transition-all ${convFilter === f ? 'bg-green-100 text-green-700' : 'text-gray-500 hover:bg-gray-100'}`}>
-                {f === 'all' ? 'All' : f === 'unread' ? 'Unread' : 'Assigned'}
+                {f === 'all' ? 'All' : f === 'unread' ? 'Unread' : f === 'assigned' ? 'Assigned' : 'Campaign'}
               </button>
             ))}
           </div>
+          {convFilter === 'campaign' && (
+            <div className="rounded-lg border border-gray-200 bg-gray-50 px-2 py-1.5">
+              <select
+                value={campaignConversationFilter}
+                onChange={(e) => setCampaignConversationFilter(e.target.value)}
+                className="w-full bg-white border border-gray-200 rounded-md px-2 py-1 text-xs text-gray-700 focus:outline-none focus:border-green-400"
+              >
+                <option value="all">All campaigns</option>
+                {availableCampaignNames.map((campaignName) => (
+                  <option key={campaignName} value={campaignName}>
+                    {campaignName}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
 
         <div className="flex-1 overflow-y-auto">
@@ -2488,6 +2555,18 @@ export default function WhatsAppPage() {
                         {sourceLabel && (
                           <p className="text-[11px] text-indigo-600 truncate mt-0.5">{sourceLabel}</p>
                         )}
+                        {conv.hasCampaignMessages && (
+                          <div className="flex items-center gap-1 mt-0.5">
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100">
+                              Campaign
+                            </span>
+                            {conv.primaryCampaignName && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-sky-50 text-sky-700 border border-sky-100 truncate max-w-[140px]">
+                                {conv.primaryCampaignName}
+                              </span>
+                            )}
+                          </div>
+                        )}
                         <div className="flex items-center justify-between mt-0.5">
                           <p className={`text-xs truncate ${hasUnread ? 'font-medium text-gray-700' : 'text-gray-500'}`}>{conv.lastMessage}</p>
                           {hasUnread && (
@@ -2542,6 +2621,16 @@ export default function WhatsAppPage() {
                 {selectedSourceLabel && (
                   <span className="text-[11px] px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-100">
                     {selectedSourceLabel}
+                  </span>
+                )}
+                {selectedConv.hasCampaignMessages && (
+                  <span className="text-[11px] px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100">
+                    Campaign
+                  </span>
+                )}
+                {selectedConv.primaryCampaignName && (
+                  <span className="text-[11px] px-1.5 py-0.5 rounded-full bg-sky-50 text-sky-700 border border-sky-100 max-w-[180px] truncate">
+                    {selectedConv.primaryCampaignName}
                   </span>
                 )}
                 {assignments[selectedConv.waId] && (
