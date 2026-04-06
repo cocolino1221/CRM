@@ -243,6 +243,25 @@ export class WhatsAppService {
     return usable.find((integration) => integration.status === IntegrationStatus.ACTIVE) || usable[0];
   }
 
+  private chooseAutoSendConfigIntegration(integrations: Integration[]): Integration | null {
+    if (!integrations.length) return null;
+
+    const withEnabledRules = integrations.filter((integration) => {
+      const rules = this.getAutoSendRulesFromConfig(integration.config || {});
+      return rules.some((rule) => rule.enabled);
+    });
+
+    const preferredWithRules = withEnabledRules.find((integration) =>
+      this.isIntegrationUsable(integration) && this.hasIntegrationSendCredentials(integration),
+    );
+    if (preferredWithRules) return preferredWithRules;
+
+    const defaultIntegration = this.chooseDefaultWorkspaceIntegration(integrations);
+    if (defaultIntegration) return defaultIntegration;
+
+    return integrations.find((integration) => this.isIntegrationUsable(integration)) || integrations[0];
+  }
+
   private async resolveWorkspaceSendIntegration(workspaceId: string, integrationId?: string): Promise<Integration> {
     const allIntegrations = await this.listWorkspaceWhatsAppIntegrations(workspaceId);
     if (!allIntegrations.length) {
@@ -1560,9 +1579,8 @@ export class WhatsAppService {
    * Get auto-send config for this workspace
    */
   async getAutoSend(workspaceId: string): Promise<any> {
-    const integration = await this.integrationRepository.findOne({
-      where: { type: IntegrationType.WHATSAPP, workspaceId },
-    });
+    const integrations = await this.listWorkspaceWhatsAppIntegrations(workspaceId);
+    const integration = this.chooseAutoSendConfigIntegration(integrations);
     const config = integration?.config || {};
     const legacyConfig = this.sanitizeAutoSendConfig(config.autoSend || this.getDefaultAutoSendConfig());
     const rules = this.getAutoSendRulesFromConfig(config);
@@ -1577,16 +1595,15 @@ export class WhatsAppService {
    * Save auto-send config for this workspace
    */
   async saveAutoSend(workspaceId: string, config: any): Promise<void> {
-    const integration = await this.integrationRepository.findOne({
-      where: { type: IntegrationType.WHATSAPP, workspaceId },
-    });
-    if (!integration) throw new BadRequestException('No WhatsApp integration found for this workspace');
+    const integrations = await this.listWorkspaceWhatsAppIntegrations(workspaceId);
+    if (!integrations.length) throw new BadRequestException('No WhatsApp integration found for this workspace');
 
     const rawRules = Array.isArray(config?.autoSendRules)
       ? config.autoSendRules
       : (Array.isArray(config?.rules) ? config.rules : null);
 
-    const normalizedConfig = { ...(integration.config || {}) } as any;
+    const targetIntegration = this.chooseAutoSendConfigIntegration(integrations) || integrations[0];
+    const normalizedConfig = { ...(targetIntegration.config || {}) } as any;
     if (rawRules) {
       const rules = rawRules
         .map((rule: any, index: number) => this.sanitizeAutoSendRule(rule, index))
@@ -1601,8 +1618,14 @@ export class WhatsAppService {
       normalizedConfig.autoSendRules = [this.sanitizeAutoSendRule({ ...legacyConfig, id: 'legacy', name: 'Default rule', priority: 0 }, 0)];
     }
 
-    integration.config = normalizedConfig;
-    await this.integrationRepository.save(integration);
+    for (const integration of integrations) {
+      integration.config = {
+        ...(integration.config || {}),
+        autoSend: normalizedConfig.autoSend,
+        autoSendRules: normalizedConfig.autoSendRules,
+      };
+    }
+    await this.integrationRepository.save(integrations);
     this.logger.log(`Auto-send config updated for workspace ${workspaceId}`);
   }
 
@@ -1849,18 +1872,24 @@ export class WhatsAppService {
         metadata: { contactId: contact.id },
       });
 
-      const integration = await this.integrationRepository.findOne({
-        where: { type: IntegrationType.WHATSAPP, workspaceId },
-      });
-      if (!integration) {
+      const integrations = await this.listWorkspaceWhatsAppIntegrations(workspaceId);
+      const configIntegration = this.chooseAutoSendConfigIntegration(integrations);
+      if (!configIntegration) {
         this.logger.log(`Auto-send skipped: no WhatsApp integration in workspace ${workspaceId}`);
         return;
       }
 
-      const matchedRule = this.selectAutoSendRule(contact, integration.config || {});
+      const matchedRule = this.selectAutoSendRule(contact, configIntegration.config || {});
       if (!matchedRule) {
         this.logger.log(`Auto-send skipped for contact ${contact.id}: no matching enabled rule`);
         return;
+      }
+
+      let senderIntegration: Integration;
+      try {
+        senderIntegration = await this.resolveWorkspaceSendIntegration(workspaceId, configIntegration.id);
+      } catch {
+        senderIntegration = await this.resolveWorkspaceSendIntegration(workspaceId);
       }
 
       const conditions = matchedRule.conditions || {};
@@ -1904,9 +1933,9 @@ export class WhatsAppService {
       }
 
       this.logger.log(
-        `Auto-send: rule="${matchedRule.name}" template="${templateName}" lang="${language}" to phone="${phone}" (raw="${rawPhone}") contact=${contact.id} source=${contact.source}`,
+        `Auto-send: rule="${matchedRule.name}" template="${templateName}" lang="${language}" to phone="${phone}" (raw="${rawPhone}") contact=${contact.id} source=${contact.source} senderIntegration=${senderIntegration.id}`,
       );
-      const msgResult = await this.sendMessageWithCredentials(integration.credentials || {}, {
+      const msgResult = await this.sendMessageWithCredentials(this.getIntegrationCredentials(senderIntegration), {
         to: phone,
         type: 'template',
         content: '',
@@ -1915,7 +1944,7 @@ export class WhatsAppService {
       const msgId = msgResult?.messages?.[0]?.id;
       // Save as outbound activity so it appears in the WhatsApp inbox
       const ownerId = this.isValidUuid(String(contact.ownerId || '')) ? String(contact.ownerId) : undefined;
-      const fallbackUserId = this.isValidUuid(String(integration.userId || '')) ? String(integration.userId) : undefined;
+      const fallbackUserId = this.isValidUuid(String(senderIntegration.userId || '')) ? String(senderIntegration.userId) : undefined;
       await this.saveOutboundActivity(
         phone,
         `[Auto-send template: ${templateName}]`,
@@ -1927,9 +1956,10 @@ export class WhatsAppService {
           mediaType: ['image', 'video', 'document'].includes(headerMediaType) ? headerMediaType : undefined,
           mediaId: headerMediaId || undefined,
           mediaUrl: headerMediaUrl || undefined,
+          ...this.getIntegrationSenderInfo(senderIntegration),
         },
       );
-      await this.armAfterAutoSendFlow(workspaceId, phone, integration);
+      await this.armAfterAutoSendFlow(workspaceId, phone, senderIntegration);
       await this.notifyAutoSendSuccess(workspaceId, contact, templateName, ownerId || fallbackUserId);
       this.logger.log(`Auto-send SUCCESS: template "${templateName}" sent to ${phone} for contact ${contact.id} msgId=${msgId}`);
     } catch (err) {
