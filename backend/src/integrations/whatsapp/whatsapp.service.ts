@@ -360,6 +360,40 @@ export class WhatsAppService {
       .filter((entry: string) => entry.length > 0);
   }
 
+  private isLikelyHttpUrl(value?: string): boolean {
+    if (!value) return false;
+    return /^https?:\/\//i.test(value.trim());
+  }
+
+  private normalizeHeaderMediaInput(headerMediaId?: string, headerMediaUrl?: string): { mediaId?: string; mediaUrl?: string } {
+    const rawId = String(headerMediaId || '').trim();
+    const rawUrl = String(headerMediaUrl || '').trim();
+
+    if (rawUrl) {
+      return {
+        mediaId: rawId || undefined,
+        mediaUrl: rawUrl,
+      };
+    }
+
+    if (rawId && this.isLikelyHttpUrl(rawId)) {
+      return {
+        mediaUrl: rawId,
+      };
+    }
+
+    return {
+      mediaId: rawId || undefined,
+      mediaUrl: undefined,
+    };
+  }
+
+  private isInvalidWhatsAppMediaAttachmentIdError(error: any): boolean {
+    const msg = String(error?.message || '').toLowerCase();
+    return msg.includes('media attachment id')
+      || msg.includes('not a valid whatsapp business account media');
+  }
+
   private normalizeCampaignRecipients(value: any): CampaignRecipient[] {
     if (!Array.isArray(value)) return [];
     const byPhone = new Map<string, CampaignRecipient>();
@@ -408,6 +442,10 @@ export class WhatsAppService {
     const defaults = this.getDefaultAutoSendConfig();
     const headerMediaType = String(config?.headerMediaType || '').trim().toLowerCase();
     const isValidHeaderMediaType = ['image', 'video', 'document'].includes(headerMediaType);
+    const normalizedHeaderMedia = this.normalizeHeaderMediaInput(
+      String(config?.headerMediaId || '').trim() || undefined,
+      String(config?.headerMediaUrl || '').trim() || undefined,
+    );
 
     return {
       enabled: Boolean(config?.enabled),
@@ -415,8 +453,8 @@ export class WhatsAppService {
       language: String(config?.language || defaults.language).trim() || defaults.language,
       includeNameParam: Boolean(config?.includeNameParam),
       headerMediaType: isValidHeaderMediaType ? (headerMediaType as AutoSendHeaderMediaType) : undefined,
-      headerMediaId: String(config?.headerMediaId || '').trim() || undefined,
-      headerMediaUrl: String(config?.headerMediaUrl || '').trim() || undefined,
+      headerMediaId: isValidHeaderMediaType ? normalizedHeaderMedia.mediaId : undefined,
+      headerMediaUrl: isValidHeaderMediaType ? normalizedHeaderMedia.mediaUrl : undefined,
       conditions: {
         sources: this.sanitizeStringArray(config?.conditions?.sources),
         statuses: this.sanitizeStringArray(config?.conditions?.statuses),
@@ -1910,37 +1948,101 @@ export class WhatsAppService {
       const language = rawLang === 'en' && templateName === 'hello_world' ? 'en_US' : rawLang;
       // Build template components dynamically (header/body).
       // Media header templates require runtime header params.
-      const params: any[] = [];
       const headerMediaType = String(matchedRule.headerMediaType || '').toLowerCase();
-      const headerMediaId = String(matchedRule.headerMediaId || '').trim();
-      const headerMediaUrl = String(matchedRule.headerMediaUrl || '').trim();
+      const normalizedHeaderMedia = this.normalizeHeaderMediaInput(
+        String(matchedRule.headerMediaId || '').trim(),
+        String(matchedRule.headerMediaUrl || '').trim(),
+      );
+      const headerMediaId = normalizedHeaderMedia.mediaId || '';
+      const headerMediaUrl = normalizedHeaderMedia.mediaUrl || '';
 
       if (['image', 'video', 'document'].includes(headerMediaType) && !headerMediaId && !headerMediaUrl) {
         this.logger.warn(`Auto-send skipped for contact ${contact.id}: template header media is required but not configured`);
         return;
       }
 
-      if (['image', 'video', 'document'].includes(headerMediaType) && (headerMediaId || headerMediaUrl)) {
-        const headerParam: any = { type: headerMediaType };
-        headerParam[headerMediaType] = headerMediaId ? { id: headerMediaId } : { link: headerMediaUrl };
-        params.push({ type: 'header', parameters: [headerParam] });
-      }
+      const buildTemplateParams = (preferHeaderUrl = false): any[] => {
+        const params: any[] = [];
 
-      // Only add name param if the template actually accepts body parameters.
-      // hello_world and many basic templates have ZERO params — sending params causes #132000
-      if (matchedRule.includeNameParam && contact.firstName && templateName !== 'hello_world') {
-        params.push({ type: 'body', parameters: [{ type: 'text', text: contact.firstName }] });
-      }
+        if (['image', 'video', 'document'].includes(headerMediaType) && (headerMediaId || headerMediaUrl)) {
+          const headerParam: any = { type: headerMediaType };
+          const useUrl = preferHeaderUrl || !headerMediaId;
+          headerParam[headerMediaType] = useUrl ? { link: headerMediaUrl } : { id: headerMediaId };
+          params.push({ type: 'header', parameters: [headerParam] });
+        }
+
+        // Only add name param if the template actually accepts body parameters.
+        // hello_world and many basic templates have ZERO params — sending params causes #132000
+        if (matchedRule.includeNameParam && contact.firstName && templateName !== 'hello_world') {
+          params.push({ type: 'body', parameters: [{ type: 'text', text: contact.firstName }] });
+        }
+
+        return params;
+      };
+
+      const senderCandidates = [
+        senderIntegration,
+        ...integrations.filter((integration) =>
+          integration.id !== senderIntegration.id
+          && this.isIntegrationUsable(integration)
+          && this.hasIntegrationSendCredentials(integration),
+        ),
+      ];
 
       this.logger.log(
         `Auto-send: rule="${matchedRule.name}" template="${templateName}" lang="${language}" to phone="${phone}" (raw="${rawPhone}") contact=${contact.id} source=${contact.source} senderIntegration=${senderIntegration.id}`,
       );
-      const msgResult = await this.sendMessageWithCredentials(this.getIntegrationCredentials(senderIntegration), {
-        to: phone,
-        type: 'template',
-        content: '',
-        template: { name: templateName, language, parameters: params },
-      });
+      let msgResult: any = null;
+      let lastError: any = null;
+      for (const candidateIntegration of senderCandidates) {
+        const sendTemplate = async (preferHeaderUrl = false): Promise<any> => this.sendMessageWithCredentials(
+          this.getIntegrationCredentials(candidateIntegration),
+          {
+            to: phone,
+            type: 'template',
+            content: '',
+            template: { name: templateName, language, parameters: buildTemplateParams(preferHeaderUrl) },
+          },
+        );
+
+        try {
+          msgResult = await sendTemplate(false);
+          senderIntegration = candidateIntegration;
+          lastError = null;
+          break;
+        } catch (err: any) {
+          lastError = err;
+          const canRetryWithUrl = !!headerMediaId && !!headerMediaUrl && this.isInvalidWhatsAppMediaAttachmentIdError(err);
+          if (canRetryWithUrl) {
+            this.logger.warn(
+              `Auto-send: media_id invalid for sender ${candidateIntegration.id}, retrying with header URL for contact ${contact.id}`,
+            );
+            try {
+              msgResult = await sendTemplate(true);
+              senderIntegration = candidateIntegration;
+              lastError = null;
+              break;
+            } catch (retryErr) {
+              lastError = retryErr;
+            }
+          }
+
+          const shouldTryNextSender = !!headerMediaId && this.isInvalidWhatsAppMediaAttachmentIdError(lastError);
+          if (shouldTryNextSender) {
+            this.logger.warn(
+              `Auto-send: sender ${candidateIntegration.id} rejected media_id for contact ${contact.id}; trying next available sender`,
+            );
+            continue;
+          }
+
+          throw lastError;
+        }
+      }
+
+      if (!msgResult && lastError) {
+        throw lastError;
+      }
+
       const msgId = msgResult?.messages?.[0]?.id;
       // Save as outbound activity so it appears in the WhatsApp inbox
       const ownerId = this.isValidUuid(String(contact.ownerId || '')) ? String(contact.ownerId) : undefined;
