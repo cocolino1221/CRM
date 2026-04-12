@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import Link from 'next/link';
 import Papa from 'papaparse';
 import {
@@ -18,6 +18,8 @@ import {
   MessageCircle,
   FileText,
   PlugZap,
+  Calendar,
+  Upload,
 } from 'lucide-react';
 import api from '@/lib/api';
 
@@ -174,6 +176,11 @@ export default function EmailCampaignsPage() {
   const [isCreatingWhatsAppCampaign, setIsCreatingWhatsAppCampaign] = useState(false);
   const [isSendingWhatsAppCampaign, setIsSendingWhatsAppCampaign] = useState<string | null>(null);
 
+  // WhatsApp campaign scheduling
+  const [waScheduledAt, setWaScheduledAt] = useState('');
+  const [schedulingEmailId, setSchedulingEmailId] = useState<string | null>(null);
+  const [scheduleEmailDate, setScheduleEmailDate] = useState('');
+
   // WhatsApp CSV import
   const [csvFile, setCsvFile] = useState<File | null>(null);
   const [csvRows, setCsvRows] = useState<CsvImportRow[]>([]);
@@ -227,8 +234,23 @@ export default function EmailCampaignsPage() {
   const fetchWhatsAppCampaigns = async () => {
     setIsLoadingWhatsAppCampaigns(true);
     try {
-      const res = await api.get('/integrations/whatsapp/campaigns');
-      setWhatsAppCampaigns(Array.isArray(res.data) ? res.data : []);
+      const [legacyRes, bulkRes] = await Promise.allSettled([
+        api.get('/integrations/whatsapp/campaigns'),
+        api.get('/integrations/whatsapp/bulk-campaigns'),
+      ]);
+      const legacy = legacyRes.status === 'fulfilled' && Array.isArray(legacyRes.value.data) ? legacyRes.value.data : [];
+      const bulk = bulkRes.status === 'fulfilled' && Array.isArray(bulkRes.value.data)
+        ? bulkRes.value.data.map((c: any) => ({
+            ...c,
+            results: c.stats,
+            _isBulk: true,
+          }))
+        : [];
+      // Merge and sort by createdAt desc
+      const all = [...bulk, ...legacy].sort((a, b) =>
+        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+      );
+      setWhatsAppCampaigns(all);
     } catch (err) {
       console.error('Failed to fetch WhatsApp campaigns', err);
       setWhatsAppCampaigns([]);
@@ -274,13 +296,24 @@ export default function EmailCampaignsPage() {
     if (!confirm('Send this campaign now? Emails will be sent to all matching contacts.')) return;
     setIsSending(id);
     try {
-      const res = await api.post(`/email-campaigns/${id}/send`);
-      alert(`Campaign sent! ${res.data.sent} sent, ${res.data.failed} failed out of ${res.data.total} contacts.`);
+      await api.post(`/email-campaigns/${id}/send`);
       fetchCampaigns();
     } catch (err: any) {
       alert(err?.response?.data?.message || 'Failed to send campaign');
     } finally {
       setIsSending(null);
+    }
+  };
+
+  const handleScheduleEmail = async (id: string, scheduledAt: string) => {
+    if (!scheduledAt) return;
+    try {
+      await api.post(`/email-campaigns/${id}/schedule`, { scheduledAt });
+      setSchedulingEmailId(null);
+      setScheduleEmailDate('');
+      fetchCampaigns();
+    } catch (err: any) {
+      alert(err?.response?.data?.message || 'Failed to schedule campaign');
     }
   };
 
@@ -423,6 +456,7 @@ export default function EmailCampaignsPage() {
     setManualRecipients([]);
     setManualRecipientsInput('');
     setManualRecipientsError('');
+    setWaScheduledAt('');
     setShowWhatsAppForm(false);
     if (approvedTemplates[0]) {
       setWhatsAppTemplate(approvedTemplates[0].name);
@@ -433,7 +467,7 @@ export default function EmailCampaignsPage() {
     }
   };
 
-  const createWhatsAppCampaign = async (sendNow: boolean) => {
+  const createWhatsAppCampaign = async (action: boolean | 'schedule') => {
     if (!whatsAppName.trim()) {
       setWhatsAppFormError('Campaign name is required');
       return;
@@ -450,24 +484,39 @@ export default function EmailCampaignsPage() {
     setIsCreatingWhatsAppCampaign(true);
     setWhatsAppFormError('');
     try {
-      const filterPayload = whatsAppAudienceMode === 'direct_list'
-        ? { recipients: manualRecipients }
-        : {
-            tags: whatsAppTags.length ? whatsAppTags : undefined,
-            status: whatsAppStatuses.length ? whatsAppStatuses : undefined,
-          };
+      // Direct list mode → use new DB-persisted bulk-campaigns endpoint
+      if (whatsAppAudienceMode === 'direct_list') {
+        const payload: any = {
+          name: whatsAppName.trim(),
+          templateName: whatsAppTemplate.trim(),
+          language: whatsAppLanguage.trim() || 'en_US',
+          csvRecipients: manualRecipients,
+        };
+        if (action === 'schedule' && waScheduledAt) payload.scheduledAt = waScheduledAt;
 
-      const createRes = await api.post('/integrations/whatsapp/campaigns', {
-        name: whatsAppName.trim(),
-        templateName: whatsAppTemplate.trim(),
-        language: whatsAppLanguage.trim() || 'en_US',
-        filter: filterPayload,
-      });
-
-      const createdCampaign = createRes.data as WhatsAppCampaign;
-      if (sendNow && createdCampaign?.id) {
-        setIsSendingWhatsAppCampaign(createdCampaign.id);
-        await api.post(`/integrations/whatsapp/campaigns/${createdCampaign.id}/send`);
+        const createRes = await api.post('/integrations/whatsapp/bulk-campaigns', payload);
+        const created = createRes.data;
+        if (action === true && created?.id) {
+          setIsSendingWhatsAppCampaign(created.id);
+          await api.post(`/integrations/whatsapp/bulk-campaigns/${created.id}/send`);
+        }
+      } else {
+        // CRM filters mode → use existing config-based endpoint
+        const filterPayload = {
+          tags: whatsAppTags.length ? whatsAppTags : undefined,
+          status: whatsAppStatuses.length ? whatsAppStatuses : undefined,
+        };
+        const createRes = await api.post('/integrations/whatsapp/campaigns', {
+          name: whatsAppName.trim(),
+          templateName: whatsAppTemplate.trim(),
+          language: whatsAppLanguage.trim() || 'en_US',
+          filter: filterPayload,
+        });
+        const createdCampaign = createRes.data as WhatsAppCampaign;
+        if (action === true && createdCampaign?.id) {
+          setIsSendingWhatsAppCampaign(createdCampaign.id);
+          await api.post(`/integrations/whatsapp/campaigns/${createdCampaign.id}/send`);
+        }
       }
 
       resetWhatsAppForm();
@@ -480,10 +529,13 @@ export default function EmailCampaignsPage() {
     }
   };
 
-  const sendWhatsAppCampaign = async (campaignId: string) => {
-    setIsSendingWhatsAppCampaign(campaignId);
+  const sendWhatsAppCampaign = async (campaign: any) => {
+    setIsSendingWhatsAppCampaign(campaign.id);
     try {
-      await api.post(`/integrations/whatsapp/campaigns/${campaignId}/send`);
+      const endpoint = campaign._isBulk
+        ? `/integrations/whatsapp/bulk-campaigns/${campaign.id}/send`
+        : `/integrations/whatsapp/campaigns/${campaign.id}/send`;
+      await api.post(endpoint);
       fetchWhatsAppCampaigns();
     } catch (err: any) {
       alert(err?.response?.data?.message || 'Failed to send campaign');
@@ -492,11 +544,14 @@ export default function EmailCampaignsPage() {
     }
   };
 
-  const deleteWhatsAppCampaign = async (campaignId: string) => {
+  const deleteWhatsAppCampaign = async (campaign: any) => {
     if (!confirm('Delete this WhatsApp campaign?')) return;
     try {
-      await api.delete(`/integrations/whatsapp/campaigns/${campaignId}`);
-      setWhatsAppCampaigns((prev) => prev.filter((campaign) => campaign.id !== campaignId));
+      const endpoint = campaign._isBulk
+        ? `/integrations/whatsapp/bulk-campaigns/${campaign.id}`
+        : `/integrations/whatsapp/campaigns/${campaign.id}`;
+      await api.delete(endpoint);
+      setWhatsAppCampaigns((prev) => prev.filter((c) => c.id !== campaign.id));
     } catch (err: any) {
       alert(err?.response?.data?.message || 'Failed to delete campaign');
     }
@@ -676,6 +731,12 @@ export default function EmailCampaignsPage() {
                           </span>
                         </div>
                         <p className="text-sm text-gray-500 mt-1 truncate">Subject: {campaign.subject}</p>
+                        {campaign.status === 'scheduled' && campaign.scheduledAt && (
+                          <p className="text-xs text-blue-600 mt-1 flex items-center gap-1">
+                            <Calendar className="h-3 w-3" />
+                            Scheduled for {new Date(campaign.scheduledAt).toLocaleString()}
+                          </p>
+                        )}
                         {campaign.status === 'sent' && campaign.stats && (
                           <p className="text-xs text-gray-400 mt-1">
                             Sent {campaign.stats.sent}/{campaign.stats.total} emails
@@ -697,15 +758,26 @@ export default function EmailCampaignsPage() {
                           </div>
                         )}
                       </div>
-                      <div className="flex items-center gap-2 shrink-0">
+                      <div className="flex flex-col items-end gap-2 shrink-0">
                         {(campaign.status === 'draft' || campaign.status === 'scheduled') && (
-                          <>
+                          <div className="flex items-center gap-2">
                             <button
                               onClick={() => handleEdit(campaign)}
                               className="p-2 rounded-lg hover:bg-gray-100 text-gray-500 transition-colors"
                               title="Edit"
                             >
                               <Edit className="h-4 w-4" />
+                            </button>
+                            <button
+                              onClick={() => {
+                                setSchedulingEmailId(schedulingEmailId === campaign.id ? null : campaign.id);
+                                setScheduleEmailDate('');
+                              }}
+                              className="flex items-center gap-1.5 px-3 py-1.5 border border-blue-300 text-blue-600 rounded-lg text-sm font-medium hover:bg-blue-50 transition-colors"
+                              title="Schedule"
+                            >
+                              <Calendar className="h-3.5 w-3.5" />
+                              Schedule
                             </button>
                             <button
                               onClick={() => handleSend(campaign.id)}
@@ -717,13 +789,30 @@ export default function EmailCampaignsPage() {
                               ) : (
                                 <Send className="h-3.5 w-3.5" />
                               )}
-                              Send
+                              Send now
                             </button>
-                          </>
+                          </div>
+                        )}
+                        {schedulingEmailId === campaign.id && (
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="datetime-local"
+                              value={scheduleEmailDate}
+                              onChange={e => setScheduleEmailDate(e.target.value)}
+                              className="px-2 py-1.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            />
+                            <button
+                              onClick={() => handleScheduleEmail(campaign.id, scheduleEmailDate)}
+                              disabled={!scheduleEmailDate}
+                              className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-40"
+                            >
+                              Confirm
+                            </button>
+                          </div>
                         )}
                         <button
                           onClick={() => handleDelete(campaign.id)}
-                          className="p-2 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-500 transition-colors"
+                          className="p-2 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-500 transition-colors self-end"
                           title="Delete"
                         >
                           <Trash2 className="h-4 w-4" />
@@ -1033,6 +1122,21 @@ export default function EmailCampaignsPage() {
                       )}
                     </div>
 
+                    {/* Scheduling */}
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-1 flex items-center gap-1">
+                        <Calendar className="h-3.5 w-3.5" />
+                        Schedule send (optional)
+                      </label>
+                      <input
+                        type="datetime-local"
+                        value={waScheduledAt}
+                        onChange={e => setWaScheduledAt(e.target.value)}
+                        className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                      />
+                      <p className="text-xs text-gray-400 mt-1">Leave empty to send immediately or save as draft</p>
+                    </div>
+
                     {whatsAppFormError && <p className="text-sm text-red-600">{whatsAppFormError}</p>}
 
                     <div className="flex flex-wrap items-center gap-2 pt-2">
@@ -1051,6 +1155,17 @@ export default function EmailCampaignsPage() {
                       >
                         Save Draft
                       </button>
+                      {waScheduledAt && (
+                        <button
+                          type="button"
+                          onClick={() => createWhatsAppCampaign('schedule')}
+                          disabled={isCreatingWhatsAppCampaign || !whatsAppName.trim() || !whatsAppTemplate.trim()}
+                          className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 disabled:opacity-50"
+                        >
+                          {isCreatingWhatsAppCampaign ? <Loader2 className="h-4 w-4 animate-spin" /> : <Calendar className="h-4 w-4" />}
+                          Schedule
+                        </button>
+                      )}
                       <button
                         type="button"
                         onClick={() => createWhatsAppCampaign(true)}
@@ -1058,7 +1173,7 @@ export default function EmailCampaignsPage() {
                         className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-green-600 text-white text-sm font-semibold hover:bg-green-700 disabled:opacity-50"
                       >
                         {isCreatingWhatsAppCampaign ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-                        Create & Send
+                        Send now
                       </button>
                     </div>
                   </div>
@@ -1088,20 +1203,34 @@ export default function EmailCampaignsPage() {
                       <tbody className="divide-y divide-gray-100 bg-white">
                         {whatsAppCampaigns.map((campaign) => (
                           <tr key={campaign.id}>
-                            <td className="px-4 py-3 font-medium text-gray-900">{campaign.name}</td>
+                            <td className="px-4 py-3">
+                              <span className="font-medium text-gray-900">{campaign.name}</span>
+                              {(campaign as any)._isBulk && (
+                                <span className="ml-1.5 text-[10px] bg-violet-100 text-violet-600 px-1.5 py-0.5 rounded-full">CSV</span>
+                              )}
+                            </td>
                             <td className="px-4 py-3 text-xs text-gray-600 font-mono">{campaign.templateName}</td>
                             <td className="px-4 py-3">
-                              <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
-                                campaign.status === 'sent'
-                                  ? 'bg-green-100 text-green-700'
-                                  : campaign.status === 'sending'
-                                    ? 'bg-amber-100 text-amber-700'
-                                    : campaign.status === 'failed'
-                                      ? 'bg-red-100 text-red-700'
-                                      : 'bg-gray-100 text-gray-700'
-                              }`}>
-                                {campaign.status}
-                              </span>
+                              <div>
+                                <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
+                                  campaign.status === 'sent'
+                                    ? 'bg-green-100 text-green-700'
+                                    : campaign.status === 'sending'
+                                      ? 'bg-amber-100 text-amber-700'
+                                      : campaign.status === 'scheduled'
+                                        ? 'bg-blue-100 text-blue-700'
+                                        : campaign.status === 'failed'
+                                          ? 'bg-red-100 text-red-700'
+                                          : 'bg-gray-100 text-gray-700'
+                                }`}>
+                                  {campaign.status}
+                                </span>
+                                {campaign.status === 'scheduled' && (campaign as any).scheduledAt && (
+                                  <p className="text-[10px] text-blue-600 mt-0.5">
+                                    {new Date((campaign as any).scheduledAt).toLocaleString()}
+                                  </p>
+                                )}
+                              </div>
                             </td>
                             <td className="px-4 py-3 text-xs text-gray-600">
                               {campaign.results?.error ? (
@@ -1120,20 +1249,20 @@ export default function EmailCampaignsPage() {
                             </td>
                             <td className="px-4 py-3">
                               <div className="flex items-center justify-end gap-1">
-                                {campaign.status === 'draft' && (
+                                {(campaign.status === 'draft' || campaign.status === 'scheduled') && (
                                   <button
-                                    onClick={() => sendWhatsAppCampaign(campaign.id)}
+                                    onClick={() => sendWhatsAppCampaign(campaign)}
                                     disabled={isSendingWhatsAppCampaign === campaign.id}
                                     className="inline-flex items-center gap-1 px-3 py-1 rounded-lg bg-green-600 text-white text-xs font-medium hover:bg-green-700 disabled:opacity-50"
                                   >
                                     {isSendingWhatsAppCampaign === campaign.id
                                       ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
                                       : <Send className="h-3.5 w-3.5" />}
-                                    Send
+                                    Send now
                                   </button>
                                 )}
                                 <button
-                                  onClick={() => deleteWhatsAppCampaign(campaign.id)}
+                                  onClick={() => deleteWhatsAppCampaign(campaign)}
                                   className="p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50"
                                   title="Delete campaign"
                                 >
@@ -1323,9 +1452,28 @@ function CampaignForm({ campaign, onClose }: { campaign: Campaign | null; onClos
   const [filterTags, setFilterTags] = useState(campaign?.filters?.tags?.join(', ') || '');
   const [filterStatuses, setFilterStatuses] = useState<string[]>(campaign?.filters?.statuses || []);
   const [filterSources, setFilterSources] = useState<string[]>(campaign?.filters?.sources || []);
+  const [scheduledAt, setScheduledAt] = useState(
+    campaign?.scheduledAt ? new Date(campaign.scheduledAt).toISOString().slice(0, 16) : '',
+  );
+  const [csvText, setCsvText] = useState('');
+  const [csvCount, setCsvCount] = useState(0);
   const [audienceCount, setAudienceCount] = useState<number | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isPreviewing, setIsPreviewing] = useState(false);
+  const csvFileRef = useRef<HTMLInputElement>(null);
+
+  const handleCsvFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      const text = ev.target?.result as string;
+      setCsvText(text);
+      const lines = text.trim().split('\n').filter(l => l.trim());
+      setCsvCount(Math.max(0, lines.length - 1));
+    };
+    reader.readAsText(file);
+  };
 
   const buildFilters = () => {
     const filters: any = {};
@@ -1352,13 +1500,32 @@ function CampaignForm({ campaign, onClose }: { campaign: Campaign | null; onClos
     if (!name.trim() || !subject.trim()) return;
     setIsSaving(true);
     try {
-      const payload = {
+      // Parse CSV recipients if file was uploaded
+      let csvRecipients: Array<{ email: string; name?: string }> | undefined;
+      if (csvText.trim()) {
+        const lines = csvText.trim().split('\n').filter(l => l.trim());
+        const headers = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/['"]/g, ''));
+        csvRecipients = lines.slice(1).map(line => {
+          const vals = line.split(',').map(v => v.trim().replace(/^["']|["']$/g, ''));
+          const row: Record<string, string> = {};
+          headers.forEach((h, i) => { row[h] = vals[i] || ''; });
+          return {
+            email: row.email || row['e-mail'] || row.mail || '',
+            name: row.name || row.nome || row.firstname || row.first_name || '',
+          };
+        }).filter(r => r.email);
+      }
+
+      const payload: any = {
         name,
         subject,
         htmlBody: htmlBody || null,
         textBody: textBody || null,
         filters: buildFilters(),
+        scheduledAt: scheduledAt || null,
       };
+      if (csvRecipients?.length) payload.csvRecipients = csvRecipients;
+
       if (campaign) {
         await api.put(`/email-campaigns/${campaign.id}`, payload);
       } else {
@@ -1513,6 +1680,39 @@ function CampaignForm({ campaign, onClose }: { campaign: Campaign | null; onClos
                 </span>
               )}
             </div>
+          </div>
+
+          {/* CSV Recipients (optional) */}
+          <div className="border-t border-gray-100 pt-5">
+            <h3 className="text-sm font-semibold text-gray-900 mb-1">CSV Recipients (optional)</h3>
+            <p className="text-xs text-gray-500 mb-3">
+              Upload a CSV to send to a specific list instead of CRM filters.
+              Columns: <code className="bg-gray-100 px-1 rounded">email</code>, <code className="bg-gray-100 px-1 rounded">name</code>
+            </p>
+            <input ref={csvFileRef} type="file" accept=".csv" className="hidden" onChange={handleCsvFile} />
+            <button
+              type="button"
+              onClick={() => csvFileRef.current?.click()}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl border-2 border-dashed border-gray-200 text-sm text-gray-500 hover:border-indigo-400 hover:text-indigo-600 transition-colors"
+            >
+              <Upload className="h-4 w-4" />
+              {csvCount > 0 ? `${csvCount} email recipients loaded` : 'Upload CSV (optional)'}
+            </button>
+          </div>
+
+          {/* Schedule */}
+          <div className="border-t border-gray-100 pt-5">
+            <h3 className="text-sm font-semibold text-gray-900 mb-1 flex items-center gap-1.5">
+              <Calendar className="h-4 w-4 text-blue-500" />
+              Schedule send (optional)
+            </h3>
+            <input
+              type="datetime-local"
+              value={scheduledAt}
+              onChange={e => setScheduledAt(e.target.value)}
+              className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+            <p className="text-xs text-gray-400 mt-1">Leave empty to save as draft and send manually</p>
           </div>
         </div>
 
