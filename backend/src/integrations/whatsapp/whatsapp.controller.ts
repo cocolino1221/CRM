@@ -21,6 +21,7 @@ import { diskStorage } from 'multer';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { WhatsAppService, WhatsAppMessage, WhatsAppWebhook } from './whatsapp.service';
 import { WhatsAppAIService } from './whatsapp-ai.service';
+import { WhatsAppCampaignsService } from './whatsapp-campaigns.service';
 import { Public } from '../../common/decorators/public.decorator';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { Response } from 'express';
@@ -33,6 +34,7 @@ export class WhatsAppController {
   constructor(
     private readonly whatsappService: WhatsAppService,
     private readonly whatsappAIService: WhatsAppAIService,
+    private readonly waCampaignsService: WhatsAppCampaignsService,
   ) {}
 
   @Public()
@@ -1166,5 +1168,73 @@ export class WhatsAppController {
       res.setHeader('Content-Disposition', `inline; filename="${media.fileName.replace(/"/g, '')}"`);
     }
     return new StreamableFile(media.buffer);
+  }
+
+  // ─── Bulk Campaigns (DB-persisted, CSV-based) ─────────────────────────────
+
+  @UseGuards(JwtAuthGuard)
+  @Get('bulk-campaigns')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'List all DB-persisted WhatsApp broadcast campaigns' })
+  async listBulkCampaigns(@Req() req: any) {
+    const workspaceId = req.user?.workspaceId;
+    if (!workspaceId) throw new BadRequestException('Workspace ID required');
+    return this.waCampaignsService.findAll(workspaceId);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('bulk-campaigns/:id')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get a bulk campaign by ID' })
+  async getBulkCampaign(@Req() req: any, @Param('id') id: string) {
+    const workspaceId = req.user?.workspaceId;
+    if (!workspaceId) throw new BadRequestException('Workspace ID required');
+    return this.waCampaignsService.findOne(workspaceId, id);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('bulk-campaigns')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Create a bulk campaign from CSV recipients (no contacts created in CRM)' })
+  async createBulkCampaign(@Req() req: any, @Body() body: any) {
+    const workspaceId = req.user?.workspaceId;
+    const userId = req.user?.id;
+    if (!workspaceId) throw new BadRequestException('Workspace ID required');
+    return this.waCampaignsService.create(workspaceId, userId, body);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('bulk-campaigns/:id/send')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Send a bulk campaign immediately (async — returns instantly)' })
+  async sendBulkCampaignNow(@Req() req: any, @Param('id') id: string) {
+    const workspaceId = req.user?.workspaceId;
+    if (!workspaceId) throw new BadRequestException('Workspace ID required');
+    return this.waCampaignsService.sendNow(workspaceId, id);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('bulk-campaigns/:id/schedule')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Schedule a bulk campaign to send at a future time' })
+  async scheduleBulkCampaign(
+    @Req() req: any,
+    @Param('id') id: string,
+    @Body() body: { scheduledAt: string },
+  ) {
+    const workspaceId = req.user?.workspaceId;
+    if (!workspaceId) throw new BadRequestException('Workspace ID required');
+    if (!body.scheduledAt) throw new BadRequestException('scheduledAt is required');
+    return this.waCampaignsService.schedule(workspaceId, id, new Date(body.scheduledAt));
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Delete('bulk-campaigns/:id')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Delete a bulk campaign' })
+  async deleteBulkCampaign(@Req() req: any, @Param('id') id: string) {
+    const workspaceId = req.user?.workspaceId;
+    if (!workspaceId) throw new BadRequestException('Workspace ID required');
+    return this.waCampaignsService.remove(workspaceId, id);
   }
 }
