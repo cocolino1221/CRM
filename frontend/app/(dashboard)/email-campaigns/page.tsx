@@ -185,7 +185,11 @@ export default function EmailCampaignsPage() {
 
   // Template parameters for WA campaign form
   const [waHeaderParamType, setWaHeaderParamType] = useState<'' | 'text' | 'image' | 'video' | 'document'>('');
-  const [waHeaderParamValue, setWaHeaderParamValue] = useState('');
+  const [waHeaderMediaId, setWaHeaderMediaId] = useState('');
+  const [waHeaderMediaUrl, setWaHeaderMediaUrl] = useState('');
+  const [waHeaderTextValue, setWaHeaderTextValue] = useState('');
+  const [isUploadingWaHeader, setIsUploadingWaHeader] = useState(false);
+  const [waHeaderFileName, setWaHeaderFileName] = useState('');
   const [waBodyParams, setWaBodyParams] = useState<string[]>(['']);
 
   // Info / Edit modals
@@ -459,11 +463,17 @@ export default function EmailCampaignsPage() {
 
   const buildWaTemplateParams = () => {
     const params: any[] = [];
-    if (waHeaderParamType && waHeaderParamValue.trim()) {
-      const headerParam = waHeaderParamType === 'text'
-        ? { type: 'text', text: waHeaderParamValue.trim() }
-        : { type: waHeaderParamType, [waHeaderParamType]: { link: waHeaderParamValue.trim() } };
-      params.push({ type: 'header', parameters: [headerParam] });
+    if (waHeaderParamType) {
+      let headerParam: any | null = null;
+      if (waHeaderParamType === 'text' && waHeaderTextValue.trim()) {
+        headerParam = { type: 'text', text: waHeaderTextValue.trim() };
+      } else if (waHeaderParamType !== 'text' && (waHeaderMediaId.trim() || waHeaderMediaUrl.trim())) {
+        const mediaObj: any = {};
+        if (waHeaderMediaId.trim()) mediaObj.id = waHeaderMediaId.trim();
+        else if (waHeaderMediaUrl.trim()) mediaObj.link = waHeaderMediaUrl.trim();
+        headerParam = { type: waHeaderParamType, [waHeaderParamType]: mediaObj };
+      }
+      if (headerParam) params.push({ type: 'header', parameters: [headerParam] });
     }
     const bodyVars = waBodyParams.filter(p => p.trim());
     if (bodyVars.length) {
@@ -485,7 +495,10 @@ export default function EmailCampaignsPage() {
     setManualRecipientsError('');
     setWaScheduledAt('');
     setWaHeaderParamType('');
-    setWaHeaderParamValue('');
+    setWaHeaderMediaId('');
+    setWaHeaderMediaUrl('');
+    setWaHeaderTextValue('');
+    setWaHeaderFileName('');
     setWaBodyParams(['']);
     setShowWhatsAppForm(false);
     if (approvedTemplates[0]) {
@@ -980,34 +993,111 @@ export default function EmailCampaignsPage() {
 
                     {/* Template Parameters */}
                     <div className="rounded-xl border border-gray-200 bg-white p-3 space-y-3">
-                      <p className="text-xs font-medium text-gray-700">Template Parameters <span className="font-normal text-gray-400">(optional — only if your template requires them)</span></p>
+                      <p className="text-xs font-medium text-gray-700">Template Parameters <span className="font-normal text-gray-400">(optional — fill only if your template requires them)</span></p>
 
                       {/* Header param */}
                       <div>
-                        <label className="block text-[11px] font-medium text-gray-500 mb-1">Header component</label>
-                        <div className="flex items-center gap-2">
-                          <select
-                            value={waHeaderParamType}
-                            onChange={e => setWaHeaderParamType(e.target.value as any)}
-                            className="px-2 py-1.5 rounded-lg border border-gray-200 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-green-500"
-                          >
-                            <option value="">None</option>
-                            <option value="text">Text</option>
-                            <option value="image">Image URL</option>
-                            <option value="video">Video URL</option>
-                            <option value="document">Document URL</option>
-                          </select>
-                          {waHeaderParamType && (
+                        <label className="block text-[11px] font-medium text-gray-500 mb-1.5">Header component type</label>
+                        <select
+                          value={waHeaderParamType}
+                          onChange={e => {
+                            setWaHeaderParamType(e.target.value as any);
+                            setWaHeaderMediaId('');
+                            setWaHeaderMediaUrl('');
+                            setWaHeaderTextValue('');
+                            setWaHeaderFileName('');
+                          }}
+                          className="w-full px-2 py-1.5 rounded-lg border border-gray-200 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-green-500"
+                        >
+                          <option value="">None</option>
+                          <option value="text">Text</option>
+                          <option value="image">Image</option>
+                          <option value="video">Video</option>
+                          <option value="document">Document</option>
+                        </select>
+                      </div>
+
+                      {waHeaderParamType === 'text' && (
+                        <div>
+                          <label className="block text-[11px] font-medium text-gray-500 mb-1">Header text value</label>
+                          <input
+                            type="text"
+                            value={waHeaderTextValue}
+                            onChange={e => setWaHeaderTextValue(e.target.value)}
+                            placeholder="Text shown in header"
+                            className="w-full px-2 py-1.5 rounded-lg border border-gray-200 text-xs focus:outline-none focus:ring-2 focus:ring-green-500"
+                          />
+                        </div>
+                      )}
+
+                      {waHeaderParamType && waHeaderParamType !== 'text' && (
+                        <div className="space-y-2 rounded-xl border border-amber-200 bg-amber-50 p-3">
+                          <p className="text-xs font-semibold text-amber-800 uppercase tracking-wide">
+                            Header media required ({waHeaderParamType})
+                          </p>
+                          <p className="text-xs text-amber-700">
+                            This template has a media header. Set a media_id (recommended) or a public URL.
+                          </p>
+                          <div className="flex items-center gap-2">
                             <input
                               type="text"
-                              value={waHeaderParamValue}
-                              onChange={e => setWaHeaderParamValue(e.target.value)}
-                              placeholder={waHeaderParamType === 'text' ? 'Header text value' : 'https://...'}
-                              className="flex-1 px-2 py-1.5 rounded-lg border border-gray-200 text-xs focus:outline-none focus:ring-2 focus:ring-green-500"
+                              value={waHeaderMediaId}
+                              onChange={e => setWaHeaderMediaId(e.target.value)}
+                              placeholder="Meta media_id (recommended)"
+                              className="flex-1 px-2 py-2 text-xs border border-amber-200 rounded-xl focus:outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-100 bg-white"
                             />
+                            <label className={`px-3 py-2 text-xs font-medium border rounded-xl cursor-pointer transition-colors ${isUploadingWaHeader ? 'text-amber-500 border-amber-200 bg-amber-50' : 'text-amber-800 border-amber-300 hover:bg-amber-100'}`}>
+                              {isUploadingWaHeader ? 'Uploading…' : 'Upload'}
+                              <input
+                                type="file"
+                                className="hidden"
+                                accept={waHeaderParamType === 'image' ? 'image/*' : waHeaderParamType === 'video' ? 'video/*' : '.pdf,.doc,.docx,.xls,.xlsx,.txt'}
+                                disabled={isUploadingWaHeader}
+                                onChange={async (e) => {
+                                  const file = e.target.files?.[0];
+                                  if (!file) return;
+                                  setIsUploadingWaHeader(true);
+                                  setWaHeaderFileName(`Uploading ${file.name}…`);
+                                  setWhatsAppFormError('');
+                                  try {
+                                    const formData = new FormData();
+                                    formData.append('file', file);
+                                    const res = await api.post('/integrations/whatsapp/media/upload', formData);
+                                    setWaHeaderMediaId(res.data.id || '');
+                                    setWaHeaderFileName(file.name);
+                                  } catch (err: any) {
+                                    setWhatsAppFormError(`Upload failed: ${err?.response?.data?.message || err.message}`);
+                                    setWaHeaderFileName('');
+                                  } finally {
+                                    setIsUploadingWaHeader(false);
+                                    e.target.value = '';
+                                  }
+                                }}
+                              />
+                            </label>
+                            {waHeaderMediaId && (
+                              <button
+                                type="button"
+                                onClick={() => { setWaHeaderMediaId(''); setWaHeaderFileName(''); }}
+                                className="text-gray-400 hover:text-red-500"
+                                title="Clear"
+                              >
+                                <X className="h-3.5 w-3.5" />
+                              </button>
+                            )}
+                          </div>
+                          {waHeaderFileName && !isUploadingWaHeader && (
+                            <p className="text-xs text-green-700 font-medium">✓ {waHeaderFileName}</p>
                           )}
+                          <input
+                            type="text"
+                            value={waHeaderMediaUrl}
+                            onChange={e => setWaHeaderMediaUrl(e.target.value)}
+                            placeholder={`${waHeaderParamType} URL (fallback if no media_id)`}
+                            className="w-full px-2 py-2 text-xs border border-amber-200 rounded-xl focus:outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-100 bg-white"
+                          />
                         </div>
-                      </div>
+                      )}
 
                       {/* Body params */}
                       <div>
@@ -1822,14 +1912,24 @@ function WaCampaignEditModal({
   const existingHeader = existingParams.find((c: any) => c.type === 'header');
   const existingBody = existingParams.find((c: any) => c.type === 'body');
   const initHeaderParam = existingHeader?.parameters?.[0];
-  const initHeaderType = initHeaderParam ? (initHeaderParam.type as 'text' | 'image' | 'video' | 'document') : '' as const;
-  const initHeaderValue = initHeaderParam
-    ? (initHeaderParam.text || initHeaderParam.image?.link || initHeaderParam.video?.link || initHeaderParam.document?.link || '')
+  const initHeaderType: '' | 'text' | 'image' | 'video' | 'document' = initHeaderParam
+    ? (initHeaderParam.type as 'text' | 'image' | 'video' | 'document')
     : '';
+  const initMediaId = initHeaderParam && initHeaderParam.type !== 'text'
+    ? (initHeaderParam[initHeaderParam.type]?.id || '')
+    : '';
+  const initMediaUrl = initHeaderParam && initHeaderParam.type !== 'text'
+    ? (initHeaderParam[initHeaderParam.type]?.link || '')
+    : '';
+  const initTextValue = initHeaderParam?.type === 'text' ? (initHeaderParam.text || '') : '';
   const initBodyParams: string[] = existingBody?.parameters?.map((p: any) => p.text || '') || [''];
 
   const [headerType, setHeaderType] = useState<'' | 'text' | 'image' | 'video' | 'document'>(initHeaderType);
-  const [headerValue, setHeaderValue] = useState(initHeaderValue);
+  const [headerMediaId, setHeaderMediaId] = useState(initMediaId);
+  const [headerMediaUrl, setHeaderMediaUrl] = useState(initMediaUrl);
+  const [headerTextValue, setHeaderTextValue] = useState(initTextValue);
+  const [headerFileName, setHeaderFileName] = useState('');
+  const [isUploadingHeader, setIsUploadingHeader] = useState(false);
   const [bodyParams, setBodyParams] = useState<string[]>(initBodyParams.length ? initBodyParams : ['']);
 
   const [isSaving, setIsSaving] = useState(false);
@@ -1837,11 +1937,17 @@ function WaCampaignEditModal({
 
   const buildTemplateParams = () => {
     const params: any[] = [];
-    if (headerType && headerValue.trim()) {
-      const hp = headerType === 'text'
-        ? { type: 'text', text: headerValue.trim() }
-        : { type: headerType, [headerType]: { link: headerValue.trim() } };
-      params.push({ type: 'header', parameters: [hp] });
+    if (headerType) {
+      let hp: any | null = null;
+      if (headerType === 'text' && headerTextValue.trim()) {
+        hp = { type: 'text', text: headerTextValue.trim() };
+      } else if (headerType !== 'text' && (headerMediaId.trim() || headerMediaUrl.trim())) {
+        const mo: any = {};
+        if (headerMediaId.trim()) mo.id = headerMediaId.trim();
+        else if (headerMediaUrl.trim()) mo.link = headerMediaUrl.trim();
+        hp = { type: headerType, [headerType]: mo };
+      }
+      if (hp) params.push({ type: 'header', parameters: [hp] });
     }
     const bodyVars = bodyParams.filter(p => p.trim());
     if (bodyVars.length) {
@@ -1922,43 +2028,85 @@ function WaCampaignEditModal({
               <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 space-y-3">
                 <p className="text-xs font-medium text-gray-700">Template Parameters <span className="font-normal text-gray-400">(header/body vars)</span></p>
                 <div>
-                  <label className="block text-[11px] text-gray-500 mb-1">Header component</label>
-                  <div className="flex items-center gap-2">
-                    <select
-                      value={headerType}
-                      onChange={e => setHeaderType(e.target.value as any)}
-                      className="px-2 py-1.5 rounded-lg border border-gray-200 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-green-500"
-                    >
-                      <option value="">None</option>
-                      <option value="text">Text</option>
-                      <option value="image">Image URL</option>
-                      <option value="video">Video URL</option>
-                      <option value="document">Document URL</option>
-                    </select>
-                    {headerType && (
-                      <input
-                        type="text"
-                        value={headerValue}
-                        onChange={e => setHeaderValue(e.target.value)}
-                        placeholder={headerType === 'text' ? 'Header text' : 'https://...'}
-                        className="flex-1 px-2 py-1.5 rounded-lg border border-gray-200 text-xs focus:outline-none focus:ring-2 focus:ring-green-500"
-                      />
-                    )}
-                  </div>
+                  <label className="block text-[11px] text-gray-500 mb-1.5">Header component type</label>
+                  <select
+                    value={headerType}
+                    onChange={e => {
+                      setHeaderType(e.target.value as any);
+                      setHeaderMediaId(''); setHeaderMediaUrl(''); setHeaderTextValue(''); setHeaderFileName('');
+                    }}
+                    className="w-full px-2 py-1.5 rounded-lg border border-gray-200 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-green-500"
+                  >
+                    <option value="">None</option>
+                    <option value="text">Text</option>
+                    <option value="image">Image</option>
+                    <option value="video">Video</option>
+                    <option value="document">Document</option>
+                  </select>
                 </div>
+                {headerType === 'text' && (
+                  <div>
+                    <label className="block text-[11px] text-gray-500 mb-1">Header text value</label>
+                    <input type="text" value={headerTextValue} onChange={e => setHeaderTextValue(e.target.value)}
+                      placeholder="Text shown in header"
+                      className="w-full px-2 py-1.5 rounded-lg border border-gray-200 text-xs focus:outline-none focus:ring-2 focus:ring-green-500" />
+                  </div>
+                )}
+                {headerType && headerType !== 'text' && (
+                  <div className="space-y-2 rounded-xl border border-amber-200 bg-amber-50 p-3">
+                    <p className="text-xs font-semibold text-amber-800 uppercase tracking-wide">Header media required ({headerType})</p>
+                    <p className="text-xs text-amber-700">Set a media_id (recommended) or a public URL.</p>
+                    <div className="flex items-center gap-2">
+                      <input type="text" value={headerMediaId} onChange={e => setHeaderMediaId(e.target.value)}
+                        placeholder="Meta media_id (recommended)"
+                        className="flex-1 px-2 py-2 text-xs border border-amber-200 rounded-xl focus:outline-none focus:border-amber-400 bg-white" />
+                      <label className={`px-3 py-2 text-xs font-medium border rounded-xl cursor-pointer transition-colors ${isUploadingHeader ? 'text-amber-500 border-amber-200' : 'text-amber-800 border-amber-300 hover:bg-amber-100'}`}>
+                        {isUploadingHeader ? 'Uploading…' : 'Upload'}
+                        <input type="file" className="hidden"
+                          accept={headerType === 'image' ? 'image/*' : headerType === 'video' ? 'video/*' : '.pdf,.doc,.docx,.txt'}
+                          disabled={isUploadingHeader}
+                          onChange={async (e) => {
+                            const file = e.target.files?.[0];
+                            if (!file) return;
+                            setIsUploadingHeader(true);
+                            setHeaderFileName(`Uploading ${file.name}…`);
+                            setError('');
+                            try {
+                              const fd = new FormData();
+                              fd.append('file', file);
+                              const res = await api.post('/integrations/whatsapp/media/upload', fd);
+                              setHeaderMediaId(res.data.id || '');
+                              setHeaderFileName(file.name);
+                            } catch (err: any) {
+                              setError(`Upload failed: ${err?.response?.data?.message || err.message}`);
+                              setHeaderFileName('');
+                            } finally {
+                              setIsUploadingHeader(false);
+                              e.target.value = '';
+                            }
+                          }} />
+                      </label>
+                      {headerMediaId && (
+                        <button type="button" onClick={() => { setHeaderMediaId(''); setHeaderFileName(''); }} className="text-gray-400 hover:text-red-500">
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </div>
+                    {headerFileName && !isUploadingHeader && <p className="text-xs text-green-700 font-medium">✓ {headerFileName}</p>}
+                    <input type="text" value={headerMediaUrl} onChange={e => setHeaderMediaUrl(e.target.value)}
+                      placeholder={`${headerType} URL (fallback if no media_id)`}
+                      className="w-full px-2 py-2 text-xs border border-amber-200 rounded-xl focus:outline-none focus:border-amber-400 bg-white" />
+                  </div>
+                )}
                 <div>
                   <label className="block text-[11px] text-gray-500 mb-1">Body variables</label>
                   <div className="space-y-1.5">
                     {bodyParams.map((val, idx) => (
                       <div key={idx} className="flex items-center gap-2">
                         <span className="text-[10px] text-gray-400 w-7 text-right shrink-0">&#123;&#123;{idx + 1}&#125;&#125;</span>
-                        <input
-                          type="text"
-                          value={val}
-                          onChange={e => { const n = [...bodyParams]; n[idx] = e.target.value; setBodyParams(n); }}
+                        <input type="text" value={val} onChange={e => { const n = [...bodyParams]; n[idx] = e.target.value; setBodyParams(n); }}
                           placeholder={`Value for {{${idx + 1}}}`}
-                          className="flex-1 px-2 py-1.5 rounded-lg border border-gray-200 text-xs focus:outline-none focus:ring-2 focus:ring-green-500"
-                        />
+                          className="flex-1 px-2 py-1.5 rounded-lg border border-gray-200 text-xs focus:outline-none focus:ring-2 focus:ring-green-500" />
                         {bodyParams.length > 1 && (
                           <button type="button" onClick={() => setBodyParams(p => p.filter((_, i) => i !== idx))} className="text-gray-400 hover:text-red-500">
                             <X className="h-3.5 w-3.5" />
