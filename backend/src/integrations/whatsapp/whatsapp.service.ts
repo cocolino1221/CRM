@@ -765,6 +765,7 @@ export class WhatsAppService {
     userId?: string,
     whatsappMessageId?: string,
     mediaMetadata?: Record<string, any>,
+    context?: { campaignId?: string; campaignName?: string; senderIntegrationId?: string; senderPhoneDisplay?: string },
   ): Promise<void> {
     try {
       const phone = normalizePhoneE164(to) || (to.startsWith('+') ? to : `+${to}`);
@@ -787,6 +788,8 @@ export class WhatsAppService {
           messageType,
           messageStatus: 'sent',
           ...(mediaMetadata || {}),
+          ...(context?.campaignId ? { campaignId: context.campaignId, campaignName: context.campaignName, isCampaign: true } : {}),
+          ...(context?.senderIntegrationId ? { senderIntegrationId: context.senderIntegrationId, senderPhoneDisplay: context.senderPhoneDisplay } : {}),
         },
       });
 

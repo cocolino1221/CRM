@@ -209,6 +209,17 @@ export class WhatsAppCampaignsService {
           campaign.language,
           recipient.vars?.length ? recipient.vars : campaign.templateParams || [],
         );
+        // Save outbound activity so the conversation appears in the inbox under this campaign
+        this.whatsappService.saveOutboundActivity(
+          phone,
+          `[Campaign: ${campaign.name}] Template: ${campaign.templateName}`,
+          'template',
+          workspaceId,
+          undefined,
+          undefined,
+          undefined,
+          { campaignId: campaign.id, campaignName: campaign.name },
+        ).catch(() => { /* non-blocking */ });
         sent++;
       } catch (err: any) {
         this.logger.warn(

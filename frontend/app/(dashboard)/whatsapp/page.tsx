@@ -606,7 +606,7 @@ export default function WhatsAppPage() {
   const [sendError, setSendError] = useState('');
   const [senderAccounts, setSenderAccounts] = useState<WhatsAppSenderAccount[]>([]);
   const [selectedSenderId, setSelectedSenderId] = useState('');
-  const [convFilter, setConvFilter] = useState<'all' | 'unread' | 'assigned' | 'campaign'>('all');
+  const [convFilter, setConvFilter] = useState<'all' | 'unread' | 'assigned' | 'campaign' | 'manychat' | 'typeform'>('all');
   const [campaignConversationFilter, setCampaignConversationFilter] = useState('all');
   const [convNumberFilter, setConvNumberFilter] = useState<string>('all');
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -1583,6 +1583,8 @@ export default function WhatsAppPage() {
     if (convNumberFilter !== 'all' && c.senderIntegrationId !== convNumberFilter) return false;
     if (convFilter === 'unread') return c.unreadCount > 0;
     if (convFilter === 'assigned') return !!assignments[c.waId];
+    if (convFilter === 'manychat') return c.contactSource === 'manychat';
+    if (convFilter === 'typeform') return c.contactSource === 'typeform';
     if (convFilter === 'campaign') {
       if (!c.hasCampaignMessages) return false;
       if (campaignConversationFilter !== 'all') {
@@ -2503,10 +2505,19 @@ export default function WhatsAppPage() {
           </div>
           {/* Filter tabs */}
           <div className="flex flex-wrap gap-1">
-            {(['all', 'unread', 'assigned', 'campaign'] as const).map(f => (
-              <button key={f} onClick={() => setConvFilter(f)}
-                className={`px-2.5 py-1 text-xs font-medium rounded-full transition-all ${convFilter === f ? 'bg-green-100 text-green-700' : 'text-gray-500 hover:bg-gray-100'}`}>
-                {f === 'all' ? 'All' : f === 'unread' ? 'Unread' : f === 'assigned' ? 'Assigned' : 'Campaign'}
+            {(
+              [
+                { key: 'all', label: 'All' },
+                { key: 'unread', label: 'Unread' },
+                { key: 'assigned', label: 'Assigned' },
+                { key: 'campaign', label: 'Campaign' },
+                { key: 'manychat', label: 'ManyChat' },
+                { key: 'typeform', label: 'Typeform' },
+              ] as const
+            ).map(({ key, label }) => (
+              <button key={key} onClick={() => setConvFilter(key)}
+                className={`px-2.5 py-1 text-xs font-medium rounded-full transition-all ${convFilter === key ? 'bg-green-100 text-green-700' : 'text-gray-500 hover:bg-gray-100'}`}>
+                {label}
               </button>
             ))}
           </div>
