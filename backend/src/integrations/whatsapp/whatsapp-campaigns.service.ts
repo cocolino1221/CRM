@@ -217,6 +217,12 @@ export class WhatsAppCampaignsService {
         failed++;
       }
 
+      // Save progress every 20 sends so the UI can show live progress
+      if ((sent + failed) % 20 === 0) {
+        campaign.stats = { total: recipients.length, sent, failed };
+        await this.repo.save(campaign);
+      }
+
       // 50 ms delay between sends to respect Meta rate limits
       await new Promise(resolve => setTimeout(resolve, 50));
     }

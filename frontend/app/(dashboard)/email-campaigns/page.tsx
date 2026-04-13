@@ -216,6 +216,17 @@ export default function EmailCampaignsPage() {
     }
   }, [activeChannel]);
 
+  // Auto-poll every 3s while any WA campaign is sending
+  useEffect(() => {
+    if (activeChannel !== 'whatsapp') return;
+    const hasSending = whatsAppCampaigns.some(c => c.status === 'sending');
+    if (!hasSending) return;
+    const timer = setInterval(() => {
+      fetchWhatsAppCampaigns();
+    }, 3000);
+    return () => clearInterval(timer);
+  }, [activeChannel, whatsAppCampaigns]);
+
   const approvedTemplates = useMemo(
     () => whatsAppTemplates.filter((tpl) => String(tpl.status || '').toUpperCase() === 'APPROVED'),
     [whatsAppTemplates],
@@ -1447,6 +1458,13 @@ export default function EmailCampaignsPage() {
                             <td className="px-4 py-3 text-xs text-gray-600">
                               {campaign.results?.error ? (
                                 <span className="text-red-600">{campaign.results.error}</span>
+                              ) : campaign.status === 'sending' ? (
+                                <span className="inline-flex items-center gap-1.5 text-amber-700 font-medium">
+                                  <Loader2 className="h-3 w-3 animate-spin" />
+                                  {typeof campaign.results?.sent === 'number'
+                                    ? `${campaign.results.sent} / ${campaign.results.total ?? '?'}`
+                                    : 'starting…'}
+                                </span>
                               ) : campaign.results ? (
                                 <>
                                   <span className="text-green-600 font-medium">{campaign.results.sent ?? 0}</span> sent
