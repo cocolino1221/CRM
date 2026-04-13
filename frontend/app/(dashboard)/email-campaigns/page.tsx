@@ -308,7 +308,7 @@ export default function EmailCampaignsPage() {
   const handleScheduleEmail = async (id: string, scheduledAt: string) => {
     if (!scheduledAt) return;
     try {
-      await api.post(`/email-campaigns/${id}/schedule`, { scheduledAt });
+      await api.post(`/email-campaigns/${id}/schedule`, { scheduledAt: new Date(scheduledAt).toISOString() });
       setSchedulingEmailId(null);
       setScheduleEmailDate('');
       fetchCampaigns();
@@ -492,7 +492,7 @@ export default function EmailCampaignsPage() {
           language: whatsAppLanguage.trim() || 'en_US',
           csvRecipients: manualRecipients,
         };
-        if (action === 'schedule' && waScheduledAt) payload.scheduledAt = waScheduledAt;
+        if (action === 'schedule' && waScheduledAt) payload.scheduledAt = new Date(waScheduledAt).toISOString();
 
         const createRes = await api.post('/integrations/whatsapp/bulk-campaigns', payload);
         const created = createRes.data;
@@ -1522,7 +1522,7 @@ function CampaignForm({ campaign, onClose }: { campaign: Campaign | null; onClos
         htmlBody: htmlBody || null,
         textBody: textBody || null,
         filters: buildFilters(),
-        scheduledAt: scheduledAt || null,
+        scheduledAt: scheduledAt ? new Date(scheduledAt).toISOString() : null,
       };
       if (csvRecipients?.length) payload.csvRecipients = csvRecipients;
 

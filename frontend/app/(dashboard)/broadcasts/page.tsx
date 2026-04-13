@@ -143,7 +143,7 @@ function CreateWaCampaignModal({
         templateName: templateName.trim(),
         language,
         csvRecipients,
-        scheduledAt: scheduledAt || null,
+        scheduledAt: scheduledAt ? new Date(scheduledAt).toISOString() : null,
       });
       onCreated();
       onClose();
@@ -323,7 +323,7 @@ function CreateEmailCampaignModal({
         subject: subject.trim(),
         htmlBody: htmlBody.trim(),
         csvRecipients: csvRecipients || [],
-        scheduledAt: scheduledAt || null,
+        scheduledAt: scheduledAt ? new Date(scheduledAt).toISOString() : null,
       });
       onCreated();
       onClose();
