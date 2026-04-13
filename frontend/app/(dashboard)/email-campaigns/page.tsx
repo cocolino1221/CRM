@@ -183,6 +183,11 @@ export default function EmailCampaignsPage() {
   const [schedulingEmailId, setSchedulingEmailId] = useState<string | null>(null);
   const [scheduleEmailDate, setScheduleEmailDate] = useState('');
 
+  // Template parameters for WA campaign form
+  const [waHeaderParamType, setWaHeaderParamType] = useState<'' | 'text' | 'image' | 'video' | 'document'>('');
+  const [waHeaderParamValue, setWaHeaderParamValue] = useState('');
+  const [waBodyParams, setWaBodyParams] = useState<string[]>(['']);
+
   // Info / Edit modals
   const [infoEmailCampaign, setInfoEmailCampaign] = useState<Campaign | null>(null);
   const [infoWaCampaign, setInfoWaCampaign] = useState<any | null>(null);
@@ -452,6 +457,21 @@ export default function EmailCampaignsPage() {
     }
   };
 
+  const buildWaTemplateParams = () => {
+    const params: any[] = [];
+    if (waHeaderParamType && waHeaderParamValue.trim()) {
+      const headerParam = waHeaderParamType === 'text'
+        ? { type: 'text', text: waHeaderParamValue.trim() }
+        : { type: waHeaderParamType, [waHeaderParamType]: { link: waHeaderParamValue.trim() } };
+      params.push({ type: 'header', parameters: [headerParam] });
+    }
+    const bodyVars = waBodyParams.filter(p => p.trim());
+    if (bodyVars.length) {
+      params.push({ type: 'body', parameters: bodyVars.map(v => ({ type: 'text', text: v.trim() })) });
+    }
+    return params;
+  };
+
   const resetWhatsAppForm = () => {
     setWhatsAppName('');
     setWhatsAppTagInput('');
@@ -464,6 +484,9 @@ export default function EmailCampaignsPage() {
     setManualRecipientsInput('');
     setManualRecipientsError('');
     setWaScheduledAt('');
+    setWaHeaderParamType('');
+    setWaHeaderParamValue('');
+    setWaBodyParams(['']);
     setShowWhatsAppForm(false);
     if (approvedTemplates[0]) {
       setWhatsAppTemplate(approvedTemplates[0].name);
@@ -493,11 +516,13 @@ export default function EmailCampaignsPage() {
     try {
       // Direct list mode → use new DB-persisted bulk-campaigns endpoint
       if (whatsAppAudienceMode === 'direct_list') {
+        const templateParams = buildWaTemplateParams();
         const payload: any = {
           name: whatsAppName.trim(),
           templateName: whatsAppTemplate.trim(),
           language: whatsAppLanguage.trim() || 'en_US',
           csvRecipients: manualRecipients,
+          ...(templateParams.length ? { templateParams } : {}),
         };
         if (action === 'schedule' && waScheduledAt) payload.scheduledAt = new Date(waScheduledAt).toISOString();
 
@@ -951,6 +976,79 @@ export default function EmailCampaignsPage() {
                           No approved template available. Create and approve templates from the WhatsApp page.
                         </p>
                       )}
+                    </div>
+
+                    {/* Template Parameters */}
+                    <div className="rounded-xl border border-gray-200 bg-white p-3 space-y-3">
+                      <p className="text-xs font-medium text-gray-700">Template Parameters <span className="font-normal text-gray-400">(optional — only if your template requires them)</span></p>
+
+                      {/* Header param */}
+                      <div>
+                        <label className="block text-[11px] font-medium text-gray-500 mb-1">Header component</label>
+                        <div className="flex items-center gap-2">
+                          <select
+                            value={waHeaderParamType}
+                            onChange={e => setWaHeaderParamType(e.target.value as any)}
+                            className="px-2 py-1.5 rounded-lg border border-gray-200 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-green-500"
+                          >
+                            <option value="">None</option>
+                            <option value="text">Text</option>
+                            <option value="image">Image URL</option>
+                            <option value="video">Video URL</option>
+                            <option value="document">Document URL</option>
+                          </select>
+                          {waHeaderParamType && (
+                            <input
+                              type="text"
+                              value={waHeaderParamValue}
+                              onChange={e => setWaHeaderParamValue(e.target.value)}
+                              placeholder={waHeaderParamType === 'text' ? 'Header text value' : 'https://...'}
+                              className="flex-1 px-2 py-1.5 rounded-lg border border-gray-200 text-xs focus:outline-none focus:ring-2 focus:ring-green-500"
+                            />
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Body params */}
+                      <div>
+                        <label className="block text-[11px] font-medium text-gray-500 mb-1">Body variables &#123;&#123;1&#125;&#125;, &#123;&#123;2&#125;&#125;...</label>
+                        <div className="space-y-1.5">
+                          {waBodyParams.map((val, idx) => (
+                            <div key={idx} className="flex items-center gap-2">
+                              <span className="text-[10px] text-gray-400 w-7 text-right shrink-0">&#123;&#123;{idx + 1}&#125;&#125;</span>
+                              <input
+                                type="text"
+                                value={val}
+                                onChange={e => {
+                                  const next = [...waBodyParams];
+                                  next[idx] = e.target.value;
+                                  setWaBodyParams(next);
+                                }}
+                                placeholder={`Value for {{${idx + 1}}}`}
+                                className="flex-1 px-2 py-1.5 rounded-lg border border-gray-200 text-xs focus:outline-none focus:ring-2 focus:ring-green-500"
+                              />
+                              {waBodyParams.length > 1 && (
+                                <button
+                                  type="button"
+                                  onClick={() => setWaBodyParams(prev => prev.filter((_, i) => i !== idx))}
+                                  className="text-gray-400 hover:text-red-500"
+                                >
+                                  <X className="h-3.5 w-3.5" />
+                                </button>
+                              )}
+                            </div>
+                          ))}
+                          {waBodyParams.length < 8 && (
+                            <button
+                              type="button"
+                              onClick={() => setWaBodyParams(prev => [...prev, ''])}
+                              className="text-xs text-green-600 hover:text-green-700 font-medium"
+                            >
+                              + Add variable
+                            </button>
+                          )}
+                        </div>
+                      </div>
                     </div>
 
                     <div>
@@ -1718,8 +1816,39 @@ function WaCampaignEditModal({
   const [scheduledAt, setScheduledAt] = useState(
     campaign.scheduledAt ? new Date(campaign.scheduledAt).toISOString().slice(0, 16) : '',
   );
+
+  // Pre-fill template params from existing campaign
+  const existingParams: any[] = campaign.templateParams || [];
+  const existingHeader = existingParams.find((c: any) => c.type === 'header');
+  const existingBody = existingParams.find((c: any) => c.type === 'body');
+  const initHeaderParam = existingHeader?.parameters?.[0];
+  const initHeaderType = initHeaderParam ? (initHeaderParam.type as 'text' | 'image' | 'video' | 'document') : '' as const;
+  const initHeaderValue = initHeaderParam
+    ? (initHeaderParam.text || initHeaderParam.image?.link || initHeaderParam.video?.link || initHeaderParam.document?.link || '')
+    : '';
+  const initBodyParams: string[] = existingBody?.parameters?.map((p: any) => p.text || '') || [''];
+
+  const [headerType, setHeaderType] = useState<'' | 'text' | 'image' | 'video' | 'document'>(initHeaderType);
+  const [headerValue, setHeaderValue] = useState(initHeaderValue);
+  const [bodyParams, setBodyParams] = useState<string[]>(initBodyParams.length ? initBodyParams : ['']);
+
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState('');
+
+  const buildTemplateParams = () => {
+    const params: any[] = [];
+    if (headerType && headerValue.trim()) {
+      const hp = headerType === 'text'
+        ? { type: 'text', text: headerValue.trim() }
+        : { type: headerType, [headerType]: { link: headerValue.trim() } };
+      params.push({ type: 'header', parameters: [hp] });
+    }
+    const bodyVars = bodyParams.filter(p => p.trim());
+    if (bodyVars.length) {
+      params.push({ type: 'body', parameters: bodyVars.map(v => ({ type: 'text', text: v.trim() })) });
+    }
+    return params;
+  };
 
   const isLocked = campaign.scheduledAt
     ? new Date(campaign.scheduledAt).getTime() - Date.now() < 5 * 60 * 1000
@@ -1730,11 +1859,13 @@ function WaCampaignEditModal({
     setIsSaving(true);
     setError('');
     try {
+      const tp = buildTemplateParams();
       await api.put(`/integrations/whatsapp/bulk-campaigns/${campaign.id}`, {
         name: name.trim(),
         templateName: templateName.trim(),
         language: language.trim() || 'en_US',
         scheduledAt: scheduledAt ? new Date(scheduledAt).toISOString() : null,
+        ...(tp.length ? { templateParams: tp } : { templateParams: [] }),
       });
       onSaved();
     } catch (err: any) {
@@ -1787,6 +1918,63 @@ function WaCampaignEditModal({
                   ))}
                 </select>
               </div>
+              {/* Template Parameters */}
+              <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 space-y-3">
+                <p className="text-xs font-medium text-gray-700">Template Parameters <span className="font-normal text-gray-400">(header/body vars)</span></p>
+                <div>
+                  <label className="block text-[11px] text-gray-500 mb-1">Header component</label>
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={headerType}
+                      onChange={e => setHeaderType(e.target.value as any)}
+                      className="px-2 py-1.5 rounded-lg border border-gray-200 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-green-500"
+                    >
+                      <option value="">None</option>
+                      <option value="text">Text</option>
+                      <option value="image">Image URL</option>
+                      <option value="video">Video URL</option>
+                      <option value="document">Document URL</option>
+                    </select>
+                    {headerType && (
+                      <input
+                        type="text"
+                        value={headerValue}
+                        onChange={e => setHeaderValue(e.target.value)}
+                        placeholder={headerType === 'text' ? 'Header text' : 'https://...'}
+                        className="flex-1 px-2 py-1.5 rounded-lg border border-gray-200 text-xs focus:outline-none focus:ring-2 focus:ring-green-500"
+                      />
+                    )}
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-[11px] text-gray-500 mb-1">Body variables</label>
+                  <div className="space-y-1.5">
+                    {bodyParams.map((val, idx) => (
+                      <div key={idx} className="flex items-center gap-2">
+                        <span className="text-[10px] text-gray-400 w-7 text-right shrink-0">&#123;&#123;{idx + 1}&#125;&#125;</span>
+                        <input
+                          type="text"
+                          value={val}
+                          onChange={e => { const n = [...bodyParams]; n[idx] = e.target.value; setBodyParams(n); }}
+                          placeholder={`Value for {{${idx + 1}}}`}
+                          className="flex-1 px-2 py-1.5 rounded-lg border border-gray-200 text-xs focus:outline-none focus:ring-2 focus:ring-green-500"
+                        />
+                        {bodyParams.length > 1 && (
+                          <button type="button" onClick={() => setBodyParams(p => p.filter((_, i) => i !== idx))} className="text-gray-400 hover:text-red-500">
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                    {bodyParams.length < 8 && (
+                      <button type="button" onClick={() => setBodyParams(p => [...p, ''])} className="text-xs text-green-600 hover:text-green-700 font-medium">
+                        + Add variable
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+
               <div>
                 <label className="block text-xs font-medium text-gray-700 mb-1 flex items-center gap-1">
                   <Calendar className="h-3.5 w-3.5" />Schedule send (optional)
