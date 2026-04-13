@@ -20,6 +20,8 @@ import {
   PlugZap,
   Calendar,
   Upload,
+  Info,
+  Lock,
 } from 'lucide-react';
 import api from '@/lib/api';
 
@@ -180,6 +182,11 @@ export default function EmailCampaignsPage() {
   const [waScheduledAt, setWaScheduledAt] = useState('');
   const [schedulingEmailId, setSchedulingEmailId] = useState<string | null>(null);
   const [scheduleEmailDate, setScheduleEmailDate] = useState('');
+
+  // Info / Edit modals
+  const [infoEmailCampaign, setInfoEmailCampaign] = useState<Campaign | null>(null);
+  const [infoWaCampaign, setInfoWaCampaign] = useState<any | null>(null);
+  const [editWaCampaign, setEditWaCampaign] = useState<any | null>(null);
 
   // WhatsApp CSV import
   const [csvFile, setCsvFile] = useState<File | null>(null);
@@ -759,15 +766,32 @@ export default function EmailCampaignsPage() {
                         )}
                       </div>
                       <div className="flex flex-col items-end gap-2 shrink-0">
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => setInfoEmailCampaign(campaign)}
+                            className="p-2 rounded-lg hover:bg-gray-100 text-gray-500 transition-colors"
+                            title="Info"
+                          >
+                            <Info className="h-4 w-4" />
+                          </button>
+                        </div>
                         {(campaign.status === 'draft' || campaign.status === 'scheduled') && (
                           <div className="flex items-center gap-2">
-                            <button
-                              onClick={() => handleEdit(campaign)}
-                              className="p-2 rounded-lg hover:bg-gray-100 text-gray-500 transition-colors"
-                              title="Edit"
-                            >
-                              <Edit className="h-4 w-4" />
-                            </button>
+                            {(() => {
+                              const isLocked = campaign.status === 'scheduled' && campaign.scheduledAt
+                                ? new Date(campaign.scheduledAt).getTime() - Date.now() < 5 * 60 * 1000
+                                : false;
+                              return (
+                                <button
+                                  onClick={() => !isLocked && handleEdit(campaign)}
+                                  disabled={isLocked}
+                                  className="p-2 rounded-lg hover:bg-gray-100 text-gray-500 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                                  title={isLocked ? 'Locked — less than 5 min to send' : 'Edit'}
+                                >
+                                  {isLocked ? <Lock className="h-4 w-4" /> : <Edit className="h-4 w-4" />}
+                                </button>
+                              );
+                            })()}
                             <button
                               onClick={() => {
                                 setSchedulingEmailId(schedulingEmailId === campaign.id ? null : campaign.id);
@@ -1249,6 +1273,28 @@ export default function EmailCampaignsPage() {
                             </td>
                             <td className="px-4 py-3">
                               <div className="flex items-center justify-end gap-1">
+                                <button
+                                  onClick={() => setInfoWaCampaign(campaign)}
+                                  className="p-1.5 rounded-lg text-gray-400 hover:text-indigo-600 hover:bg-indigo-50"
+                                  title="Info"
+                                >
+                                  <Info className="h-4 w-4" />
+                                </button>
+                                {(campaign as any)._isBulk && (campaign.status === 'draft' || campaign.status === 'scheduled') && (() => {
+                                  const isLocked = campaign.status === 'scheduled' && (campaign as any).scheduledAt
+                                    ? new Date((campaign as any).scheduledAt).getTime() - Date.now() < 5 * 60 * 1000
+                                    : false;
+                                  return (
+                                    <button
+                                      onClick={() => !isLocked && setEditWaCampaign(campaign)}
+                                      disabled={isLocked}
+                                      className="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                                      title={isLocked ? 'Locked — less than 5 min to send' : 'Edit'}
+                                    >
+                                      {isLocked ? <Lock className="h-4 w-4" /> : <Edit className="h-4 w-4" />}
+                                    </button>
+                                  );
+                                })()}
                                 {(campaign.status === 'draft' || campaign.status === 'scheduled') && (
                                   <button
                                     onClick={() => sendWhatsAppCampaign(campaign)}
@@ -1440,6 +1486,335 @@ export default function EmailCampaignsPage() {
           )}
         </>
       )}
+      {/* Email campaign info modal */}
+      {infoEmailCampaign && (
+        <EmailCampaignInfoModal campaign={infoEmailCampaign} onClose={() => setInfoEmailCampaign(null)} />
+      )}
+
+      {/* WhatsApp campaign info modal */}
+      {infoWaCampaign && (
+        <WaCampaignInfoModal campaign={infoWaCampaign} onClose={() => setInfoWaCampaign(null)} />
+      )}
+
+      {/* WhatsApp campaign edit modal */}
+      {editWaCampaign && (
+        <WaCampaignEditModal
+          campaign={editWaCampaign}
+          approvedTemplates={approvedTemplates}
+          onClose={() => setEditWaCampaign(null)}
+          onSaved={() => { setEditWaCampaign(null); fetchWhatsAppCampaigns(); }}
+        />
+      )}
+    </div>
+  );
+}
+
+function EmailCampaignInfoModal({ campaign, onClose }: { campaign: Campaign; onClose: () => void }) {
+  const sc = statusConfig[campaign.status];
+  const Icon = sc.icon;
+  return (
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-xl max-w-lg w-full max-h-[85vh] overflow-y-auto">
+        <div className="flex items-center justify-between p-5 border-b border-gray-100">
+          <h2 className="text-lg font-bold text-gray-900">Campaign Info</h2>
+          <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-100 text-gray-400"><X className="h-5 w-5" /></button>
+        </div>
+        <div className="p-5 space-y-4 text-sm">
+          <div className="flex items-center gap-3">
+            <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium ${sc.color}`}>
+              <Icon className="h-3 w-3" />{sc.label}
+            </span>
+            <span className="font-semibold text-gray-900">{campaign.name}</span>
+          </div>
+          <div className="grid grid-cols-2 gap-3 text-sm">
+            <div>
+              <p className="text-xs text-gray-500 mb-0.5">Subject</p>
+              <p className="text-gray-800">{campaign.subject}</p>
+            </div>
+            <div>
+              <p className="text-xs text-gray-500 mb-0.5">Created</p>
+              <p className="text-gray-800">{new Date(campaign.createdAt).toLocaleString()}</p>
+            </div>
+            {campaign.scheduledAt && (
+              <div>
+                <p className="text-xs text-gray-500 mb-0.5">Scheduled for</p>
+                <p className="text-blue-600">{new Date(campaign.scheduledAt).toLocaleString()}</p>
+              </div>
+            )}
+            {campaign.sentAt && (
+              <div>
+                <p className="text-xs text-gray-500 mb-0.5">Sent at</p>
+                <p className="text-gray-800">{new Date(campaign.sentAt).toLocaleString()}</p>
+              </div>
+            )}
+          </div>
+          {campaign.stats && (campaign.stats.total ?? 0) > 0 && (
+            <div className="rounded-xl bg-gray-50 p-3 flex gap-6">
+              <div className="text-center">
+                <p className="text-lg font-bold text-gray-900">{campaign.stats.total}</p>
+                <p className="text-xs text-gray-500">Total</p>
+              </div>
+              <div className="text-center">
+                <p className="text-lg font-bold text-green-600">{campaign.stats.sent ?? 0}</p>
+                <p className="text-xs text-gray-500">Sent</p>
+              </div>
+              {(campaign.stats.failed ?? 0) > 0 && (
+                <div className="text-center">
+                  <p className="text-lg font-bold text-red-500">{campaign.stats.failed}</p>
+                  <p className="text-xs text-gray-500">Failed</p>
+                </div>
+              )}
+            </div>
+          )}
+          {(campaign.filters?.tags?.length || campaign.filters?.statuses?.length || campaign.filters?.sources?.length) ? (
+            <div>
+              <p className="text-xs text-gray-500 mb-1.5">Audience Filters</p>
+              <div className="flex flex-wrap gap-1.5">
+                {campaign.filters.tags?.map(t => (
+                  <span key={t} className="rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-medium text-indigo-600">tag: {t}</span>
+                ))}
+                {campaign.filters.statuses?.map(s => (
+                  <span key={s} className="rounded-full bg-green-50 px-2 py-0.5 text-[10px] font-medium text-green-600">status: {s}</span>
+                ))}
+                {campaign.filters.sources?.map(s => (
+                  <span key={s} className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-600">source: {s}</span>
+                ))}
+              </div>
+            </div>
+          ) : null}
+          {campaign.htmlBody && (
+            <div>
+              <p className="text-xs text-gray-500 mb-1">Email Body (HTML preview)</p>
+              <div className="max-h-40 overflow-y-auto rounded-xl border border-gray-200 bg-gray-50 p-3 text-xs font-mono text-gray-600 whitespace-pre-wrap break-all">
+                {campaign.htmlBody.slice(0, 1000)}{campaign.htmlBody.length > 1000 ? '...' : ''}
+              </div>
+            </div>
+          )}
+        </div>
+        <div className="flex justify-end p-5 border-t border-gray-100">
+          <button onClick={onClose} className="px-4 py-2 bg-gray-100 text-gray-700 rounded-xl text-sm font-medium hover:bg-gray-200">Close</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function WaCampaignInfoModal({ campaign, onClose }: { campaign: any; onClose: () => void }) {
+  const recipients: any[] = campaign.csvRecipients || [];
+  const stats = campaign.results || campaign.stats || {};
+  return (
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-xl max-w-lg w-full max-h-[85vh] overflow-y-auto">
+        <div className="flex items-center justify-between p-5 border-b border-gray-100">
+          <h2 className="text-lg font-bold text-gray-900">WhatsApp Campaign Info</h2>
+          <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-100 text-gray-400"><X className="h-5 w-5" /></button>
+        </div>
+        <div className="p-5 space-y-4 text-sm">
+          <div className="flex items-center gap-3">
+            <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${
+              campaign.status === 'sent' ? 'bg-green-100 text-green-700'
+              : campaign.status === 'sending' ? 'bg-amber-100 text-amber-700'
+              : campaign.status === 'scheduled' ? 'bg-blue-100 text-blue-700'
+              : campaign.status === 'failed' ? 'bg-red-100 text-red-700'
+              : 'bg-gray-100 text-gray-700'
+            }`}>{campaign.status}</span>
+            <span className="font-semibold text-gray-900">{campaign.name}</span>
+            {campaign._isBulk && <span className="text-[10px] bg-violet-100 text-violet-600 px-1.5 py-0.5 rounded-full">CSV</span>}
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <p className="text-xs text-gray-500 mb-0.5">Template</p>
+              <p className="font-mono text-gray-800">{campaign.templateName}</p>
+            </div>
+            <div>
+              <p className="text-xs text-gray-500 mb-0.5">Language</p>
+              <p className="text-gray-800">{campaign.language}</p>
+            </div>
+            <div>
+              <p className="text-xs text-gray-500 mb-0.5">Created</p>
+              <p className="text-gray-800">{new Date(campaign.createdAt).toLocaleString()}</p>
+            </div>
+            {campaign.scheduledAt && (
+              <div>
+                <p className="text-xs text-gray-500 mb-0.5">Scheduled for</p>
+                <p className="text-blue-600">{new Date(campaign.scheduledAt).toLocaleString()}</p>
+              </div>
+            )}
+            {campaign.sentAt && (
+              <div>
+                <p className="text-xs text-gray-500 mb-0.5">Sent at</p>
+                <p className="text-gray-800">{new Date(campaign.sentAt).toLocaleString()}</p>
+              </div>
+            )}
+          </div>
+          {(stats.total ?? stats.sent ?? stats.failed) !== undefined && (
+            <div className="rounded-xl bg-gray-50 p-3 flex gap-6">
+              {stats.total !== undefined && (
+                <div className="text-center"><p className="text-lg font-bold text-gray-900">{stats.total}</p><p className="text-xs text-gray-500">Total</p></div>
+              )}
+              {stats.sent !== undefined && (
+                <div className="text-center"><p className="text-lg font-bold text-green-600">{stats.sent}</p><p className="text-xs text-gray-500">Sent</p></div>
+              )}
+              {(stats.failed ?? 0) > 0 && (
+                <div className="text-center"><p className="text-lg font-bold text-red-500">{stats.failed}</p><p className="text-xs text-gray-500">Failed</p></div>
+              )}
+            </div>
+          )}
+          {stats.error && (
+            <div className="rounded-xl bg-red-50 border border-red-100 p-3">
+              <p className="text-xs text-red-600 font-medium">Error</p>
+              <p className="text-sm text-red-700 mt-1">{stats.error}</p>
+            </div>
+          )}
+          {recipients.length > 0 && (
+            <div>
+              <p className="text-xs text-gray-500 mb-1.5">Recipients ({recipients.length})</p>
+              <div className="max-h-44 overflow-y-auto rounded-xl border border-gray-200">
+                <table className="w-full text-xs">
+                  <thead className="bg-gray-50 sticky top-0">
+                    <tr>
+                      <th className="px-3 py-1.5 text-left font-medium text-gray-500">Phone</th>
+                      <th className="px-3 py-1.5 text-left font-medium text-gray-500">Name</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100 bg-white">
+                    {recipients.slice(0, 100).map((r: any, i: number) => (
+                      <tr key={i}>
+                        <td className="px-3 py-1.5 font-mono">{r.phone}</td>
+                        <td className="px-3 py-1.5">{`${r.firstName || ''} ${r.lastName || ''}`.trim() || '-'}</td>
+                      </tr>
+                    ))}
+                    {recipients.length > 100 && (
+                      <tr><td className="px-3 py-1.5 text-gray-400" colSpan={2}>... and {recipients.length - 100} more</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+        <div className="flex justify-end p-5 border-t border-gray-100">
+          <button onClick={onClose} className="px-4 py-2 bg-gray-100 text-gray-700 rounded-xl text-sm font-medium hover:bg-gray-200">Close</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function WaCampaignEditModal({
+  campaign,
+  approvedTemplates,
+  onClose,
+  onSaved,
+}: {
+  campaign: any;
+  approvedTemplates: { name: string; language: string; status: string }[];
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [name, setName] = useState(campaign.name || '');
+  const [templateName, setTemplateName] = useState(campaign.templateName || '');
+  const [language, setLanguage] = useState(campaign.language || 'en_US');
+  const [scheduledAt, setScheduledAt] = useState(
+    campaign.scheduledAt ? new Date(campaign.scheduledAt).toISOString().slice(0, 16) : '',
+  );
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const isLocked = campaign.scheduledAt
+    ? new Date(campaign.scheduledAt).getTime() - Date.now() < 5 * 60 * 1000
+    : false;
+
+  const handleSave = async () => {
+    if (!name.trim()) { setError('Name is required'); return; }
+    setIsSaving(true);
+    setError('');
+    try {
+      await api.put(`/integrations/whatsapp/bulk-campaigns/${campaign.id}`, {
+        name: name.trim(),
+        templateName: templateName.trim(),
+        language: language.trim() || 'en_US',
+        scheduledAt: scheduledAt ? new Date(scheduledAt).toISOString() : null,
+      });
+      onSaved();
+    } catch (err: any) {
+      setError(err?.response?.data?.message || 'Failed to save');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-xl max-w-md w-full">
+        <div className="flex items-center justify-between p-5 border-b border-gray-100">
+          <h2 className="text-lg font-bold text-gray-900">Edit WhatsApp Campaign</h2>
+          <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-100 text-gray-400"><X className="h-5 w-5" /></button>
+        </div>
+        {isLocked ? (
+          <div className="p-5 text-center space-y-3">
+            <Lock className="h-10 w-10 text-amber-400 mx-auto" />
+            <p className="text-sm font-semibold text-gray-800">Campaign is locked</p>
+            <p className="text-xs text-gray-500">Less than 5 minutes before the scheduled send. Editing is not allowed.</p>
+            <button onClick={onClose} className="mt-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-xl text-sm font-medium hover:bg-gray-200">Close</button>
+          </div>
+        ) : (
+          <>
+            <div className="p-5 space-y-4">
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Campaign Name *</label>
+                <input
+                  type="text"
+                  value={name}
+                  onChange={e => setName(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Template</label>
+                <select
+                  value={templateName}
+                  onChange={e => {
+                    const sel = approvedTemplates.find(t => t.name === e.target.value);
+                    setTemplateName(e.target.value);
+                    if (sel?.language) setLanguage(sel.language);
+                  }}
+                  className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-green-500"
+                >
+                  <option value="">Select approved template</option>
+                  {approvedTemplates.map(t => (
+                    <option key={`${t.name}_${t.language}`} value={t.name}>{t.name} ({t.language})</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1 flex items-center gap-1">
+                  <Calendar className="h-3.5 w-3.5" />Schedule send (optional)
+                </label>
+                <input
+                  type="datetime-local"
+                  value={scheduledAt}
+                  onChange={e => setScheduledAt(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                />
+                <p className="text-xs text-gray-400 mt-1">Clear to revert to draft</p>
+              </div>
+              {error && <p className="text-sm text-red-600">{error}</p>}
+            </div>
+            <div className="flex items-center justify-end gap-3 p-5 border-t border-gray-100">
+              <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800">Cancel</button>
+              <button
+                onClick={handleSave}
+                disabled={isSaving || !name.trim()}
+                className="flex items-center gap-2 px-5 py-2 bg-green-600 text-white rounded-xl text-sm font-medium hover:bg-green-700 disabled:opacity-50"
+              >
+                {isSaving && <Loader2 className="h-4 w-4 animate-spin" />}
+                Save Changes
+              </button>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }

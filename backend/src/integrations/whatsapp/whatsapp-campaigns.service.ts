@@ -72,6 +72,36 @@ export class WhatsAppCampaignsService {
     return this.repo.save(campaign);
   }
 
+  async update(
+    workspaceId: string,
+    id: string,
+    dto: Partial<Pick<CreateWaCampaignDto, 'name' | 'templateName' | 'language' | 'templateParams' | 'scheduledAt'>>,
+  ): Promise<WhatsAppCampaign> {
+    const campaign = await this.findOne(workspaceId, id);
+    if (campaign.status === WhatsAppCampaignStatus.SENDING || campaign.status === WhatsAppCampaignStatus.SENT) {
+      throw new BadRequestException('Cannot edit a campaign that is sending or already sent');
+    }
+    // Enforce 5-minute lock before scheduled send
+    if (campaign.scheduledAt) {
+      const msUntilSend = new Date(campaign.scheduledAt).getTime() - Date.now();
+      if (msUntilSend < 5 * 60 * 1000) {
+        throw new BadRequestException('Campaign is locked — less than 5 minutes before scheduled send');
+      }
+    }
+    if (dto.name !== undefined) campaign.name = dto.name;
+    if (dto.templateName !== undefined) campaign.templateName = dto.templateName;
+    if (dto.language !== undefined) campaign.language = dto.language;
+    if (dto.templateParams !== undefined) campaign.templateParams = dto.templateParams;
+    if ('scheduledAt' in dto) {
+      campaign.scheduledAt = dto.scheduledAt ? new Date(dto.scheduledAt) : null;
+      campaign.status =
+        campaign.scheduledAt && campaign.scheduledAt > new Date()
+          ? WhatsAppCampaignStatus.SCHEDULED
+          : WhatsAppCampaignStatus.DRAFT;
+    }
+    return this.repo.save(campaign);
+  }
+
   async remove(workspaceId: string, id: string): Promise<{ deleted: boolean }> {
     const campaign = await this.findOne(workspaceId, id);
     if (campaign.status === WhatsAppCampaignStatus.SENDING) {

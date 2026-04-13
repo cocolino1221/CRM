@@ -2,6 +2,7 @@ import {
   Controller,
   Post,
   Get,
+  Put,
   Delete,
   Body,
   Query,
@@ -1201,6 +1202,16 @@ export class WhatsAppController {
     const userId = req.user?.id;
     if (!workspaceId) throw new BadRequestException('Workspace ID required');
     return this.waCampaignsService.create(workspaceId, userId, body);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Put('bulk-campaigns/:id')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Update a bulk campaign (locked within 5 min of send)' })
+  async updateBulkCampaign(@Req() req: any, @Param('id') id: string, @Body() body: any) {
+    const workspaceId = req.user?.workspaceId;
+    if (!workspaceId) throw new BadRequestException('Workspace ID required');
+    return this.waCampaignsService.update(workspaceId, id, body);
   }
 
   @UseGuards(JwtAuthGuard)
