@@ -73,6 +73,8 @@ interface Conversation {
   campaignNames: string[];
   primaryCampaignName: string | null;
   assignment?: ConvAssignment;
+  senderIntegrationId?: string | null;
+  senderPhoneDisplay?: string | null;
 }
 
 interface ContactDetail {
@@ -606,6 +608,7 @@ export default function WhatsAppPage() {
   const [selectedSenderId, setSelectedSenderId] = useState('');
   const [convFilter, setConvFilter] = useState<'all' | 'unread' | 'assigned' | 'campaign'>('all');
   const [campaignConversationFilter, setCampaignConversationFilter] = useState('all');
+  const [convNumberFilter, setConvNumberFilter] = useState<string>('all');
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Mobile layout: 'list' shows conv list, 'chat' shows selected chat
@@ -891,11 +894,18 @@ export default function WhatsAppPage() {
             lastMessage: act.description || '', lastMessageTime: act.occurredAt,
             messageCount: 0, messages: [], unreadCount: 0, lastInboundTime: null,
             hasCampaignMessages: false, campaignIds: [], campaignNames: [], primaryCampaignName: null,
+            senderIntegrationId: act.metadata?.senderIntegrationId || null,
+            senderPhoneDisplay: act.metadata?.senderPhoneDisplay || null,
           });
         }
         const conv = convMap.get(waId)!;
         if (!conv.contactSource && contactSource) {
           conv.contactSource = contactSource;
+        }
+        // Update sender info from latest outbound message (most reliable indicator of which number was used)
+        if (act.direction === 'outbound' && act.metadata?.senderIntegrationId) {
+          conv.senderIntegrationId = act.metadata.senderIntegrationId;
+          conv.senderPhoneDisplay = act.metadata.senderPhoneDisplay || conv.senderPhoneDisplay;
         }
         const campaignId = String(act.metadata?.campaignId || '').trim();
         const campaignName = String(act.metadata?.campaignName || '').trim();
@@ -1570,6 +1580,7 @@ export default function WhatsAppPage() {
       || c.phone.includes(search)
       || c.campaignNames.some((campaignName) => campaignName.toLowerCase().includes(normalizedSearch));
     if (!matchesSearch) return false;
+    if (convNumberFilter !== 'all' && c.senderIntegrationId !== convNumberFilter) return false;
     if (convFilter === 'unread') return c.unreadCount > 0;
     if (convFilter === 'assigned') return !!assignments[c.waId];
     if (convFilter === 'campaign') {
@@ -1712,8 +1723,16 @@ export default function WhatsAppPage() {
   const fetchCampaigns = async () => {
     setIsLoadingCampaigns(true);
     try {
-      const res = await api.get('/integrations/whatsapp/campaigns');
-      setCampaigns(res.data || []);
+      const [legacyRes, bulkRes] = await Promise.allSettled([
+        api.get('/integrations/whatsapp/campaigns'),
+        api.get('/integrations/whatsapp/bulk-campaigns'),
+      ]);
+      const legacy = legacyRes.status === 'fulfilled' && Array.isArray(legacyRes.value.data) ? legacyRes.value.data : [];
+      const bulk = bulkRes.status === 'fulfilled' && Array.isArray(bulkRes.value.data)
+        ? bulkRes.value.data.map((c: any) => ({ ...c, results: c.stats, _isBulk: true }))
+        : [];
+      const all = [...bulk, ...legacy].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      setCampaigns(all);
     } catch { /* silent */ }
     finally { setIsLoadingCampaigns(false); }
   };
@@ -2461,6 +2480,21 @@ export default function WhatsAppPage() {
               </button>
             </div>
           </div>
+          {/* Number filter — only shown when multiple WA numbers are connected */}
+          {senderAccounts.length > 1 && (
+            <select
+              value={convNumberFilter}
+              onChange={e => setConvNumberFilter(e.target.value)}
+              className="w-full bg-white border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs text-gray-700 focus:outline-none focus:border-green-400 focus:ring-2 focus:ring-green-100"
+            >
+              <option value="all">All numbers</option>
+              {senderAccounts.map(account => (
+                <option key={account.id} value={account.id}>
+                  {account.phoneDisplay || account.phoneNumberId || account.name}
+                </option>
+              ))}
+            </select>
+          )}
           {/* Search */}
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
