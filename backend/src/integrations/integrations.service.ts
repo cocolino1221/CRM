@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Logger, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, FindOptionsWhere } from 'typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -21,7 +21,7 @@ export interface IntegrationEvent {
 }
 
 @Injectable()
-export class IntegrationsService {
+export class IntegrationsService implements OnModuleInit {
   private readonly logger = new Logger(IntegrationsService.name);
 
   constructor(
@@ -39,6 +39,29 @@ export class IntegrationsService {
     private webhookService: WebhookService,
     private syncService: SyncService,
   ) { }
+
+  /**
+   * Restore sync schedules on server startup (lost after restart/deploy)
+   */
+  async onModuleInit(): Promise<void> {
+    try {
+      const integrations = await this.integrationRepository.find({
+        where: { status: IntegrationStatus.ACTIVE },
+      });
+      let restored = 0;
+      for (const integration of integrations) {
+        if (integration.config?.syncFrequency && integration.config.syncFrequency !== 'manual') {
+          await this.setupSyncSchedule(integration);
+          restored++;
+        }
+      }
+      if (restored > 0) {
+        this.logger.log(`Restored ${restored} integration sync schedule(s) after startup`);
+      }
+    } catch (err) {
+      this.logger.error(`Failed to restore sync schedules on startup: ${err.message}`);
+    }
+  }
 
   /**
    * Get all available integration types
@@ -462,8 +485,10 @@ export class IntegrationsService {
 
     // Relaxed check: Allow sync if active and not expired, even if error count is high
     // For Google, also allow if status is PENDING but we have access token
-    const canSync = integration.status === IntegrationStatus.ACTIVE || 
+    // For webhook-first providers (payfunnel etc.), allow sync even in ERROR state — they don't have credentials to fail
+    const canSync = integration.status === IntegrationStatus.ACTIVE ||
                    (isGoogle && integration.status === IntegrationStatus.PENDING && hasAccessToken) ||
+                   (isWebhookFirstProvider && integration.status !== IntegrationStatus.DISABLED) ||
                    options?.force;
 
     if (!canSync) {
@@ -498,6 +523,10 @@ export class IntegrationsService {
       // If sync was successful, clear any previous errors to restore health
       if (syncResult.success) {
         integration.clearErrors();
+        // Restore ACTIVE status for webhook-first providers that may have been in ERROR
+        if (isWebhookFirstProvider && integration.status === IntegrationStatus.ERROR) {
+          integration.status = IntegrationStatus.ACTIVE;
+        }
       }
 
       await this.integrationRepository.save(integration);
@@ -668,6 +697,16 @@ export class IntegrationsService {
 
     const job = new CronJob(cronPattern, async () => {
       try {
+        // Re-fetch to get current status — integration may have changed since job was registered
+        const current = await this.integrationRepository.findOne({ where: { id: integration.id } });
+        if (!current) {
+          this.logger.warn(`Scheduled sync: integration ${integration.id} no longer exists, skipping`);
+          return;
+        }
+        if (current.status !== IntegrationStatus.ACTIVE) {
+          this.logger.warn(`Scheduled sync: integration ${integration.id} is ${current.status}, skipping`);
+          return;
+        }
         await this.syncData(integration.id, integration.workspaceId, { force: false });
       } catch (error) {
         this.logger.error(`Scheduled sync failed for integration ${integration.id}:`, error);
