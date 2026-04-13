@@ -25,7 +25,7 @@ import api from '@/lib/api';
 
 type CampaignStatus = 'draft' | 'scheduled' | 'sending' | 'sent' | 'failed';
 type CampaignChannel = 'email' | 'whatsapp';
-type WhatsAppCampaignStatus = 'draft' | 'sending' | 'sent' | 'failed';
+type WhatsAppCampaignStatus = 'draft' | 'scheduled' | 'sending' | 'sent' | 'failed';
 
 interface Campaign {
   id: string;
