@@ -42,6 +42,17 @@ export class UsersService {
       throw new ForbiddenException('You do not have permission to create users');
     }
 
+    if (createUserDto.role === UserRole.SUPER_ADMIN && creatorRole !== UserRole.SUPER_ADMIN) {
+      throw new ForbiddenException('Only platform super admins can assign SUPER_ADMIN role');
+    }
+
+    if (
+      creatorRole === UserRole.MANAGER &&
+      [UserRole.ADMIN, UserRole.SUPER_ADMIN].includes(createUserDto.role)
+    ) {
+      throw new ForbiddenException('Managers cannot create ADMIN or SUPER_ADMIN users');
+    }
+
     // Check if email already exists in workspace
     const existingUser = await this.userRepository.findOne({
       where: {
@@ -138,7 +149,14 @@ export class UsersService {
       throw new NotFoundException('User not found');
     }
 
-    Object.assign(user, updateUserDto);
+    // Hash password before saving if it was provided as plain text
+    const dto: any = { ...updateUserDto };
+    if (dto.password) {
+      const bcryptRounds = this.configService.get<number>('auth.bcryptRounds') || 12;
+      dto.password = await bcrypt.hash(dto.password, bcryptRounds);
+    }
+
+    Object.assign(user, dto);
     const updatedUser = await this.userRepository.save(user);
 
     return this.transformToResponse(updatedUser);
@@ -164,6 +182,14 @@ export class UsersService {
 
     if (!user) {
       throw new NotFoundException('User not found');
+    }
+
+    if (user.role === UserRole.SUPER_ADMIN && currentUserRole !== UserRole.SUPER_ADMIN) {
+      throw new ForbiddenException('Only platform super admins can modify SUPER_ADMIN users');
+    }
+
+    if (updateRoleDto.role === UserRole.SUPER_ADMIN && currentUserRole !== UserRole.SUPER_ADMIN) {
+      throw new ForbiddenException('Only platform super admins can assign SUPER_ADMIN role');
     }
 
     user.role = updateRoleDto.role;
