@@ -17,7 +17,7 @@ import { randomBytes } from 'crypto';
 import * as bcrypt from 'bcrypt';
 import { v4 as uuidv4 } from 'uuid';
 import { User, UserRole, UserStatus } from '../database/entities/user.entity';
-import { Workspace } from '../database/entities/workspace.entity';
+import { Workspace, WorkspaceSettings } from '../database/entities/workspace.entity';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
@@ -112,6 +112,53 @@ export class AuthService implements OnModuleInit {
   private isConfiguredSuperAdminEmail(email?: string): boolean {
     const normalized = this.normalizeEmailForMatch(email);
     return !!normalized && this.superAdminEmailSet.has(normalized);
+  }
+
+  private getDefaultWorkspaceFeatures(): WorkspaceSettings['features'] {
+    return {
+      aiEnabled: true,
+      slackIntegration: true,
+      emailIntegration: true,
+      whatsappEnabled: true,
+      contactsEnabled: true,
+      leadsEnabled: true,
+      calendarEnabled: true,
+      pipelineEnabled: true,
+      tasksEnabled: true,
+      automationEnabled: true,
+      marketingEnabled: true,
+      mobileAppEnabled: true,
+    };
+  }
+
+  private getWorkspaceLimitsForPackage(
+    packageId: 'starter' | 'growth' | 'scale',
+  ): NonNullable<WorkspaceSettings['limits']> {
+    if (packageId === 'growth') {
+      return { maxUsers: 25, maxWhatsAppNumbers: 3 };
+    }
+    if (packageId === 'scale') {
+      return { maxUsers: null, maxWhatsAppNumbers: 10 };
+    }
+    return { maxUsers: 8, maxWhatsAppNumbers: 1 };
+  }
+
+  private buildWorkspaceSettingsForNewSignup(
+    packageId: 'starter' | 'growth' | 'scale' = 'starter',
+  ): WorkspaceSettings {
+    return {
+      timezone: 'UTC',
+      dateFormat: 'MM/DD/YYYY',
+      currency: 'USD',
+      features: this.getDefaultWorkspaceFeatures(),
+      billing: {
+        grandfathered: false,
+        package: packageId,
+        billingProvider: 'stripe' as const,
+        billingStatus: 'trialing' as const,
+      },
+      limits: this.getWorkspaceLimitsForPackage(packageId),
+    };
   }
 
   private async promoteConfiguredSuperAdmin(): Promise<void> {
@@ -260,25 +307,7 @@ export class AuthService implements OnModuleInit {
           domain: this.generateWorkspaceDomain(registerDto.email),
           plan: 'trial',
           isActive: true,
-          settings: {
-            timezone: 'UTC',
-            dateFormat: 'MM/DD/YYYY',
-            currency: 'USD',
-            features: {
-              aiEnabled: true,
-              slackIntegration: true,
-              emailIntegration: true,
-              whatsappEnabled: true,
-              contactsEnabled: true,
-              leadsEnabled: true,
-              calendarEnabled: true,
-              pipelineEnabled: true,
-              tasksEnabled: true,
-              automationEnabled: true,
-              marketingEnabled: true,
-              mobileAppEnabled: true,
-            },
-          },
+          settings: this.buildWorkspaceSettingsForNewSignup('starter'),
         });
 
         workspace = await this.workspaceRepository.save(workspace);
@@ -373,9 +402,9 @@ export class AuthService implements OnModuleInit {
   /**
    * Generate signed OAuth state token to prevent CSRF
    */
-  generateOAuthState(): string {
+  generateOAuthState(source: 'web' | 'mobile' = 'web'): string {
     return this.jwtService.sign(
-      { nonce: randomBytes(16).toString('hex') },
+      { nonce: randomBytes(16).toString('hex'), source },
       {
         secret: this.oauthStateSecret,
         expiresIn: Math.floor(this.oauthStateTtlMs / 1000),
@@ -384,19 +413,24 @@ export class AuthService implements OnModuleInit {
   }
 
   /**
-   * Validate OAuth state token
+   * Validate OAuth state and return the source ('web' | 'mobile'), or null if invalid
    */
-  validateOAuthState(state?: string): boolean {
-    if (!state) {
-      return false;
-    }
+  getOAuthStateSource(state?: string): 'web' | 'mobile' | null {
+    if (!state) return null;
     try {
-      this.jwtService.verify(state, { secret: this.oauthStateSecret });
-      return true;
+      const payload = this.jwtService.verify(state, { secret: this.oauthStateSecret }) as { source?: string };
+      return payload.source === 'mobile' ? 'mobile' : 'web';
     } catch (error) {
       this.logger.warn(`Invalid OAuth state received: ${error.message}`);
-      return false;
+      return null;
     }
+  }
+
+  /**
+   * Validate OAuth state token (kept for backwards compat)
+   */
+  validateOAuthState(state?: string): boolean {
+    return this.getOAuthStateSource(state) !== null;
   }
 
   /**
@@ -857,6 +891,9 @@ export class AuthService implements OnModuleInit {
         const workspace = this.workspaceRepository.create({
           name: workspaceName,
           domain: workspaceDomain,
+          plan: 'trial',
+          isActive: true,
+          settings: this.buildWorkspaceSettingsForNewSignup('starter'),
         });
         await this.workspaceRepository.save(workspace);
 
@@ -945,6 +982,9 @@ export class AuthService implements OnModuleInit {
         const workspace = this.workspaceRepository.create({
           name: `${firstName}'s Workspace`,
           domain: `${firstName.toLowerCase()}-${Date.now()}`,
+          plan: 'trial',
+          isActive: true,
+          settings: this.buildWorkspaceSettingsForNewSignup('starter'),
         });
         await this.workspaceRepository.save(workspace);
 

@@ -13,6 +13,7 @@ import {
   Res,
   Query,
   UnauthorizedException,
+  ValidationPipe,
 } from '@nestjs/common';
 import { Response } from 'express';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
@@ -84,7 +85,16 @@ export class AuthController {
     description: 'Too many requests',
   })
   async login(
-    @Body() loginDto: LoginDto,
+    @Body(
+      new ValidationPipe({
+        whitelist: true,
+        transform: true,
+        forbidNonWhitelisted: false,
+        // Avoid exposing validation internals on login; return a clear auth error instead.
+        exceptionFactory: () => new UnauthorizedException('Invalid email or password'),
+      }),
+    )
+    loginDto: LoginDto,
     @Ip() ipAddress: string,
     @Res({ passthrough: true }) res: Response,
   ): Promise<Omit<AuthResponse, 'refreshToken'>> {
@@ -382,10 +392,10 @@ export class AuthController {
   @Get('google')
   @ApiOperation({ summary: 'Start Google OAuth login flow' })
   @ApiResponse({ status: 302, description: 'Redirect to Google OAuth' })
-  async googleAuth(@Res() res: Response): Promise<void> {
+  async googleAuth(@Res() res: Response, @Query('source') source?: string): Promise<void> {
     const googleClientId = this.configService.get('GOOGLE_CLIENT_ID');
     const callbackUrl = this.configService.get('GOOGLE_CALLBACK_URL');
-    const state = this.authService.generateOAuthState();
+    const state = this.authService.generateOAuthState(source === 'mobile' ? 'mobile' : 'web');
 
     const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +
       `client_id=${googleClientId}` +
@@ -416,10 +426,14 @@ export class AuthController {
       return;
     }
 
-    if (!this.authService.validateOAuthState(state)) {
+    const stateSource = this.authService.getOAuthStateSource(state);
+    if (!stateSource) {
       res.redirect(`${frontendUrl}/login?error=${encodeURIComponent('Invalid OAuth state')}`);
       return;
     }
+
+    const mobileFrontendUrl = this.configService.get('MOBILE_FRONTEND_URL') || frontendUrl;
+    const targetUrl = stateSource === 'mobile' ? mobileFrontendUrl : frontendUrl;
 
     try {
       const authResponse = await this.authService.googleLogin(code);
@@ -429,12 +443,12 @@ export class AuthController {
 
       const encodedCode = encodeURIComponent(authCode);
       res.redirect(
-        `${frontendUrl}/auth/callback?` +
+        `${targetUrl}/auth/callback?` +
         `code=${encodedCode}` +
         `&provider=google`
       );
     } catch (err) {
-      res.redirect(`${frontendUrl}/login?error=${encodeURIComponent('Authentication failed')}`);
+      res.redirect(`${targetUrl}/login?error=${encodeURIComponent('Authentication failed')}`);
     }
   }
 

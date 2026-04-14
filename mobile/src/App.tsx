@@ -5,6 +5,7 @@ import { useNotificationsStore } from '@/stores/notifications-store';
 import TabBar from '@/components/TabBar';
 import ToastContainer from '@/components/Toast';
 import LoginPage from '@/pages/LoginPage';
+import AuthCallbackPage from '@/pages/AuthCallbackPage';
 import ConversationList from '@/pages/whatsapp/ConversationList';
 import ChatView from '@/pages/whatsapp/ChatView';
 import LeadsList from '@/pages/leads/LeadsList';
@@ -56,6 +57,7 @@ export default function App() {
       ) : (
         <Routes>
           <Route path="/login" element={<LoginPage />} />
+          <Route path="/auth/callback" element={<AuthCallbackPage />} />
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
       )}

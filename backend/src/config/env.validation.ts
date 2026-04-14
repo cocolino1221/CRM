@@ -9,6 +9,7 @@ export const validationSchema = Joi.object({
   // Application
   PORT: Joi.number().default(3000),
   FRONTEND_URL: Joi.string().uri().required(),
+  MOBILE_FRONTEND_URL: Joi.string().uri().optional(),
   APP_URL: Joi.string().uri().optional().default('http://localhost:3000'),
 
   // Database - Either DATABASE_URL or individual connection parameters
@@ -80,7 +81,7 @@ export const validationSchema = Joi.object({
 
   // Email Configuration
   EMAIL_PROVIDER: Joi.string().valid('sendgrid', 'smtp', 'resend').default('smtp'),
-  FROM_EMAIL: Joi.string().email().default('noreply@slackcrm.com'),
+  FROM_EMAIL: Joi.string().email().default('onboarding@etcrm.primafisoft.com'),
 
   // Resend
   RESEND_API_KEY: Joi.string().when('EMAIL_PROVIDER', {
@@ -192,6 +193,9 @@ export const validationSchema = Joi.object({
   WHATSAPP_PHONE_NUMBER_ID: Joi.string().optional(),
   WHATSAPP_VERIFY_TOKEN: Joi.string().optional(),
   WHATSAPP_BUSINESS_ACCOUNT_ID: Joi.string().optional(),
+
+  // Phone normalization
+  CONTACT_PHONE_DEFAULT_COUNTRY_CODE: Joi.string().pattern(/^\d{1,3}$/).default('40'),
 });
 
 /**
