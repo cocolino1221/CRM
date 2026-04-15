@@ -518,6 +518,11 @@ export default function DocumentsPage() {
         : form.paymentLinkMode === 'payfunnel'
           ? (selectedPayfunnelLink?.name || form.selectedPayfunnelLinkName || undefined)
           : undefined;
+      const chosenPaymentLinkId = !form.autoSendPaymentLink
+        ? undefined
+        : form.paymentLinkMode === 'payfunnel'
+          ? (selectedPayfunnelLink?.id || undefined)
+          : undefined;
 
       await api.post('/documents/esemneaza', {
         name: form.name,
@@ -539,6 +544,7 @@ export default function DocumentsPage() {
         paymentCurrency: form.paymentCurrency || 'EUR',
         paymentLinkUrl: chosenPaymentLinkUrl,
         paymentLinkName: chosenPaymentLinkName,
+        paymentLinkId: chosenPaymentLinkId,
       });
 
       setShowCreateModal(false);
@@ -585,11 +591,16 @@ export default function DocumentsPage() {
           : sendPaymentMode === 'payfunnel'
             ? (sendPaymentSelectedLinkUrl || undefined)
             : undefined;
+      const paymentLinkId =
+        sendPaymentMode === 'payfunnel'
+          ? (selectedLink?.id || undefined)
+          : undefined;
 
       await api.post(`/documents/${documentId}/payment-link`, {
         sendEmail: sendPaymentViaEmail,
         sendWhatsApp: sendPaymentViaWhatsApp,
         paymentLinkUrl,
+        paymentLinkId,
         paymentLinkName: sendPaymentMode === 'payfunnel'
           ? (selectedLink?.name || sendPaymentSelectedLinkName || undefined)
           : undefined,

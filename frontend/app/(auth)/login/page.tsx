@@ -6,6 +6,28 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { Mail, Lock, Eye, EyeOff, ArrowRight, AlertCircle, Loader2, Sparkles, CheckCircle } from 'lucide-react';
 import { authService } from '@/lib/auth';
 
+function getLoginErrorMessage(err: any): string {
+  const status = Number(err?.response?.status || 0);
+  const rawMessage = err?.response?.data?.message;
+  const message = Array.isArray(rawMessage)
+    ? rawMessage.find((entry: unknown) => typeof entry === 'string') || ''
+    : typeof rawMessage === 'string'
+      ? rawMessage
+      : '';
+
+  // Login UX: always show a clear credential error for auth failures.
+  if (status === 400 || status === 401) {
+    if (/invalid credentials|invalid email or password/i.test(message)) {
+      return 'Invalid email or password. If your account was created with Google, use Google Sign-In or reset your password.';
+    }
+    if (!message || /bad request/i.test(message)) {
+      return 'Invalid email or password. If your account was created with Google, use Google Sign-In or reset your password.';
+    }
+  }
+
+  return message || 'Invalid email or password. If your account was created with Google, use Google Sign-In or reset your password.';
+}
+
 function LoginSkeleton() {
   return (
     <div className="animate-pulse space-y-6">
@@ -61,7 +83,7 @@ function LoginForm() {
       }, 500);
     } catch (err: any) {
       console.error('Login error:', err);
-      const errorMessage = err.response?.data?.message || 'Invalid email or password. Please try again.';
+      const errorMessage = getLoginErrorMessage(err);
       setError(errorMessage);
     } finally {
       setIsLoading(false);

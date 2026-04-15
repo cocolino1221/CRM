@@ -66,6 +66,7 @@ interface PayfunnelPaymentItem {
   customerName?: string;
   customerId?: string;
   customerEmail?: string;
+  customerPhone?: string;
   paymentMethodType?: string;
   cardLast4?: string;
   productNames?: string[];
@@ -91,6 +92,7 @@ interface PayfunnelSubscriptionItem {
   customerName?: string;
   customerId?: string;
   customerEmail?: string;
+  customerPhone?: string;
   planName?: string;
   interval?: string;
   paymentType?: string;
@@ -161,6 +163,10 @@ function formatCurrency(amount?: number, currency?: string): string {
   }
 }
 
+function normalizePhoneDigits(value?: string): string {
+  return String(value || '').replace(/\D+/g, '');
+}
+
 function getStatusClasses(status: PaymentStatus): string {
   if (status === 'paid') {
     return 'bg-emerald-100 text-emerald-700';
@@ -197,6 +203,7 @@ export default function PaymentsPage() {
   });
   const [loadingPayfunnel, setLoadingPayfunnel] = useState(true);
   const [payfunnelError, setPayfunnelError] = useState('');
+  const [subscriptionSearch, setSubscriptionSearch] = useState('');
 
   const queryStatus = status === 'all' ? undefined : status;
 
@@ -319,6 +326,35 @@ export default function PaymentsPage() {
     setPage(1);
     setSearch(searchInput.trim());
   };
+
+  const filteredPayfunnelSubscriptions = useMemo(() => {
+    const query = subscriptionSearch.trim().toLowerCase();
+    const queryPhone = normalizePhoneDigits(subscriptionSearch);
+
+    if (!query && !queryPhone) {
+      return payfunnelData.subscriptions;
+    }
+
+    return payfunnelData.subscriptions.filter((item) => {
+      const textMatch = [
+        item.planName,
+        item.title,
+        item.customerName,
+        item.customerEmail,
+        item.customerId,
+        item.id,
+        item.customerPhone,
+      ]
+        .filter(Boolean)
+        .some((value) => String(value).toLowerCase().includes(query));
+
+      const phoneMatch = queryPhone.length > 0
+        ? normalizePhoneDigits(item.customerPhone).includes(queryPhone)
+        : false;
+
+      return textMatch || phoneMatch;
+    });
+  }, [payfunnelData.subscriptions, subscriptionSearch]);
 
   return (
     <div className="p-6 space-y-6">
@@ -451,16 +487,29 @@ export default function PaymentsPage() {
 
             <div className="rounded-lg border border-gray-200 bg-white overflow-hidden">
               <div className="px-3 py-2 bg-gray-50 border-b border-gray-200 text-xs font-semibold text-gray-700">
-                Subscriptions ({payfunnelData.subscriptions.length})
+                Subscriptions ({filteredPayfunnelSubscriptions.length}/{payfunnelData.subscriptions.length})
+              </div>
+              <div className="p-3 border-b border-gray-100 bg-white">
+                <input
+                  value={subscriptionSearch}
+                  onChange={(e) => setSubscriptionSearch(e.target.value)}
+                  placeholder="Cauta subscription dupa nume sau telefon"
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-xs focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400"
+                />
               </div>
               <div className="max-h-80 overflow-auto">
-                {payfunnelData.subscriptions.length === 0 ? (
-                  <div className="p-3 text-xs text-gray-500">Nu exista subscriptions returnate.</div>
+                {filteredPayfunnelSubscriptions.length === 0 ? (
+                  <div className="p-3 text-xs text-gray-500">
+                    {payfunnelData.subscriptions.length === 0
+                      ? 'Nu exista subscriptions returnate.'
+                      : 'Nu exista subscriptions pentru cautarea curenta.'}
+                  </div>
                 ) : (
-                  payfunnelData.subscriptions.map((item) => (
+                  filteredPayfunnelSubscriptions.map((item) => (
                     <div key={item.id} className="p-3 border-b border-gray-100 last:border-b-0">
                       <div className="text-xs font-semibold text-gray-900 truncate">{item.planName || item.title || item.id}</div>
                       <div className="text-[11px] text-gray-500 mt-1">{item.customerName || item.customerEmail || '-'}</div>
+                      {item.customerPhone && <div className="text-[11px] text-gray-500">Phone: {item.customerPhone}</div>}
                       {item.customerId && <div className="text-[11px] text-gray-500">Customer ID: {item.customerId}</div>}
                       <div className="text-[11px] text-gray-500">{formatCurrency(item.amount, item.currency)}</div>
                       {item.chargeAmount !== undefined && <div className="text-[11px] text-gray-500">Charge amount: {formatCurrency(item.chargeAmount, item.currency)}</div>}

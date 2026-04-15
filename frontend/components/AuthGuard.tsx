@@ -27,6 +27,8 @@ export default function AuthGuard({ children }: AuthGuardProps) {
     '/platform-admin',
     '/privacy',
     '/terms',
+    '/help',
+    '/forms/public',
     '/auth/callback', // OAuth callback must stay public so tokens can be exchanged
   ]);
   const isPublicRoute =

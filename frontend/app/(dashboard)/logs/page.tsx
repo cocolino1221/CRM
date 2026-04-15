@@ -73,7 +73,8 @@ export default function LogsPage() {
       const adminRole = role === 'admin';
       const canAccessLogs = superAdminRole || adminRole;
 
-      setIsSuperAdmin(superAdminRole);
+      // Logs page is always workspace-scoped to prevent cross-company visibility.
+      setIsSuperAdmin(false);
       setIsAuthorized(canAccessLogs);
 
       if (!canAccessLogs) {
@@ -82,13 +83,9 @@ export default function LogsPage() {
         return;
       }
 
-      const logsRes = superAdminRole
-        ? await api.get<SystemLogsResponse>('/platform-admin/logs', {
-            params: { limit: 200 },
-          })
-        : await api.get<SystemLogsResponse>('/analytics/system-logs', {
-            params: { limit: 200 },
-          });
+      const logsRes = await api.get<SystemLogsResponse>('/analytics/system-logs', {
+        params: { limit: 200 },
+      });
 
       setLogs(logsRes.data.logs || []);
       setSources(logsRes.data.sources || { activity: 0, notification: 0, integration: 0 });

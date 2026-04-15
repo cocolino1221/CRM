@@ -68,16 +68,20 @@ api.interceptors.response.use(
   },
   async (error: AxiosError) => {
     const originalRequest = error.config as InternalAxiosRequestConfig & { _retry?: boolean };
+    const requestUrl = String(originalRequest?.url || '');
+    const isAuthEndpoint = /^\/?auth\/(login|register|refresh|logout|oauth\/exchange)(\/|$)/i.test(requestUrl);
+    const hasAccessToken =
+      typeof window !== 'undefined' && Boolean(localStorage.getItem('accessToken'));
 
-    // Handle 401 errors (unauthorized)
-    if (error.response?.status === 401 && !originalRequest._retry) {
+    // Handle 401 errors (unauthorized) only for authenticated API calls.
+    if (error.response?.status === 401 && !originalRequest._retry && !isAuthEndpoint && hasAccessToken) {
       if (isRefreshing) {
         // Queue the request while token is being refreshed
         return new Promise((resolve, reject) => {
           failedQueue.push({ resolve, reject });
         })
           .then((token) => {
-            if (originalRequest.headers) {
+            if (originalRequest.headers && token) {
               originalRequest.headers.Authorization = `Bearer ${token}`;
             }
             return api(originalRequest);
