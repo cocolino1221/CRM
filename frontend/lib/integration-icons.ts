@@ -41,6 +41,7 @@ export const integrationIcons: Record<string, string> = {
   // Social Media
   facebook: 'https://cdn.simpleicons.org/facebook/1877F2',
   instagram: 'https://cdn.simpleicons.org/instagram/E4405F',
+  tiktok: 'https://cdn.simpleicons.org/tiktok/000000',
   linkedin: 'https://cdn.simpleicons.org/linkedin/0A66C2',
 
   // E-commerce
