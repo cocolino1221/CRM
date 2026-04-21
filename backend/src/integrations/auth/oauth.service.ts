@@ -22,6 +22,10 @@ export interface OAuthConfig {
   authUrl: string;
   tokenUrl: string;
   revokeUrl?: string;
+  providerKey?: string;
+  authorizeClientParam?: 'client_id' | 'client_key';
+  tokenClientParam?: 'client_id' | 'client_key';
+  scopeDelimiter?: 'space' | 'comma';
 }
 
 @Injectable()
@@ -63,7 +67,8 @@ export class OAuthService {
   /**
    * Get OAuth configuration for integration type
    */
-  private getOAuthConfig(type: IntegrationType): OAuthConfig {
+  private getOAuthConfig(integration: Integration): OAuthConfig {
+    const type = integration.type;
     const configs: Record<IntegrationType, Partial<OAuthConfig>> = {
       [IntegrationType.SLACK]: {
         authUrl: 'https://slack.com/oauth/v2/authorize',
@@ -122,25 +127,118 @@ export class OAuthService {
       [IntegrationType.MANYCHAT]: {},
     };
 
-    const baseConfig = configs[type];
+    let baseConfig = configs[type];
+    let envPrefixes = [type.toUpperCase()];
+    let defaultScopes: string[] = [];
+    let authorizeClientParam: 'client_id' | 'client_key' = 'client_id';
+    let tokenClientParam: 'client_id' | 'client_key' = 'client_id';
+    let scopeDelimiter: 'space' | 'comma' = 'space';
+    let providerKey: string | undefined;
+
+    if (type === IntegrationType.API) {
+      providerKey = this.getApiOAuthProviderKey(integration);
+      const apiProviderConfigs: Record<string, {
+        authUrl: string;
+        tokenUrl: string;
+        revokeUrl?: string;
+        defaultScopes: string[];
+        envPrefixes: string[];
+        authorizeClientParam?: 'client_id' | 'client_key';
+        tokenClientParam?: 'client_id' | 'client_key';
+        scopeDelimiter?: 'space' | 'comma';
+      }> = {
+        facebook: {
+          authUrl: 'https://www.facebook.com/v23.0/dialog/oauth',
+          tokenUrl: 'https://graph.facebook.com/v23.0/oauth/access_token',
+          defaultScopes: [
+            'public_profile',
+            'email',
+            'pages_show_list',
+            'pages_read_engagement',
+            'pages_manage_metadata',
+            'leads_retrieval',
+          ],
+          envPrefixes: ['FACEBOOK'],
+        },
+        instagram: {
+          authUrl: 'https://www.facebook.com/v23.0/dialog/oauth',
+          tokenUrl: 'https://graph.facebook.com/v23.0/oauth/access_token',
+          defaultScopes: [
+            'public_profile',
+            'email',
+            'pages_show_list',
+            'pages_read_engagement',
+            'pages_manage_metadata',
+            'instagram_basic',
+            'instagram_manage_comments',
+            'instagram_manage_messages',
+          ],
+          envPrefixes: ['INSTAGRAM', 'FACEBOOK'],
+        },
+        tiktok: {
+          authUrl: 'https://www.tiktok.com/v2/auth/authorize/',
+          tokenUrl: 'https://open.tiktokapis.com/v2/oauth/token/',
+          defaultScopes: ['user.info.basic'],
+          envPrefixes: ['TIKTOK'],
+          authorizeClientParam: 'client_key',
+          tokenClientParam: 'client_key',
+          scopeDelimiter: 'comma',
+        },
+      };
+
+      const providerConfig = providerKey ? apiProviderConfigs[providerKey] : undefined;
+      if (!providerConfig) {
+        throw new BadRequestException(`OAuth not supported for API provider: ${providerKey || 'unknown'}`);
+      }
+
+      baseConfig = providerConfig;
+      envPrefixes = providerConfig.envPrefixes;
+      defaultScopes = providerConfig.defaultScopes;
+      authorizeClientParam = providerConfig.authorizeClientParam || authorizeClientParam;
+      tokenClientParam = providerConfig.tokenClientParam || tokenClientParam;
+      scopeDelimiter = providerConfig.scopeDelimiter || scopeDelimiter;
+    }
+
     if (!baseConfig || !baseConfig.authUrl) {
       throw new BadRequestException(`OAuth not supported for integration type: ${type}`);
     }
 
-    const envPrefix = type.toUpperCase();
+    const readFirstEnvValue = (keys: string[]): string | undefined => {
+      for (const key of keys) {
+        const value = this.configService.get<string>(key);
+        if (value) {
+          return value;
+        }
+      }
+      return undefined;
+    };
 
     // Get client credentials
-    const clientId = this.configService.get(`OAUTH_${envPrefix}_CLIENT_ID`);
-    const clientSecret = this.configService.get(`OAUTH_${envPrefix}_CLIENT_SECRET`);
+    const clientIdCandidates = envPrefixes.flatMap((prefix) =>
+      tokenClientParam === 'client_key'
+        ? [`OAUTH_${prefix}_CLIENT_KEY`, `OAUTH_${prefix}_CLIENT_ID`]
+        : [`OAUTH_${prefix}_CLIENT_ID`, `OAUTH_${prefix}_CLIENT_KEY`]
+    );
+    const clientSecretCandidates = envPrefixes.map((prefix) => `OAUTH_${prefix}_CLIENT_SECRET`);
+
+    let clientId = readFirstEnvValue(clientIdCandidates);
+    let clientSecret = readFirstEnvValue(clientSecretCandidates);
+
+    // Reuse existing Meta app credentials (already used by WhatsApp embedded signup)
+    // when dedicated Facebook/Instagram OAuth vars are not configured yet.
+    if ((!clientId || !clientSecret) && (providerKey === 'facebook' || providerKey === 'instagram')) {
+      clientId = clientId || this.configService.get<string>('META_APP_ID');
+      clientSecret = clientSecret || this.configService.get<string>('META_APP_SECRET');
+    }
 
     if (!clientId || !clientSecret) {
       throw new BadRequestException(
-        `OAuth credentials not configured for ${type}. Please contact your administrator.`
+        `OAuth credentials not configured for ${providerKey || type}. Please contact your administrator.`
       );
     }
 
     // Get redirect URI - use specific env var or construct from APP_URL
-    let redirectUri = this.configService.get(`OAUTH_${envPrefix}_REDIRECT_URI`);
+    let redirectUri = readFirstEnvValue(envPrefixes.map((prefix) => `OAUTH_${prefix}_REDIRECT_URI`));
 
     if (!redirectUri) {
       // Fallback: construct from APP_URL
@@ -151,8 +249,8 @@ export class OAuthService {
     }
 
     // Get scopes (from env or default)
-    const scopesEnv = this.configService.get(`OAUTH_${envPrefix}_SCOPES`);
-    let scopes: string[] = [];
+    const scopesEnv = readFirstEnvValue(envPrefixes.map((prefix) => `OAUTH_${prefix}_SCOPES`));
+    let scopes: string[] = defaultScopes;
 
     if (scopesEnv) {
       scopes = scopesEnv.split(',').map((s: string) => s.trim());
@@ -164,15 +262,33 @@ export class OAuthService {
       clientSecret,
       redirectUri,
       scopes,
+      providerKey,
+      authorizeClientParam,
+      tokenClientParam,
+      scopeDelimiter,
       ...baseConfig,
     } as OAuthConfig;
+  }
+
+  private getApiOAuthProviderKey(integration: Integration): string | null {
+    const rawProvider = String(integration.config?.provider || integration.externalId || '').trim().toLowerCase();
+    if (!rawProvider) {
+      return null;
+    }
+    if (rawProvider === 'fb' || rawProvider === 'meta-facebook') {
+      return 'facebook';
+    }
+    if (rawProvider === 'ig' || rawProvider === 'meta-instagram') {
+      return 'instagram';
+    }
+    return rawProvider;
   }
 
   /**
    * Generate OAuth authorization URL
    */
   generateAuthUrl(integration: Integration, state?: string): string {
-    const config = this.getOAuthConfig(integration.type);
+    const config = this.getOAuthConfig(integration);
 
     // Get scopes from: integration config > OAuth config > registry defaults
     let scopes = integration.config?.scopes || config.scopes;
@@ -183,13 +299,17 @@ export class OAuthService {
       scopes = metadata?.defaultConfig?.scopes || [];
     }
 
-    const params = new URLSearchParams({
-      client_id: config.clientId,
-      redirect_uri: config.redirectUri,
-      scope: Array.isArray(scopes) ? scopes.join(' ') : scopes,
-      response_type: 'code',
-      state: state || this.generateState(integration),
-    });
+    const params = new URLSearchParams();
+    params.append(config.authorizeClientParam || 'client_id', config.clientId);
+    params.append('redirect_uri', config.redirectUri);
+    params.append(
+      'scope',
+      Array.isArray(scopes)
+        ? scopes.join(config.scopeDelimiter === 'comma' ? ',' : ' ')
+        : scopes
+    );
+    params.append('response_type', 'code');
+    params.append('state', state || this.generateState(integration));
 
     // Add integration-specific parameters
     switch (integration.type) {
@@ -281,28 +401,36 @@ export class OAuthService {
    * Exchange authorization code for access tokens
    */
   async exchangeCodeForTokens(integration: Integration, code: string): Promise<OAuthTokens> {
-    const config = this.getOAuthConfig(integration.type);
+    const config = this.getOAuthConfig(integration);
 
-    const params = new URLSearchParams({
-      grant_type: 'authorization_code',
-      client_id: config.clientId,
-      client_secret: config.clientSecret,
-      code,
-      redirect_uri: config.redirectUri,
-    });
+    const params = new URLSearchParams();
+    params.set('grant_type', 'authorization_code');
+    params.set(config.tokenClientParam || 'client_id', config.clientId);
+    params.set('client_secret', config.clientSecret);
+    params.set('code', code);
+    params.set('redirect_uri', config.redirectUri);
 
     this.logger.log(`Exchanging code for tokens - Integration: ${integration.id}, Type: ${integration.type}`);
 
     try {
-      const response = await firstValueFrom(
-        this.httpService.post(config.tokenUrl, params.toString(), {
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-          },
-        })
-      );
+      const isMetaSocialApiProvider =
+        integration.type === IntegrationType.API &&
+        (config.providerKey === 'facebook' || config.providerKey === 'instagram');
+      const response = isMetaSocialApiProvider
+        ? await firstValueFrom(
+            this.httpService.get(config.tokenUrl, {
+              params: Object.fromEntries(params),
+            })
+          )
+        : await firstValueFrom(
+            this.httpService.post(config.tokenUrl, params.toString(), {
+              headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+              },
+            })
+          );
 
-      const data = response.data;
+      const data = response.data?.data || response.data;
 
       this.logger.log(`Token response received for ${integration.id}`);
       this.logger.log(`Response has access_token: ${!!data.access_token}`);
@@ -353,14 +481,13 @@ export class OAuthService {
       throw new BadRequestException('No refresh token available');
     }
 
-    const config = this.getOAuthConfig(integration.type);
+    const config = this.getOAuthConfig(integration);
 
-    const params = new URLSearchParams({
-      grant_type: 'refresh_token',
-      client_id: config.clientId,
-      client_secret: config.clientSecret,
-      refresh_token: integration.credentials.refreshToken,
-    });
+    const params = new URLSearchParams();
+    params.set('grant_type', 'refresh_token');
+    params.set(config.tokenClientParam || 'client_id', config.clientId);
+    params.set('client_secret', config.clientSecret);
+    params.set('refresh_token', integration.credentials.refreshToken);
 
     try {
       const response = await firstValueFrom(
@@ -371,7 +498,7 @@ export class OAuthService {
         })
       );
 
-      const data = response.data;
+      const data = response.data?.data || response.data;
 
       const tokens: OAuthTokens = {
         accessToken: data.access_token,
@@ -397,7 +524,7 @@ export class OAuthService {
    * Revoke OAuth tokens
    */
   async revokeTokens(integration: Integration): Promise<void> {
-    const config = this.getOAuthConfig(integration.type);
+    const config = this.getOAuthConfig(integration);
 
     if (!config.revokeUrl || !integration.credentials?.accessToken) {
       return;
