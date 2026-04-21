@@ -794,9 +794,12 @@ export default function IntegrationsPage() {
           const backendInt = available.find((b: any) => String(b.type || '').toLowerCase() === staticInt.id);
           const connectedEntry = connectedMap[staticInt.id];
           if (!backendInt && !connectedEntry) return staticInt;
-          // Webhook-only integrations (typeform, manychat, calendly) work without active API key test — treat pending as connected
+          const status = String(connectedEntry?.status || '').toLowerCase();
+          const isInErrorState = ['disabled', 'expired', 'suspended', 'error'].includes(status);
+          // OAuth integrations should be shown as connected only after successful auth (ACTIVE).
+          // For non-OAuth integrations we preserve legacy behavior (pending is still treated as connected).
           const isConnected = connectedEntry
-            ? !['disabled', 'expired', 'suspended', 'error'].includes(String(connectedEntry.status || '').toLowerCase())
+            ? (staticInt.oauth ? status === 'active' : !isInErrorState)
             : false;
           return {
             ...staticInt,
