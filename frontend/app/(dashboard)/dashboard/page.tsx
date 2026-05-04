@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import StatCard from '@/components/ui/StatCard';
 import {
   Users, Building2, Briefcase, TrendingUp, ArrowRight, Loader2,
@@ -87,6 +87,7 @@ export default function DashboardPage() {
   const [myLeads, setMyLeads] = useState<MyLead[]>([]);
   const [myTasks, setMyTasks] = useState<MyTask[]>([]);
   const [myDeals, setMyDeals] = useState<MyDeal[]>([]);
+  const userIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     const fetchDashboardData = async () => {
@@ -115,15 +116,19 @@ export default function DashboardPage() {
         }
 
         try {
-          const meRes = await api.get<CurrentUser>('/auth/me');
-          const userId = meRes.data.id;
+          if (!userIdRef.current) {
+            const meRes = await api.get<CurrentUser>('/auth/me');
+            userIdRef.current = meRes.data.id ?? null;
+          }
+          const userId = userIdRef.current;
+          if (!userId) return;
 
           const today = new Date();
           const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate()).toISOString();
           const todayEnd = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999).toISOString();
 
           const [leadsRes, tasksRes, dealsRes] = await Promise.allSettled([
-            api.get<any>(`/contacts?ownerId=${userId}&limit=8&sortBy=createdAt&sortOrder=DESC`),
+            api.get<any>(`/contacts?ownerId=${userId}&status=lead&limit=8&sortBy=createdAt&sortOrder=DESC`),
             api.get<any>(`/tasks?assigneeId=${userId}&dueDateFrom=${encodeURIComponent(todayStart)}&dueDateTo=${encodeURIComponent(todayEnd)}&limit=10`),
             api.get<any>(`/deals?ownerId=${userId}&limit=12`),
           ]);
