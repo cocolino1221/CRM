@@ -46,6 +46,37 @@ interface LeadScoreDistribution {
   avgScore: number;
 }
 
+interface CurrentUser {
+  id: string;
+  firstName: string;
+  lastName: string;
+}
+
+interface MyLead {
+  id: string;
+  firstName: string;
+  lastName: string;
+  phone?: string;
+  leadScore: number;
+  status: string;
+}
+
+interface MyTask {
+  id: string;
+  title: string;
+  dueDate: string;
+  priority: string;
+  status: string;
+  contact?: { firstName: string; lastName: string } | null;
+}
+
+interface MyDeal {
+  id: string;
+  title: string;
+  value: number;
+  stage: string;
+}
+
 export default function DashboardPage() {
   const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
   const [recentActivities, setRecentActivities] = useState<RecentActivity[]>([]);
@@ -53,6 +84,9 @@ export default function DashboardPage() {
   const [leadDistribution, setLeadDistribution] = useState<LeadScoreDistribution | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [myLeads, setMyLeads] = useState<MyLead[]>([]);
+  const [myTasks, setMyTasks] = useState<MyTask[]>([]);
+  const [myDeals, setMyDeals] = useState<MyDeal[]>([]);
 
   useEffect(() => {
     const fetchDashboardData = async () => {
@@ -78,6 +112,41 @@ export default function DashboardPage() {
 
         if (distributionRes.status === 'fulfilled') {
           setLeadDistribution(distributionRes.value.data);
+        }
+
+        try {
+          const meRes = await api.get<CurrentUser>('/auth/me');
+          const userId = meRes.data.id;
+
+          const today = new Date();
+          const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate()).toISOString();
+          const todayEnd = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999).toISOString();
+
+          const [leadsRes, tasksRes, dealsRes] = await Promise.allSettled([
+            api.get<any>(`/contacts?ownerId=${userId}&limit=8&sortBy=createdAt&sortOrder=DESC`),
+            api.get<any>(`/tasks?assigneeId=${userId}&dueDateFrom=${encodeURIComponent(todayStart)}&dueDateTo=${encodeURIComponent(todayEnd)}&limit=10`),
+            api.get<any>(`/deals?ownerId=${userId}&limit=12`),
+          ]);
+
+          if (leadsRes.status === 'fulfilled') {
+            const raw = leadsRes.value.data;
+            const arr: MyLead[] = Array.isArray(raw) ? raw : (raw?.data ?? raw?.contacts ?? []);
+            setMyLeads(arr.slice(0, 8));
+          }
+
+          if (tasksRes.status === 'fulfilled') {
+            const raw = tasksRes.value.data;
+            const arr: MyTask[] = Array.isArray(raw) ? raw : (raw?.data ?? raw?.tasks ?? []);
+            setMyTasks(arr.slice(0, 10));
+          }
+
+          if (dealsRes.status === 'fulfilled') {
+            const raw = dealsRes.value.data;
+            const arr: MyDeal[] = Array.isArray(raw) ? raw : (raw?.data ?? raw?.deals ?? []);
+            setMyDeals(arr.filter(d => d.stage !== 'closed_won' && d.stage !== 'closed_lost').slice(0, 8));
+          }
+        } catch {
+          // my-work data is non-critical; dashboard still renders without it
         }
       } catch (err) {
         console.error('Failed to fetch dashboard data:', err);
@@ -200,6 +269,123 @@ export default function DashboardPage() {
           <StatCard key={stat.title} {...stat} />
         ))}
       </div>
+
+      {/* My Work Today */}
+      {(myLeads.length > 0 || myTasks.length > 0 || myDeals.length > 0) && (
+        <div className="glass-effect rounded-2xl p-6 animate-slide-up">
+          <div className="flex items-center gap-2 mb-5">
+            <Zap className="h-5 w-5 text-indigo-600" />
+            <h2 className="text-lg font-semibold text-gray-900">My Work Today</h2>
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+            {/* My Leads */}
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-sm font-semibold text-gray-700">My Leads</span>
+                <a href="/leads" className="text-xs text-indigo-600 hover:underline">View all</a>
+              </div>
+              {myLeads.length === 0 ? (
+                <p className="text-sm text-gray-400">No leads assigned</p>
+              ) : (
+                <div className="space-y-2">
+                  {myLeads.map(lead => (
+                    <a
+                      key={lead.id}
+                      href="/leads"
+                      className="flex items-center justify-between p-2.5 bg-gray-50 rounded-lg hover:bg-indigo-50 transition-colors"
+                    >
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-gray-900 truncate">
+                          {lead.firstName} {lead.lastName}
+                        </p>
+                        {lead.phone && (
+                          <p className="text-xs text-gray-500 truncate">{lead.phone}</p>
+                        )}
+                      </div>
+                      <div className="flex-shrink-0 ml-2">
+                        <span className={`inline-flex w-8 h-8 rounded-full text-xs font-bold items-center justify-center ${
+                          lead.leadScore >= 80 ? 'bg-green-100 text-green-700' :
+                          lead.leadScore >= 60 ? 'bg-yellow-100 text-yellow-700' :
+                          'bg-gray-100 text-gray-600'
+                        }`}>
+                          {lead.leadScore}
+                        </span>
+                      </div>
+                    </a>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Tasks Due Today */}
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-sm font-semibold text-gray-700">Tasks Due Today</span>
+                <a href="/tasks" className="text-xs text-indigo-600 hover:underline">View all</a>
+              </div>
+              {myTasks.length === 0 ? (
+                <p className="text-sm text-gray-400">No tasks due today</p>
+              ) : (
+                <div className="space-y-2">
+                  {myTasks.map(task => (
+                    <div key={task.id} className="flex items-start gap-2 p-2.5 bg-gray-50 rounded-lg">
+                      <CheckCircle2 className={`h-4 w-4 mt-0.5 flex-shrink-0 ${
+                        task.status === 'completed' ? 'text-green-500' : 'text-gray-300'
+                      }`} />
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-gray-900 truncate">{task.title}</p>
+                        {task.contact && (
+                          <p className="text-xs text-gray-500 truncate">
+                            {task.contact.firstName} {task.contact.lastName}
+                          </p>
+                        )}
+                      </div>
+                      <span className={`flex-shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded ${
+                        task.priority === 'high' ? 'bg-red-100 text-red-700' :
+                        task.priority === 'medium' ? 'bg-yellow-100 text-yellow-700' :
+                        'bg-gray-100 text-gray-600'
+                      }`}>
+                        {task.priority}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Open Deals */}
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-sm font-semibold text-gray-700">My Open Deals</span>
+                <a href="/pipeline" className="text-xs text-indigo-600 hover:underline">View all</a>
+              </div>
+              {myDeals.length === 0 ? (
+                <p className="text-sm text-gray-400">No open deals</p>
+              ) : (
+                <div className="space-y-2">
+                  {myDeals.map(deal => (
+                    <a
+                      key={deal.id}
+                      href="/pipeline"
+                      className="flex items-center justify-between p-2.5 bg-gray-50 rounded-lg hover:bg-indigo-50 transition-colors"
+                    >
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-gray-900 truncate">{deal.title}</p>
+                        <p className="text-xs text-gray-500 capitalize">{deal.stage.replace(/_/g, ' ')}</p>
+                      </div>
+                      <span className="flex-shrink-0 ml-2 text-sm font-bold text-indigo-600">
+                        ${Number(deal.value).toLocaleString()}
+                      </span>
+                    </a>
+                  ))}
+                </div>
+              )}
+            </div>
+
+          </div>
+        </div>
+      )}
 
       {/* AI Insights Section */}
       {aiInsights.length > 0 && (
