@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Plus, Search, Phone, Video, Trophy, TrendingUp, TrendingDown, UserCheck, Loader2, Mail, Building, Calendar, DollarSign, MoreVertical, Edit, Trash2, X, AlertCircle, Settings, Users, Tag, FileText, Star, Clock, Briefcase, Eye, ChevronLeft, ChevronRight, MessageSquare, Send, ExternalLink, RefreshCw, Upload } from 'lucide-react';
+import { Plus, Search, Phone, Video, Trophy, TrendingUp, TrendingDown, UserCheck, Loader2, Mail, Building, Calendar, DollarSign, MoreVertical, Edit, Trash2, X, AlertCircle, Settings, Users, Tag, FileText, Star, Clock, Briefcase, Eye, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, MessageSquare, Send, ExternalLink, RefreshCw, Upload } from 'lucide-react';
 import { getInitials } from '@/lib/utils';
 import api from '@/lib/api';
 
@@ -134,6 +134,7 @@ export default function LeadsPage() {
 
   // Modal states
   const [showAddModal, setShowAddModal] = useState(false);
+  const [showMoreFields, setShowMoreFields] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [showPipelineModal, setShowPipelineModal] = useState(false);
@@ -1564,6 +1565,7 @@ export default function LeadsPage() {
               <button
                 onClick={() => {
                   setShowAddModal(false);
+                  setShowMoreFields(false);
                   resetForm();
                 }}
                 className="rounded-xl p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-all"
@@ -1703,111 +1705,110 @@ export default function LeadsPage() {
                       ))}
                   </select>
                 </div>
-
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">
-                    Setter
-                  </label>
-                  <select
-                    disabled={isSubmitting}
-                    value={formData.setterId || ''}
-                    onChange={(e) => setFormData({ ...formData, setterId: e.target.value })}
-                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 disabled:bg-gray-50 disabled:cursor-not-allowed transition-all"
-                  >
-                    <option value="">None</option>
-                    {setters.map(user => (
-                      <option key={user.id} value={user.id}>
-                        {user.firstName} {user.lastName}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">
-                    Caller
-                  </label>
-                  <select
-                    disabled={isSubmitting}
-                    value={formData.callerId || ''}
-                    onChange={(e) => setFormData({ ...formData, callerId: e.target.value })}
-                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 disabled:bg-gray-50 disabled:cursor-not-allowed transition-all"
-                  >
-                    <option value="">None</option>
-                    {callers.map(user => (
-                      <option key={user.id} value={user.id}>
-                        {user.firstName} {user.lastName}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">
-                    Closer
-                  </label>
-                  <select
-                    disabled={isSubmitting}
-                    value={formData.closerId || ''}
-                    onChange={(e) => setFormData({ ...formData, closerId: e.target.value })}
-                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 disabled:bg-gray-50 disabled:cursor-not-allowed transition-all"
-                  >
-                    <option value="">None</option>
-                    {closers.map(user => (
-                      <option key={user.id} value={user.id}>
-                        {user.firstName} {user.lastName}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">
-                    Source
-                  </label>
-                  <select
-                    disabled={isSubmitting}
-                    value={formData.source}
-                    onChange={(e) => setFormData({ ...formData, source: e.target.value })}
-                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 disabled:bg-gray-50 disabled:cursor-not-allowed transition-all"
-                  >
-                    <option value="manual">Manual</option>
-                    <option value="website">Website</option>
-                    <option value="referral">Referral</option>
-                    <option value="social_media">Social Media</option>
-                    <option value="email_campaign">Email Campaign</option>
-                    <option value="cold_outreach">Cold Outreach</option>
-                    <option value="event">Event</option>
-                    <option value="facebook">Facebook</option>
-                    <option value="instagram">Instagram</option>
-                    <option value="linkedin">LinkedIn</option>
-                    <option value="google-ads">Google Ads</option>
-                    <option value="slack">Slack</option>
-                    <option value="typeform">Typeform</option>
-                    <option value="other">Other</option>
-                  </select>
-                </div>
-
-                <div className="col-span-2">
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">
-                    Notes
-                  </label>
-                  <textarea
-                    disabled={isSubmitting}
-                    value={formData.notes}
-                    onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-                    rows={3}
-                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 resize-none disabled:bg-gray-50 disabled:cursor-not-allowed transition-all"
-                    placeholder="Add any additional notes about this lead..."
-                  />
-                </div>
               </div>
+
+              <button
+                type="button"
+                onClick={() => setShowMoreFields(v => !v)}
+                className="flex items-center gap-1 text-sm text-indigo-600 hover:text-indigo-700 font-medium transition-colors mt-1"
+              >
+                {showMoreFields ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                {showMoreFields ? 'Hide details' : 'More details (setter, source, notes…)'}
+              </button>
+
+              {showMoreFields && (
+                <div className="grid grid-cols-2 gap-4 pt-2 border-t border-gray-100">
+                  {/* Setter */}
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">Setter</label>
+                    <select
+                      disabled={isSubmitting}
+                      value={formData.setterId || ''}
+                      onChange={(e) => setFormData({ ...formData, setterId: e.target.value })}
+                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 disabled:bg-gray-50 disabled:cursor-not-allowed transition-all"
+                    >
+                      <option value="">None</option>
+                      {setters.map(user => (
+                        <option key={user.id} value={user.id}>{user.firstName} {user.lastName}</option>
+                      ))}
+                    </select>
+                  </div>
+                  {/* Caller */}
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">Caller</label>
+                    <select
+                      disabled={isSubmitting}
+                      value={formData.callerId || ''}
+                      onChange={(e) => setFormData({ ...formData, callerId: e.target.value })}
+                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 disabled:bg-gray-50 disabled:cursor-not-allowed transition-all"
+                    >
+                      <option value="">None</option>
+                      {callers.map(user => (
+                        <option key={user.id} value={user.id}>{user.firstName} {user.lastName}</option>
+                      ))}
+                    </select>
+                  </div>
+                  {/* Closer */}
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">Closer</label>
+                    <select
+                      disabled={isSubmitting}
+                      value={formData.closerId || ''}
+                      onChange={(e) => setFormData({ ...formData, closerId: e.target.value })}
+                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 disabled:bg-gray-50 disabled:cursor-not-allowed transition-all"
+                    >
+                      <option value="">None</option>
+                      {closers.map(user => (
+                        <option key={user.id} value={user.id}>{user.firstName} {user.lastName}</option>
+                      ))}
+                    </select>
+                  </div>
+                  {/* Source */}
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">Source</label>
+                    <select
+                      disabled={isSubmitting}
+                      value={formData.source}
+                      onChange={(e) => setFormData({ ...formData, source: e.target.value })}
+                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 disabled:bg-gray-50 disabled:cursor-not-allowed transition-all"
+                    >
+                      <option value="manual">Manual</option>
+                      <option value="website">Website</option>
+                      <option value="referral">Referral</option>
+                      <option value="social_media">Social Media</option>
+                      <option value="email_campaign">Email Campaign</option>
+                      <option value="cold_outreach">Cold Outreach</option>
+                      <option value="event">Event</option>
+                      <option value="facebook">Facebook</option>
+                      <option value="instagram">Instagram</option>
+                      <option value="linkedin">LinkedIn</option>
+                      <option value="google-ads">Google Ads</option>
+                      <option value="slack">Slack</option>
+                      <option value="typeform">Typeform</option>
+                      <option value="other">Other</option>
+                    </select>
+                  </div>
+                  {/* Notes */}
+                  <div className="col-span-2">
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">Notes</label>
+                    <textarea
+                      disabled={isSubmitting}
+                      value={formData.notes}
+                      onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+                      rows={3}
+                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 resize-none disabled:bg-gray-50 disabled:cursor-not-allowed transition-all"
+                      placeholder="Add any additional notes about this lead..."
+                    />
+                  </div>
+                </div>
+              )}
 
               <div className="flex justify-end gap-3 pt-4 border-t border-gray-200">
                 <button
                   type="button"
                   onClick={() => {
                     setShowAddModal(false);
+                    setShowMoreFields(false);
                     resetForm();
                   }}
                   disabled={isSubmitting}
