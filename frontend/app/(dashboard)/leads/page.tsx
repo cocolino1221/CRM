@@ -598,6 +598,15 @@ export default function LeadsPage() {
     }
   };
 
+  const handleInlineStatusChange = async (contact: Contact, newStatus: string) => {
+    try {
+      await api.put(`/contacts/${contact.id}`, { status: newStatus });
+      setContacts(prev => prev.map(c => c.id === contact.id ? { ...c, status: newStatus } : c));
+    } catch {
+      // silent — card shows old value on next render if this fails
+    }
+  };
+
   const handleQuickStageChange = async (contact: Contact, newStageId: string) => {
     if (newStageId === contact.pipelineStageId) return;
     const stage = selectedPipeline?.stages.find(s => s.id === newStageId);
@@ -1106,6 +1115,33 @@ export default function LeadsPage() {
                           {/* Date */}
                           <div className="text-[10px] text-gray-400 mb-1.5">
                             {new Date(contact.createdAt).toLocaleDateString()}
+                          </div>
+
+                          {/* Inline status badge */}
+                          <div
+                            className="mb-1.5"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <select
+                              value={contact.status}
+                              onChange={(e) => handleInlineStatusChange(contact, e.target.value)}
+                              onClick={(e) => e.stopPropagation()}
+                              className={`w-full text-[10px] font-semibold rounded-full px-2 py-1 border-0 cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-400 ${
+                                contact.status === 'qualified' ? 'bg-green-100 text-green-700' :
+                                contact.status === 'customer' ? 'bg-emerald-100 text-emerald-700' :
+                                contact.status === 'prospect' ? 'bg-purple-100 text-purple-700' :
+                                contact.status === 'inactive' ? 'bg-gray-100 text-gray-700' :
+                                contact.status === 'churned' ? 'bg-red-100 text-red-700' :
+                                'bg-blue-100 text-blue-700'
+                              }`}
+                            >
+                              <option value="lead">Lead</option>
+                              <option value="prospect">Prospect</option>
+                              <option value="qualified">Qualified</option>
+                              <option value="customer">Customer</option>
+                              <option value="inactive">Inactive</option>
+                              <option value="churned">Churned</option>
+                            </select>
                           </div>
 
                           {/* Quick Stage Controls */}
