@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { DndContext, DragEndEvent, DragOverlay, DragStartEvent, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
-import { Loader2, Plus, TrendingUp, DollarSign, Calendar, User } from 'lucide-react';
+import { Loader2, Plus, TrendingUp, DollarSign, Calendar, User, ChevronRight } from 'lucide-react';
 import api from '@/lib/api';
 import { formatCurrency } from '@/lib/utils';
 
@@ -239,6 +239,33 @@ export default function PipelinePage() {
       }
     } finally {
       setSavingStatus(false);
+    }
+  };
+
+  const handleAdvanceDeal = async (dealId: string, currentStageId: string) => {
+    if (!pipeline) return;
+    const stageIndex = pipeline.stages.findIndex(s => s.id === currentStageId);
+    if (stageIndex === -1 || stageIndex >= pipeline.stages.length - 1) return;
+    const nextStage = pipeline.stages[stageIndex + 1];
+
+    const movingDeal = pipeline.stages.flatMap(s => s.deals).find(d => d.id === dealId);
+    if (!movingDeal) return;
+
+    const updatedStages = pipeline.stages.map(stage => {
+      if (stage.id === currentStageId) {
+        return { ...stage, deals: stage.deals.filter(d => d.id !== dealId), totalValue: stage.totalValue - movingDeal.value };
+      }
+      if (stage.id === nextStage.id) {
+        return { ...stage, deals: [...stage.deals, { ...movingDeal, stage: nextStage.id }], totalValue: stage.totalValue + movingDeal.value };
+      }
+      return stage;
+    });
+    setPipeline({ ...pipeline, stages: updatedStages });
+
+    try {
+      await api.put(`/deals/${dealId}`, { stage: nextStage.id });
+    } catch {
+      setPipeline(pipeline);
     }
   };
 
@@ -497,7 +524,12 @@ export default function PipelinePage() {
                   style={{ borderColor: STAGE_COLORS[stage.id].split(' ')[1].replace('border-', '') }}
                 >
                   {stage.deals.map((deal) => (
-                    <DealCard key={deal.id} deal={deal} />
+                    <DealCard
+                      key={deal.id}
+                      deal={deal}
+                      isLastStage={pipeline.stages[pipeline.stages.length - 1]?.id === stage.id}
+                      onAdvance={() => handleAdvanceDeal(deal.id, stage.id)}
+                    />
                   ))}
                 </div>
               </SortableContext>
@@ -506,7 +538,7 @@ export default function PipelinePage() {
         </div>
 
         <DragOverlay>
-          {activeDeal && <DealCard deal={activeDeal} isDragging />}
+          {activeDeal && <DealCard deal={activeDeal} isDragging isLastStage={false} />}
         </DragOverlay>
       </DndContext>
     </div>
@@ -516,9 +548,11 @@ export default function PipelinePage() {
 interface DealCardProps {
   deal: Deal;
   isDragging?: boolean;
+  isLastStage?: boolean;
+  onAdvance?: () => void;
 }
 
-function DealCard({ deal, isDragging }: DealCardProps) {
+function DealCard({ deal, isDragging, isLastStage, onAdvance }: DealCardProps) {
   return (
     <div
       className={`bg-white rounded-lg p-4 border-2 border-gray-200 cursor-move hover:shadow-md transition-shadow ${
@@ -559,6 +593,18 @@ function DealCard({ deal, isDragging }: DealCardProps) {
               style={{ width: `${deal.probability}%` }}
             />
           </div>
+        </div>
+      )}
+
+      {!isDragging && !isLastStage && onAdvance && (
+        <div className="mt-3 pt-3 border-t border-gray-100">
+          <button
+            onClick={(e) => { e.stopPropagation(); onAdvance(); }}
+            className="w-full flex items-center justify-center gap-1 text-xs font-semibold text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50 rounded-lg py-1.5 transition-colors"
+          >
+            Advance Stage
+            <ChevronRight className="h-3.5 w-3.5" />
+          </button>
         </div>
       )}
     </div>
