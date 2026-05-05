@@ -326,6 +326,7 @@ export default function LeadsPage() {
   useEffect(() => {
     const handleOpenModal = () => {
       resetForm();
+      setShowMoreFields(false);
       setShowAddModal(true);
     };
 
@@ -377,6 +378,7 @@ export default function LeadsPage() {
       console.log('Sending contact data:', cleanedData);
       const response = await api.post('/contacts', cleanedData);
       setShowAddModal(false);
+      setShowMoreFields(false);
       resetForm();
 
       if (response.data) {
@@ -829,6 +831,7 @@ export default function LeadsPage() {
           <button
             onClick={() => {
               resetForm();
+              setShowMoreFields(false);
               setShowAddModal(true);
             }}
             className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-lg hover:shadow-xl transition-all"
