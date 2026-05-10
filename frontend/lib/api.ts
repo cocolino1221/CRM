@@ -70,11 +70,10 @@ api.interceptors.response.use(
     const originalRequest = error.config as InternalAxiosRequestConfig & { _retry?: boolean };
     const requestUrl = String(originalRequest?.url || '');
     const isAuthEndpoint = /^\/?auth\/(login|register|refresh|logout|oauth\/exchange)(\/|$)/i.test(requestUrl);
-    const hasAccessToken =
-      typeof window !== 'undefined' && Boolean(localStorage.getItem('accessToken'));
 
-    // Handle 401 errors (unauthorized) only for authenticated API calls.
-    if (error.response?.status === 401 && !originalRequest._retry && !isAuthEndpoint && hasAccessToken) {
+    // Handle 401 errors for any non-auth endpoint. Always attempt refresh — the refresh
+    // token cookie may still be valid even if localStorage.accessToken was cleared.
+    if (error.response?.status === 401 && !originalRequest._retry && !isAuthEndpoint) {
       if (isRefreshing) {
         // Queue the request while token is being refreshed
         return new Promise((resolve, reject) => {
@@ -101,14 +100,19 @@ api.interceptors.response.use(
             { withCredentials: true } // Ensure cookies are sent
           );
 
-          // New tokens are set as httpOnly cookies; accessToken also in response body
-          // (response interceptor above already saves it to localStorage)
           const newToken = response.data?.accessToken ?? null;
+
+          // Persist new token so the request interceptor picks it up on the retry.
+          if (newToken) {
+            localStorage.setItem('accessToken', newToken);
+            if (originalRequest.headers) {
+              originalRequest.headers.Authorization = `Bearer ${newToken}`;
+            }
+          }
 
           processQueue(null, newToken);
           isRefreshing = false;
 
-          // Retry the original request
           return api(originalRequest);
         } catch (refreshError) {
           processQueue(refreshError as AxiosError, null);
