@@ -9,7 +9,7 @@ import { createReadStream, promises as fsPromises } from 'fs';
 import { Contact, ContactStatus, ContactSource } from '../../database/entities/contact.entity';
 import { Activity, ActivityType, ActivityDirection, ActivityOutcome } from '../../database/entities/activity.entity';
 import { Integration, IntegrationType, IntegrationStatus } from '../../database/entities/integration.entity';
-import { User, UserStatus } from '../../database/entities/user.entity';
+import { User, UserRole, UserStatus } from '../../database/entities/user.entity';
 import { PipelineStage } from '../../database/entities/pipeline-stage.entity';
 import { NotificationsService, CreateNotificationDto } from '../../notifications/notifications.service';
 import { NotificationType } from '../../database/entities/notification.entity';
@@ -291,6 +291,83 @@ export class WhatsAppService {
     return selected;
   }
 
+  private async resolveWorkspaceSendIntegrationByConversation(
+    workspaceId: string,
+    to: string,
+  ): Promise<Integration | null> {
+    const normalizedWaId = normalizePhoneDigits(to);
+    if (!normalizedWaId) return null;
+
+    try {
+      const recentInbound = await this.activityRepository
+        .createQueryBuilder('activity')
+        .select(['activity.id', 'activity.metadata', 'activity.occurredAt', 'activity.createdAt'])
+        .where('activity.workspaceId = :workspaceId', { workspaceId })
+        .andWhere('activity.type = :type', { type: ActivityType.WHATSAPP_MESSAGE })
+        .andWhere('activity.direction = :direction', { direction: ActivityDirection.INBOUND })
+        .andWhere("activity.metadata->>'waId' = :waId", { waId: normalizedWaId })
+        .orderBy('activity.occurredAt', 'DESC')
+        .addOrderBy('activity.createdAt', 'DESC')
+        .getOne();
+
+      const senderIntegrationId = String((recentInbound?.metadata as any)?.senderIntegrationId || '').trim();
+      if (senderIntegrationId) {
+        return this.resolveWorkspaceSendIntegration(workspaceId, senderIntegrationId);
+      }
+
+      const senderPhoneNumberId = String((recentInbound?.metadata as any)?.senderPhoneNumberId || '').trim();
+      if (!senderPhoneNumberId) return null;
+
+      const integrations = await this.listWorkspaceWhatsAppIntegrations(workspaceId);
+      const byPhoneNumberId = integrations.find((integration) => {
+        if (!this.isIntegrationUsable(integration) || !this.hasIntegrationSendCredentials(integration)) return false;
+        const credentials = this.getIntegrationCredentials(integration);
+        const { phoneNumberId } = this.getCredentials(credentials, false);
+        return phoneNumberId === senderPhoneNumberId;
+      });
+
+      return byPhoneNumberId || null;
+    } catch {
+      return null;
+    }
+  }
+
+  private buildWorkspaceSendCandidates(
+    integrations: Integration[],
+    preferred?: Integration | null,
+    fallback?: Integration | null,
+  ): Integration[] {
+    const usable = integrations.filter((integration) =>
+      this.isIntegrationUsable(integration) && this.hasIntegrationSendCredentials(integration),
+    );
+    const candidates: Integration[] = [];
+    const seen = new Set<string>();
+    const pushUnique = (integration?: Integration | null) => {
+      if (!integration) return;
+      if (!this.isIntegrationUsable(integration) || !this.hasIntegrationSendCredentials(integration)) return;
+      if (seen.has(integration.id)) return;
+      seen.add(integration.id);
+      candidates.push(integration);
+    };
+
+    pushUnique(preferred);
+    pushUnique(fallback);
+    for (const integration of usable) pushUnique(integration);
+    return candidates;
+  }
+
+  private shouldTryNextIntegrationForSend(error: any): boolean {
+    if (!(error instanceof BadRequestException)) return false;
+    const response = typeof error.getResponse === 'function' ? error.getResponse() : null;
+    const responseMessage = typeof response === 'string'
+      ? response
+      : Array.isArray((response as any)?.message)
+        ? (response as any).message.join(' ')
+        : String((response as any)?.message || '');
+    const msg = `${responseMessage} ${String(error?.message || '')}`.toLowerCase();
+    return msg.includes('whatsapp api error');
+  }
+
   async listWorkspaceAccounts(workspaceId: string): Promise<{ defaultIntegrationId: string | null; data: Array<Record<string, any>> }> {
     const integrations = await this.listWorkspaceWhatsAppIntegrations(workspaceId);
     const defaultIntegration = this.chooseDefaultWorkspaceIntegration(integrations);
@@ -323,7 +400,6 @@ export class WhatsAppService {
     message: WhatsAppMessage,
     integrationId?: string,
   ): Promise<{ result: any; sender: ReturnType<WhatsAppService['getIntegrationSenderInfo']> }> {
-    const integration = await this.resolveWorkspaceSendIntegration(workspaceId, integrationId);
     const payload: WhatsAppMessage = message.type === 'template' && message.template
       ? {
           ...message,
@@ -333,11 +409,87 @@ export class WhatsAppService {
           },
         }
       : message;
-    const result = await this.sendMessageWithCredentials(this.getIntegrationCredentials(integration), payload);
-    return {
-      result,
-      sender: this.getIntegrationSenderInfo(integration),
-    };
+
+    if (integrationId?.trim()) {
+      const selected = await this.resolveWorkspaceSendIntegration(workspaceId, integrationId);
+      try {
+        const result = await this.sendMessageWithCredentials(this.getIntegrationCredentials(selected), payload);
+        return {
+          result,
+          sender: this.getIntegrationSenderInfo(selected),
+        };
+      } catch (error: any) {
+        const hasUploadedMediaId = !!String(payload.media?.id || '').trim();
+        if (!hasUploadedMediaId || !this.shouldTryNextIntegrationForSend(error)) {
+          throw error;
+        }
+
+        this.logger.warn(
+          `WhatsApp media send failed with selected integration=${selected.id}; trying other active senders in workspace=${workspaceId}`,
+        );
+
+        const allIntegrations = await this.listWorkspaceWhatsAppIntegrations(workspaceId);
+        const defaultIntegration = this.chooseDefaultWorkspaceIntegration(allIntegrations);
+        const fallbackCandidates = this.buildWorkspaceSendCandidates(allIntegrations, defaultIntegration, null)
+          .filter((candidate) => candidate.id !== selected.id);
+
+        let lastError: any = error;
+        for (const candidate of fallbackCandidates) {
+          try {
+            const result = await this.sendMessageWithCredentials(this.getIntegrationCredentials(candidate), payload);
+            return {
+              result,
+              sender: this.getIntegrationSenderInfo(candidate),
+            };
+          } catch (candidateError: any) {
+            lastError = candidateError;
+            this.logger.warn(
+              `WhatsApp media fallback failed via integration=${candidate.id} workspace=${workspaceId}: ${String(candidateError?.message || candidateError)}`,
+            );
+            if (!this.shouldTryNextIntegrationForSend(candidateError)) {
+              throw candidateError;
+            }
+          }
+        }
+
+        throw lastError;
+      }
+    }
+
+    const allIntegrations = await this.listWorkspaceWhatsAppIntegrations(workspaceId);
+    if (!allIntegrations.length) {
+      throw new BadRequestException('No WhatsApp integration found for this workspace');
+    }
+
+    const fromConversation = await this.resolveWorkspaceSendIntegrationByConversation(workspaceId, message.to);
+    const defaultIntegration = this.chooseDefaultWorkspaceIntegration(allIntegrations);
+    const candidates = this.buildWorkspaceSendCandidates(allIntegrations, fromConversation, defaultIntegration);
+
+    if (!candidates.length) {
+      throw new BadRequestException('No active WhatsApp sender number is configured');
+    }
+
+    let lastError: any = null;
+
+    for (const candidate of candidates) {
+      try {
+        const result = await this.sendMessageWithCredentials(this.getIntegrationCredentials(candidate), payload);
+        return {
+          result,
+          sender: this.getIntegrationSenderInfo(candidate),
+        };
+      } catch (error: any) {
+        lastError = error;
+        this.logger.warn(
+          `WhatsApp send failed via integration=${candidate.id} workspace=${workspaceId}: ${String(error?.message || error)}`,
+        );
+        if (!this.shouldTryNextIntegrationForSend(error)) {
+          throw error;
+        }
+      }
+    }
+
+    throw lastError || new BadRequestException('Failed to send WhatsApp message');
   }
 
   private getDefaultAutoSendConfig(): AutoSendConfig {
@@ -550,8 +702,10 @@ export class WhatsAppService {
       const contactPhone = contact?.phone || 'unknown';
       const notification = {
         type: NotificationType.WHATSAPP,
-        title: 'Auto-send delivered',
-        message: `Template "${templateName}" sent to ${fullName} (${contactPhone})`,
+        // This only confirms Meta API accepted the send request.
+        // Final delivery/read confirmation comes later via webhook status callbacks.
+        title: 'Auto-send sent',
+        message: `Template "${templateName}" accepted for delivery to ${fullName} (${contactPhone})`,
         link: '/whatsapp',
         metadata: {
           contactId: contact?.id,
@@ -784,7 +938,7 @@ export class WhatsAppService {
         occurredAt: new Date(),
         metadata: {
           whatsappMessageId: whatsappMessageId || undefined,
-          waId: to,
+          waId: normalizePhoneDigits(to) || to.replace(/[^0-9]/g, ''),
           messageType,
           messageStatus: 'sent',
           ...(mediaMetadata || {}),
@@ -804,23 +958,65 @@ export class WhatsAppService {
     if (!accessToken || !phoneNumberId) throw new BadRequestException('WhatsApp credentials not configured');
 
     const payload = this.buildMessagePayload(message);
-    try {
-      const response = await firstValueFrom(
-        this.httpService.post(`${this.apiUrl}/${phoneNumberId}/messages`, payload, {
-          headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-        }),
-      );
-      return response.data;
-    } catch (error: any) {
-      const metaError = error?.response?.data?.error;
-      if (metaError) {
-        const details = metaError.error_data?.details ? ` (${metaError.error_data.details})` : '';
-        throw new BadRequestException(
-          `WhatsApp API error ${metaError.code || ''}: ${metaError.message || 'Unknown error'}${details}`.trim(),
+    const maxAttempts = 3;
+    let lastError: any = null;
+
+    // Track whether we already fell back to env-var token to avoid infinite loops.
+    let usingEnvFallback = false;
+    let activeToken = accessToken;
+    let activePhoneNumberId = phoneNumberId;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        const response = await firstValueFrom(
+          this.httpService.post(`${this.apiUrl}/${activePhoneNumberId}/messages`, payload, {
+            headers: { 'Authorization': `Bearer ${activeToken}`, 'Content-Type': 'application/json' },
+          }),
         );
+        return response.data;
+      } catch (error: any) {
+        lastError = error;
+        const metaError = error?.response?.data?.error;
+        const metaCode = Number(metaError?.code || 0);
+
+        // Error 190 = token expired/invalid. Try env-var token once as fallback.
+        if (metaCode === 190 && !usingEnvFallback) {
+          const envToken = this.configService.get<string>('WHATSAPP_ACCESS_TOKEN') || '';
+          const envPhoneId = this.configService.get<string>('WHATSAPP_PHONE_NUMBER_ID') || '';
+          if (envToken && envToken !== activeToken) {
+            usingEnvFallback = true;
+            activeToken = envToken;
+            activePhoneNumberId = envPhoneId || activePhoneNumberId;
+            this.logger.warn(
+              `WhatsApp stored token expired (190); retrying with env-var token (attempt ${attempt}/${maxAttempts})`,
+            );
+            continue;
+          }
+        }
+
+        const isRetryableMetaInternal = metaCode === 131000;
+        const isLastAttempt = attempt >= maxAttempts;
+
+        if (isRetryableMetaInternal && !isLastAttempt) {
+          const waitMs = 250 * attempt;
+          this.logger.warn(
+            `WhatsApp API transient error ${metaCode} on attempt ${attempt}/${maxAttempts}; retrying in ${waitMs}ms`,
+          );
+          await new Promise((resolve) => setTimeout(resolve, waitMs));
+          continue;
+        }
+
+        if (metaError) {
+          const details = metaError.error_data?.details ? ` (${metaError.error_data.details})` : '';
+          const fbtraceId = metaError.fbtrace_id ? ` [fbtrace_id=${metaError.fbtrace_id}]` : '';
+          throw new BadRequestException(
+            `WhatsApp API error ${metaError.code || ''}: ${metaError.message || 'Unknown error'}${details}${fbtraceId}`.trim(),
+          );
+        }
       }
-      throw error;
     }
+
+    throw lastError || new BadRequestException('WhatsApp send failed');
   }
 
   async sendMessage(message: WhatsAppMessage): Promise<any> {
@@ -1025,14 +1221,79 @@ export class WhatsAppService {
   /**
    * Update message status (sent → delivered → read) from webhook status callbacks
    */
-  private async updateMessageStatus(status: { id: string; status: string; timestamp: string; recipient_id: string }): Promise<void> {
+  private async updateMessageStatus(status: {
+    id: string;
+    status: string;
+    timestamp: string;
+    recipient_id: string;
+    errors?: Array<{ code?: number; title?: string; message?: string; error_data?: any }>;
+  }): Promise<void> {
     try {
-      const activity = await this.activityRepository.findOne({
-        where: { metadata: { whatsappMessageId: status.id } as any },
-      });
-      if (activity && activity.metadata) {
-        activity.metadata.messageStatus = status.status;
+      const messageId = String(status?.id || '').trim();
+      if (!messageId) return;
+
+      const normalizedStatus = String(status?.status || '').trim().toLowerCase();
+      const activities = await this.activityRepository
+        .createQueryBuilder('activity')
+        .where('activity.type = :type', { type: ActivityType.WHATSAPP_MESSAGE })
+        .andWhere('activity.direction = :direction', { direction: ActivityDirection.OUTBOUND })
+        .andWhere("activity.metadata->>'whatsappMessageId' = :messageId", { messageId })
+        .orderBy('activity.createdAt', 'DESC')
+        .getMany();
+
+      if (!activities.length) {
+        this.logger.debug(
+          `WhatsApp status "${normalizedStatus || 'unknown'}" for message ${messageId} has no matching outbound activity`,
+        );
+        return;
+      }
+
+      for (const activity of activities) {
+        const nextMetadata = {
+          ...(activity.metadata || {}),
+          messageStatus: normalizedStatus || status.status,
+          messageStatusUpdatedAt: new Date().toISOString(),
+        } as Record<string, any>;
+
+        if (status?.timestamp) {
+          const ts = Number(status.timestamp);
+          nextMetadata.messageStatusTimestamp = Number.isFinite(ts)
+            ? new Date(ts * 1000).toISOString()
+            : String(status.timestamp);
+        }
+        if (status?.recipient_id) {
+          nextMetadata.messageStatusRecipientId = String(status.recipient_id);
+        }
+
+        const firstError = Array.isArray(status.errors) ? status.errors[0] : undefined;
+        if (firstError) {
+          nextMetadata.messageStatusError = {
+            code: firstError.code,
+            title: firstError.title,
+            message: firstError.message,
+            details: firstError.error_data,
+          };
+        }
+
+        activity.metadata = nextMetadata;
+
+        if (normalizedStatus === 'failed' || normalizedStatus === 'undelivered') {
+          activity.outcome = ActivityOutcome.FAILED;
+        } else if (['sent', 'delivered', 'read'].includes(normalizedStatus)) {
+          if (activity.outcome !== ActivityOutcome.FAILED) {
+            activity.outcome = ActivityOutcome.SUCCESSFUL;
+          }
+        }
+
         await this.activityRepository.save(activity);
+      }
+
+      if (normalizedStatus === 'failed' || normalizedStatus === 'undelivered') {
+        const firstError = Array.isArray(status.errors) ? status.errors[0] : undefined;
+        const errorDetails = firstError
+          ? ` code=${firstError.code || '-'} title="${firstError.title || ''}" message="${firstError.message || ''}" recipient="${status.recipient_id || ''}" details="${String(firstError.error_data?.details || '')}" href="${String((firstError as any)?.href || '')}"`
+          : '';
+        this.logger.warn(`WhatsApp delivery FAILED for message ${messageId}.${errorDetails}`);
       }
     } catch (error) {
       // Silently ignore - status updates are best-effort
@@ -1222,7 +1483,11 @@ export class WhatsAppService {
   }
 
   private buildMessagePayload(message: WhatsAppMessage): any {
-    const base = { messaging_product: 'whatsapp', recipient_type: 'individual', to: message.to };
+    const normalizedTo = normalizePhoneDigits(message.to);
+    if (!normalizedTo) {
+      throw new BadRequestException('Recipient phone is invalid');
+    }
+    const base = { messaging_product: 'whatsapp', recipient_type: 'individual', to: normalizedTo };
     switch (message.type) {
       case 'text': return { ...base, type: 'text', text: { preview_url: true, body: message.content } };
       case 'template': return {
@@ -1935,10 +2200,11 @@ export class WhatsAppService {
 
       const conditions = matchedRule.conditions || {};
       const rawPhone = contact.phone || '';
-      const phone = rawPhone.replace(/[^0-9]/g, '');
+      const phone = normalizePhoneDigits(rawPhone) || rawPhone.replace(/[^0-9]/g, '');
+      const normalizedE164 = normalizePhoneE164(rawPhone);
       if (!phone || phone.length < 7) {
         this.logger.log(
-          `Auto-send skipped for contact ${contact.id}: invalid phone ("${rawPhone}" → "${phone}", len=${phone.length}, requirePhone=${conditions.requirePhone !== false})`,
+          `Auto-send skipped for contact ${contact.id}: invalid phone ("${rawPhone}" → digits="${phone}", e164="${normalizedE164 || ''}", len=${phone.length}, requirePhone=${conditions.requirePhone !== false})`,
         );
         return;
       }
@@ -1993,7 +2259,7 @@ export class WhatsAppService {
       ];
 
       this.logger.log(
-        `Auto-send: rule="${matchedRule.name}" template="${templateName}" lang="${language}" to phone="${phone}" (raw="${rawPhone}") contact=${contact.id} source=${contact.source} senderIntegration=${senderIntegration.id}`,
+        `Auto-send: rule="${matchedRule.name}" template="${templateName}" lang="${language}" to phone="${phone}" (raw="${rawPhone}", e164="${normalizedE164 || ''}") contact=${contact.id} source=${contact.source} senderIntegration=${senderIntegration.id}`,
       );
       let msgResult: any = null;
       let lastError: any = null;
@@ -2110,9 +2376,36 @@ export class WhatsAppService {
       return;
     }
 
+    const assignee = await this.userRepository.findOne({
+      where: { id: userId, workspaceId },
+      select: ['id', 'role'],
+    });
+    if (!assignee) {
+      this.logger.warn(
+        `Skipping contact sync for conversation ${waId}: user ${userId} not found in workspace ${workspaceId}`,
+      );
+      return;
+    }
+
     let shouldSave = false;
-    if (contact.ownerId !== userId) {
-      contact.ownerId = userId;
+    if (contact.ownerId !== assignee.id) {
+      contact.ownerId = assignee.id;
+      shouldSave = true;
+    }
+
+    if (
+      [UserRole.CLOSER, UserRole.MANAGER, UserRole.SETTER].includes(assignee.role)
+      && contact.closerId !== assignee.id
+    ) {
+      contact.closerId = assignee.id;
+      shouldSave = true;
+    }
+    if (assignee.role === UserRole.SETTER && contact.setterId !== assignee.id) {
+      contact.setterId = assignee.id;
+      shouldSave = true;
+    }
+    if (assignee.role === UserRole.CALLER && contact.callerId !== assignee.id) {
+      contact.callerId = assignee.id;
       shouldSave = true;
     }
 
@@ -2164,21 +2457,26 @@ export class WhatsAppService {
     waId: string,
     assignment: { userId: string | null; userName: string; color: string } | null,
   ): Promise<void> {
+    const normalizedWaId = normalizePhoneDigits(waId);
+    if (!normalizedWaId) {
+      throw new BadRequestException('Invalid conversation id');
+    }
+
     const integration = await this.integrationRepository.findOne({
       where: { type: IntegrationType.WHATSAPP, workspaceId },
     });
     if (!integration) throw new BadRequestException('No WhatsApp integration found for this workspace');
     const current = integration.config?.conversationAssignments || {};
     if (assignment) {
-      current[waId] = { ...assignment, assignedAt: new Date().toISOString() };
+      current[normalizedWaId] = { ...assignment, assignedAt: new Date().toISOString() };
     } else {
-      delete current[waId];
+      delete current[normalizedWaId];
     }
     integration.config = { ...(integration.config || {}), conversationAssignments: current };
     await this.integrationRepository.save(integration);
 
     if (assignment?.userId) {
-      await this.syncAssignedConversationContact(workspaceId, waId, assignment.userId);
+      await this.syncAssignedConversationContact(workspaceId, normalizedWaId, assignment.userId);
     }
   }
 
