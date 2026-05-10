@@ -794,12 +794,9 @@ export default function IntegrationsPage() {
           const backendInt = available.find((b: any) => String(b.type || '').toLowerCase() === staticInt.id);
           const connectedEntry = connectedMap[staticInt.id];
           if (!backendInt && !connectedEntry) return staticInt;
-          const status = String(connectedEntry?.status || '').toLowerCase();
-          const isInErrorState = ['disabled', 'expired', 'suspended', 'error'].includes(status);
-          // OAuth integrations should be shown as connected only after successful auth (ACTIVE).
-          // For non-OAuth integrations we preserve legacy behavior (pending is still treated as connected).
+          // Webhook-only integrations (typeform, manychat, calendly) work without active API key test — treat pending as connected
           const isConnected = connectedEntry
-            ? (staticInt.oauth ? status === 'active' : !isInErrorState)
+            ? !['disabled', 'expired', 'suspended', 'error'].includes(String(connectedEntry.status || '').toLowerCase())
             : false;
           return {
             ...staticInt,
@@ -924,13 +921,23 @@ export default function IntegrationsPage() {
   };
 
   const handleDisconnect = async (integration: Integration) => {
-    if (!connectedIntegrations[integration.id]) return;
+    // Primary lookup by static id key; fallback: search all connected entries by type match.
+    const connected =
+      connectedIntegrations[integration.id] ||
+      Object.values(connectedIntegrations).find(
+        (c: any) => String(c?.type || '').toLowerCase() === integration.id.toLowerCase()
+      );
+
+    if (!connected) {
+      setModalError('Integration not found. Please refresh the page and try again.');
+      return;
+    }
 
     setIsSubmitting(true);
     setModalError('');
 
     try {
-      await api.delete(`/integrations/${connectedIntegrations[integration.id].id}`);
+      await api.delete(`/integrations/${connected.id}`);
 
       // Update local state
       const newConnected = { ...connectedIntegrations };
