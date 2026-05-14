@@ -375,6 +375,7 @@ function buildDemoConversations(now = new Date()): Conversation[] {
 
 const AUTO_SEND_SOURCES = ['typeform', 'manychat', 'manual', 'form', 'import', 'webhook'];
 const AUTO_SEND_STATUSES = ['lead', 'prospect', 'customer', 'active'];
+const INBOX_ACTIVITY_LIMIT = 2000;
 
 const createAutoSendRule = (priority: number): AutoSendRuleForm => ({
   id: `rule_${Date.now()}_${priority}_${Math.random().toString(36).slice(2, 7)}`,
@@ -1232,7 +1233,7 @@ export default function WhatsAppPage() {
     }
     try {
       const [inboxRes, stateRes] = await Promise.all([
-        api.get('/integrations/whatsapp/inbox?limit=200'),
+        api.get(`/integrations/whatsapp/inbox?limit=${INBOX_ACTIVITY_LIMIT}`),
         api.get('/integrations/whatsapp/conversations/state').catch(() => ({ data: { data: {} } })),
       ]);
       const activities: WhatsAppActivity[] = inboxRes.data.data || [];
@@ -2401,6 +2402,7 @@ export default function WhatsAppPage() {
     }
     return true;
   });
+  const archivedConversationCount = conversations.filter(c => !!c.archived).length;
 
   // Group conversations by date for Brevo-style display
   const groupedConversations = (() => {
@@ -3376,10 +3378,24 @@ export default function WhatsAppPage() {
               </div>
               <p className="text-sm font-semibold text-gray-600">No conversations</p>
               <p className="text-xs text-gray-400 mt-1 max-w-48">Messages from WhatsApp will appear here</p>
+              {convFilter !== 'archived' && archivedConversationCount > 0 && (
+                <p className="text-xs text-amber-600 mt-2 max-w-56">
+                  {archivedConversationCount} chat{archivedConversationCount === 1 ? '' : 's'} are archived.
+                  Open the Archived filter to view them.
+                </p>
+              )}
               <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
                 <button onClick={() => setShowNewConversation(true)} className="px-4 py-1.5 text-xs font-medium text-white bg-green-500 rounded-full hover:bg-green-600 transition-all">
                   Start conversation
                 </button>
+                {convFilter !== 'archived' && archivedConversationCount > 0 && (
+                  <button
+                    onClick={() => setConvFilter('archived')}
+                    className="px-4 py-1.5 text-xs font-medium text-gray-700 bg-amber-100 rounded-full hover:bg-amber-200 transition-all"
+                  >
+                    View archived chats
+                  </button>
+                )}
                 <button
                   onClick={demoMode ? disableDemoMode : enableDemoMode}
                   className="px-4 py-1.5 text-xs font-medium text-gray-700 bg-gray-100 rounded-full hover:bg-gray-200 transition-all"
