@@ -54,6 +54,8 @@ const triggerOptions = [
   { value: 'form.submitted', label: 'Form Submitted' },
   { value: 'email.received', label: 'Email Received' },
   { value: 'payment.received', label: 'Payment Updated' },
+  { value: 'whatsapp.message.received', label: 'WhatsApp Message Received' },
+  { value: 'whatsapp.button.clicked', label: 'WhatsApp Button Clicked' },
   { value: 'webhook', label: 'Webhook' },
   { value: 'schedule', label: 'Scheduled (Cron)' },
 ] as const;
@@ -307,6 +309,8 @@ export default function AutomationPage() {
             ? { title: '', description: '', priority: 'medium' }
             : type === 'send_email'
               ? { subject: '', body: '' }
+              : type === 'send_whatsapp'
+                ? { to: '', message: '' }
               : {};
 
       return { ...a, type, config: nextConfig };
@@ -1266,6 +1270,7 @@ export default function AutomationPage() {
                             className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
                           >
                             <option value="send_email">Send Email</option>
+                            <option value="send_whatsapp">Send WhatsApp</option>
                             <option value="send_sms">Send SMS</option>
                             <option value="create_task">Create Task</option>
                             <option value="create_deal">Create Deal</option>
@@ -1352,6 +1357,45 @@ export default function AutomationPage() {
                                 onChange={(e) => updateActionConfig(action.id, 'body', e.target.value)}
                                 rows={4}
                                 placeholder="Hi {{contact.name}}, your payment status is {{status}}"
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                              />
+                            </div>
+                          </div>
+                        )}
+
+                        {action.type === 'send_whatsapp' && (
+                          <div className="space-y-3">
+                            <div>
+                              <label className="block text-xs font-semibold text-gray-700 mb-1">
+                                Recipient Phone (optional)
+                              </label>
+                              <input
+                                value={action.config?.to || ''}
+                                onChange={(e) => updateActionConfig(action.id, 'to', e.target.value)}
+                                placeholder="Leave empty to reply to trigger sender"
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-xs font-semibold text-gray-700 mb-1">
+                                Message
+                              </label>
+                              <textarea
+                                value={action.config?.message || ''}
+                                onChange={(e) => updateActionConfig(action.id, 'message', e.target.value)}
+                                rows={4}
+                                placeholder="Hi {{firstName}}, thanks for your message."
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-xs font-semibold text-gray-700 mb-1">
+                                Sender Integration ID (optional)
+                              </label>
+                              <input
+                                value={action.config?.integrationId || ''}
+                                onChange={(e) => updateActionConfig(action.id, 'integrationId', e.target.value)}
+                                placeholder="Use only if you want to force a specific WhatsApp number"
                                 className="w-full px-3 py-2 border border-gray-300 rounded-lg"
                               />
                             </div>

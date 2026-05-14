@@ -7,7 +7,7 @@ import {
   Image, FileText, Mic, Video, Info, X, Zap, LayoutTemplate,
   Building2, Tag, Star, AlertTriangle, Timer, Edit, Trash2,
   Copy, ExternalLink, Mail, Briefcase, ArrowRight, ChevronLeft, Brain,
-  GitBranch, Upload,
+  GitBranch, Upload, Pin, BellOff, Bell, Archive, ArchiveRestore, CornerUpLeft, AudioLines,
 } from 'lucide-react';
 import Link from 'next/link';
 import api from '@/lib/api';
@@ -38,6 +38,10 @@ interface WhatsAppActivity {
     mediaMimeType?: string;
     mediaCaption?: string;
     fileName?: string;
+    reactionEmoji?: string;
+    reactionMessageId?: string;
+    replyToMessageId?: string;
+    replyPreviewText?: string;
   };
   contact: {
     id: string;
@@ -75,6 +79,9 @@ interface Conversation {
   assignment?: ConvAssignment;
   senderIntegrationId?: string | null;
   senderPhoneDisplay?: string | null;
+  archived?: boolean;
+  pinned?: boolean;
+  mutedUntil?: string | null;
 }
 
 interface ContactDetail {
@@ -109,6 +116,12 @@ interface QuickReply {
   id: string;
   title: string;
   message: string;
+}
+
+interface ReplyDraft {
+  messageId: string;
+  previewText: string;
+  direction: 'inbound' | 'outbound';
 }
 
 interface AutoSendRuleForm {
@@ -183,6 +196,183 @@ const DEFAULT_QUICK_REPLIES: QuickReply[] = [
   { id: 'qr3', title: 'More info', message: 'Could you please provide more details so I can assist you better?' },
 ];
 
+function isConversationMuted(conv: Conversation): boolean {
+  const mutedUntil = String(conv.mutedUntil || '').trim();
+  if (!mutedUntil) return false;
+  const parsed = new Date(mutedUntil);
+  if (Number.isNaN(parsed.getTime())) return false;
+  return parsed.getTime() > Date.now();
+}
+
+function sortConversationsByPinAndTime(items: Conversation[]): Conversation[] {
+  return [...items].sort((a, b) => {
+    const aPinned = !!a.pinned;
+    const bPinned = !!b.pinned;
+    if (aPinned !== bPinned) return aPinned ? -1 : 1;
+    return new Date(b.lastMessageTime).getTime() - new Date(a.lastMessageTime).getTime();
+  });
+}
+
+function formatDuration(seconds: number): string {
+  const safeSeconds = Number.isFinite(seconds) ? Math.max(0, Math.floor(seconds)) : 0;
+  const minutes = Math.floor(safeSeconds / 60);
+  const remainder = safeSeconds % 60;
+  return `${String(minutes).padStart(2, '0')}:${String(remainder).padStart(2, '0')}`;
+}
+
+function buildDemoConversations(now = new Date()): Conversation[] {
+  const nowMs = now.getTime();
+  const iso = (deltaMinutes: number) => new Date(nowMs - deltaMinutes * 60_000).toISOString();
+  const makeId = (suffix: string) => `demo_${suffix}`;
+  const c1Messages: WhatsAppActivity[] = [
+    {
+      id: makeId('m1'),
+      title: 'WhatsApp from Ana',
+      description: 'Salut! Ai 5 minute azi pentru demo?',
+      direction: 'inbound',
+      occurredAt: iso(95),
+      metadata: { waId: '40740111222', messageType: 'text', whatsappMessageId: makeId('wm1') },
+      contact: { id: makeId('c1'), firstName: 'Ana', lastName: 'Ionescu', phone: '+40740111222', status: 'lead', source: 'manychat' },
+    },
+    {
+      id: makeId('m2'),
+      title: 'WhatsApp to Ana',
+      description: 'Sigur. Pot la 16:30 sau la 18:00.',
+      direction: 'outbound',
+      occurredAt: iso(80),
+      metadata: { waId: '40740111222', messageType: 'text', messageStatus: 'read', whatsappMessageId: makeId('wm2') },
+      contact: { id: makeId('c1'), firstName: 'Ana', lastName: 'Ionescu', phone: '+40740111222', status: 'lead', source: 'manychat' },
+    },
+    {
+      id: makeId('m3'),
+      title: 'WhatsApp from Ana',
+      description: 'Perfect, 18:00 e ok 🙌',
+      direction: 'inbound',
+      occurredAt: iso(65),
+      metadata: { waId: '40740111222', messageType: 'text', whatsappMessageId: makeId('wm3') },
+      contact: { id: makeId('c1'), firstName: 'Ana', lastName: 'Ionescu', phone: '+40740111222', status: 'lead', source: 'manychat' },
+    },
+    {
+      id: makeId('m4'),
+      title: 'WhatsApp to Ana',
+      description: '[Reaction]',
+      direction: 'outbound',
+      occurredAt: iso(60),
+      metadata: {
+        waId: '40740111222',
+        messageType: 'reaction',
+        reactionEmoji: '👍',
+        replyPreviewText: 'Perfect, 18:00 e ok 🙌',
+        replyToMessageId: makeId('wm3'),
+        whatsappMessageId: makeId('wm4'),
+      },
+      contact: { id: makeId('c1'), firstName: 'Ana', lastName: 'Ionescu', phone: '+40740111222', status: 'lead', source: 'manychat' },
+    },
+  ];
+
+  const c2Messages: WhatsAppActivity[] = [
+    {
+      id: makeId('m5'),
+      title: 'WhatsApp from Mihai',
+      description: 'Buna! As vrea oferta pentru pachetul Growth.',
+      direction: 'inbound',
+      occurredAt: iso(240),
+      metadata: { waId: '40755666444', messageType: 'text', whatsappMessageId: makeId('wm5') },
+      contact: { id: makeId('c2'), firstName: 'Mihai', lastName: 'Popescu', phone: '+40755666444', status: 'prospect', source: 'typeform' },
+    },
+    {
+      id: makeId('m6'),
+      title: 'WhatsApp to Mihai',
+      description: 'Super. Iti trimit imediat detaliile pe email.',
+      direction: 'outbound',
+      occurredAt: iso(220),
+      metadata: { waId: '40755666444', messageType: 'text', messageStatus: 'delivered', whatsappMessageId: makeId('wm6') },
+      contact: { id: makeId('c2'), firstName: 'Mihai', lastName: 'Popescu', phone: '+40755666444', status: 'prospect', source: 'typeform' },
+    },
+  ];
+
+  const c3Messages: WhatsAppActivity[] = [
+    {
+      id: makeId('m7'),
+      title: 'WhatsApp from Andrei',
+      description: '[Document: contract.pdf]',
+      direction: 'inbound',
+      occurredAt: iso(1440),
+      metadata: { waId: '40722233445', messageType: 'document', fileName: 'contract.pdf', whatsappMessageId: makeId('wm7') },
+      contact: { id: makeId('c3'), firstName: 'Andrei', lastName: 'Stan', phone: '+40722233445', status: 'customer', source: 'manual' },
+    },
+  ];
+
+  return [
+    {
+      waId: '40740111222',
+      contactName: 'Ana Ionescu',
+      contactId: makeId('c1'),
+      contactSource: 'manychat',
+      phone: '+40740111222',
+      lastMessage: '[Reaction]',
+      lastMessageTime: iso(60),
+      messageCount: c1Messages.length,
+      messages: c1Messages,
+      unreadCount: 2,
+      lastInboundTime: iso(65),
+      hasCampaignMessages: false,
+      campaignIds: [],
+      campaignNames: [],
+      primaryCampaignName: null,
+      pinned: true,
+      mutedUntil: null,
+      archived: false,
+      senderIntegrationId: 'demo_sender_a',
+      senderPhoneDisplay: '+40 740 111 222',
+    },
+    {
+      waId: '40755666444',
+      contactName: 'Mihai Popescu',
+      contactId: makeId('c2'),
+      contactSource: 'typeform',
+      phone: '+40755666444',
+      lastMessage: 'Super. Iti trimit imediat detaliile pe email.',
+      lastMessageTime: iso(220),
+      messageCount: c2Messages.length,
+      messages: c2Messages,
+      unreadCount: 0,
+      lastInboundTime: iso(240),
+      hasCampaignMessages: true,
+      campaignIds: [makeId('camp1')],
+      campaignNames: ['Growth Leads'],
+      primaryCampaignName: 'Growth Leads',
+      pinned: false,
+      mutedUntil: new Date(nowMs + 6 * 60 * 60 * 1000).toISOString(),
+      archived: false,
+      senderIntegrationId: 'demo_sender_b',
+      senderPhoneDisplay: '+40 755 666 444',
+    },
+    {
+      waId: '40722233445',
+      contactName: 'Andrei Stan',
+      contactId: makeId('c3'),
+      contactSource: 'manual',
+      phone: '+40722233445',
+      lastMessage: '[Document: contract.pdf]',
+      lastMessageTime: iso(1440),
+      messageCount: c3Messages.length,
+      messages: c3Messages,
+      unreadCount: 1,
+      lastInboundTime: iso(1440),
+      hasCampaignMessages: false,
+      campaignIds: [],
+      campaignNames: [],
+      primaryCampaignName: null,
+      pinned: false,
+      mutedUntil: null,
+      archived: true,
+      senderIntegrationId: 'demo_sender_a',
+      senderPhoneDisplay: '+40 740 111 222',
+    },
+  ];
+}
+
 const AUTO_SEND_SOURCES = ['typeform', 'manychat', 'manual', 'form', 'import', 'webhook'];
 const AUTO_SEND_STATUSES = ['lead', 'prospect', 'customer', 'active'];
 
@@ -223,7 +413,15 @@ function DateSeparator({ label }: { label: string }) {
   );
 }
 
-function MessageBubble({ msg, formatTime }: { msg: WhatsAppActivity; formatTime: (d: string) => string }) {
+function MessageBubble({
+  msg,
+  formatTime,
+  onReply,
+}: {
+  msg: WhatsAppActivity;
+  formatTime: (d: string) => string;
+  onReply: (msg: WhatsAppActivity) => void;
+}) {
   const isOutbound = msg.direction === 'outbound';
   const parsed = parseMessageContent(msg);
   const status = getStatusDisplay(msg);
@@ -277,11 +475,25 @@ function MessageBubble({ msg, formatTime }: { msg: WhatsAppActivity; formatTime:
 
   return (
     <div className={`flex ${isOutbound ? 'justify-end' : 'justify-start'}`}>
+      <div className="group relative">
+      <button
+        onClick={() => onReply(msg)}
+        className={`absolute -top-2 ${isOutbound ? '-left-10' : '-right-10'} opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-full border border-gray-200 bg-white text-gray-500 hover:text-green-600 hover:border-green-200`}
+        title="Reply"
+      >
+        <CornerUpLeft className="h-3.5 w-3.5" />
+      </button>
       <div className={`max-w-md rounded-2xl px-4 py-2.5 shadow-sm ${
         isOutbound
           ? 'bg-green-500 text-white rounded-br-sm'
           : 'bg-white text-gray-900 rounded-bl-sm border border-gray-100'
       }`}>
+        {msg.metadata?.replyPreviewText && (
+          <div className={`mb-1.5 px-2 py-1 rounded-lg border ${isOutbound ? 'bg-green-600 border-green-400' : 'bg-gray-50 border-gray-200'}`}>
+            <p className={`text-[10px] font-semibold ${isOutbound ? 'text-green-100' : 'text-gray-500'}`}>Reply</p>
+            <p className={`text-xs line-clamp-2 ${isOutbound ? 'text-white' : 'text-gray-700'}`}>{msg.metadata.replyPreviewText}</p>
+          </div>
+        )}
         {parsed.type === 'image' && (mediaSrc ? (
           <img
             src={mediaSrc}
@@ -328,13 +540,19 @@ function MessageBubble({ msg, formatTime }: { msg: WhatsAppActivity; formatTime:
             <span className="text-xs font-medium">Video</span>
           </div>
         ))}
+        {parsed.type === 'reaction' && (
+          <div className={`inline-flex items-center gap-2 px-2 py-1 rounded-full mb-1 ${isOutbound ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-700'}`}>
+            <span className="text-lg leading-none">{parsed.reactionEmoji || '👍'}</span>
+            <span className="text-xs font-medium">{parsed.text || 'Reaction'}</span>
+          </div>
+        )}
         {isLoadingMedia && (
           <p className={`text-xs mb-1 ${isOutbound ? 'text-green-100' : 'text-gray-500'}`}>Loading media...</p>
         )}
         {mediaError && (
           <p className={`text-xs mb-1 ${isOutbound ? 'text-green-100' : 'text-red-500'}`}>{mediaError}</p>
         )}
-        {parsed.text && <p className="text-sm whitespace-pre-wrap">{parsed.text}</p>}
+        {parsed.type !== 'reaction' && parsed.text && <p className="text-sm whitespace-pre-wrap">{parsed.text}</p>}
         <div className={`flex items-center justify-end gap-1 mt-1 ${isOutbound ? 'text-green-100' : 'text-gray-400'}`}>
           <span className="text-xs">{formatTime(msg.occurredAt)}</span>
           {isOutbound && (
@@ -343,6 +561,7 @@ function MessageBubble({ msg, formatTime }: { msg: WhatsAppActivity; formatTime:
               : <Check className={`h-3.5 w-3.5 ${status.color}`} />
           )}
         </div>
+      </div>
       </div>
     </div>
   );
@@ -529,11 +748,20 @@ function parseMessageContent(msg: WhatsAppActivity): {
   fileName?: string;
   mediaId?: string;
   mediaUrl?: string;
+  reactionEmoji?: string;
 } {
   const desc = msg.description || '';
   const msgType = msg.metadata?.messageType || 'text';
   const mediaId = msg.metadata?.mediaId;
   const mediaUrl = msg.metadata?.mediaUrl;
+  const reactionEmoji = String(msg.metadata?.reactionEmoji || '').trim();
+  if (reactionEmoji || msgType === 'reaction' || desc.startsWith('[Reaction]')) {
+    return {
+      type: 'reaction',
+      text: desc.replace('[Reaction]', '').trim() || 'Reaction',
+      reactionEmoji: reactionEmoji || '👍',
+    };
+  }
   if (msgType === 'image' || desc.startsWith('[Image]')) {
     return {
       type: 'image',
@@ -606,10 +834,12 @@ export default function WhatsAppPage() {
   const [sendError, setSendError] = useState('');
   const [senderAccounts, setSenderAccounts] = useState<WhatsAppSenderAccount[]>([]);
   const [selectedSenderId, setSelectedSenderId] = useState('');
-  const [convFilter, setConvFilter] = useState<'all' | 'unread' | 'assigned' | 'campaign' | 'manychat' | 'typeform'>('all');
+  const [convFilter, setConvFilter] = useState<'all' | 'unread' | 'assigned' | 'campaign' | 'manychat' | 'typeform' | 'pinned' | 'archived'>('all');
   const [campaignConversationFilter, setCampaignConversationFilter] = useState('all');
   const [convNumberFilter, setConvNumberFilter] = useState<string>('all');
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [replyingTo, setReplyingTo] = useState<ReplyDraft | null>(null);
+  const [demoMode, setDemoMode] = useState(false);
 
   // Mobile layout: 'list' shows conv list, 'chat' shows selected chat
   const [mobilePanel, setMobilePanel] = useState<'list' | 'chat'>('list');
@@ -662,6 +892,21 @@ export default function WhatsAppPage() {
   const [attachmentFileName, setAttachmentFileName] = useState('');
   const [attachmentCaption, setAttachmentCaption] = useState('');
   const [isUploadingAttachment, setIsUploadingAttachment] = useState(false);
+  const speechRecognitionRef = useRef<any | null>(null);
+  const voiceMediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const voiceStreamRef = useRef<MediaStream | null>(null);
+  const voiceChunksRef = useRef<BlobPart[]>([]);
+  const voiceTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const discardVoiceOnStopRef = useRef(false);
+  const voicePreviewUrlRef = useRef('');
+  const [dictationSupported, setDictationSupported] = useState(true);
+  const [isDictating, setIsDictating] = useState(false);
+  const [voiceRecordingSupported, setVoiceRecordingSupported] = useState(true);
+  const [isVoiceRecording, setIsVoiceRecording] = useState(false);
+  const [voiceRecordingSeconds, setVoiceRecordingSeconds] = useState(0);
+  const [voiceAudioBlob, setVoiceAudioBlob] = useState<Blob | null>(null);
+  const [voiceAudioPreviewUrl, setVoiceAudioPreviewUrl] = useState('');
+  const [voiceInputError, setVoiceInputError] = useState('');
 
   // Message search
   const [messageSearch, setMessageSearch] = useState('');
@@ -786,7 +1031,6 @@ export default function WhatsAppPage() {
   // ─── Effects ──────────────────────────────────────────────
 
   useEffect(() => {
-    fetchInbox();
     fetchSenderAccounts();
     fetchWebhookInfo();
     fetchAutoResponses();
@@ -794,9 +1038,11 @@ export default function WhatsAppPage() {
     fetchTypeformForms();
     fetchAssignments();
     fetchTeamUsers();
-    // Poll every 5 seconds for near-real-time inbox updates
+  }, []);
+
+  useEffect(() => {
+    fetchInbox();
     const interval = setInterval(fetchInbox, 5000);
-    // Also refresh when the user tabs back to the page
     const onVisible = () => { if (document.visibilityState === 'visible') fetchInbox(); };
     document.addEventListener('visibilitychange', onVisible);
     return () => {
@@ -825,6 +1071,98 @@ export default function WhatsAppPage() {
       setQuickReplies(DEFAULT_QUICK_REPLIES);
     }
   }, []);
+
+  const stopVoiceTimer = useCallback(() => {
+    if (voiceTimerRef.current) {
+      clearInterval(voiceTimerRef.current);
+      voiceTimerRef.current = null;
+    }
+  }, []);
+
+  const stopVoiceStream = useCallback(() => {
+    if (voiceStreamRef.current) {
+      voiceStreamRef.current.getTracks().forEach((track) => track.stop());
+      voiceStreamRef.current = null;
+    }
+  }, []);
+
+  const clearVoiceDraft = useCallback((keepPreviewUrl = false) => {
+    if (!keepPreviewUrl && voiceAudioPreviewUrl) {
+      URL.revokeObjectURL(voiceAudioPreviewUrl);
+    }
+    setVoiceAudioBlob(null);
+    setVoiceAudioPreviewUrl('');
+    setVoiceRecordingSeconds(0);
+    setVoiceInputError('');
+  }, [voiceAudioPreviewUrl]);
+
+  const stopDictation = useCallback(() => {
+    if (speechRecognitionRef.current) {
+      try {
+        speechRecognitionRef.current.onend = null;
+        speechRecognitionRef.current.stop();
+      } catch {
+        // ignore
+      }
+      speechRecognitionRef.current = null;
+    }
+    setIsDictating(false);
+  }, []);
+
+  useEffect(() => {
+    voicePreviewUrlRef.current = voiceAudioPreviewUrl;
+  }, [voiceAudioPreviewUrl]);
+
+  useEffect(() => {
+    const speechCtor = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    setDictationSupported(!!speechCtor);
+    setVoiceRecordingSupported(!!(window as any).MediaRecorder && !!navigator.mediaDevices?.getUserMedia);
+
+    return () => {
+      stopDictation();
+      stopVoiceTimer();
+      stopVoiceStream();
+      if (voiceMediaRecorderRef.current && voiceMediaRecorderRef.current.state !== 'inactive') {
+        try {
+          voiceMediaRecorderRef.current.stop();
+        } catch {
+          // ignore
+        }
+      }
+      if (voicePreviewUrlRef.current) {
+        URL.revokeObjectURL(voicePreviewUrlRef.current);
+      }
+    };
+  }, [stopDictation, stopVoiceStream, stopVoiceTimer]);
+
+  const enableDemoMode = useCallback(() => {
+    const demoConversations = sortConversationsByPinAndTime(buildDemoConversations());
+    localStorage.setItem('wa_demo_mode', '1');
+    setDemoMode(true);
+    setConversations(demoConversations);
+    setSelectedConv(demoConversations[0] || null);
+    setIsLoading(false);
+  }, []);
+
+  const disableDemoMode = useCallback(() => {
+    localStorage.setItem('wa_demo_mode', '0');
+    setDemoMode(false);
+    setConversations([]);
+    setSelectedConv(null);
+    setIsLoading(true);
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const storedDemoMode = localStorage.getItem('wa_demo_mode');
+    const demoFromStorage = storedDemoMode === '1';
+    const demoDisabledByStorage = storedDemoMode === '0';
+    const demoFromQuery = !demoDisabledByStorage && params.get('demo') === '1';
+    const enabled = demoFromQuery || demoFromStorage;
+    if (enabled) {
+      enableDemoMode();
+    }
+  }, [enableDemoMode]);
 
   useEffect(() => {
     if (autoSendRules.length === 0) {
@@ -876,10 +1214,41 @@ export default function WhatsAppPage() {
   // ─── Data Fetching ────────────────────────────────────────
 
   const fetchInbox = useCallback(async () => {
+    const storedDemoMode = typeof window !== 'undefined' ? localStorage.getItem('wa_demo_mode') : null;
+    const demoFromStorage = storedDemoMode === '1';
+    const demoDisabledByStorage = storedDemoMode === '0';
+    const demoFromQuery = typeof window !== 'undefined' && !demoDisabledByStorage && new URLSearchParams(window.location.search).get('demo') === '1';
+    const shouldUseDemo = demoFromStorage || demoFromQuery;
+    if (shouldUseDemo) {
+      const seededDemoConversations = sortConversationsByPinAndTime(buildDemoConversations());
+      setDemoMode(true);
+      setConversations((prev) => (prev.length > 0 ? sortConversationsByPinAndTime(prev) : seededDemoConversations));
+      setSelectedConv((prev) => {
+        if (!prev) return seededDemoConversations[0] || null;
+        return seededDemoConversations.find((conversation) => conversation.waId === prev.waId) || seededDemoConversations[0] || null;
+      });
+      setIsLoading(false);
+      return;
+    }
     try {
-      const res = await api.get('/integrations/whatsapp/inbox?limit=200');
-      const activities: WhatsAppActivity[] = res.data.data || [];
-      const readTimestamps = JSON.parse(localStorage.getItem('wa_read_timestamps') || '{}');
+      const [inboxRes, stateRes] = await Promise.all([
+        api.get('/integrations/whatsapp/inbox?limit=200'),
+        api.get('/integrations/whatsapp/conversations/state').catch(() => ({ data: { data: {} } })),
+      ]);
+      const activities: WhatsAppActivity[] = inboxRes.data.data || [];
+      const serverState = stateRes.data?.data || {};
+      const localReadTimestamps = JSON.parse(localStorage.getItem('wa_read_timestamps') || '{}');
+      const localArchivedMap = JSON.parse(localStorage.getItem('wa_web_archived_map') || '{}');
+      const localPinnedMap = JSON.parse(localStorage.getItem('wa_web_pinned_map') || '{}');
+      const localMutedMap = JSON.parse(localStorage.getItem('wa_web_muted_map') || '{}');
+      const readTimestamps = { ...localReadTimestamps, ...(serverState.readAtMap || {}) };
+      const archivedMap = { ...localArchivedMap, ...(serverState.archivedMap || {}) };
+      const pinnedMap = { ...localPinnedMap, ...(serverState.pinnedMap || {}) };
+      const mutedUntilMap = { ...localMutedMap, ...(serverState.mutedUntilMap || {}) };
+      localStorage.setItem('wa_read_timestamps', JSON.stringify(readTimestamps));
+      localStorage.setItem('wa_web_archived_map', JSON.stringify(archivedMap));
+      localStorage.setItem('wa_web_pinned_map', JSON.stringify(pinnedMap));
+      localStorage.setItem('wa_web_muted_map', JSON.stringify(mutedUntilMap));
       const convMap = new Map<string, Conversation>();
 
       for (const act of activities) {
@@ -896,6 +1265,9 @@ export default function WhatsAppPage() {
             hasCampaignMessages: false, campaignIds: [], campaignNames: [], primaryCampaignName: null,
             senderIntegrationId: act.metadata?.senderIntegrationId || null,
             senderPhoneDisplay: act.metadata?.senderPhoneDisplay || null,
+            archived: !!archivedMap[waId],
+            pinned: !!pinnedMap[waId],
+            mutedUntil: mutedUntilMap[waId] || null,
           });
         }
         const conv = convMap.get(waId)!;
@@ -944,21 +1316,18 @@ export default function WhatsAppPage() {
         conv.messages.sort((a, b) => new Date(a.occurredAt).getTime() - new Date(b.occurredAt).getTime());
       }
 
-      const convList = Array.from(convMap.values()).sort(
-        (a, b) => new Date(b.lastMessageTime).getTime() - new Date(a.lastMessageTime).getTime(),
-      );
+      const convList = sortConversationsByPinAndTime(Array.from(convMap.values()));
       setConversations(convList);
-
-      if (selectedConv) {
-        const updated = convList.find(c => c.waId === selectedConv.waId);
-        if (updated) setSelectedConv(updated);
-      }
+      setSelectedConv((prev) => {
+        if (!prev) return prev;
+        return convList.find((conversation) => conversation.waId === prev.waId) || null;
+      });
     } catch (err) {
       console.error('Failed to fetch WhatsApp inbox:', err);
     } finally {
       setIsLoading(false);
     }
-  }, [selectedConv]);
+  }, []);
 
   const fetchSenderAccounts = useCallback(async () => {
     try {
@@ -1338,6 +1707,9 @@ export default function WhatsAppPage() {
   const selectConversation = (conv: Conversation) => {
     setSelectedConv(conv);
     setMobilePanel('chat');
+    setReplyingTo(null);
+    stopDictation();
+    discardVoiceDraft();
     markAsRead(conv.waId);
     conv.unreadCount = 0;
     setConversations(prev => prev.map(c => c.waId === conv.waId ? { ...c, unreadCount: 0 } : c));
@@ -1346,6 +1718,25 @@ export default function WhatsAppPage() {
     } else {
       setContactDetail(null);
     }
+  };
+
+  const pushDemoMessage = (conversationWaId: string, message: WhatsAppActivity) => {
+    setConversations((prev) => {
+      const updated = prev.map((conversation) => {
+        if (conversation.waId !== conversationWaId) return conversation;
+        const nextMessages = [...conversation.messages, message];
+        return {
+          ...conversation,
+          messages: nextMessages,
+          messageCount: nextMessages.length,
+          lastMessage: message.description || conversation.lastMessage,
+          lastMessageTime: message.occurredAt,
+        };
+      });
+      const sorted = sortConversationsByPinAndTime(updated);
+      setSelectedConv(sorted.find((conversation) => conversation.waId === conversationWaId) || null);
+      return sorted;
+    });
   };
 
   const handleDeleteConversation = async (waId: string) => {
@@ -1358,6 +1749,7 @@ export default function WhatsAppPage() {
         setSelectedConv(null);
         setMobilePanel('list');
       }
+      if (demoMode) return;
       // Delete activities for this waId on the server
       await api.delete(`/integrations/whatsapp/conversation/${waId}`);
     } catch {
@@ -1368,17 +1760,143 @@ export default function WhatsAppPage() {
     }
   };
 
+  const handleTogglePin = async (waId: string, pinned: boolean) => {
+    const nextPinned = !pinned;
+    setConversations((prev) => {
+      const updated = prev.map((conversation) => (
+        conversation.waId === waId
+          ? { ...conversation, pinned: nextPinned }
+          : conversation
+      ));
+      const sorted = sortConversationsByPinAndTime(updated);
+      const map = sorted.reduce<Record<string, boolean>>((acc, item) => {
+        if (item.pinned) acc[item.waId] = true;
+        return acc;
+      }, {});
+      localStorage.setItem('wa_web_pinned_map', JSON.stringify(map));
+      return sorted;
+    });
+    if (selectedConv?.waId === waId) {
+      setSelectedConv((prev) => (prev ? { ...prev, pinned: nextPinned } : prev));
+    }
+    if (demoMode) return;
+    try {
+      await api.post(`/integrations/whatsapp/conversations/${waId}/pin`, { pinned: nextPinned });
+    } catch {
+      await fetchInbox();
+    }
+  };
+
+  const handleToggleMute = async (waId: string, mutedUntil: string | null | undefined) => {
+    const currentlyMuted = !!mutedUntil && new Date(mutedUntil).getTime() > Date.now();
+    const nextMutedUntil = currentlyMuted ? null : new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString();
+    setConversations((prev) => {
+      const updated = prev.map((conversation) => (
+        conversation.waId === waId
+          ? { ...conversation, mutedUntil: nextMutedUntil }
+          : conversation
+      ));
+      const map = updated.reduce<Record<string, string>>((acc, item) => {
+        if (item.mutedUntil) acc[item.waId] = item.mutedUntil;
+        return acc;
+      }, {});
+      localStorage.setItem('wa_web_muted_map', JSON.stringify(map));
+      return updated;
+    });
+    if (selectedConv?.waId === waId) {
+      setSelectedConv((prev) => (prev ? { ...prev, mutedUntil: nextMutedUntil } : prev));
+    }
+    if (demoMode) return;
+    try {
+      await api.post(`/integrations/whatsapp/conversations/${waId}/mute`, { mutedUntil: nextMutedUntil });
+    } catch {
+      await fetchInbox();
+    }
+  };
+
+  const handleToggleArchive = async (waId: string, archived: boolean) => {
+    const nextArchived = !archived;
+    setConversations((prev) => {
+      const updated = prev.map((conversation) => (
+        conversation.waId === waId
+          ? { ...conversation, archived: nextArchived }
+          : conversation
+      ));
+      const map = updated.reduce<Record<string, boolean>>((acc, item) => {
+        if (item.archived) acc[item.waId] = true;
+        return acc;
+      }, {});
+      localStorage.setItem('wa_web_archived_map', JSON.stringify(map));
+      return updated;
+    });
+    if (selectedConv?.waId === waId) {
+      setSelectedConv((prev) => (prev ? { ...prev, archived: nextArchived } : prev));
+    }
+    if (demoMode) return;
+    try {
+      await api.post(`/integrations/whatsapp/conversations/${waId}/archive`, { archived: nextArchived });
+    } catch {
+      await fetchInbox();
+    }
+  };
+
   const handleSend = async () => {
     if (!replyText.trim() || !selectedConv) return;
-    if (senderAccounts.length > 0 && !selectedSenderId) {
+    if (!demoMode && senderAccounts.length > 0 && !selectedSenderId) {
       setSendError('Selecteaza numarul WhatsApp din care vrei sa trimiti.');
       return;
     }
+    stopDictation();
     setIsSending(true);
     setSendError('');
-    try {
-      await api.post('/integrations/whatsapp/send', withSelectedSender({ to: selectedConv.waId, message: replyText.trim() }));
+    const trimmedMessage = replyText.trim();
+    if (demoMode) {
+      const nowIso = new Date().toISOString();
+      const messageId = `demo_local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      const [firstName = selectedConv.contactName, ...rest] = selectedConv.contactName.split(' ');
+      const senderPhoneDisplay = selectedSender?.phoneDisplay || selectedSender?.phoneNumberId || selectedSender?.name || selectedConv.senderPhoneDisplay || undefined;
+      const localMessage: WhatsAppActivity = {
+        id: messageId,
+        title: `WhatsApp to ${selectedConv.contactName}`,
+        description: trimmedMessage,
+        direction: 'outbound',
+        occurredAt: nowIso,
+        metadata: {
+          waId: selectedConv.waId,
+          messageType: 'text',
+          messageStatus: 'sent',
+          whatsappMessageId: messageId,
+          senderIntegrationId: selectedSenderId || undefined,
+          senderPhoneDisplay,
+          replyToMessageId: replyingTo?.messageId,
+          replyPreviewText: replyingTo?.previewText,
+        },
+        contact: selectedConv.contactId
+          ? {
+              id: selectedConv.contactId,
+              firstName,
+              lastName: rest.join(' '),
+              phone: selectedConv.phone,
+              status: 'lead',
+              source: selectedConv.contactSource || 'manual',
+            }
+          : null,
+      };
+      pushDemoMessage(selectedConv.waId, localMessage);
       setReplyText('');
+      setReplyingTo(null);
+      setIsSending(false);
+      return;
+    }
+    try {
+      await api.post('/integrations/whatsapp/send', withSelectedSender({
+        to: selectedConv.waId,
+        message: trimmedMessage,
+        ...(replyingTo?.messageId ? { replyToMessageId: replyingTo.messageId } : {}),
+        ...(replyingTo?.previewText ? { replyPreviewText: replyingTo.previewText } : {}),
+      }));
+      setReplyText('');
+      setReplyingTo(null);
       await fetchInbox();
     } catch (err: any) {
       setSendError(err.response?.data?.message || 'Failed to send message');
@@ -1477,8 +1995,59 @@ export default function WhatsAppPage() {
 
   const handleSendAttachment = async () => {
     if ((!attachmentUrl.trim() && !attachmentMediaId) || !selectedConv) return;
+    stopDictation();
     setIsSending(true);
     setSendError('');
+    if (demoMode) {
+      const nowIso = new Date().toISOString();
+      const messageId = `demo_local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      const [firstName = selectedConv.contactName, ...rest] = selectedConv.contactName.split(' ');
+      const senderPhoneDisplay = selectedSender?.phoneDisplay || selectedSender?.phoneNumberId || selectedSender?.name || selectedConv.senderPhoneDisplay || undefined;
+      const caption = attachmentCaption.trim();
+      const description = attachmentType === 'image'
+        ? (caption ? `[Image] ${caption}` : '[Image]')
+        : attachmentType === 'video'
+          ? (caption ? `[Video] ${caption}` : '[Video]')
+          : attachmentType === 'audio'
+            ? '[Voice message]'
+            : `[Document: ${attachmentFileName || 'Document'}]${caption ? ` ${caption}` : ''}`;
+      const localMessage: WhatsAppActivity = {
+        id: messageId,
+        title: `WhatsApp to ${selectedConv.contactName}`,
+        description,
+        direction: 'outbound',
+        occurredAt: nowIso,
+        metadata: {
+          waId: selectedConv.waId,
+          messageType: attachmentType,
+          messageStatus: 'sent',
+          whatsappMessageId: messageId,
+          senderIntegrationId: selectedSenderId || undefined,
+          senderPhoneDisplay,
+          mediaId: attachmentMediaId || undefined,
+          mediaUrl: attachmentUrl.trim() || undefined,
+          mediaCaption: caption || undefined,
+          fileName: attachmentType === 'document' ? (attachmentFileName || undefined) : undefined,
+          replyToMessageId: replyingTo?.messageId,
+          replyPreviewText: replyingTo?.previewText,
+        },
+        contact: selectedConv.contactId
+          ? {
+              id: selectedConv.contactId,
+              firstName,
+              lastName: rest.join(' '),
+              phone: selectedConv.phone,
+              status: 'lead',
+              source: selectedConv.contactSource || 'manual',
+            }
+          : null,
+      };
+      pushDemoMessage(selectedConv.waId, localMessage);
+      resetAttachmentState();
+      setReplyingTo(null);
+      setIsSending(false);
+      return;
+    }
     try {
       let endpoint: string;
       let body: any;
@@ -1508,11 +2077,247 @@ export default function WhatsAppPage() {
             }
           : { to: selectedConv.waId, documentUrl: attachmentUrl.trim(), caption: attachmentCaption.trim() || undefined };
       }
+      if (replyingTo?.messageId) {
+        body.replyToMessageId = replyingTo.messageId;
+      }
+      if (replyingTo?.previewText) {
+        body.replyPreviewText = replyingTo.previewText;
+      }
       await api.post(endpoint, withSelectedSender(body));
       resetAttachmentState();
+      setReplyingTo(null);
       await fetchInbox();
     } catch (err: any) {
       setSendError(err.response?.data?.message || 'Failed to send attachment');
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  const toggleDictation = () => {
+    if (isDictating) {
+      stopDictation();
+      return;
+    }
+    const SpeechRecognitionCtor = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognitionCtor) {
+      setVoiceInputError('Speech-to-text is not supported in this browser.');
+      return;
+    }
+    setVoiceInputError('');
+    const recognition = new SpeechRecognitionCtor();
+    recognition.lang = navigator.language || 'en-US';
+    recognition.continuous = true;
+    recognition.interimResults = false;
+    recognition.onresult = (event: any) => {
+      let transcript = '';
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        if (event.results[i].isFinal) {
+          transcript += event.results[i][0]?.transcript || '';
+        }
+      }
+      const cleanTranscript = transcript.trim();
+      if (!cleanTranscript) return;
+      setReplyText((prev) => {
+        const separator = prev && !prev.endsWith(' ') ? ' ' : '';
+        return `${prev}${separator}${cleanTranscript}`;
+      });
+    };
+    recognition.onerror = (event: any) => {
+      if (event?.error === 'not-allowed') {
+        setVoiceInputError('Microphone permission denied for speech-to-text.');
+      } else {
+        setVoiceInputError('Speech-to-text failed. Try again.');
+      }
+      setIsDictating(false);
+    };
+    recognition.onend = () => {
+      speechRecognitionRef.current = null;
+      setIsDictating(false);
+    };
+    speechRecognitionRef.current = recognition;
+    recognition.start();
+    setIsDictating(true);
+  };
+
+  const startVoiceRecording = async () => {
+    if (!voiceRecordingSupported) {
+      setVoiceInputError('Voice recording is not supported in this browser.');
+      return;
+    }
+    if (!window.isSecureContext) {
+      setVoiceInputError('Voice recording needs a secure context (HTTPS or localhost).');
+      return;
+    }
+    if (isVoiceRecording) return;
+    setVoiceInputError('');
+    stopDictation();
+    discardVoiceOnStopRef.current = false;
+    clearVoiceDraft();
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      voiceStreamRef.current = stream;
+      voiceChunksRef.current = [];
+      const mimeTypeCandidates = ['audio/webm;codecs=opus', 'audio/ogg;codecs=opus', 'audio/webm'];
+      const mimeType = mimeTypeCandidates.find((candidate) => (
+        typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(candidate)
+      ));
+      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+      voiceMediaRecorderRef.current = recorder;
+      recorder.ondataavailable = (event: BlobEvent) => {
+        if (event.data?.size) {
+          voiceChunksRef.current.push(event.data);
+        }
+      };
+      recorder.onstop = () => {
+        stopVoiceTimer();
+        stopVoiceStream();
+        const shouldDiscard = discardVoiceOnStopRef.current;
+        discardVoiceOnStopRef.current = false;
+        setIsVoiceRecording(false);
+        if (shouldDiscard) {
+          return;
+        }
+        const voiceBlob = new Blob(voiceChunksRef.current, { type: recorder.mimeType || 'audio/webm' });
+        voiceChunksRef.current = [];
+        if (!voiceBlob.size) {
+          setVoiceInputError('Recorded audio is empty. Try again.');
+          return;
+        }
+        const previewUrl = URL.createObjectURL(voiceBlob);
+        setVoiceAudioBlob(voiceBlob);
+        setVoiceAudioPreviewUrl(previewUrl);
+      };
+      recorder.onerror = (event: any) => {
+        const mediaErrorName = String(event?.error?.name || '').trim();
+        if (mediaErrorName === 'NotReadableError') {
+          setVoiceInputError('Microphone is currently busy. Close other apps using it and retry.');
+          return;
+        }
+        setVoiceInputError(mediaErrorName ? `Recording failed (${mediaErrorName}).` : 'Recording failed. Please retry.');
+      };
+      recorder.start(250);
+      setVoiceRecordingSeconds(0);
+      setIsVoiceRecording(true);
+      voiceTimerRef.current = setInterval(() => {
+        setVoiceRecordingSeconds((prev) => prev + 1);
+      }, 1000);
+    } catch (error: any) {
+      stopVoiceStream();
+      setIsVoiceRecording(false);
+      const errorName = String(error?.name || '').trim();
+      const message = String(error?.message || '').toLowerCase();
+      if (errorName === 'NotAllowedError' || errorName === 'SecurityError' || message.includes('denied') || message.includes('permission')) {
+        setVoiceInputError('Microphone permission denied for voice recording. Allow mic access in browser site settings.');
+      } else if (errorName === 'NotFoundError' || errorName === 'DevicesNotFoundError' || message.includes('not found')) {
+        setVoiceInputError('No microphone detected. Connect a microphone and retry.');
+      } else if (errorName === 'NotReadableError' || errorName === 'TrackStartError' || message.includes('could not start') || message.includes('busy')) {
+        setVoiceInputError('Microphone is busy/unavailable. Close other recording apps and retry.');
+      } else if (errorName === 'NotSupportedError') {
+        setVoiceInputError('This browser cannot record audio with current settings.');
+      } else {
+        setVoiceInputError(errorName ? `Could not start voice recording (${errorName}).` : 'Could not start voice recording.');
+      }
+      console.error('Voice recording start failed:', error);
+    }
+  };
+
+  const stopVoiceRecording = () => {
+    if (!voiceMediaRecorderRef.current) return;
+    if (voiceMediaRecorderRef.current.state !== 'inactive') {
+      voiceMediaRecorderRef.current.stop();
+    }
+  };
+
+  const discardVoiceDraft = () => {
+    setVoiceInputError('');
+    discardVoiceOnStopRef.current = true;
+    if (voiceMediaRecorderRef.current && voiceMediaRecorderRef.current.state !== 'inactive') {
+      voiceMediaRecorderRef.current.stop();
+    }
+    setIsVoiceRecording(false);
+    stopVoiceTimer();
+    stopVoiceStream();
+    clearVoiceDraft();
+  };
+
+  const handleSendVoiceRecording = async () => {
+    if (!voiceAudioBlob || !selectedConv) return;
+    if (!demoMode && senderAccounts.length > 0 && !selectedSenderId) {
+      setVoiceInputError('Selecteaza numarul WhatsApp din care vrei sa trimiti.');
+      return;
+    }
+    setIsSending(true);
+    setSendError('');
+    setVoiceInputError('');
+    stopDictation();
+    let voicePreviewForMessage = voiceAudioPreviewUrl;
+    if (demoMode && !voicePreviewForMessage) {
+      voicePreviewForMessage = URL.createObjectURL(voiceAudioBlob);
+    }
+    try {
+      if (demoMode) {
+        const nowIso = new Date().toISOString();
+        const messageId = `demo_local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        const [firstName = selectedConv.contactName, ...rest] = selectedConv.contactName.split(' ');
+        const senderPhoneDisplay = selectedSender?.phoneDisplay || selectedSender?.phoneNumberId || selectedSender?.name || selectedConv.senderPhoneDisplay || undefined;
+        const localMessage: WhatsAppActivity = {
+          id: messageId,
+          title: `WhatsApp to ${selectedConv.contactName}`,
+          description: '[Voice message]',
+          direction: 'outbound',
+          occurredAt: nowIso,
+          metadata: {
+            waId: selectedConv.waId,
+            messageType: 'audio',
+            messageStatus: 'sent',
+            whatsappMessageId: messageId,
+            senderIntegrationId: selectedSenderId || undefined,
+            senderPhoneDisplay,
+            mediaUrl: voicePreviewForMessage,
+            replyToMessageId: replyingTo?.messageId,
+            replyPreviewText: replyingTo?.previewText,
+          },
+          contact: selectedConv.contactId
+            ? {
+                id: selectedConv.contactId,
+                firstName,
+                lastName: rest.join(' '),
+                phone: selectedConv.phone,
+                status: 'lead',
+                source: selectedConv.contactSource || 'manual',
+              }
+            : null,
+        };
+        pushDemoMessage(selectedConv.waId, localMessage);
+        clearVoiceDraft(true);
+        setReplyingTo(null);
+        return;
+      }
+
+      const extension = voiceAudioBlob.type.includes('ogg') ? 'ogg' : voiceAudioBlob.type.includes('mp4') ? 'm4a' : 'webm';
+      const formData = new FormData();
+      formData.append('file', new File([voiceAudioBlob], `voice-note-${Date.now()}.${extension}`, { type: voiceAudioBlob.type || 'audio/webm' }));
+      const uploadRes = await api.post('/integrations/whatsapp/media/upload', formData, {
+        params: selectedSenderId ? { integrationId: selectedSenderId } : undefined,
+      });
+      const uploadedMediaId = String(uploadRes.data?.id || '').trim();
+      if (!uploadedMediaId) {
+        throw new Error('Voice upload did not return media id');
+      }
+      const body: Record<string, any> = { to: selectedConv.waId, audioId: uploadedMediaId };
+      if (replyingTo?.messageId) {
+        body.replyToMessageId = replyingTo.messageId;
+      }
+      if (replyingTo?.previewText) {
+        body.replyPreviewText = replyingTo.previewText;
+      }
+      await api.post('/integrations/whatsapp/send/audio', withSelectedSender(body));
+      clearVoiceDraft();
+      setReplyingTo(null);
+      await fetchInbox();
+    } catch (err: any) {
+      setVoiceInputError(err?.response?.data?.message || err?.message || 'Failed to send voice message.');
     } finally {
       setIsSending(false);
     }
@@ -1580,7 +2385,10 @@ export default function WhatsAppPage() {
       || c.phone.includes(search)
       || c.campaignNames.some((campaignName) => campaignName.toLowerCase().includes(normalizedSearch));
     if (!matchesSearch) return false;
+    if (convFilter !== 'archived' && c.archived) return false;
+    if (convFilter === 'archived') return !!c.archived;
     if (convNumberFilter !== 'all' && c.senderIntegrationId !== convNumberFilter) return false;
+    if (convFilter === 'pinned') return !!c.pinned;
     if (convFilter === 'unread') return c.unreadCount > 0;
     if (convFilter === 'assigned') return !!assignments[c.waId];
     if (convFilter === 'manychat') return c.contactSource === 'manychat';
@@ -1620,6 +2428,7 @@ export default function WhatsAppPage() {
 
   const sessionStatus = selectedConv ? getSessionStatus(selectedConv) : 'closed';
   const sessionOpen = sessionStatus === 'open' || sessionStatus === 'closing';
+  const selectedConversationMuted = selectedConv ? isConversationMuted(selectedConv) : false;
   const selectedSourceLabel = selectedConv ? formatSourceLabel(selectedConv.contactSource || contactDetail?.source || null) : '';
 
   // True if this conversation has NEVER received an inbound message
@@ -2421,39 +3230,55 @@ export default function WhatsAppPage() {
         ${mobilePanel === 'chat' ? 'hidden md:flex' : 'flex'}
       `}>
         <div className="p-3 border-b border-gray-100 space-y-2">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className="h-7 w-7 rounded-lg bg-green-500 flex items-center justify-center">
-                <MessageCircle className="h-4 w-4 text-white" />
-              </div>
-              <span className="text-sm font-bold text-gray-900">Chats</span>
-              {conversations.length > 0 && (
-                <span className="text-xs font-medium text-gray-400">{conversations.length}</span>
-              )}
+          <div className="flex items-center gap-2">
+            <div className="h-7 w-7 rounded-lg bg-green-500 flex items-center justify-center">
+              <MessageCircle className="h-4 w-4 text-white" />
             </div>
-            <div className="flex gap-0.5">
-              <button onClick={() => { setShowNewConversation(true); if (metaTemplates.length === 0) fetchMetaTemplates(); }} className="p-1.5 rounded-lg bg-green-500 hover:bg-green-600 transition-all shadow-sm" title="New conversation">
+            <span className="text-sm font-bold text-gray-900">Chats</span>
+            {demoMode && (
+              <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-200">
+                DEMO
+              </span>
+            )}
+            {conversations.length > 0 && (
+              <span className="text-xs font-medium text-gray-400">{conversations.length}</span>
+            )}
+          </div>
+          <div className="-mx-1 overflow-x-auto px-1 pb-1">
+            <div className="flex w-max items-center gap-1 pr-2">
+              <button
+                onClick={demoMode ? disableDemoMode : enableDemoMode}
+                className={`flex-shrink-0 px-2 py-1.5 rounded-lg text-[11px] font-semibold transition-all ${
+                  demoMode
+                    ? 'bg-amber-100 text-amber-700 hover:bg-amber-200'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                }`}
+                title={demoMode ? 'Disable demo data' : 'Load demo data'}
+              >
+                {demoMode ? 'Live' : 'Demo'}
+              </button>
+              <button onClick={() => { setShowNewConversation(true); if (metaTemplates.length === 0) fetchMetaTemplates(); }} className="flex-shrink-0 p-1.5 rounded-lg bg-green-500 hover:bg-green-600 transition-all shadow-sm" title="New conversation">
                 <Plus className="h-3.5 w-3.5 text-white" />
               </button>
-              <button onClick={fetchInbox} className="p-1.5 rounded-lg hover:bg-gray-100 transition-all" title="Refresh">
+              <button onClick={fetchInbox} className="flex-shrink-0 p-1.5 rounded-lg hover:bg-gray-100 transition-all" title="Refresh">
                 <RefreshCw className="h-3.5 w-3.5 text-gray-400" />
               </button>
-              <button onClick={() => { setShowAutoResponses(true); fetchAutoResponses(); }} className="p-1.5 rounded-lg hover:bg-gray-100 transition-all" title="Auto-responses">
+              <button onClick={() => { setShowAutoResponses(true); fetchAutoResponses(); }} className="flex-shrink-0 p-1.5 rounded-lg hover:bg-gray-100 transition-all" title="Auto-responses">
                 <Zap className="h-3.5 w-3.5 text-gray-400" />
               </button>
-              <button onClick={() => { setShowTemplateManager(true); fetchMetaTemplates(); }} className="p-1.5 rounded-lg hover:bg-gray-100 transition-all" title="Templates">
+              <button onClick={() => { setShowTemplateManager(true); fetchMetaTemplates(); }} className="flex-shrink-0 p-1.5 rounded-lg hover:bg-gray-100 transition-all" title="Templates">
                 <LayoutTemplate className="h-3.5 w-3.5 text-gray-400" />
               </button>
-              <button onClick={() => { setShowAutoSend(true); fetchAutoSend(); fetchMetaTemplates(); }} className="p-1.5 rounded-lg hover:bg-gray-100 transition-all" title="Auto-send">
+              <button onClick={() => { setShowAutoSend(true); fetchAutoSend(); fetchMetaTemplates(); }} className="flex-shrink-0 p-1.5 rounded-lg hover:bg-gray-100 transition-all" title="Auto-send">
                 <Timer className="h-3.5 w-3.5 text-gray-400" />
               </button>
-              <button onClick={() => { setShowAISettings(true); fetchAIConfig(); }} className="p-1.5 rounded-lg hover:bg-gray-100 transition-all" title="AI Auto-Reply">
+              <button onClick={() => { setShowAISettings(true); fetchAIConfig(); }} className="flex-shrink-0 p-1.5 rounded-lg hover:bg-gray-100 transition-all" title="AI Auto-Reply">
                 <Brain className="h-3.5 w-3.5 text-gray-400" />
               </button>
-              <button onClick={() => { setShowFlowEditor(true); fetchFlows(); if (metaTemplates.length === 0) fetchMetaTemplates(); }} className="p-1.5 rounded-lg hover:bg-gray-100 transition-all" title="Conversation Flows">
+              <button onClick={() => { setShowFlowEditor(true); fetchFlows(); if (metaTemplates.length === 0) fetchMetaTemplates(); }} className="flex-shrink-0 p-1.5 rounded-lg hover:bg-gray-100 transition-all" title="Conversation Flows">
                 <GitBranch className="h-3.5 w-3.5 text-gray-400" />
               </button>
-              <button onClick={() => setShowWebhookSetup(true)} className="p-1.5 rounded-lg hover:bg-gray-100 transition-all" title="Settings">
+              <button onClick={() => setShowWebhookSetup(true)} className="flex-shrink-0 p-1.5 rounded-lg hover:bg-gray-100 transition-all" title="Settings">
                 <Settings className="h-3.5 w-3.5 text-gray-400" />
               </button>
             </div>
@@ -2509,7 +3334,9 @@ export default function WhatsAppPage() {
               [
                 { key: 'all', label: 'All' },
                 { key: 'unread', label: 'Unread' },
+                { key: 'pinned', label: 'Pinned' },
                 { key: 'assigned', label: 'Assigned' },
+                { key: 'archived', label: 'Archived' },
                 { key: 'campaign', label: 'Campaign' },
                 { key: 'manychat', label: 'ManyChat' },
                 { key: 'typeform', label: 'Typeform' },
@@ -2549,9 +3376,17 @@ export default function WhatsAppPage() {
               </div>
               <p className="text-sm font-semibold text-gray-600">No conversations</p>
               <p className="text-xs text-gray-400 mt-1 max-w-48">Messages from WhatsApp will appear here</p>
-              <button onClick={() => setShowNewConversation(true)} className="mt-4 px-4 py-1.5 text-xs font-medium text-white bg-green-500 rounded-full hover:bg-green-600 transition-all">
-                Start conversation
-              </button>
+              <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+                <button onClick={() => setShowNewConversation(true)} className="px-4 py-1.5 text-xs font-medium text-white bg-green-500 rounded-full hover:bg-green-600 transition-all">
+                  Start conversation
+                </button>
+                <button
+                  onClick={demoMode ? disableDemoMode : enableDemoMode}
+                  className="px-4 py-1.5 text-xs font-medium text-gray-700 bg-gray-100 rounded-full hover:bg-gray-200 transition-all"
+                >
+                  {demoMode ? 'Disable demo' : 'Load demo chats'}
+                </button>
+              </div>
             </div>
           ) : (
             groupedConversations.map(group => (
@@ -2564,6 +3399,7 @@ export default function WhatsAppPage() {
                   const ss = getSessionStatus(conv);
                   const isSelected = selectedConv?.waId === conv.waId;
                   const hasUnread = conv.unreadCount > 0;
+                  const isMuted = isConversationMuted(conv);
                   const convAssignment = assignments[conv.waId];
                   const sourceLabel = formatSourceLabel(conv.contactSource);
                   return (
@@ -2585,7 +3421,12 @@ export default function WhatsAppPage() {
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between">
-                          <p className={`text-sm truncate ${hasUnread ? 'font-bold text-gray-900' : 'font-medium text-gray-800'}`}>{conv.contactName}</p>
+                          <div className="min-w-0 flex items-center gap-1.5">
+                            <p className={`text-sm truncate ${hasUnread ? 'font-bold text-gray-900' : 'font-medium text-gray-800'}`}>{conv.contactName}</p>
+                            {conv.pinned && <Pin className="h-3.5 w-3.5 text-amber-500 flex-shrink-0" />}
+                            {isMuted && <BellOff className="h-3.5 w-3.5 text-gray-400 flex-shrink-0" />}
+                            {conv.archived && <Archive className="h-3.5 w-3.5 text-gray-400 flex-shrink-0" />}
+                          </div>
                           <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
                             {convAssignment && (
                               <div className="h-5 w-5 rounded-full flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0 shadow-sm"
@@ -2622,14 +3463,48 @@ export default function WhatsAppPage() {
                         </div>
                       </div>
                     </button>
-                    {/* Delete button on hover */}
-                    <button
-                      onClick={(e) => { e.stopPropagation(); handleDeleteConversation(conv.waId); }}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover/conv:opacity-100 transition-opacity p-1.5 bg-white rounded-lg shadow-sm border border-gray-100 hover:bg-red-50 hover:border-red-200 hover:text-red-500 text-gray-400"
-                      title="Delete conversation"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
+                    <div className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover/conv:opacity-100 transition-opacity flex items-center gap-1">
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleTogglePin(conv.waId, !!conv.pinned); }}
+                        className={`p-1.5 rounded-lg shadow-sm border transition-colors ${
+                          conv.pinned
+                            ? 'bg-amber-50 border-amber-200 text-amber-600'
+                            : 'bg-white border-gray-100 text-gray-400 hover:bg-gray-50'
+                        }`}
+                        title={conv.pinned ? 'Unpin chat' : 'Pin chat'}
+                      >
+                        <Pin className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleToggleMute(conv.waId, conv.mutedUntil); }}
+                        className={`p-1.5 rounded-lg shadow-sm border transition-colors ${
+                          isMuted
+                            ? 'bg-blue-50 border-blue-200 text-blue-600'
+                            : 'bg-white border-gray-100 text-gray-400 hover:bg-gray-50'
+                        }`}
+                        title={isMuted ? 'Unmute chat' : 'Mute for 8h'}
+                      >
+                        {isMuted ? <Bell className="h-3.5 w-3.5" /> : <BellOff className="h-3.5 w-3.5" />}
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleToggleArchive(conv.waId, !!conv.archived); }}
+                        className={`p-1.5 rounded-lg shadow-sm border transition-colors ${
+                          conv.archived
+                            ? 'bg-emerald-50 border-emerald-200 text-emerald-600'
+                            : 'bg-white border-gray-100 text-gray-400 hover:bg-gray-50'
+                        }`}
+                        title={conv.archived ? 'Unarchive chat' : 'Archive chat'}
+                      >
+                        {conv.archived ? <ArchiveRestore className="h-3.5 w-3.5" /> : <Archive className="h-3.5 w-3.5" />}
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleDeleteConversation(conv.waId); }}
+                        className="p-1.5 bg-white rounded-lg shadow-sm border border-gray-100 hover:bg-red-50 hover:border-red-200 hover:text-red-500 text-gray-400 transition-colors"
+                        title="Delete conversation"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
                     </div>
                   );
                 })}
@@ -2690,6 +3565,33 @@ export default function WhatsAppPage() {
               </div>
             </div>
             <div className="ml-auto flex items-center gap-1">
+              <button
+                onClick={() => handleTogglePin(selectedConv.waId, !!selectedConv.pinned)}
+                className={`p-2 rounded-lg transition-all ${
+                  selectedConv.pinned ? 'bg-amber-100 text-amber-700' : 'hover:bg-gray-100 text-gray-500'
+                }`}
+                title={selectedConv.pinned ? 'Unpin chat' : 'Pin chat'}
+              >
+                <Pin className="h-4 w-4" />
+              </button>
+              <button
+                onClick={() => handleToggleMute(selectedConv.waId, selectedConv.mutedUntil)}
+                className={`p-2 rounded-lg transition-all ${
+                  selectedConversationMuted ? 'bg-blue-100 text-blue-700' : 'hover:bg-gray-100 text-gray-500'
+                }`}
+                title={selectedConversationMuted ? 'Unmute chat' : 'Mute chat for 8 hours'}
+              >
+                {selectedConversationMuted ? <Bell className="h-4 w-4" /> : <BellOff className="h-4 w-4" />}
+              </button>
+              <button
+                onClick={() => handleToggleArchive(selectedConv.waId, !!selectedConv.archived)}
+                className={`p-2 rounded-lg transition-all ${
+                  selectedConv.archived ? 'bg-emerald-100 text-emerald-700' : 'hover:bg-gray-100 text-gray-500'
+                }`}
+                title={selectedConv.archived ? 'Unarchive chat' : 'Archive chat'}
+              >
+                {selectedConv.archived ? <ArchiveRestore className="h-4 w-4" /> : <Archive className="h-4 w-4" />}
+              </button>
               {/* Assign dropdown */}
               <div className="relative">
                 <button onClick={() => setShowAssignDropdown(v => !v)}
@@ -2779,104 +3681,124 @@ export default function WhatsAppPage() {
             {messagesWithDates.map((item, i) =>
               item.type === 'date'
                 ? <DateSeparator key={`date-${i}`} label={item.label} />
-                : <MessageBubble key={item.msg.id} msg={item.msg} formatTime={formatTime} />
+                : <MessageBubble
+                    key={item.msg.id}
+                    msg={item.msg}
+                    formatTime={formatTime}
+                    onReply={(message) => {
+                      const previewText = parseMessageContent(message).text || message.description || 'Message';
+                      setReplyingTo({
+                        messageId: String(message.metadata?.whatsappMessageId || message.id),
+                        previewText: String(previewText).trim().slice(0, 140),
+                        direction: message.direction,
+                      });
+                    }}
+                  />
             )}
             <div ref={messagesEndRef} />
           </div>
 
           {/* Template panel (slide up) */}
           {showTemplatePanel && (
-            <div className="border-t border-gray-200 bg-white p-4 max-h-64 overflow-y-auto">
-              <div className="flex items-center justify-between mb-3">
+            <div className="border-t border-gray-200 bg-white">
+              <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
                 <h3 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
                   <LayoutTemplate className="h-4 w-4" /> Message Templates
                 </h3>
-                <button onClick={() => {
-                  setShowTemplatePanel(false);
-                  setSelectedTemplate(null);
-                  setTemplateParams([]);
-                  setTemplateHeaderMediaId('');
-                  setTemplateHeaderMediaUrl('');
-                }}>
+                <button
+                  onClick={() => {
+                    setShowTemplatePanel(false);
+                    setSelectedTemplate(null);
+                    setTemplateParams([]);
+                    setTemplateHeaderMediaId('');
+                    setTemplateHeaderMediaUrl('');
+                  }}
+                >
                   <X className="h-4 w-4 text-gray-400" />
                 </button>
               </div>
-              {!selectedTemplate ? (
-                isLoadingTemplates ? (
-                  <div className="flex justify-center py-6"><Loader2 className="h-5 w-5 animate-spin text-gray-400" /></div>
-                ) : (
-                <div className="grid grid-cols-2 gap-2">
-                  {(metaTemplates.filter((t: any) => t.status === 'APPROVED').map(toSendableTemplate).length > 0
-                    ? metaTemplates.filter((t: any) => t.status === 'APPROVED').map(toSendableTemplate)
-                    : WHATSAPP_TEMPLATES
-                  ).map(t => (
-                    <button key={t.id} onClick={() => {
-                      setSelectedTemplate(t);
-                      setTemplateParams(Array(t.parameterCount).fill(''));
-                      setTemplateHeaderMediaId('');
-                      setTemplateHeaderMediaUrl('');
-                    }}
-                      className="p-3 text-left bg-gray-50 hover:bg-green-50 rounded-xl border border-gray-200 hover:border-green-300 transition-all">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="text-xs font-semibold text-gray-900">{t.displayName}</span>
-                        <span className={`text-xs px-1.5 py-0.5 rounded-full ${
-                          t.category === 'marketing' ? 'bg-purple-100 text-purple-600' : t.category === 'utility' ? 'bg-blue-100 text-blue-600' : 'bg-gray-100 text-gray-600'
-                        }`}>{t.category}</span>
-                      </div>
-                      <p className="text-xs text-gray-500 truncate">{t.body}</p>
-                    </button>
-                  ))}
-                </div>
-                )
-              ) : (
-                <div>
-                  <p className="text-sm text-gray-700 mb-3 p-2 bg-gray-50 rounded-lg">{selectedTemplate.body}</p>
-                  {selectedTemplate.parameterCount > 0 && (
-                    <div className="space-y-2 mb-3">
-                      {templateParams.map((p, i) => (
-                        <input key={i} type="text" placeholder={`Parameter {{${i + 1}}}`} value={p}
-                          onChange={e => { const np = [...templateParams]; np[i] = e.target.value; setTemplateParams(np); }}
-                          className="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:border-green-400" />
+              <div className="max-h-[40vh] overflow-y-auto p-4">
+                {!selectedTemplate ? (
+                  isLoadingTemplates ? (
+                    <div className="flex justify-center py-6"><Loader2 className="h-5 w-5 animate-spin text-gray-400" /></div>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {(metaTemplates.filter((t: any) => t.status === 'APPROVED').map(toSendableTemplate).length > 0
+                        ? metaTemplates.filter((t: any) => t.status === 'APPROVED').map(toSendableTemplate)
+                        : WHATSAPP_TEMPLATES
+                      ).map(t => (
+                        <button key={t.id} onClick={() => {
+                          setSelectedTemplate(t);
+                          setTemplateParams(Array(t.parameterCount).fill(''));
+                          setTemplateHeaderMediaId('');
+                          setTemplateHeaderMediaUrl('');
+                        }}
+                          className="p-3 text-left bg-gray-50 hover:bg-green-50 rounded-xl border border-gray-200 hover:border-green-300 transition-all">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="text-xs font-semibold text-gray-900">{t.displayName}</span>
+                            <span className={`text-xs px-1.5 py-0.5 rounded-full ${
+                              t.category === 'marketing' ? 'bg-purple-100 text-purple-600' : t.category === 'utility' ? 'bg-blue-100 text-blue-600' : 'bg-gray-100 text-gray-600'
+                            }`}>{t.category}</span>
+                          </div>
+                          <p className="text-xs text-gray-500 truncate">{t.body}</p>
+                        </button>
                       ))}
                     </div>
-                  )}
-                  {selectedTemplate.headerMediaType && (
-                    <div className="mb-3 space-y-2 p-3 rounded-lg border border-amber-200 bg-amber-50">
-                      <p className="text-xs text-amber-800 font-medium">
-                        Header media required ({selectedTemplate.headerMediaType})
-                      </p>
-                      <div className="flex items-center gap-2">
+                  )
+                ) : (
+                  <div>
+                    <p className="text-sm text-gray-700 mb-3 p-2 bg-gray-50 rounded-lg">{selectedTemplate.body}</p>
+                    {selectedTemplate.parameterCount > 0 && (
+                      <div className="space-y-2 mb-3">
+                        {templateParams.map((p, i) => (
+                          <input key={i} type="text" placeholder={`Parameter {{${i + 1}}}`} value={p}
+                            onChange={e => { const np = [...templateParams]; np[i] = e.target.value; setTemplateParams(np); }}
+                            className="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:border-green-400" />
+                        ))}
+                      </div>
+                    )}
+                    {selectedTemplate.headerMediaType && (
+                      <div className="mb-3 space-y-2 p-3 rounded-lg border border-amber-200 bg-amber-50">
+                        <p className="text-xs text-amber-800 font-medium">
+                          Header media required ({selectedTemplate.headerMediaType})
+                        </p>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            value={templateHeaderMediaId}
+                            onChange={(e) => setTemplateHeaderMediaId(e.target.value)}
+                            placeholder="Meta media_id"
+                            className="flex-1 px-3 py-1.5 text-sm border border-amber-200 rounded-lg focus:outline-none focus:border-amber-400"
+                          />
+                          <label className="px-3 py-1.5 text-xs font-medium text-amber-800 border border-amber-300 rounded-lg cursor-pointer hover:bg-amber-100">
+                            {isUploadingTemplateHeader ? 'Uploading…' : 'Upload'}
+                            <input
+                              type="file"
+                              className="hidden"
+                              accept={selectedTemplate.headerMediaType === 'image' ? 'image/*' : selectedTemplate.headerMediaType === 'video' ? 'video/*' : '.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt'}
+                              onChange={async (e) => {
+                                const file = e.target.files?.[0];
+                                if (!file) return;
+                                await handleUploadTemplateHeader(file);
+                                e.target.value = '';
+                              }}
+                            />
+                          </label>
+                        </div>
                         <input
                           type="text"
-                          value={templateHeaderMediaId}
-                          onChange={(e) => setTemplateHeaderMediaId(e.target.value)}
-                          placeholder="Meta media_id"
-                          className="flex-1 px-3 py-1.5 text-sm border border-amber-200 rounded-lg focus:outline-none focus:border-amber-400"
+                          value={templateHeaderMediaUrl}
+                          onChange={(e) => setTemplateHeaderMediaUrl(e.target.value)}
+                          placeholder={`${selectedTemplate.headerMediaType} URL (optional)`}
+                          className="w-full px-3 py-1.5 text-sm border border-amber-200 rounded-lg focus:outline-none focus:border-amber-400"
                         />
-                        <label className="px-3 py-1.5 text-xs font-medium text-amber-800 border border-amber-300 rounded-lg cursor-pointer hover:bg-amber-100">
-                          {isUploadingTemplateHeader ? 'Uploading…' : 'Upload'}
-                          <input
-                            type="file"
-                            className="hidden"
-                            accept={selectedTemplate.headerMediaType === 'image' ? 'image/*' : selectedTemplate.headerMediaType === 'video' ? 'video/*' : '.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt'}
-                            onChange={async (e) => {
-                              const file = e.target.files?.[0];
-                              if (!file) return;
-                              await handleUploadTemplateHeader(file);
-                              e.target.value = '';
-                            }}
-                          />
-                        </label>
                       </div>
-                      <input
-                        type="text"
-                        value={templateHeaderMediaUrl}
-                        onChange={(e) => setTemplateHeaderMediaUrl(e.target.value)}
-                        placeholder={`${selectedTemplate.headerMediaType} URL (optional)`}
-                        className="w-full px-3 py-1.5 text-sm border border-amber-200 rounded-lg focus:outline-none focus:border-amber-400"
-                      />
-                    </div>
-                  )}
+                    )}
+                  </div>
+                )}
+              </div>
+              {selectedTemplate && (
+                <div className="px-4 py-3 border-t border-gray-100 bg-white sticky bottom-0">
                   <div className="flex gap-2">
                     <button onClick={() => {
                       setSelectedTemplate(null);
@@ -2900,6 +3822,63 @@ export default function WhatsAppPage() {
           {/* Reply input */}
           <div className="p-3 border-t border-gray-100 bg-white">
             {sendError && <p className="text-xs text-red-600 mb-2 px-1">{sendError}</p>}
+            {voiceInputError && <p className="text-xs text-amber-700 mb-2 px-1">{voiceInputError}</p>}
+            {replyingTo && (
+              <div className="mb-2 flex items-start justify-between gap-2 rounded-xl border border-green-100 bg-green-50 px-3 py-2">
+                <div className="min-w-0">
+                  <p className="text-[11px] font-semibold text-green-700">
+                    Replying to {replyingTo.direction === 'inbound' ? 'customer' : 'your message'}
+                  </p>
+                  <p className="text-xs text-green-900 truncate">{replyingTo.previewText}</p>
+                </div>
+                <button
+                  onClick={() => setReplyingTo(null)}
+                  className="p-1 rounded-md text-green-700 hover:bg-green-100"
+                  title="Cancel reply"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            )}
+            {(isVoiceRecording || voiceAudioBlob) && (
+              <div className="mb-2 rounded-xl border border-blue-100 bg-blue-50 px-3 py-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <AudioLines className={`h-4 w-4 flex-shrink-0 ${isVoiceRecording ? 'text-red-500 animate-pulse' : 'text-blue-600'}`} />
+                    <p className="text-xs font-medium text-blue-900 truncate">
+                      {isVoiceRecording ? `Recording voice note • ${formatDuration(voiceRecordingSeconds)}` : `Voice note ready • ${formatDuration(voiceRecordingSeconds)}`}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-1 flex-shrink-0">
+                    {isVoiceRecording ? (
+                      <button
+                        onClick={stopVoiceRecording}
+                        className="px-2 py-1 rounded-md bg-red-100 text-red-700 text-[11px] font-semibold hover:bg-red-200"
+                      >
+                        Stop
+                      </button>
+                    ) : (
+                      <button
+                        onClick={handleSendVoiceRecording}
+                        disabled={isSending || !voiceAudioBlob}
+                        className="px-2 py-1 rounded-md bg-blue-600 text-white text-[11px] font-semibold hover:bg-blue-700 disabled:opacity-50"
+                      >
+                        Send voice
+                      </button>
+                    )}
+                    <button
+                      onClick={discardVoiceDraft}
+                      className="px-2 py-1 rounded-md bg-white text-gray-600 text-[11px] font-semibold border border-gray-200 hover:bg-gray-50"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                </div>
+                {!isVoiceRecording && voiceAudioPreviewUrl && (
+                  <audio controls src={voiceAudioPreviewUrl} className="mt-2 w-full h-8" />
+                )}
+              </div>
+            )}
 
             {/* Toolbar */}
             <div className="flex items-center gap-1 mb-2 relative">
@@ -2917,6 +3896,26 @@ export default function WhatsAppPage() {
               <button onClick={() => { const opening = !showTemplatePanel; setShowTemplatePanel(opening); setShowEmojiPicker(false); setShowQuickReplies(false); if (opening && metaTemplates.length === 0) fetchMetaTemplates(); }}
                 className={`p-1.5 rounded-lg transition-all ${showTemplatePanel ? 'bg-green-100 text-green-600' : 'hover:bg-gray-100 text-gray-500'}`} title="Templates">
                 <LayoutTemplate className="h-4 w-4" />
+              </button>
+              <button
+                onClick={toggleDictation}
+                disabled={!dictationSupported}
+                className={`p-1.5 rounded-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
+                  isDictating ? 'bg-red-100 text-red-600' : 'hover:bg-gray-100 text-gray-500'
+                }`}
+                title={dictationSupported ? (isDictating ? 'Stop speech-to-text' : 'Speak to type') : 'Speech-to-text not supported'}
+              >
+                <Mic className="h-4 w-4" />
+              </button>
+              <button
+                onClick={isVoiceRecording ? stopVoiceRecording : startVoiceRecording}
+                disabled={!voiceRecordingSupported || isSending}
+                className={`p-1.5 rounded-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
+                  isVoiceRecording ? 'bg-red-100 text-red-600' : 'hover:bg-gray-100 text-gray-500'
+                }`}
+                title={voiceRecordingSupported ? (isVoiceRecording ? 'Stop voice note recording' : 'Record voice note') : 'Voice recording not supported'}
+              >
+                <AudioLines className="h-4 w-4" />
               </button>
               <div className="relative">
                 <button onClick={() => { setShowQuickReplies(!showQuickReplies); setShowEmojiPicker(false); }}
@@ -2948,6 +3947,9 @@ export default function WhatsAppPage() {
                   </div>
                 )}
               </div>
+              {isDictating && (
+                <span className="ml-1 text-[11px] font-medium text-red-600 animate-pulse">Listening…</span>
+              )}
             </div>
 
             {/* "/" slash command dropdown */}
@@ -3056,6 +4058,12 @@ export default function WhatsAppPage() {
             <button onClick={() => setShowNewConversation(true)}
               className="px-4 py-2 text-sm font-medium text-white bg-green-500 hover:bg-green-600 rounded-xl transition-all flex items-center gap-2 mx-auto">
               <Plus className="h-4 w-4" /> New Conversation
+            </button>
+            <button
+              onClick={demoMode ? disableDemoMode : enableDemoMode}
+              className="mt-2 px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-xl transition-all"
+            >
+              {demoMode ? 'Disable demo data' : 'Load demo chats'}
             </button>
           </div>
         </div>
