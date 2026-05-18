@@ -1036,6 +1036,7 @@ export default function WhatsAppPage() {
   const [teamUsers, setTeamUsers] = useState<Array<{ id: string; firstName: string; lastName: string; email: string }>>([]);
   const [showAssignDropdown, setShowAssignDropdown] = useState(false);
   const previousScrollSignatureRef = useRef('');
+  const inboxFetchInProgressRef = useRef(false);
   const selectedMessageCount = selectedConv?.messages?.length ?? 0;
   const selectedLastMessageId = selectedMessageCount > 0
     ? (selectedConv?.messages?.[selectedMessageCount - 1]?.id || '')
@@ -1389,6 +1390,10 @@ export default function WhatsAppPage() {
   // ─── Data Fetching ────────────────────────────────────────
 
   const fetchInbox = useCallback(async () => {
+    if (inboxFetchInProgressRef.current) {
+      return;
+    }
+    inboxFetchInProgressRef.current = true;
     const storedDemoMode = typeof window !== 'undefined' ? localStorage.getItem('wa_demo_mode') : null;
     const demoFromStorage = storedDemoMode === '1';
     const demoDisabledByStorage = storedDemoMode === '0';
@@ -1403,6 +1408,7 @@ export default function WhatsAppPage() {
         return seededDemoConversations.find((conversation) => conversation.waId === prev.waId) || seededDemoConversations[0] || null;
       });
       setIsLoading(false);
+      inboxFetchInProgressRef.current = false;
       return;
     }
     try {
@@ -1501,6 +1507,7 @@ export default function WhatsAppPage() {
       console.error('Failed to fetch WhatsApp inbox:', err);
     } finally {
       setIsLoading(false);
+      inboxFetchInProgressRef.current = false;
     }
   }, []);
 
@@ -2587,33 +2594,38 @@ export default function WhatsAppPage() {
     setCampaignConversationFilter('all');
   }, [availableCampaignNames, campaignConversationFilter]);
 
-  const filteredConversations = conversations.filter(c => {
+  const filteredConversations = useMemo(() => {
     const normalizedSearch = search.toLowerCase().trim();
-    const matchesSearch = !normalizedSearch
-      || c.contactName.toLowerCase().includes(normalizedSearch)
-      || c.phone.includes(search)
-      || c.campaignNames.some((campaignName) => campaignName.toLowerCase().includes(normalizedSearch));
-    if (!matchesSearch) return false;
-    if (convFilter !== 'archived' && c.archived) return false;
-    if (convFilter === 'archived') return !!c.archived;
-    if (convNumberFilter !== 'all' && c.senderIntegrationId !== convNumberFilter) return false;
-    if (convFilter === 'pinned') return !!c.pinned;
-    if (convFilter === 'unread') return c.unreadCount > 0;
-    if (convFilter === 'assigned') return !!assignments[c.waId];
-    if (convFilter === 'manychat') return c.contactSource === 'manychat';
-    if (convFilter === 'typeform') return c.contactSource === 'typeform';
-    if (convFilter === 'campaign') {
-      if (!c.hasCampaignMessages) return false;
-      if (campaignConversationFilter !== 'all') {
-        return c.campaignNames.includes(campaignConversationFilter);
+    return conversations.filter(c => {
+      const matchesSearch = !normalizedSearch
+        || c.contactName.toLowerCase().includes(normalizedSearch)
+        || c.phone.includes(search)
+        || c.campaignNames.some((campaignName) => campaignName.toLowerCase().includes(normalizedSearch));
+      if (!matchesSearch) return false;
+      if (convFilter !== 'archived' && c.archived) return false;
+      if (convFilter === 'archived') return !!c.archived;
+      if (convNumberFilter !== 'all' && c.senderIntegrationId !== convNumberFilter) return false;
+      if (convFilter === 'pinned') return !!c.pinned;
+      if (convFilter === 'unread') return c.unreadCount > 0;
+      if (convFilter === 'assigned') return !!assignments[c.waId];
+      if (convFilter === 'manychat') return c.contactSource === 'manychat';
+      if (convFilter === 'typeform') return c.contactSource === 'typeform';
+      if (convFilter === 'campaign') {
+        if (!c.hasCampaignMessages) return false;
+        if (campaignConversationFilter !== 'all') {
+          return c.campaignNames.includes(campaignConversationFilter);
+        }
       }
-    }
-    return true;
-  });
-  const archivedConversationCount = conversations.filter(c => !!c.archived).length;
+      return true;
+    });
+  }, [assignments, campaignConversationFilter, conversations, convFilter, convNumberFilter, search]);
+  const archivedConversationCount = useMemo(
+    () => conversations.filter(c => !!c.archived).length,
+    [conversations],
+  );
 
   // Group conversations by date for Brevo-style display
-  const groupedConversations = (() => {
+  const groupedConversations = useMemo(() => {
     const groups: { label: string; convs: typeof filteredConversations }[] = [];
     const today = new Date(); today.setHours(0,0,0,0);
     const yesterday = new Date(today); yesterday.setDate(yesterday.getDate() - 1);
@@ -2634,7 +2646,7 @@ export default function WhatsAppPage() {
     if (weekConvs.length) groups.push({ label: 'This Week', convs: weekConvs });
     if (olderConvs.length) groups.push({ label: 'Older', convs: olderConvs });
     return groups;
-  })();
+  }, [filteredConversations]);
 
   const sessionStatus = selectedConv ? getSessionStatus(selectedConv) : 'closed';
   const sessionOpen = sessionStatus === 'open' || sessionStatus === 'closing';
@@ -2646,21 +2658,26 @@ export default function WhatsAppPage() {
   // True if webhooks may not be configured (no inbound messages across all conversations)
   const noInboundEver = conversations.length > 0 && conversations.every(c => !c.lastInboundTime);
 
-  const filteredMessages = selectedConv?.messages.filter(m =>
-    !messageSearch || m.description?.toLowerCase().includes(messageSearch.toLowerCase())
-  ) || [];
+  const filteredMessages = useMemo(() => (
+    selectedConv?.messages.filter(m =>
+      !messageSearch || m.description?.toLowerCase().includes(messageSearch.toLowerCase())
+    ) || []
+  ), [messageSearch, selectedConv?.messages]);
 
   // Build date-grouped messages
-  const messagesWithDates: Array<{ type: 'date'; label: string } | { type: 'message'; msg: WhatsAppActivity }> = [];
-  let lastDateLabel = '';
-  for (const msg of filteredMessages) {
-    const label = getDateLabel(msg.occurredAt);
-    if (label !== lastDateLabel) {
-      messagesWithDates.push({ type: 'date', label });
-      lastDateLabel = label;
+  const messagesWithDates = useMemo(() => {
+    const grouped: Array<{ type: 'date'; label: string } | { type: 'message'; msg: WhatsAppActivity }> = [];
+    let lastDateLabel = '';
+    for (const msg of filteredMessages) {
+      const label = getDateLabel(msg.occurredAt);
+      if (label !== lastDateLabel) {
+        grouped.push({ type: 'date', label });
+        lastDateLabel = label;
+      }
+      grouped.push({ type: 'message', msg });
     }
-    messagesWithDates.push({ type: 'message', msg });
-  }
+    return grouped;
+  }, [filteredMessages]);
 
   // ─── CSV parsing ─────────────────────────────────────────
 

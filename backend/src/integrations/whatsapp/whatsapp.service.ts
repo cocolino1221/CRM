@@ -1940,6 +1940,18 @@ export class WhatsAppService {
 
       this.logger.log(`Media uploaded: ${response.data.id} (${uploadMimeType}, ${uploadFilename})`);
       return { id: response.data.id };
+    } catch (error: any) {
+      const metaMessage = String(error?.response?.data?.error?.message || error?.message || 'Unknown upload error');
+      const metaCode = String(error?.response?.data?.error?.code || '').trim();
+      const details = String(error?.response?.data?.error?.error_data?.details || '').trim();
+      this.logger.error(
+        `WhatsApp media upload failed integration=${integration.id} mime=${uploadMimeType} ext=${inputExtension || 'none'} code=${metaCode || 'n/a'} message=${metaMessage}${details ? ` details=${details}` : ''}`,
+      );
+      throw new BadRequestException(
+        details
+          ? `WhatsApp media upload failed: ${metaMessage} (${details})`
+          : `WhatsApp media upload failed: ${metaMessage}`,
+      );
     } finally {
       await fsPromises.unlink(filePath).catch((error: any) => {
         this.logger.warn(`Failed to cleanup temp upload file ${filePath}: ${error?.message || error}`);

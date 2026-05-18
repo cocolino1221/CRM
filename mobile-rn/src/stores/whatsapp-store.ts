@@ -77,6 +77,16 @@ function shouldQueueRetry(err: any): boolean {
   return status >= 500;
 }
 
+function shouldRetryWithoutIntegration(err: any): boolean {
+  const rawMessage = err?.response?.data?.message ?? err?.message ?? '';
+  const message = String(rawMessage).toLowerCase();
+  return (
+    message.includes('selected whatsapp number was not found')
+    || message.includes('selected whatsapp sender number is disabled')
+    || message.includes('selected whatsapp sender number is missing credentials')
+  );
+}
+
 function createOutboxId(): string {
   return `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 }
@@ -257,12 +267,24 @@ function buildMediaSendRequest(
 async function sendTextNow(to: string, message: string, integrationId?: string, options?: MessageSendOptions): Promise<void> {
   const replyToMessageId = String(options?.replyToMessageId || '').trim() || undefined;
   const replyPreviewText = String(options?.replyPreviewText || '').trim() || undefined;
-  const payload = integrationId ? { to, message, integrationId } : { to, message };
-  await api.post('/integrations/whatsapp/send', {
-    ...payload,
-    ...(replyToMessageId ? { replyToMessageId } : {}),
-    ...(replyPreviewText ? { replyPreviewText } : {}),
-  });
+  const sendWithIntegration = async (selectedIntegrationId?: string) => {
+    const payload = selectedIntegrationId ? { to, message, integrationId: selectedIntegrationId } : { to, message };
+    await api.post('/integrations/whatsapp/send', {
+      ...payload,
+      ...(replyToMessageId ? { replyToMessageId } : {}),
+      ...(replyPreviewText ? { replyPreviewText } : {}),
+    });
+  };
+
+  try {
+    await sendWithIntegration(integrationId);
+  } catch (err) {
+    if (integrationId && shouldRetryWithoutIntegration(err)) {
+      await sendWithIntegration(undefined);
+      return;
+    }
+    throw err;
+  }
 }
 
 async function sendMediaNow(
@@ -273,13 +295,25 @@ async function sendMediaNow(
 ): Promise<void> {
   const replyToMessageId = String(options?.replyToMessageId || '').trim() || undefined;
   const replyPreviewText = String(options?.replyPreviewText || '').trim() || undefined;
-  const mediaId = await uploadMediaFile(payload, integrationId);
-  const request = buildMediaSendRequest(to, mediaId, payload, integrationId);
-  await api.post(request.endpoint, {
-    ...request.body,
-    ...(replyToMessageId ? { replyToMessageId } : {}),
-    ...(replyPreviewText ? { replyPreviewText } : {}),
-  });
+  const sendWithIntegration = async (selectedIntegrationId?: string) => {
+    const mediaId = await uploadMediaFile(payload, selectedIntegrationId);
+    const request = buildMediaSendRequest(to, mediaId, payload, selectedIntegrationId);
+    await api.post(request.endpoint, {
+      ...request.body,
+      ...(replyToMessageId ? { replyToMessageId } : {}),
+      ...(replyPreviewText ? { replyPreviewText } : {}),
+    });
+  };
+
+  try {
+    await sendWithIntegration(integrationId);
+  } catch (err) {
+    if (integrationId && shouldRetryWithoutIntegration(err)) {
+      await sendWithIntegration(undefined);
+      return;
+    }
+    throw err;
+  }
 }
 
 function normalizeWaId(value?: string): string {
