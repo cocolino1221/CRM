@@ -1091,6 +1091,68 @@ export default function WhatsAppPage() {
     }
   }, []);
 
+  const stopWaveformAnimation = useCallback(() => {
+    if (voiceAnimFrameRef.current) {
+      cancelAnimationFrame(voiceAnimFrameRef.current);
+      voiceAnimFrameRef.current = null;
+    }
+    voiceAnalyserRef.current = null;
+    if (voiceAudioContextRef.current) {
+      voiceAudioContextRef.current.close().catch(() => {});
+      voiceAudioContextRef.current = null;
+    }
+    const canvas = voiceWaveformCanvasRef.current;
+    if (canvas) {
+      const ctx = canvas.getContext('2d');
+      if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+  }, []);
+
+  const startWaveformAnimation = useCallback((stream: MediaStream) => {
+    try {
+      const AudioCtxClass = (window as any).AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtxClass) return;
+      const audioCtx: AudioContext = new AudioCtxClass();
+      const analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 64;
+      analyser.smoothingTimeConstant = 0.7;
+      const source = audioCtx.createMediaStreamSource(stream);
+      source.connect(analyser);
+      voiceAudioContextRef.current = audioCtx;
+      voiceAnalyserRef.current = analyser;
+      const bufferLength = analyser.frequencyBinCount; // 32
+      const dataArray = new Uint8Array(bufferLength);
+      const draw = () => {
+        if (!voiceAnalyserRef.current) return;
+        const canvas = voiceWaveformCanvasRef.current;
+        if (canvas) {
+          voiceAnalyserRef.current.getByteFrequencyData(dataArray);
+          const ctx2d = canvas.getContext('2d');
+          if (ctx2d) {
+            const W = canvas.width;
+            const H = canvas.height;
+            ctx2d.clearRect(0, 0, W, H);
+            const numBars = Math.min(bufferLength, 28);
+            const gap = 2;
+            const barW = Math.max(1, Math.floor((W - gap * (numBars - 1)) / numBars));
+            for (let i = 0; i < numBars; i++) {
+              const val = dataArray[i] / 255;
+              const barH = Math.max(3, Math.round(val * H * 0.92));
+              const x = i * (barW + gap);
+              const y = Math.round((H - barH) / 2);
+              ctx2d.fillStyle = '#ef4444';
+              ctx2d.fillRect(x, y, barW, barH);
+            }
+          }
+        }
+        voiceAnimFrameRef.current = requestAnimationFrame(draw);
+      };
+      voiceAnimFrameRef.current = requestAnimationFrame(draw);
+    } catch {
+      // AudioContext unavailable — waveform won't show, recording still works
+    }
+  }, []);
+
   const clearVoiceDraft = useCallback((keepPreviewUrl = false) => {
     if (!keepPreviewUrl && voiceAudioPreviewUrl) {
       URL.revokeObjectURL(voiceAudioPreviewUrl);
@@ -1127,6 +1189,7 @@ export default function WhatsAppPage() {
       stopDictation();
       stopVoiceTimer();
       stopVoiceStream();
+      stopWaveformAnimation();
       if (voiceMediaRecorderRef.current && voiceMediaRecorderRef.current.state !== 'inactive') {
         try {
           voiceMediaRecorderRef.current.stop();
@@ -1138,7 +1201,7 @@ export default function WhatsAppPage() {
         URL.revokeObjectURL(voicePreviewUrlRef.current);
       }
     };
-  }, [stopDictation, stopVoiceStream, stopVoiceTimer]);
+  }, [stopDictation, stopVoiceStream, stopVoiceTimer, stopWaveformAnimation]);
 
   const enableDemoMode = useCallback(() => {
     const demoConversations = sortConversationsByPinAndTime(buildDemoConversations());
@@ -2163,6 +2226,7 @@ export default function WhatsAppPage() {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       voiceStreamRef.current = stream;
       voiceChunksRef.current = [];
+      startWaveformAnimation(stream);
       const mimeTypeCandidates = ['audio/webm;codecs=opus', 'audio/ogg;codecs=opus', 'audio/webm'];
       const mimeType = mimeTypeCandidates.find((candidate) => (
         typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(candidate)
@@ -2177,6 +2241,7 @@ export default function WhatsAppPage() {
       recorder.onstop = () => {
         stopVoiceTimer();
         stopVoiceStream();
+        stopWaveformAnimation();
         const shouldDiscard = discardVoiceOnStopRef.current;
         discardVoiceOnStopRef.current = false;
         setIsVoiceRecording(false);
@@ -2243,6 +2308,7 @@ export default function WhatsAppPage() {
     setIsVoiceRecording(false);
     stopVoiceTimer();
     stopVoiceStream();
+    stopWaveformAnimation();
     clearVoiceDraft();
   };
 
@@ -3891,15 +3957,30 @@ export default function WhatsAppPage() {
               </div>
             )}
             {(isVoiceRecording || voiceAudioBlob) && (
-              <div className="mb-2 rounded-xl border border-blue-100 bg-blue-50 px-3 py-2">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <AudioLines className={`h-4 w-4 flex-shrink-0 ${isVoiceRecording ? 'text-red-500 animate-pulse' : 'text-blue-600'}`} />
-                    <p className="text-xs font-medium text-blue-900 truncate">
-                      {isVoiceRecording ? `Recording voice note • ${formatDuration(voiceRecordingSeconds)}` : `Voice note ready • ${formatDuration(voiceRecordingSeconds)}`}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-1 flex-shrink-0">
+              <div className={`mb-2 rounded-xl border px-3 py-2 ${isVoiceRecording ? 'border-red-200 bg-red-50' : 'border-green-100 bg-green-50'}`}>
+                <div className="flex items-center gap-2">
+                  {/* Pulsing dot */}
+                  <span className={`h-2.5 w-2.5 rounded-full flex-shrink-0 ${isVoiceRecording ? 'bg-red-500 animate-pulse' : 'bg-green-500'}`} />
+
+                  {/* Waveform canvas (recording) or ready icon (preview) */}
+                  {isVoiceRecording ? (
+                    <canvas
+                      ref={voiceWaveformCanvasRef}
+                      width={160}
+                      height={30}
+                      className="flex-1 min-w-0"
+                    />
+                  ) : (
+                    <AudioLines className="h-4 w-4 flex-shrink-0 text-green-600" />
+                  )}
+
+                  {/* Timer */}
+                  <span className={`text-xs font-mono flex-shrink-0 tabular-nums ${isVoiceRecording ? 'text-red-700' : 'text-green-700'}`}>
+                    {formatDuration(voiceRecordingSeconds)}
+                  </span>
+
+                  {/* Actions */}
+                  <div className="flex items-center gap-1 flex-shrink-0 ml-auto">
                     {isVoiceRecording ? (
                       <button
                         onClick={stopVoiceRecording}
@@ -3911,16 +3992,16 @@ export default function WhatsAppPage() {
                       <button
                         onClick={handleSendVoiceRecording}
                         disabled={isSending || !voiceAudioBlob}
-                        className="px-2 py-1 rounded-md bg-blue-600 text-white text-[11px] font-semibold hover:bg-blue-700 disabled:opacity-50"
+                        className="px-2 py-1 rounded-md bg-green-600 text-white text-[11px] font-semibold hover:bg-green-700 disabled:opacity-50"
                       >
-                        Send voice
+                        Send
                       </button>
                     )}
                     <button
                       onClick={discardVoiceDraft}
                       className="px-2 py-1 rounded-md bg-white text-gray-600 text-[11px] font-semibold border border-gray-200 hover:bg-gray-50"
                     >
-                      Clear
+                      ✕
                     </button>
                   </div>
                 </div>
