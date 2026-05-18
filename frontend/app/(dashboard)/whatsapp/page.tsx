@@ -169,11 +169,13 @@ function toSendableTemplate(t: any): WhatsAppTemplate {
   const bodyText = bodyComponent?.text || t.name;
   const paramCount = (bodyText.match(/\{\{\d+\}\}/g) || []).length;
   const headerMediaType = getTemplateHeaderMediaType(t);
+  const language = t.language || 'en_US';
+  const idBase = t.id || t.name;
   return {
-    id: t.id || t.name,
+    id: `${idBase}:${language}`,
     name: t.name,
     displayName: t.name.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase()),
-    language: t.language || 'en_US',
+    language,
     body: bodyText,
     parameterCount: paramCount,
     category: (t.category || 'utility').toLowerCase() as any,
@@ -195,6 +197,14 @@ const DEFAULT_QUICK_REPLIES: QuickReply[] = [
   { id: 'qr2', title: 'Follow up', message: 'Just checking in. Is there anything else you need help with?' },
   { id: 'qr3', title: 'More info', message: 'Could you please provide more details so I can assist you better?' },
 ];
+
+interface TemplateHeaderMediaCacheEntry {
+  headerMediaId: string;
+  headerMediaUrl: string;
+  updatedAt: string;
+}
+
+const TEMPLATE_HEADER_MEDIA_CACHE_KEY = 'wa_template_header_media_cache_v1';
 
 function isConversationMuted(conv: Conversation): boolean {
   const mutedUntil = String(conv.mutedUntil || '').trim();
@@ -866,6 +876,7 @@ export default function WhatsAppPage() {
   const [newConvPhone, setNewConvPhone] = useState('');
   const [newConvTemplate, setNewConvTemplate] = useState<WhatsAppTemplate | null>(null);
   const [newConvTemplateParams, setNewConvTemplateParams] = useState<string[]>([]);
+  const [newConvTemplateSearch, setNewConvTemplateSearch] = useState('');
   const [contactSearchResults, setContactSearchResults] = useState<any[]>([]);
   const [contactSearchQuery, setContactSearchQuery] = useState('');
   const [isSearchingContacts, setIsSearchingContacts] = useState(false);
@@ -1277,6 +1288,73 @@ export default function WhatsAppPage() {
   const withSelectedSender = useCallback((payload: Record<string, any> = {}) => (
     selectedSenderId ? { ...payload, integrationId: selectedSenderId } : payload
   ), [selectedSenderId]);
+  const approvedTemplates = useMemo<WhatsAppTemplate[]>(
+    () => metaTemplates.filter((t: any) => t.status === 'APPROVED').map(toSendableTemplate),
+    [metaTemplates],
+  );
+  const availableTemplates = approvedTemplates.length > 0 ? approvedTemplates : WHATSAPP_TEMPLATES;
+  const filteredNewConversationTemplates = useMemo(() => {
+    const query = newConvTemplateSearch.trim().toLowerCase();
+    if (!query) return availableTemplates;
+    return availableTemplates.filter((template) =>
+      template.displayName.toLowerCase().includes(query)
+      || template.name.toLowerCase().includes(query)
+      || template.body.toLowerCase().includes(query),
+    );
+  }, [availableTemplates, newConvTemplateSearch]);
+  const getTemplateMediaCacheKey = useCallback((template: WhatsAppTemplate) => (
+    `${selectedSenderId || 'default'}::${template.name}::${template.language}`
+  ), [selectedSenderId]);
+  const readTemplateHeaderMediaCache = useCallback((template: WhatsAppTemplate) => {
+    if (typeof window === 'undefined') return { headerMediaId: '', headerMediaUrl: '' };
+    try {
+      const raw = localStorage.getItem(TEMPLATE_HEADER_MEDIA_CACHE_KEY);
+      if (!raw) return { headerMediaId: '', headerMediaUrl: '' };
+      const parsed = JSON.parse(raw) as Record<string, TemplateHeaderMediaCacheEntry>;
+      const entry = parsed[getTemplateMediaCacheKey(template)];
+      if (!entry) return { headerMediaId: '', headerMediaUrl: '' };
+      return {
+        headerMediaId: String(entry.headerMediaId || '').trim(),
+        headerMediaUrl: String(entry.headerMediaUrl || '').trim(),
+      };
+    } catch {
+      return { headerMediaId: '', headerMediaUrl: '' };
+    }
+  }, [getTemplateMediaCacheKey]);
+  const persistTemplateHeaderMediaCache = useCallback((template: WhatsAppTemplate, mediaId: string, mediaUrl: string) => {
+    if (typeof window === 'undefined') return;
+    const normalizedId = String(mediaId || '').trim();
+    const normalizedUrl = String(mediaUrl || '').trim();
+    try {
+      const raw = localStorage.getItem(TEMPLATE_HEADER_MEDIA_CACHE_KEY);
+      const parsed = raw ? (JSON.parse(raw) as Record<string, TemplateHeaderMediaCacheEntry>) : {};
+      const key = getTemplateMediaCacheKey(template);
+      if (!normalizedId && !normalizedUrl) {
+        delete parsed[key];
+      } else {
+        parsed[key] = {
+          headerMediaId: normalizedId,
+          headerMediaUrl: normalizedUrl,
+          updatedAt: new Date().toISOString(),
+        };
+      }
+      localStorage.setItem(TEMPLATE_HEADER_MEDIA_CACHE_KEY, JSON.stringify(parsed));
+    } catch {
+      // ignore local cache write failures
+    }
+  }, [getTemplateMediaCacheKey]);
+  const applyTemplateSelection = useCallback((template: WhatsAppTemplate, target: 'chat' | 'new') => {
+    const cachedMedia = readTemplateHeaderMediaCache(template);
+    if (target === 'chat') {
+      setSelectedTemplate(template);
+      setTemplateParams(Array(template.parameterCount).fill(''));
+    } else {
+      setNewConvTemplate(template);
+      setNewConvTemplateParams(Array(template.parameterCount).fill(''));
+    }
+    setTemplateHeaderMediaId(cachedMedia.headerMediaId);
+    setTemplateHeaderMediaUrl(cachedMedia.headerMediaUrl);
+  }, [readTemplateHeaderMediaCache]);
 
   const updateSelectedAutoSendRule = (updater: (rule: AutoSendRuleForm) => AutoSendRuleForm) => {
     const targetId = selectedAutoSendRuleId || autoSendRules[0]?.id;
@@ -1992,7 +2070,13 @@ export default function WhatsAppPage() {
   };
 
   const handleSendTemplate = async (to: string, template: WhatsAppTemplate, params: string[]) => {
-    if (template.headerMediaType && !templateHeaderMediaId.trim() && !templateHeaderMediaUrl.trim()) {
+    if (!demoMode && senderAccounts.length > 0 && !selectedSenderId) {
+      setSendError('Selecteaza numarul WhatsApp din care vrei sa trimiti.');
+      return;
+    }
+    const normalizedHeaderMediaId = templateHeaderMediaId.trim();
+    const normalizedHeaderMediaUrl = templateHeaderMediaUrl.trim();
+    if (template.headerMediaType && !normalizedHeaderMediaId && !normalizedHeaderMediaUrl) {
       setSendError(`Template "${template.displayName}" needs ${template.headerMediaType} in header (media_id or URL).`);
       return;
     }
@@ -2006,9 +2090,12 @@ export default function WhatsAppPage() {
         language: template.language,
         parameters: params.length > 0 ? params.map(p => ({ type: 'text', text: p })) : [],
         headerMediaType: template.headerMediaType || undefined,
-        headerMediaId: templateHeaderMediaId.trim() || undefined,
-        headerMediaUrl: templateHeaderMediaUrl.trim() || undefined,
+        headerMediaId: normalizedHeaderMediaId || undefined,
+        headerMediaUrl: normalizedHeaderMediaUrl || undefined,
       }));
+      if (template.headerMediaType && (normalizedHeaderMediaId || normalizedHeaderMediaUrl)) {
+        persistTemplateHeaderMediaCache(template, normalizedHeaderMediaId, normalizedHeaderMediaUrl);
+      }
       setShowTemplatePanel(false);
       setSelectedTemplate(null);
       setTemplateParams([]);
@@ -2035,7 +2122,12 @@ export default function WhatsAppPage() {
       const res = await api.post('/integrations/whatsapp/media/upload', formData, {
         params: selectedSenderId ? { integrationId: selectedSenderId } : undefined,
       });
-      setTemplateHeaderMediaId(res.data.id || '');
+      const uploadedMediaId = String(res.data.id || '').trim();
+      setTemplateHeaderMediaId(uploadedMediaId);
+      const activeTemplate = selectedTemplate || newConvTemplate;
+      if (activeTemplate && uploadedMediaId) {
+        persistTemplateHeaderMediaCache(activeTemplate, uploadedMediaId, templateHeaderMediaUrl.trim());
+      }
     } catch (err: any) {
       setSendError(`Upload failed: ${err.response?.data?.message || err.message}`);
     } finally {
@@ -3364,7 +3456,7 @@ export default function WhatsAppPage() {
               >
                 {demoMode ? 'Live' : 'Demo'}
               </button>
-              <button onClick={() => { setShowNewConversation(true); if (metaTemplates.length === 0) fetchMetaTemplates(); }} className="flex-shrink-0 p-1.5 rounded-lg bg-green-500 hover:bg-green-600 transition-all shadow-sm" title="New conversation">
+              <button onClick={() => { setShowNewConversation(true); setSendError(''); setNewConvTemplateSearch(''); if (metaTemplates.length === 0) fetchMetaTemplates(); }} className="flex-shrink-0 p-1.5 rounded-lg bg-green-500 hover:bg-green-600 transition-all shadow-sm" title="New conversation">
                 <Plus className="h-3.5 w-3.5 text-white" />
               </button>
               <button onClick={fetchInbox} className="flex-shrink-0 p-1.5 rounded-lg hover:bg-gray-100 transition-all" title="Refresh">
@@ -3490,7 +3582,7 @@ export default function WhatsAppPage() {
                 </p>
               )}
               <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
-                <button onClick={() => setShowNewConversation(true)} className="px-4 py-1.5 text-xs font-medium text-white bg-green-500 rounded-full hover:bg-green-600 transition-all">
+                <button onClick={() => { setShowNewConversation(true); setSendError(''); setNewConvTemplateSearch(''); if (metaTemplates.length === 0) fetchMetaTemplates(); }} className="px-4 py-1.5 text-xs font-medium text-white bg-green-500 rounded-full hover:bg-green-600 transition-all">
                   Start conversation
                 </button>
                 {convFilter !== 'archived' && archivedConversationCount > 0 && (
@@ -3849,10 +3941,7 @@ export default function WhatsAppPage() {
                         : WHATSAPP_TEMPLATES
                       ).map(t => (
                         <button key={t.id} onClick={() => {
-                          setSelectedTemplate(t);
-                          setTemplateParams(Array(t.parameterCount).fill(''));
-                          setTemplateHeaderMediaId('');
-                          setTemplateHeaderMediaUrl('');
+                          applyTemplateSelection(t, 'chat');
                         }}
                           className="p-3 text-left bg-gray-50 hover:bg-green-50 rounded-xl border border-gray-200 hover:border-green-300 transition-all">
                           <div className="flex items-center gap-2 mb-1">
@@ -4113,11 +4202,8 @@ export default function WhatsAppPage() {
                 ).map((t: any) => {
                   const tpl = toSendableTemplate(t);
                   return (
-                    <button key={tpl.name} onClick={() => {
-                      setSelectedTemplate(tpl);
-                      setTemplateParams(Array(tpl.parameterCount).fill(''));
-                      setTemplateHeaderMediaId('');
-                      setTemplateHeaderMediaUrl('');
+                    <button key={tpl.id} onClick={() => {
+                      applyTemplateSelection(tpl, 'chat');
                       setShowTemplatePanel(true);
                       setShowSlashMenu(false);
                       setReplyText('');
@@ -4204,7 +4290,7 @@ export default function WhatsAppPage() {
                 </button>
               </div>
             )}
-            <button onClick={() => setShowNewConversation(true)}
+            <button onClick={() => { setShowNewConversation(true); setSendError(''); setNewConvTemplateSearch(''); if (metaTemplates.length === 0) fetchMetaTemplates(); }}
               className="px-4 py-2 text-sm font-medium text-white bg-green-500 hover:bg-green-600 rounded-xl transition-all flex items-center gap-2 mx-auto">
               <Plus className="h-4 w-4" /> New Conversation
             </button>
@@ -4231,7 +4317,7 @@ export default function WhatsAppPage() {
       {/* New Conversation Modal */}
       {showNewConversation && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden max-h-[90vh] flex flex-col">
             <div className="flex items-center justify-between p-4 border-b border-gray-100">
               <h3 className="font-semibold text-gray-900 flex items-center gap-2"><MessageCircle className="h-5 w-5 text-green-600" /> New Conversation</h3>
               <button onClick={() => {
@@ -4239,15 +4325,17 @@ export default function WhatsAppPage() {
                 setNewConvPhone('');
                 setNewConvTemplate(null);
                 setNewConvTemplateParams([]);
+                setNewConvTemplateSearch('');
                 setContactSearchQuery('');
                 setContactSearchResults([]);
                 setTemplateHeaderMediaId('');
                 setTemplateHeaderMediaUrl('');
+                setSendError('');
               }}>
                 <X className="h-5 w-5 text-gray-400" />
               </button>
             </div>
-            <div className="p-4 space-y-4">
+            <div className="p-4 space-y-4 overflow-y-auto min-h-0">
               {/* Contact search */}
               <div>
                 <label className="text-sm font-medium text-gray-700 mb-1 block">Search contacts</label>
@@ -4290,25 +4378,52 @@ export default function WhatsAppPage() {
                   <LayoutTemplate className="h-3.5 w-3.5" /> Select template <span className="text-xs text-gray-400">(required for first message)</span>
                 </label>
                 <div className="space-y-2">
-                  {isLoadingTemplates ? (
-                    <div className="flex justify-center py-4"><Loader2 className="h-5 w-5 animate-spin text-gray-400" /></div>
-                  ) : (metaTemplates.filter((t: any) => t.status === 'APPROVED').map(toSendableTemplate).length > 0
-                    ? metaTemplates.filter((t: any) => t.status === 'APPROVED').map(toSendableTemplate)
-                    : WHATSAPP_TEMPLATES
-                  ).map(t => (
-                    <button key={t.id} onClick={() => {
-                      setNewConvTemplate(t);
-                      setNewConvTemplateParams(Array(t.parameterCount).fill(''));
-                      setTemplateHeaderMediaId('');
-                      setTemplateHeaderMediaUrl('');
-                    }}
-                      className={`w-full p-3 text-left rounded-xl border transition-all ${
-                        newConvTemplate?.id === t.id ? 'border-green-400 bg-green-50' : 'border-gray-200 hover:border-green-300 hover:bg-gray-50'
-                      }`}>
-                      <span className="text-sm font-medium text-gray-900">{t.displayName}</span>
-                      <p className="text-xs text-gray-500 mt-0.5">{t.body}</p>
-                    </button>
-                  ))}
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
+                    <input
+                      type="text"
+                      placeholder="Search templates..."
+                      value={newConvTemplateSearch}
+                      onChange={(e) => setNewConvTemplateSearch(e.target.value)}
+                      className="w-full pl-8 pr-3 py-1.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:border-green-400"
+                    />
+                  </div>
+                  <div className="max-h-64 overflow-y-auto pr-1 space-y-2">
+                    {isLoadingTemplates ? (
+                      <div className="flex justify-center py-4"><Loader2 className="h-5 w-5 animate-spin text-gray-400" /></div>
+                    ) : filteredNewConversationTemplates.length > 0 ? (
+                      filteredNewConversationTemplates.map((t) => {
+                        const selected = newConvTemplate?.id === t.id;
+                        return (
+                          <button
+                            key={t.id}
+                            onClick={() => {
+                              applyTemplateSelection(t, 'new');
+                            }}
+                            className={`w-full p-3 text-left rounded-xl border transition-all ${
+                              selected ? 'border-green-400 bg-green-50' : 'border-gray-200 hover:border-green-300 hover:bg-gray-50'
+                            }`}
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <span className="text-sm font-medium text-gray-900">{t.displayName}</span>
+                                <p className="text-xs text-gray-500 mt-0.5 line-clamp-2">{t.body}</p>
+                              </div>
+                              <span className={`text-[11px] font-semibold px-2 py-1 rounded-md flex-shrink-0 ${
+                                selected ? 'bg-green-200 text-green-800' : 'bg-gray-100 text-gray-600'
+                              }`}>
+                                {selected ? 'Selected' : 'Use template'}
+                              </span>
+                            </div>
+                          </button>
+                        );
+                      })
+                    ) : (
+                      <div className="px-3 py-4 text-center text-xs text-gray-500 border border-dashed border-gray-200 rounded-xl">
+                        No templates match your search.
+                      </div>
+                    )}
+                  </div>
                 </div>
                 {newConvTemplate && newConvTemplate.parameterCount > 0 && (
                   <div className="mt-2 space-y-2">
@@ -4358,20 +4473,28 @@ export default function WhatsAppPage() {
                 )}
               </div>
             </div>
+            {sendError && (
+              <p className="px-4 pb-2 text-xs text-red-600">{sendError}</p>
+            )}
             <div className="p-4 border-t border-gray-100 flex gap-2">
               <button onClick={() => {
                 setShowNewConversation(false);
                 setNewConvPhone('');
                 setNewConvTemplate(null);
+                setNewConvTemplateParams([]);
+                setNewConvTemplateSearch('');
+                setContactSearchQuery('');
+                setContactSearchResults([]);
                 setTemplateHeaderMediaId('');
                 setTemplateHeaderMediaUrl('');
+                setSendError('');
               }}
                 className="flex-1 px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-xl transition-all">Cancel</button>
               <button onClick={() => { if (newConvPhone && newConvTemplate) handleSendTemplate(newConvPhone, newConvTemplate, newConvTemplateParams); }}
                 disabled={!newConvPhone || !newConvTemplate || isSending || (!!newConvTemplate?.headerMediaType && !templateHeaderMediaId.trim() && !templateHeaderMediaUrl.trim())}
                 className="flex-1 px-4 py-2 text-sm font-medium text-white bg-green-500 hover:bg-green-600 rounded-xl transition-all disabled:opacity-50 flex items-center justify-center gap-2">
                 {isSending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-                Send
+                Use template
               </button>
             </div>
           </div>
@@ -4541,12 +4664,7 @@ export default function WhatsAppPage() {
                             <div className="flex items-center gap-1 flex-shrink-0">
                               {t.status === 'APPROVED' && (
                                 <button onClick={() => {
-                                  setSelectedTemplate({
-                                    id: t.id || t.name, name: t.name, displayName: t.name,
-                                    language: t.language, body: t.components?.find((c: any) => c.type === 'BODY')?.text || '',
-                                    parameterCount: 0, category: t.category?.toLowerCase() || 'utility',
-                                  });
-                                  setTemplateParams([]);
+                                  applyTemplateSelection(toSendableTemplate(t), 'chat');
                                   setShowTemplatePanel(true);
                                   setShowTemplateManager(false);
                                 }}
