@@ -1113,6 +1113,10 @@ export default function WhatsAppPage() {
       const AudioCtxClass = (window as any).AudioContext || (window as any).webkitAudioContext;
       if (!AudioCtxClass) return;
       const audioCtx: AudioContext = new AudioCtxClass();
+      // iOS Safari starts AudioContext suspended — resume immediately after user gesture
+      if (audioCtx.state === 'suspended') {
+        audioCtx.resume().catch(() => {});
+      }
       const analyser = audioCtx.createAnalyser();
       analyser.fftSize = 64;
       analyser.smoothingTimeConstant = 0.7;
@@ -1122,24 +1126,38 @@ export default function WhatsAppPage() {
       voiceAnalyserRef.current = analyser;
       const bufferLength = analyser.frequencyBinCount; // 32
       const dataArray = new Uint8Array(bufferLength);
+
+      // Scale canvas buffer to device pixel ratio for sharp rendering on Retina/HiDPI
+      const canvas = voiceWaveformCanvasRef.current;
+      if (canvas) {
+        const dpr = window.devicePixelRatio || 1;
+        const cssW = canvas.offsetWidth || 160;
+        const cssH = canvas.offsetHeight || 30;
+        canvas.width = Math.round(cssW * dpr);
+        canvas.height = Math.round(cssH * dpr);
+        const ctx2d = canvas.getContext('2d');
+        if (ctx2d) ctx2d.scale(dpr, dpr);
+      }
+
       const draw = () => {
         if (!voiceAnalyserRef.current) return;
-        const canvas = voiceWaveformCanvasRef.current;
-        if (canvas) {
+        const cvs = voiceWaveformCanvasRef.current;
+        if (cvs) {
           voiceAnalyserRef.current.getByteFrequencyData(dataArray);
-          const ctx2d = canvas.getContext('2d');
+          const ctx2d = cvs.getContext('2d');
           if (ctx2d) {
-            const W = canvas.width;
-            const H = canvas.height;
+            const dpr = window.devicePixelRatio || 1;
+            const W = cvs.width / dpr;
+            const H = cvs.height / dpr;
             ctx2d.clearRect(0, 0, W, H);
             const numBars = Math.min(bufferLength, 28);
             const gap = 2;
-            const barW = Math.max(1, Math.floor((W - gap * (numBars - 1)) / numBars));
+            const barW = Math.max(1, (W - gap * (numBars - 1)) / numBars);
             for (let i = 0; i < numBars; i++) {
               const val = dataArray[i] / 255;
-              const barH = Math.max(3, Math.round(val * H * 0.92));
+              const barH = Math.max(3, val * H * 0.92);
               const x = i * (barW + gap);
-              const y = Math.round((H - barH) / 2);
+              const y = (H - barH) / 2;
               ctx2d.fillStyle = '#ef4444';
               ctx2d.fillRect(x, y, barW, barH);
             }
