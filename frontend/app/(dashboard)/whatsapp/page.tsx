@@ -385,7 +385,8 @@ function buildDemoConversations(now = new Date()): Conversation[] {
 
 const AUTO_SEND_SOURCES = ['typeform', 'manychat', 'manual', 'form', 'import', 'webhook'];
 const AUTO_SEND_STATUSES = ['lead', 'prospect', 'customer', 'active'];
-const INBOX_ACTIVITY_LIMIT = 2000;
+const INBOX_ACTIVITY_LIMIT = 600;
+const INBOX_POLL_INTERVAL_MS = 12000;
 
 const createAutoSendRule = (priority: number): AutoSendRuleForm => ({
   id: `rule_${Date.now()}_${priority}_${Math.random().toString(36).slice(2, 7)}`,
@@ -1034,6 +1035,11 @@ export default function WhatsAppPage() {
   const [assignments, setAssignments] = useState<Record<string, ConvAssignment>>({});
   const [teamUsers, setTeamUsers] = useState<Array<{ id: string; firstName: string; lastName: string; email: string }>>([]);
   const [showAssignDropdown, setShowAssignDropdown] = useState(false);
+  const previousScrollSignatureRef = useRef('');
+  const selectedMessageCount = selectedConv?.messages?.length ?? 0;
+  const selectedLastMessageId = selectedMessageCount > 0
+    ? (selectedConv?.messages?.[selectedMessageCount - 1]?.id || '')
+    : '';
 
   // ─── Conversation Flows ─────────────────────────────────
   const [showFlowEditor, setShowFlowEditor] = useState(false);
@@ -1058,7 +1064,7 @@ export default function WhatsAppPage() {
 
   useEffect(() => {
     fetchInbox();
-    const interval = setInterval(fetchInbox, 5000);
+    const interval = setInterval(fetchInbox, INBOX_POLL_INTERVAL_MS);
     const onVisible = () => { if (document.visibilityState === 'visible') fetchInbox(); };
     document.addEventListener('visibilitychange', onVisible);
     return () => {
@@ -1076,8 +1082,13 @@ export default function WhatsAppPage() {
   }, [selectedSenderId]);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [selectedConv?.messages]);
+    const signature = `${selectedConv?.waId || ''}:${selectedMessageCount}:${selectedLastMessageId}`;
+    if (!selectedConv?.waId || previousScrollSignatureRef.current === signature) {
+      return;
+    }
+    previousScrollSignatureRef.current = signature;
+    messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
+  }, [selectedConv?.waId, selectedMessageCount, selectedLastMessageId]);
 
   useEffect(() => {
     const saved = localStorage.getItem('whatsapp_quick_replies');

@@ -6,6 +6,10 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In } from 'typeorm';
 import { firstValueFrom } from 'rxjs';
 import { createReadStream, promises as fsPromises } from 'fs';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
+import { extname, join } from 'path';
+import * as os from 'os';
 import { Contact, ContactStatus, ContactSource } from '../../database/entities/contact.entity';
 import { Activity, ActivityType, ActivityDirection, ActivityOutcome } from '../../database/entities/activity.entity';
 import { Integration, IntegrationType, IntegrationStatus } from '../../database/entities/integration.entity';
@@ -15,6 +19,8 @@ import { NotificationsService, CreateNotificationDto } from '../../notifications
 import { NotificationType } from '../../database/entities/notification.entity';
 import { WhatsAppAIService } from './whatsapp-ai.service';
 import { normalizePhoneDigits, normalizePhoneE164 } from '../../common/utils/phone.util';
+
+const execFileAsync = promisify(execFile);
 
 export interface WhatsAppMessage {
   to: string;
@@ -1854,20 +1860,66 @@ export class WhatsAppService {
     const integration = await this.resolveWorkspaceSendIntegration(workspaceId, integrationId);
     const { accessToken, phoneNumberId } = this.getCredentials(this.getIntegrationCredentials(integration), false);
 
-    // Chrome records audio as audio/webm;codecs=opus — Meta doesn't support webm.
-    // Both webm/opus and ogg/opus use the same Opus codec, so relabel to audio/ogg.
-    let uploadMimeType = mimeType;
+    // Some mobile clients provide generic or mismatched MIME types. Normalize by extension first.
+    const inputExtension = extname(String(filename || '')).toLowerCase();
+    let uploadMimeType = String(mimeType || '').trim().toLowerCase() || 'application/octet-stream';
+    if (uploadMimeType === 'application/octet-stream') {
+      if (inputExtension === '.m4a' || inputExtension === '.mp4') uploadMimeType = 'audio/mp4';
+      else if (inputExtension === '.aac') uploadMimeType = 'audio/aac';
+      else if (inputExtension === '.mp3') uploadMimeType = 'audio/mpeg';
+      else if (inputExtension === '.ogg') uploadMimeType = 'audio/ogg';
+      else if (inputExtension === '.amr') uploadMimeType = 'audio/amr';
+      else if (inputExtension === '.wav' || inputExtension === '.wave') uploadMimeType = 'audio/wav';
+      else if (inputExtension === '.caf') uploadMimeType = 'audio/x-caf';
+      else if (inputExtension === '.webm') uploadMimeType = 'audio/webm';
+    }
+
+    // Meta supports only a subset of audio formats. Convert unsupported/ambiguous containers to OGG/Opus.
     let uploadFilename = filename;
-    if (mimeType.startsWith('audio/webm')) {
+    let convertedPath: string | null = null;
+    let actualFilePath = filePath;
+    const acceptedAudioMimeTypes = new Set(['audio/aac', 'audio/mp4', 'audio/mpeg', 'audio/amr', 'audio/ogg']);
+    const needsAudioConversion = uploadMimeType.startsWith('audio/')
+      && (
+        uploadMimeType.startsWith('audio/webm')
+        || uploadMimeType === 'audio/caf'
+        || uploadMimeType === 'audio/x-caf'
+        || uploadMimeType === 'audio/wav'
+        || uploadMimeType === 'audio/x-wav'
+        || uploadMimeType === 'audio/wave'
+        || uploadMimeType === 'audio/x-pn-wav'
+        || inputExtension === '.webm'
+        || inputExtension === '.caf'
+        || inputExtension === '.wav'
+        || inputExtension === '.wave'
+        || !acceptedAudioMimeTypes.has(uploadMimeType)
+      );
+
+    if (needsAudioConversion) {
       uploadMimeType = 'audio/ogg';
-      uploadFilename = filename.replace(/\.webm$/, '.ogg');
+      uploadFilename = filename.replace(/\.[^.]+$/, '') + '.ogg';
+      convertedPath = join(os.tmpdir(), `wa_converted_${Date.now()}.ogg`);
+      try {
+        await execFileAsync('ffmpeg', [
+          '-i', filePath,
+          '-c:a', 'libopus',
+          '-b:a', '32k',
+          '-y',
+          convertedPath,
+        ]);
+        actualFilePath = convertedPath;
+        this.logger.log(`Converted audio to ogg: ${filePath} (${mimeType || 'unknown'}) → ${convertedPath}`);
+      } catch (convErr: any) {
+        this.logger.error(`ffmpeg conversion failed: ${convErr?.message || convErr}`);
+        throw new BadRequestException('Audio conversion failed — ffmpeg error');
+      }
     }
 
     // Build FormData for Meta upload
     const FormData = require('form-data');
     const form = new FormData();
     form.append('messaging_product', 'whatsapp');
-    form.append('file', createReadStream(filePath), { filename: uploadFilename, contentType: uploadMimeType });
+    form.append('file', createReadStream(actualFilePath), { filename: uploadFilename, contentType: uploadMimeType });
     form.append('type', uploadMimeType);
 
     try {
@@ -1892,6 +1944,11 @@ export class WhatsAppService {
       await fsPromises.unlink(filePath).catch((error: any) => {
         this.logger.warn(`Failed to cleanup temp upload file ${filePath}: ${error?.message || error}`);
       });
+      if (convertedPath) {
+        await fsPromises.unlink(convertedPath).catch((error: any) => {
+          this.logger.warn(`Failed to cleanup converted file ${convertedPath}: ${error?.message || error}`);
+        });
+      }
     }
   }
 

@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import api from '../lib/api';
 import type { Conversation, ConversationAssignment, User, WhatsAppActivity } from '../types';
+import { useLeadsStore } from './leads-store';
 
 export type WhatsAppAttachmentType = 'image' | 'video' | 'audio' | 'document';
 
@@ -16,6 +17,7 @@ export interface WhatsAppAttachmentPayload {
 interface PendingOutboxItem {
   id: string;
   waId: string;
+  integrationId?: string;
   kind: 'text' | 'media';
   text?: string;
   media?: WhatsAppAttachmentPayload;
@@ -23,11 +25,18 @@ interface PendingOutboxItem {
   createdAt: string;
 }
 
+interface MessageSendOptions {
+  replyToMessageId?: string;
+  replyPreviewText?: string;
+}
+
 interface WhatsAppState {
   conversations: Conversation[];
   selectedConv: Conversation | null;
   assignments: Record<string, ConversationAssignment>;
   archivedMap: Record<string, boolean>;
+  pinnedMap: Record<string, boolean>;
+  mutedUntilMap: Record<string, string>;
   teamUsers: User[];
   pendingOutboxCount: number;
   isLoading: boolean;
@@ -40,17 +49,21 @@ interface WhatsAppState {
   assignConversation: (waId: string, user: User | null) => Promise<string | null>;
   selectConversation: (conv: Conversation | null) => Promise<void>;
   openConversation: (input: { waId?: string; phone?: string; contactName?: string; contactId?: string | null }) => Promise<Conversation | null>;
-  sendMessage: (to: string, message: string) => Promise<boolean>;
-  sendMediaMessage: (to: string, media: WhatsAppAttachmentPayload) => Promise<boolean>;
+  sendMessage: (to: string, message: string, integrationId?: string, options?: MessageSendOptions) => Promise<boolean>;
+  sendMediaMessage: (to: string, media: WhatsAppAttachmentPayload, integrationId?: string, options?: MessageSendOptions) => Promise<boolean>;
   markUnread: (waId: string) => Promise<void>;
   markRead: (waId: string) => Promise<void>;
   archiveConversation: (waId: string, archived?: boolean) => Promise<void>;
+  pinConversation: (waId: string, pinned?: boolean) => Promise<void>;
+  muteConversation: (waId: string, mutedUntil?: string | null) => Promise<void>;
   deleteConversation: (waId: string) => Promise<string | null>;
   syncOutbox: () => Promise<void>;
 }
 
 const USER_COLORS = ['#16a34a', '#2563eb', '#9333ea', '#dc2626', '#ea580c', '#0891b2', '#be185d', '#65a30d'];
 const ARCHIVED_STORAGE_KEY = 'wa_archived_conversations';
+const PINNED_STORAGE_KEY = 'wa_pinned_conversations';
+const MUTED_STORAGE_KEY = 'wa_muted_until_conversations';
 const OUTBOX_STORAGE_KEY = 'wa_pending_outbox';
 
 function getUserColor(userId: string): string {
@@ -94,6 +107,32 @@ async function setArchivedMap(value: Record<string, boolean>) {
   await AsyncStorage.setItem(ARCHIVED_STORAGE_KEY, JSON.stringify(value));
 }
 
+async function getPinnedMap(): Promise<Record<string, boolean>> {
+  try {
+    const raw = await AsyncStorage.getItem(PINNED_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+async function setPinnedMap(value: Record<string, boolean>) {
+  await AsyncStorage.setItem(PINNED_STORAGE_KEY, JSON.stringify(value));
+}
+
+async function getMutedUntilMap(): Promise<Record<string, string>> {
+  try {
+    const raw = await AsyncStorage.getItem(MUTED_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+async function setMutedUntilMap(value: Record<string, string>) {
+  await AsyncStorage.setItem(MUTED_STORAGE_KEY, JSON.stringify(value));
+}
+
 async function getPendingOutbox(): Promise<PendingOutboxItem[]> {
   try {
     const raw = await AsyncStorage.getItem(OUTBOX_STORAGE_KEY);
@@ -108,14 +147,23 @@ async function setPendingOutbox(value: PendingOutboxItem[]) {
   await AsyncStorage.setItem(OUTBOX_STORAGE_KEY, JSON.stringify(value));
 }
 
-async function getConversationStateFromServer(): Promise<{ archivedMap: Record<string, boolean>; readAtMap: Record<string, string> }> {
+async function getConversationStateFromServer(): Promise<{
+  archivedMap: Record<string, boolean>;
+  readAtMap: Record<string, string>;
+  pinnedMap: Record<string, boolean>;
+  mutedUntilMap: Record<string, string>;
+}> {
   try {
     const res = await api.get('/integrations/whatsapp/conversations/state');
     const raw = res.data?.data || {};
     const archivedRaw = raw.archivedMap && typeof raw.archivedMap === 'object' ? raw.archivedMap : {};
     const readRaw = raw.readAtMap && typeof raw.readAtMap === 'object' ? raw.readAtMap : {};
+    const pinnedRaw = raw.pinnedMap && typeof raw.pinnedMap === 'object' ? raw.pinnedMap : {};
+    const mutedRaw = raw.mutedUntilMap && typeof raw.mutedUntilMap === 'object' ? raw.mutedUntilMap : {};
     const archivedMap: Record<string, boolean> = {};
     const readAtMap: Record<string, string> = {};
+    const pinnedMap: Record<string, boolean> = {};
+    const mutedUntilMap: Record<string, string> = {};
 
     for (const [waId, archived] of Object.entries(archivedRaw)) {
       const normalizedWaId = normalizeWaId(String(waId || ''));
@@ -131,13 +179,27 @@ async function getConversationStateFromServer(): Promise<{ archivedMap: Record<s
       if (Number.isNaN(parsed.getTime())) continue;
       readAtMap[normalizedWaId] = parsed.toISOString();
     }
-    return { archivedMap, readAtMap };
+    for (const [waId, pinned] of Object.entries(pinnedRaw)) {
+      const normalizedWaId = normalizeWaId(String(waId || ''));
+      if (!normalizedWaId) continue;
+      if (pinned) pinnedMap[normalizedWaId] = true;
+    }
+    for (const [waId, mutedUntilRaw] of Object.entries(mutedRaw)) {
+      const normalizedWaId = normalizeWaId(String(waId || ''));
+      if (!normalizedWaId) continue;
+      const mutedUntil = String(mutedUntilRaw || '').trim();
+      if (!mutedUntil) continue;
+      const parsed = new Date(mutedUntil);
+      if (Number.isNaN(parsed.getTime())) continue;
+      mutedUntilMap[normalizedWaId] = parsed.toISOString();
+    }
+    return { archivedMap, readAtMap, pinnedMap, mutedUntilMap };
   } catch {
-    return { archivedMap: {}, readAtMap: {} };
+    return { archivedMap: {}, readAtMap: {}, pinnedMap: {}, mutedUntilMap: {} };
   }
 }
 
-async function uploadMediaFile(payload: WhatsAppAttachmentPayload): Promise<string> {
+async function uploadMediaFile(payload: WhatsAppAttachmentPayload, integrationId?: string): Promise<string> {
   const formData = new FormData();
   formData.append('file', {
     uri: payload.uri,
@@ -145,7 +207,7 @@ async function uploadMediaFile(payload: WhatsAppAttachmentPayload): Promise<stri
     name: payload.name || `upload-${Date.now()}`,
   } as any);
   const res = await api.post('/integrations/whatsapp/media/upload', formData, {
-    headers: { 'Content-Type': 'multipart/form-data' },
+    ...(integrationId ? { params: { integrationId } } : {}),
   });
   const mediaId = String(res.data?.id || '').trim();
   if (!mediaId) {
@@ -154,44 +216,70 @@ async function uploadMediaFile(payload: WhatsAppAttachmentPayload): Promise<stri
   return mediaId;
 }
 
-function buildMediaSendRequest(to: string, mediaId: string, payload: WhatsAppAttachmentPayload) {
+function buildMediaSendRequest(
+  to: string,
+  mediaId: string,
+  payload: WhatsAppAttachmentPayload,
+  integrationId?: string,
+) {
+  const withIntegration = (body: Record<string, any>) => (
+    integrationId ? { ...body, integrationId } : body
+  );
   switch (payload.type) {
     case 'image':
       return {
         endpoint: '/integrations/whatsapp/send/image',
-        body: { to, imageId: mediaId, caption: payload.caption || undefined },
+        body: withIntegration({ to, imageId: mediaId, caption: payload.caption || undefined }),
       };
     case 'video':
       return {
         endpoint: '/integrations/whatsapp/send/video',
-        body: { to, videoId: mediaId, caption: payload.caption || undefined },
+        body: withIntegration({ to, videoId: mediaId, caption: payload.caption || undefined }),
       };
     case 'audio':
       return {
         endpoint: '/integrations/whatsapp/send/audio',
-        body: { to, audioId: mediaId },
+        body: withIntegration({ to, audioId: mediaId }),
       };
     default:
       return {
         endpoint: '/integrations/whatsapp/send/document',
-        body: {
+        body: withIntegration({
           to,
           documentId: mediaId,
           filename: payload.name || undefined,
           caption: payload.caption || undefined,
-        },
+        }),
       };
   }
 }
 
-async function sendTextNow(to: string, message: string): Promise<void> {
-  await api.post('/integrations/whatsapp/send', { to, message });
+async function sendTextNow(to: string, message: string, integrationId?: string, options?: MessageSendOptions): Promise<void> {
+  const replyToMessageId = String(options?.replyToMessageId || '').trim() || undefined;
+  const replyPreviewText = String(options?.replyPreviewText || '').trim() || undefined;
+  const payload = integrationId ? { to, message, integrationId } : { to, message };
+  await api.post('/integrations/whatsapp/send', {
+    ...payload,
+    ...(replyToMessageId ? { replyToMessageId } : {}),
+    ...(replyPreviewText ? { replyPreviewText } : {}),
+  });
 }
 
-async function sendMediaNow(to: string, payload: WhatsAppAttachmentPayload): Promise<void> {
-  const mediaId = await uploadMediaFile(payload);
-  const request = buildMediaSendRequest(to, mediaId, payload);
-  await api.post(request.endpoint, request.body);
+async function sendMediaNow(
+  to: string,
+  payload: WhatsAppAttachmentPayload,
+  integrationId?: string,
+  options?: MessageSendOptions,
+): Promise<void> {
+  const replyToMessageId = String(options?.replyToMessageId || '').trim() || undefined;
+  const replyPreviewText = String(options?.replyPreviewText || '').trim() || undefined;
+  const mediaId = await uploadMediaFile(payload, integrationId);
+  const request = buildMediaSendRequest(to, mediaId, payload, integrationId);
+  await api.post(request.endpoint, {
+    ...request.body,
+    ...(replyToMessageId ? { replyToMessageId } : {}),
+    ...(replyPreviewText ? { replyPreviewText } : {}),
+  });
 }
 
 function normalizeWaId(value?: string): string {
@@ -199,10 +287,32 @@ function normalizeWaId(value?: string): string {
 }
 
 function normalizePhone(value?: string, waId?: string): string {
-  const raw = String(value || '').trim();
-  if (raw.startsWith('+')) return raw;
-  const digits = normalizeWaId(raw || waId);
+  const digits = normalizeWaId(value || waId);
   return digits ? `+${digits}` : '';
+}
+
+function asText(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (value == null) return '';
+  if (typeof value === 'object') {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return '[object]';
+    }
+  }
+  return String(value);
+}
+
+function normalizeOccurredAt(value: unknown): string {
+  const raw = asText(value).trim();
+  const parsed = raw ? new Date(raw) : new Date(NaN);
+  if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
+  return new Date().toISOString();
+}
+
+function normalizeDirection(value: unknown): 'inbound' | 'outbound' {
+  return String(value || '').toLowerCase() === 'outbound' ? 'outbound' : 'inbound';
 }
 
 export const useWhatsAppStore = create<WhatsAppState>((set, get) => ({
@@ -210,6 +320,8 @@ export const useWhatsAppStore = create<WhatsAppState>((set, get) => ({
   selectedConv: null,
   assignments: {},
   archivedMap: {},
+  pinnedMap: {},
+  mutedUntilMap: {},
   teamUsers: [],
   pendingOutboxCount: 0,
   isLoading: true,
@@ -219,52 +331,132 @@ export const useWhatsAppStore = create<WhatsAppState>((set, get) => ({
 
   fetchInbox: async () => {
     try {
-      const [inboxRes, serverState, localReadTimestamps, localArchivedMap] = await Promise.all([
+      const [inboxRes, serverState, localReadTimestamps, localArchivedMap, localPinnedMap, localMutedUntilMap] = await Promise.all([
         api.get('/integrations/whatsapp/inbox?limit=200'),
         getConversationStateFromServer(),
         getReadTimestamps(),
         getArchivedMap(),
+        getPinnedMap(),
+        getMutedUntilMap(),
       ]);
-      const activities: WhatsAppActivity[] = inboxRes.data.data || [];
+      const rawActivities = Array.isArray(inboxRes.data?.data) ? inboxRes.data.data : [];
       const readTimestamps = { ...localReadTimestamps, ...serverState.readAtMap };
       const archivedMap = { ...localArchivedMap, ...serverState.archivedMap };
+      const pinnedMap = { ...localPinnedMap, ...serverState.pinnedMap };
+      const mutedUntilMap = { ...localMutedUntilMap, ...serverState.mutedUntilMap };
       await setReadTimestamps(readTimestamps);
       await setArchivedMap(archivedMap);
+      await setPinnedMap(pinnedMap);
+      await setMutedUntilMap(mutedUntilMap);
       const convMap = new Map<string, Conversation>();
+      const latestInboundByConversation = new Map<string, number>();
 
-      for (const act of activities) {
-        const waId = act.metadata?.waId || act.contact?.phone?.replace('+', '') || 'unknown';
-        const phone = act.contact?.phone || `+${waId}`;
-        const contactName = act.contact ? `${act.contact.firstName} ${act.contact.lastName}`.trim() : phone;
+      for (const rawAct of rawActivities) {
+        if (!rawAct || typeof rawAct !== 'object') continue;
+        const raw = rawAct as Record<string, any>;
+        const metadata = raw.metadata && typeof raw.metadata === 'object' ? raw.metadata : {};
+        const contactRaw = raw.contact && typeof raw.contact === 'object' ? raw.contact : null;
+        const occurredAt = normalizeOccurredAt(raw.occurredAt);
+        const activity: WhatsAppActivity = {
+          id: asText(raw.id) || `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+          title: asText(raw.title),
+          description: asText(raw.description),
+          direction: normalizeDirection(raw.direction),
+          occurredAt,
+          metadata: {
+            whatsappMessageId: asText(metadata.whatsappMessageId) || undefined,
+            waId: asText(metadata.waId) || undefined,
+            messageType: asText(metadata.messageType) || undefined,
+            messageStatus: ['sent', 'delivered', 'read', 'failed'].includes(String(metadata.messageStatus))
+              ? metadata.messageStatus
+              : undefined,
+            senderIntegrationId: asText(metadata.senderIntegrationId) || undefined,
+            senderPhoneNumberId: asText(metadata.senderPhoneNumberId) || undefined,
+            senderPhoneDisplay: asText(metadata.senderPhoneDisplay) || undefined,
+            mediaId: asText(metadata.mediaId) || undefined,
+            mediaUrl: asText(metadata.mediaUrl) || undefined,
+            mediaType: ['image', 'video', 'audio', 'document', 'template'].includes(String(metadata.mediaType))
+              ? metadata.mediaType
+              : undefined,
+            mediaMimeType: asText(metadata.mediaMimeType) || undefined,
+            mediaCaption: asText(metadata.mediaCaption) || undefined,
+            fileName: asText(metadata.fileName) || undefined,
+            reactionEmoji: asText(metadata.reactionEmoji) || undefined,
+            reactionMessageId: asText(metadata.reactionMessageId) || undefined,
+            replyToMessageId: asText(metadata.replyToMessageId) || undefined,
+            replyPreviewText: asText(metadata.replyPreviewText) || undefined,
+          },
+          contact: contactRaw ? {
+            id: asText(contactRaw.id),
+            firstName: asText(contactRaw.firstName),
+            lastName: asText(contactRaw.lastName),
+            phone: asText(contactRaw.phone),
+            status: asText(contactRaw.status),
+            source: asText(contactRaw.source) || undefined,
+          } : null,
+        };
+
+        const metadataWaId = normalizeWaId(asText(activity.metadata?.waId));
+        const contactPhoneRaw = asText(activity.contact?.phone);
+        const phoneWaId = normalizeWaId(contactPhoneRaw);
+        const waId = metadataWaId || phoneWaId || 'unknown';
+        const phone = normalizePhone(contactPhoneRaw, waId) || `+${waId}`;
+        const firstName = asText(activity.contact?.firstName);
+        const lastName = asText(activity.contact?.lastName);
+        const fullName = `${firstName} ${lastName}`.trim();
+        const contactName = fullName || phone;
+        const description = asText(activity.description);
 
         if (!convMap.has(waId)) {
           const assignment = get().assignments[waId] || null;
           convMap.set(waId, {
-            waId, contactName, contactId: act.contact?.id || null, phone,
-            contactSource: act.contact?.source || null,
-            lastMessage: act.description || '', lastMessageTime: act.occurredAt,
+            waId, contactName, contactId: activity.contact?.id || null, phone,
+            contactSource: activity.contact?.source || null,
+            preferredSenderIntegrationId: activity.metadata?.senderIntegrationId || null,
+            preferredSenderPhoneDisplay: activity.metadata?.senderPhoneDisplay || null,
+            lastMessage: description, lastMessageTime: activity.occurredAt,
             messageCount: 0, messages: [], unreadCount: 0, lastInboundTime: null,
             assignment,
             archived: !!archivedMap[waId],
+            pinned: !!pinnedMap[waId],
+            mutedUntil: mutedUntilMap[waId] || null,
           });
         }
         const conv = convMap.get(waId)!;
-        if (!conv.contactSource && act.contact?.source) {
-          conv.contactSource = act.contact.source;
+        if (!conv.contactSource && asText(activity.contact?.source).trim()) {
+          conv.contactSource = asText(activity.contact?.source);
         }
-        conv.messages.push(act);
+        conv.messages.push(activity);
         conv.messageCount++;
-
-        if (new Date(act.occurredAt) > new Date(conv.lastMessageTime)) {
-          conv.lastMessage = act.description || '';
-          conv.lastMessageTime = act.occurredAt;
+        if (!conv.preferredSenderIntegrationId && activity.metadata?.senderIntegrationId) {
+          conv.preferredSenderIntegrationId = activity.metadata.senderIntegrationId;
         }
-        if (act.direction === 'inbound') {
-          if (!conv.lastInboundTime || new Date(act.occurredAt) > new Date(conv.lastInboundTime)) {
-            conv.lastInboundTime = act.occurredAt;
+        if (!conv.preferredSenderPhoneDisplay && activity.metadata?.senderPhoneDisplay) {
+          conv.preferredSenderPhoneDisplay = activity.metadata.senderPhoneDisplay;
+        }
+
+        if (new Date(activity.occurredAt) > new Date(conv.lastMessageTime)) {
+          conv.lastMessage = description;
+          conv.lastMessageTime = activity.occurredAt;
+        }
+        if (activity.direction === 'inbound') {
+          const occurredAtMs = new Date(activity.occurredAt).getTime();
+          const previousMs = latestInboundByConversation.get(waId) || Number.NEGATIVE_INFINITY;
+          if (
+            activity.metadata?.senderIntegrationId
+            && occurredAtMs >= previousMs
+          ) {
+            conv.preferredSenderIntegrationId = activity.metadata.senderIntegrationId;
+            if (activity.metadata?.senderPhoneDisplay) {
+              conv.preferredSenderPhoneDisplay = activity.metadata.senderPhoneDisplay;
+            }
+            latestInboundByConversation.set(waId, occurredAtMs);
+          }
+          if (!conv.lastInboundTime || new Date(activity.occurredAt) > new Date(conv.lastInboundTime)) {
+            conv.lastInboundTime = activity.occurredAt;
           }
           const lastRead = readTimestamps[waId];
-          if (!lastRead || new Date(act.occurredAt) > new Date(lastRead)) {
+          if (!lastRead || new Date(activity.occurredAt) > new Date(lastRead)) {
             conv.unreadCount++;
           }
         }
@@ -274,9 +466,12 @@ export const useWhatsAppStore = create<WhatsAppState>((set, get) => ({
         conv.messages.sort((a, b) => new Date(a.occurredAt).getTime() - new Date(b.occurredAt).getTime());
       }
 
-      const convList = Array.from(convMap.values()).sort(
-        (a, b) => new Date(b.lastMessageTime).getTime() - new Date(a.lastMessageTime).getTime(),
-      );
+      const convList = Array.from(convMap.values()).sort((a, b) => {
+        const aPinned = !!pinnedMap[a.waId];
+        const bPinned = !!pinnedMap[b.waId];
+        if (aPinned !== bPinned) return aPinned ? -1 : 1;
+        return new Date(b.lastMessageTime).getTime() - new Date(a.lastMessageTime).getTime();
+      });
 
       const selected = get().selectedConv;
       const updated = selected ? convList.find(c => c.waId === selected.waId) || null : null;
@@ -285,6 +480,8 @@ export const useWhatsAppStore = create<WhatsAppState>((set, get) => ({
         conversations: convList,
         selectedConv: updated,
         archivedMap,
+        pinnedMap,
+        mutedUntilMap,
         pendingOutboxCount: outbox.length,
         isLoading: false,
         fetchError: '',
@@ -381,6 +578,7 @@ export const useWhatsAppStore = create<WhatsAppState>((set, get) => ({
         ? { ...selected, assignment: assignment || null }
         : selected;
       set({ assignments: nextAssignments, conversations: nextConversations, selectedConv: nextSelected });
+      await useLeadsStore.getState().fetchContacts();
       return null;
     } catch (err: any) {
       return err?.response?.data?.message || 'Failed to assign conversation';
@@ -413,14 +611,20 @@ export const useWhatsAppStore = create<WhatsAppState>((set, get) => ({
           contactId: existing.contactId || contactId || null,
           contactSource: existing.contactSource || null,
           assignment: existing.assignment || get().assignments[normalizedWaId] || null,
+          preferredSenderIntegrationId: existing.preferredSenderIntegrationId || null,
+          preferredSenderPhoneDisplay: existing.preferredSenderPhoneDisplay || null,
           archived: false,
           unreadCount: 0,
+          pinned: existing.pinned || false,
+          mutedUntil: existing.mutedUntil || null,
         }
       : {
           waId: normalizedWaId,
           contactName: contactName || normalizedPhone || normalizedWaId,
           contactId: contactId || null,
           contactSource: null,
+          preferredSenderIntegrationId: null,
+          preferredSenderPhoneDisplay: null,
           phone: normalizedPhone || `+${normalizedWaId}`,
           lastMessage: '',
           lastMessageTime: now,
@@ -430,6 +634,8 @@ export const useWhatsAppStore = create<WhatsAppState>((set, get) => ({
           lastInboundTime: null,
           assignment: get().assignments[normalizedWaId] || null,
           archived: false,
+          pinned: !!get().pinnedMap[normalizedWaId],
+          mutedUntil: get().mutedUntilMap[normalizedWaId] || null,
         };
 
     const nextConversations = existing
@@ -452,15 +658,19 @@ export const useWhatsAppStore = create<WhatsAppState>((set, get) => ({
         ? { ...entry, unreadCount: 0, archived: false }
         : entry
     ));
-    set({ selectedConv: { ...conversation, unreadCount: 0, archived: false }, conversations: conversationsWithState, archivedMap });
+    set({
+      selectedConv: { ...conversation, unreadCount: 0, archived: false },
+      conversations: conversationsWithState,
+      archivedMap,
+    });
 
     return conversation;
   },
 
-  sendMessage: async (to, message) => {
+  sendMessage: async (to, message, integrationId, options) => {
     set({ isSending: true, sendError: '' });
     try {
-      await sendTextNow(to, message);
+      await sendTextNow(to, message, integrationId, options);
       set({ isSending: false });
       get().fetchInbox();
       return true;
@@ -470,6 +680,7 @@ export const useWhatsAppStore = create<WhatsAppState>((set, get) => ({
         queue.push({
           id: createOutboxId(),
           waId: normalizeWaId(to),
+          integrationId: integrationId || undefined,
           kind: 'text',
           text: message,
           retries: 0,
@@ -488,10 +699,10 @@ export const useWhatsAppStore = create<WhatsAppState>((set, get) => ({
     }
   },
 
-  sendMediaMessage: async (to, payload) => {
+  sendMediaMessage: async (to, payload, integrationId, options) => {
     set({ isSending: true, sendError: '' });
     try {
-      await sendMediaNow(to, payload);
+      await sendMediaNow(to, payload, integrationId, options);
       set({ isSending: false });
       get().fetchInbox();
       return true;
@@ -501,6 +712,7 @@ export const useWhatsAppStore = create<WhatsAppState>((set, get) => ({
         queue.push({
           id: createOutboxId(),
           waId: normalizeWaId(to),
+          integrationId: integrationId || undefined,
           kind: 'media',
           media: payload,
           retries: 0,
@@ -572,6 +784,60 @@ export const useWhatsAppStore = create<WhatsAppState>((set, get) => ({
     set({ archivedMap: map, conversations, selectedConv });
   },
 
+  pinConversation: async (waId, pinned = true) => {
+    const normalizedWaId = normalizeWaId(waId);
+    if (!normalizedWaId) return;
+    await api.post(`/integrations/whatsapp/conversations/${normalizedWaId}/pin`, { pinned }).catch(() => undefined);
+    const map = { ...get().pinnedMap };
+    if (pinned) {
+      map[normalizedWaId] = true;
+    } else {
+      delete map[normalizedWaId];
+    }
+    await setPinnedMap(map);
+    const conversations = [...get().conversations]
+      .map((conversation) => (
+        conversation.waId === normalizedWaId
+          ? { ...conversation, pinned }
+          : { ...conversation, pinned: !!map[conversation.waId] }
+      ))
+      .sort((a, b) => {
+        const aPinned = !!map[a.waId];
+        const bPinned = !!map[b.waId];
+        if (aPinned !== bPinned) return aPinned ? -1 : 1;
+        return new Date(b.lastMessageTime).getTime() - new Date(a.lastMessageTime).getTime();
+      });
+    const selected = get().selectedConv;
+    const selectedConv = selected && selected.waId === normalizedWaId
+      ? { ...selected, pinned }
+      : selected;
+    set({ pinnedMap: map, conversations, selectedConv });
+  },
+
+  muteConversation: async (waId, mutedUntil = null) => {
+    const normalizedWaId = normalizeWaId(waId);
+    if (!normalizedWaId) return;
+    const normalizedMutedUntil = String(mutedUntil || '').trim() || null;
+    await api.post(`/integrations/whatsapp/conversations/${normalizedWaId}/mute`, { mutedUntil: normalizedMutedUntil }).catch(() => undefined);
+    const map = { ...get().mutedUntilMap };
+    if (normalizedMutedUntil) {
+      map[normalizedWaId] = normalizedMutedUntil;
+    } else {
+      delete map[normalizedWaId];
+    }
+    await setMutedUntilMap(map);
+    const conversations = get().conversations.map((conversation) => (
+      conversation.waId === normalizedWaId
+        ? { ...conversation, mutedUntil: normalizedMutedUntil }
+        : { ...conversation, mutedUntil: map[conversation.waId] || null }
+    ));
+    const selected = get().selectedConv;
+    const selectedConv = selected && selected.waId === normalizedWaId
+      ? { ...selected, mutedUntil: normalizedMutedUntil }
+      : selected;
+    set({ mutedUntilMap: map, conversations, selectedConv });
+  },
+
   deleteConversation: async (waId) => {
     const normalizedWaId = normalizeWaId(waId);
     if (!normalizedWaId) return 'Conversation is invalid';
@@ -581,9 +847,15 @@ export const useWhatsAppStore = create<WhatsAppState>((set, get) => ({
       const selected = get().selectedConv;
       const selectedConv = selected && selected.waId === normalizedWaId ? null : selected;
       const archivedMap = { ...get().archivedMap };
+      const pinnedMap = { ...get().pinnedMap };
+      const mutedUntilMap = { ...get().mutedUntilMap };
       delete archivedMap[normalizedWaId];
+      delete pinnedMap[normalizedWaId];
+      delete mutedUntilMap[normalizedWaId];
       await setArchivedMap(archivedMap);
-      set({ conversations, selectedConv, archivedMap });
+      await setPinnedMap(pinnedMap);
+      await setMutedUntilMap(mutedUntilMap);
+      set({ conversations, selectedConv, archivedMap, pinnedMap, mutedUntilMap });
       return null;
     } catch (err: any) {
       return err?.response?.data?.message || 'Failed to delete conversation';
@@ -605,12 +877,12 @@ export const useWhatsAppStore = create<WhatsAppState>((set, get) => ({
     for (const item of queue) {
       try {
         if (item.kind === 'text' && item.text) {
-          await sendTextNow(item.waId, item.text);
+          await sendTextNow(item.waId, item.text, item.integrationId);
           sentAny = true;
           continue;
         }
         if (item.kind === 'media' && item.media) {
-          await sendMediaNow(item.waId, item.media);
+          await sendMediaNow(item.waId, item.media, item.integrationId);
           sentAny = true;
           continue;
         }
