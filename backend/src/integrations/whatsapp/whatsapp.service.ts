@@ -20,6 +20,9 @@ export interface WhatsAppMessage {
   to: string;
   type: 'text' | 'template' | 'image' | 'document' | 'video' | 'audio' | 'interactive';
   content: string;
+  context?: {
+    messageId: string;
+  };
   template?: {
     name: string;
     language: string;
@@ -691,6 +694,57 @@ export class WhatsAppService {
     return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
   }
 
+  private async clearStaleAutoSendRuleMediaId(
+    workspaceId: string,
+    ruleId: string,
+    staleMediaId: string,
+  ): Promise<void> {
+    const normalizedRuleId = String(ruleId || '').trim();
+    const normalizedMediaId = String(staleMediaId || '').trim();
+    if (!normalizedRuleId || !normalizedMediaId) return;
+
+    const integrations = await this.listWorkspaceWhatsAppIntegrations(workspaceId);
+    if (!integrations.length) return;
+
+    let hasChanges = false;
+    for (const integration of integrations) {
+      const rawRules = Array.isArray(integration.config?.autoSendRules)
+        ? integration.config.autoSendRules
+        : [];
+      if (!rawRules.length) continue;
+
+      let rulesChanged = false;
+      const updatedRules = rawRules.map((rawRule: any) => {
+        const currentRuleId = String(rawRule?.id || '').trim();
+        const currentMediaId = String(rawRule?.headerMediaId || '').trim();
+        if (currentRuleId !== normalizedRuleId || currentMediaId !== normalizedMediaId) {
+          return rawRule;
+        }
+
+        const nextRule = { ...rawRule };
+        delete nextRule.headerMediaId;
+        rulesChanged = true;
+        return nextRule;
+      });
+
+      if (!rulesChanged) continue;
+      hasChanges = true;
+      integration.config = {
+        ...(integration.config || {}),
+        autoSendRules: updatedRules,
+        autoSend: updatedRules.length
+          ? this.ruleToAutoSendConfig(this.sanitizeAutoSendRule(updatedRules[0], 0))
+          : this.getDefaultAutoSendConfig(),
+      };
+    }
+
+    if (!hasChanges) return;
+    await this.integrationRepository.save(integrations);
+    this.logger.log(
+      `Auto-send self-heal: cleared stale header media_id for rule=${normalizedRuleId} in workspace=${workspaceId}`,
+    );
+  }
+
   private async notifyAutoSendSuccess(
     workspaceId: string,
     contact: any,
@@ -919,7 +973,14 @@ export class WhatsAppService {
     userId?: string,
     whatsappMessageId?: string,
     mediaMetadata?: Record<string, any>,
-    context?: { campaignId?: string; campaignName?: string; senderIntegrationId?: string; senderPhoneDisplay?: string },
+    context?: {
+      campaignId?: string;
+      campaignName?: string;
+      senderIntegrationId?: string;
+      senderPhoneDisplay?: string;
+      replyToMessageId?: string;
+      replyPreviewText?: string;
+    },
   ): Promise<void> {
     try {
       const phone = normalizePhoneE164(to) || (to.startsWith('+') ? to : `+${to}`);
@@ -944,6 +1005,8 @@ export class WhatsAppService {
           ...(mediaMetadata || {}),
           ...(context?.campaignId ? { campaignId: context.campaignId, campaignName: context.campaignName, isCampaign: true } : {}),
           ...(context?.senderIntegrationId ? { senderIntegrationId: context.senderIntegrationId, senderPhoneDisplay: context.senderPhoneDisplay } : {}),
+          ...(context?.replyToMessageId ? { replyToMessageId: context.replyToMessageId } : {}),
+          ...(context?.replyPreviewText ? { replyPreviewText: context.replyPreviewText } : {}),
         },
       });
 
@@ -1054,6 +1117,104 @@ export class WhatsAppService {
     return result;
   }
 
+  private buildTemplateComponentsWithHeaderMedia(
+    parameters: any[] = [],
+    headerMediaType?: string,
+    headerMediaId?: string,
+    headerMediaUrl?: string,
+    preferHeaderUrl = false,
+  ): any[] {
+    const components: any[] = Array.isArray(parameters) ? [...parameters] : [];
+    const headerType = String(headerMediaType || '').toLowerCase();
+    if (!['image', 'video', 'document'].includes(headerType)) {
+      return components;
+    }
+
+    const normalizedHeaderMedia = this.normalizeHeaderMediaInput(
+      String(headerMediaId || '').trim(),
+      String(headerMediaUrl || '').trim(),
+    );
+    const mediaId = normalizedHeaderMedia.mediaId || '';
+    const mediaUrl = normalizedHeaderMedia.mediaUrl || '';
+    if (!mediaId && !mediaUrl) {
+      return components;
+    }
+
+    const headerParam: any = { type: headerType };
+    const shouldUseUrl = preferHeaderUrl || !mediaId;
+    headerParam[headerType] = shouldUseUrl ? { link: mediaUrl } : { id: mediaId };
+    components.unshift({ type: 'header', parameters: [headerParam] });
+
+    return components;
+  }
+
+  async sendTemplateMessageForWorkspaceWithHeaderMediaRecovery(
+    workspaceId: string,
+    payload: {
+      to: string;
+      templateName: string;
+      language?: string;
+      parameters?: any[];
+      headerMediaType?: 'image' | 'video' | 'document';
+      headerMediaId?: string;
+      headerMediaUrl?: string;
+      integrationId?: string;
+    },
+  ): Promise<{ result: any; sender: ReturnType<WhatsAppService['getIntegrationSenderInfo']>; usedHeaderUrlFallback: boolean }> {
+    const language = payload.language || 'en';
+    const headerType = String(payload.headerMediaType || '').toLowerCase();
+    const normalizedHeaderMedia = this.normalizeHeaderMediaInput(
+      String(payload.headerMediaId || '').trim(),
+      String(payload.headerMediaUrl || '').trim(),
+    );
+    const headerMediaId = normalizedHeaderMedia.mediaId || '';
+    const headerMediaUrl = normalizedHeaderMedia.mediaUrl || '';
+    const hasHeaderMedia = ['image', 'video', 'document'].includes(headerType) && (headerMediaId || headerMediaUrl);
+
+    const sendTemplate = async (preferHeaderUrl = false): Promise<{ result: any; sender: ReturnType<WhatsAppService['getIntegrationSenderInfo']> }> => {
+      const parameters = hasHeaderMedia
+        ? this.buildTemplateComponentsWithHeaderMedia(
+            payload.parameters || [],
+            headerType,
+            headerMediaId,
+            headerMediaUrl,
+            preferHeaderUrl,
+          )
+        : (payload.parameters || []);
+
+      return this.sendMessageForWorkspace(
+        workspaceId,
+        {
+          to: payload.to,
+          type: 'template',
+          content: '',
+          template: {
+            name: payload.templateName,
+            language,
+            parameters,
+          },
+        },
+        payload.integrationId,
+      );
+    };
+
+    try {
+      const sent = await sendTemplate(false);
+      return { ...sent, usedHeaderUrlFallback: false };
+    } catch (error: any) {
+      const canRetryWithUrl = !!headerMediaId && !!headerMediaUrl && this.isInvalidWhatsAppMediaAttachmentIdError(error);
+      if (!canRetryWithUrl) {
+        throw error;
+      }
+
+      this.logger.warn(
+        `Template send: media_id invalid for workspace=${workspaceId}; retrying with header URL`,
+      );
+      const sent = await sendTemplate(true);
+      return { ...sent, usedHeaderUrlFallback: true };
+    }
+  }
+
   async sendTextMessage(to: string, text: string, credentials?: Record<string, any>): Promise<any> {
     const msg: WhatsAppMessage = { to, type: 'text', content: text };
     return credentials ? this.sendMessageWithCredentials(credentials, msg) : this.sendMessage(msg);
@@ -1162,19 +1323,45 @@ export class WhatsAppService {
             await this.saveMessageActivity(contact, message, integration.workspaceId, ownerId, integration);
             await this.markMessageAsRead(message.id, integration.credentials);
 
+            const interactiveReply = message.interactive?.button_reply || message.interactive?.list_reply;
+            const inferredMessageText =
+              message.text?.body
+              || message.image?.caption
+              || message.document?.caption
+              || message.video?.caption
+              || interactiveReply?.title
+              || '';
+
             const messageEventPayload = {
               workspaceId: integration.workspaceId,
               integrationId: integration.id,
+              ownerId,
+              userId: ownerId,
               contactId: contact.id,
+              firstName: contact.firstName,
+              lastName: contact.lastName,
+              contactName: `${contact.firstName || ''} ${contact.lastName || ''}`.trim() || undefined,
+              email: contact.email,
+              contactPhone: contact.phone || contact.phoneNormalized || undefined,
+              contact: {
+                id: contact.id,
+                firstName: contact.firstName,
+                lastName: contact.lastName,
+                email: contact.email,
+                phone: contact.phone,
+                phoneNormalized: contact.phoneNormalized,
+              },
               waId: message.from,
+              phone: message.from,
               messageId: message.id,
               messageType: message.type,
+              messageText: inferredMessageText || undefined,
+              messageTimestamp: message.timestamp,
               occurredAt: new Date().toISOString(),
             };
             this.eventEmitter.emit('message_received', messageEventPayload);
             this.eventEmitter.emit('whatsapp.message.received', messageEventPayload);
 
-            const interactiveReply = message.interactive?.button_reply || message.interactive?.list_reply;
             if (message.type === 'interactive' && interactiveReply) {
               const buttonEventPayload = {
                 ...messageEventPayload,
@@ -1488,33 +1675,36 @@ export class WhatsAppService {
       throw new BadRequestException('Recipient phone is invalid');
     }
     const base = { messaging_product: 'whatsapp', recipient_type: 'individual', to: normalizedTo };
+    const contextPayload = message.context?.messageId
+      ? { context: { message_id: message.context.messageId } }
+      : {};
     switch (message.type) {
-      case 'text': return { ...base, type: 'text', text: { preview_url: true, body: message.content } };
+      case 'text': return { ...base, ...contextPayload, type: 'text', text: { preview_url: true, body: message.content } };
       case 'template': return {
-        ...base, type: 'template',
+        ...base, ...contextPayload, type: 'template',
         template: { name: message.template!.name, language: { code: message.template!.language }, components: message.template!.parameters || [] },
       };
       case 'image': {
         const img: any = { caption: message.media!.caption };
         if (message.media!.id) img.id = message.media!.id; else img.link = message.media!.url;
-        return { ...base, type: 'image', image: img };
+        return { ...base, ...contextPayload, type: 'image', image: img };
       }
       case 'document': {
         const doc: any = { caption: message.media!.caption, filename: message.media!.filename };
         if (message.media!.id) doc.id = message.media!.id; else doc.link = message.media!.url;
-        return { ...base, type: 'document', document: doc };
+        return { ...base, ...contextPayload, type: 'document', document: doc };
       }
       case 'video': {
         const vid: any = { caption: message.media!.caption };
         if (message.media!.id) vid.id = message.media!.id; else vid.link = message.media!.url;
-        return { ...base, type: 'video', video: vid };
+        return { ...base, ...contextPayload, type: 'video', video: vid };
       }
       case 'audio': {
         const aud: any = {};
         if (message.media!.id) aud.id = message.media!.id; else aud.link = message.media!.url;
-        return { ...base, type: 'audio', audio: aud };
+        return { ...base, ...contextPayload, type: 'audio', audio: aud };
       }
-      case 'interactive': return { ...base, type: 'interactive', interactive: message.interactive };
+      case 'interactive': return { ...base, ...contextPayload, type: 'interactive', interactive: message.interactive };
       default: throw new BadRequestException(`Unsupported message type: ${message.type}`);
     }
   }
@@ -1664,12 +1854,21 @@ export class WhatsAppService {
     const integration = await this.resolveWorkspaceSendIntegration(workspaceId, integrationId);
     const { accessToken, phoneNumberId } = this.getCredentials(this.getIntegrationCredentials(integration), false);
 
+    // Chrome records audio as audio/webm;codecs=opus — Meta doesn't support webm.
+    // Both webm/opus and ogg/opus use the same Opus codec, so relabel to audio/ogg.
+    let uploadMimeType = mimeType;
+    let uploadFilename = filename;
+    if (mimeType.startsWith('audio/webm')) {
+      uploadMimeType = 'audio/ogg';
+      uploadFilename = filename.replace(/\.webm$/, '.ogg');
+    }
+
     // Build FormData for Meta upload
     const FormData = require('form-data');
     const form = new FormData();
     form.append('messaging_product', 'whatsapp');
-    form.append('file', createReadStream(filePath), { filename, contentType: mimeType });
-    form.append('type', mimeType);
+    form.append('file', createReadStream(filePath), { filename: uploadFilename, contentType: uploadMimeType });
+    form.append('type', uploadMimeType);
 
     try {
       const response = await firstValueFrom(
@@ -1687,7 +1886,7 @@ export class WhatsAppService {
         ),
       );
 
-      this.logger.log(`Media uploaded: ${response.data.id} (${mimeType}, ${filename})`);
+      this.logger.log(`Media uploaded: ${response.data.id} (${uploadMimeType}, ${uploadFilename})`);
       return { id: response.data.id };
     } finally {
       await fsPromises.unlink(filePath).catch((error: any) => {
@@ -2263,6 +2462,7 @@ export class WhatsAppService {
       );
       let msgResult: any = null;
       let lastError: any = null;
+      let usedHeaderUrlFallback = false;
       for (const candidateIntegration of senderCandidates) {
         const sendTemplate = async (preferHeaderUrl = false): Promise<any> => this.sendMessageWithCredentials(
           this.getIntegrationCredentials(candidateIntegration),
@@ -2290,6 +2490,7 @@ export class WhatsAppService {
               msgResult = await sendTemplate(true);
               senderIntegration = candidateIntegration;
               lastError = null;
+              usedHeaderUrlFallback = true;
               break;
             } catch (retryErr) {
               lastError = retryErr;
@@ -2310,6 +2511,10 @@ export class WhatsAppService {
 
       if (!msgResult && lastError) {
         throw lastError;
+      }
+
+      if (usedHeaderUrlFallback && matchedRule.id && headerMediaId) {
+        await this.clearStaleAutoSendRuleMediaId(workspaceId, matchedRule.id, headerMediaId);
       }
 
       const msgId = msgResult?.messages?.[0]?.id;
@@ -2438,13 +2643,20 @@ export class WhatsAppService {
 
   async getConversationState(
     workspaceId: string,
-  ): Promise<{ archivedMap: Record<string, boolean>; readAtMap: Record<string, string> }> {
+  ): Promise<{
+    archivedMap: Record<string, boolean>;
+    readAtMap: Record<string, string>;
+    pinnedMap: Record<string, boolean>;
+    mutedUntilMap: Record<string, string>;
+  }> {
     const integration = await this.integrationRepository.findOne({
       where: { type: IntegrationType.WHATSAPP, workspaceId },
     });
     return {
       archivedMap: this.normalizeArchivedMap(integration?.config?.conversationArchivedMap),
       readAtMap: this.normalizeReadAtMap(integration?.config?.conversationReadAtMap),
+      pinnedMap: this.normalizePinnedMap(integration?.config?.conversationPinnedMap),
+      mutedUntilMap: this.normalizeMutedUntilMap(integration?.config?.conversationMutedUntilMap),
     };
   }
 
@@ -2518,6 +2730,49 @@ export class WhatsAppService {
     await this.integrationRepository.save(integration);
   }
 
+  async setConversationPinned(
+    workspaceId: string,
+    waId: string,
+    pinned: boolean,
+  ): Promise<void> {
+    const integration = await this.integrationRepository.findOne({
+      where: { type: IntegrationType.WHATSAPP, workspaceId },
+    });
+    if (!integration) throw new BadRequestException('No WhatsApp integration found for this workspace');
+    const map = this.normalizePinnedMap(integration.config?.conversationPinnedMap);
+    if (pinned) {
+      map[waId] = true;
+    } else {
+      delete map[waId];
+    }
+    integration.config = { ...(integration.config || {}), conversationPinnedMap: map };
+    await this.integrationRepository.save(integration);
+  }
+
+  async setConversationMutedUntil(
+    workspaceId: string,
+    waId: string,
+    mutedUntil: string | null,
+  ): Promise<void> {
+    const integration = await this.integrationRepository.findOne({
+      where: { type: IntegrationType.WHATSAPP, workspaceId },
+    });
+    if (!integration) throw new BadRequestException('No WhatsApp integration found for this workspace');
+    const map = this.normalizeMutedUntilMap(integration.config?.conversationMutedUntilMap);
+    const candidate = String(mutedUntil || '').trim();
+    if (!candidate) {
+      delete map[waId];
+    } else {
+      const parsed = new Date(candidate);
+      if (Number.isNaN(parsed.getTime())) {
+        throw new BadRequestException('Invalid mutedUntil date');
+      }
+      map[waId] = parsed.toISOString();
+    }
+    integration.config = { ...(integration.config || {}), conversationMutedUntilMap: map };
+    await this.integrationRepository.save(integration);
+  }
+
   private normalizeArchivedMap(value: any): Record<string, boolean> {
     if (!value || typeof value !== 'object') return {};
     const result: Record<string, boolean> = {};
@@ -2538,6 +2793,32 @@ export class WhatsAppService {
       const readAt = String(readAtRaw || '').trim();
       if (!readAt) continue;
       const parsed = new Date(readAt);
+      if (Number.isNaN(parsed.getTime())) continue;
+      result[normalizedWaId] = parsed.toISOString();
+    }
+    return result;
+  }
+
+  private normalizePinnedMap(value: any): Record<string, boolean> {
+    if (!value || typeof value !== 'object') return {};
+    const result: Record<string, boolean> = {};
+    for (const [waId, pinned] of Object.entries(value)) {
+      const normalizedWaId = normalizePhoneDigits(String(waId || ''));
+      if (!normalizedWaId) continue;
+      if (pinned) result[normalizedWaId] = true;
+    }
+    return result;
+  }
+
+  private normalizeMutedUntilMap(value: any): Record<string, string> {
+    if (!value || typeof value !== 'object') return {};
+    const result: Record<string, string> = {};
+    for (const [waId, mutedUntilRaw] of Object.entries(value)) {
+      const normalizedWaId = normalizePhoneDigits(String(waId || ''));
+      if (!normalizedWaId) continue;
+      const mutedUntil = String(mutedUntilRaw || '').trim();
+      if (!mutedUntil) continue;
+      const parsed = new Date(mutedUntil);
       if (Number.isNaN(parsed.getTime())) continue;
       result[normalizedWaId] = parsed.toISOString();
     }

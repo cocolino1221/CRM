@@ -900,6 +900,10 @@ export default function WhatsAppPage() {
   const voiceTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const discardVoiceOnStopRef = useRef(false);
   const voicePreviewUrlRef = useRef('');
+  const voiceAnalyserRef = useRef<AnalyserNode | null>(null);
+  const voiceAudioContextRef = useRef<AudioContext | null>(null);
+  const voiceAnimFrameRef = useRef<number | null>(null);
+  const voiceWaveformCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const [dictationSupported, setDictationSupported] = useState(true);
   const [isDictating, setIsDictating] = useState(false);
   const [voiceRecordingSupported, setVoiceRecordingSupported] = useState(true);
@@ -2244,6 +2248,10 @@ export default function WhatsAppPage() {
 
   const handleSendVoiceRecording = async () => {
     if (!voiceAudioBlob || !selectedConv) return;
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      setVoiceInputError('No internet connection. Check your connection and try again.');
+      return;
+    }
     if (!demoMode && senderAccounts.length > 0 && !selectedSenderId) {
       setVoiceInputError('Selecteaza numarul WhatsApp din care vrei sa trimiti.');
       return;
@@ -2318,7 +2326,20 @@ export default function WhatsAppPage() {
       setReplyingTo(null);
       await fetchInbox();
     } catch (err: any) {
-      setVoiceInputError(err?.response?.data?.message || err?.message || 'Failed to send voice message.');
+      const raw = String(err?.response?.data?.message || err?.message || '');
+      const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
+      const looksLikeNetwork =
+        isOffline ||
+        raw.toLowerCase().includes('no connection') ||
+        raw.toLowerCase().includes('network') ||
+        raw.toLowerCase().includes('media query') ||
+        raw.toLowerCase().includes('will retry') ||
+        raw === 'Network Error';
+      setVoiceInputError(
+        looksLikeNetwork
+          ? 'No internet connection. Check your connection and try again.'
+          : raw || 'Failed to send voice message.',
+      );
     } finally {
       setIsSending(false);
     }
@@ -3838,7 +3859,20 @@ export default function WhatsAppPage() {
           {/* Reply input */}
           <div className="p-3 border-t border-gray-100 bg-white">
             {sendError && <p className="text-xs text-red-600 mb-2 px-1">{sendError}</p>}
-            {voiceInputError && <p className="text-xs text-amber-700 mb-2 px-1">{voiceInputError}</p>}
+            {voiceInputError && (
+              <div className="flex items-center gap-2 mb-2 px-1">
+                <p className="text-xs text-amber-700 flex-1">{voiceInputError}</p>
+                {voiceAudioBlob && (
+                  <button
+                    onClick={() => { setVoiceInputError(''); handleSendVoiceRecording(); }}
+                    disabled={isSending}
+                    className="flex-shrink-0 text-[11px] font-semibold text-amber-800 underline disabled:opacity-50"
+                  >
+                    Retry
+                  </button>
+                )}
+              </div>
+            )}
             {replyingTo && (
               <div className="mb-2 flex items-start justify-between gap-2 rounded-xl border border-green-100 bg-green-50 px-3 py-2">
                 <div className="min-w-0">
