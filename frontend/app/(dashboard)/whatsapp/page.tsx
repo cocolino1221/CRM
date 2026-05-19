@@ -908,6 +908,10 @@ export default function WhatsAppPage() {
   const speechRecognitionRef = useRef<any | null>(null);
   const voiceMediaRecorderRef = useRef<MediaRecorder | null>(null);
   const voiceStreamRef = useRef<MediaStream | null>(null);
+  const autoSendOnStopRef = useRef(false);
+  const autoSendTriggerRef = useRef(false);
+  const holdStartPosRef = useRef<{ x: number; y: number } | null>(null);
+  const holdLockedRef = useRef(false);
   const voiceChunksRef = useRef<BlobPart[]>([]);
   const voiceTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const discardVoiceOnStopRef = useRef(false);
@@ -924,6 +928,10 @@ export default function WhatsAppPage() {
   const [voiceAudioBlob, setVoiceAudioBlob] = useState<Blob | null>(null);
   const [voiceAudioPreviewUrl, setVoiceAudioPreviewUrl] = useState('');
   const [voiceInputError, setVoiceInputError] = useState('');
+  const [voicePendingMediaId, setVoicePendingMediaId] = useState<string | null>(null);
+  const [holdSlideHint, setHoldSlideHint] = useState<'none' | 'cancel' | 'lock'>('none');
+  const [isHoldMode, setIsHoldMode] = useState(false);
+  const [isHoldLocked, setIsHoldLocked] = useState(false);
 
   // Message search
   const [messageSearch, setMessageSearch] = useState('');
@@ -1202,6 +1210,13 @@ export default function WhatsAppPage() {
     setVoiceAudioPreviewUrl('');
     setVoiceRecordingSeconds(0);
     setVoiceInputError('');
+    setVoicePendingMediaId(null);
+    setIsHoldMode(false);
+    setIsHoldLocked(false);
+    setHoldSlideHint('none');
+    holdStartPosRef.current = null;
+    holdLockedRef.current = false;
+    autoSendOnStopRef.current = false;
   }, [voiceAudioPreviewUrl]);
 
   const stopDictation = useCallback(() => {
@@ -1220,6 +1235,15 @@ export default function WhatsAppPage() {
   useEffect(() => {
     voicePreviewUrlRef.current = voiceAudioPreviewUrl;
   }, [voiceAudioPreviewUrl]);
+
+  // Auto-send after hold-to-record release: blob lands in state, trigger fires
+  useEffect(() => {
+    if (voiceAudioBlob && autoSendTriggerRef.current) {
+      autoSendTriggerRef.current = false;
+      handleSendVoiceRecording();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [voiceAudioBlob]);
 
   useEffect(() => {
     const speechCtor = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -2371,8 +2395,15 @@ export default function WhatsAppPage() {
         stopVoiceStream();
         stopWaveformAnimation();
         const shouldDiscard = discardVoiceOnStopRef.current;
+        const shouldAutoSend = autoSendOnStopRef.current;
         discardVoiceOnStopRef.current = false;
+        autoSendOnStopRef.current = false;
+        holdLockedRef.current = false;
         setIsVoiceRecording(false);
+        setIsHoldMode(false);
+        setIsHoldLocked(false);
+        setHoldSlideHint('none');
+        holdStartPosRef.current = null;
         if (shouldDiscard) {
           return;
         }
@@ -2385,6 +2416,9 @@ export default function WhatsAppPage() {
         const previewUrl = URL.createObjectURL(voiceBlob);
         setVoiceAudioBlob(voiceBlob);
         setVoiceAudioPreviewUrl(previewUrl);
+        if (shouldAutoSend) {
+          autoSendTriggerRef.current = true;
+        }
       };
       recorder.onerror = (event: any) => {
         const mediaErrorName = String(event?.error?.name || '').trim();
@@ -2430,6 +2464,8 @@ export default function WhatsAppPage() {
   const discardVoiceDraft = () => {
     setVoiceInputError('');
     discardVoiceOnStopRef.current = true;
+    autoSendOnStopRef.current = false;
+    autoSendTriggerRef.current = false;
     if (voiceMediaRecorderRef.current && voiceMediaRecorderRef.current.state !== 'inactive') {
       voiceMediaRecorderRef.current.stop();
     }
@@ -2437,7 +2473,59 @@ export default function WhatsAppPage() {
     stopVoiceTimer();
     stopVoiceStream();
     stopWaveformAnimation();
+    if (selectedConv?.waId) {
+      try { localStorage.removeItem(`wa_voice_mediaId_${selectedConv.waId}`); } catch { /* ignore */ }
+    }
     clearVoiceDraft();
+  };
+
+  // Hold-to-record pointer handlers (WhatsApp style)
+  const handleVoicePointerDown = async (e: React.PointerEvent<HTMLButtonElement>) => {
+    if (isVoiceRecording || voiceAudioBlob || isSending) return;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    holdStartPosRef.current = { x: e.clientX, y: e.clientY };
+    holdLockedRef.current = false;
+    setIsHoldMode(true);
+    setHoldSlideHint('none');
+    await startVoiceRecording();
+  };
+
+  const handleVoicePointerMove = (e: React.PointerEvent<HTMLButtonElement>) => {
+    if (!holdStartPosRef.current || holdLockedRef.current) return;
+    const dx = e.clientX - holdStartPosRef.current.x;
+    const dy = e.clientY - holdStartPosRef.current.y;
+    if (dx < -50) setHoldSlideHint('cancel');
+    else if (dy < -60) setHoldSlideHint('lock');
+    else setHoldSlideHint('none');
+  };
+
+  const handleVoicePointerUp = (e: React.PointerEvent<HTMLButtonElement>) => {
+    if (!holdStartPosRef.current) return;
+    const hint = holdSlideHint;
+    holdStartPosRef.current = null;
+    if (holdLockedRef.current) return; // locked: user uses Stop/Send/Discard buttons
+    if (hint === 'cancel') {
+      discardVoiceDraft();
+    } else if (hint === 'lock') {
+      holdLockedRef.current = true;
+      setIsHoldLocked(true);
+      setIsHoldMode(false);
+      setHoldSlideHint('none');
+      // recording continues, user must press Stop/Send
+    } else {
+      // Normal release: send immediately if ≥ 1 second, else discard
+      if (voiceRecordingSeconds < 1) {
+        discardVoiceDraft();
+      } else {
+        autoSendOnStopRef.current = true;
+        stopVoiceRecording();
+      }
+    }
+  };
+
+  const handleVoicePointerCancel = () => {
+    holdStartPosRef.current = null;
+    if (!holdLockedRef.current) discardVoiceDraft();
   };
 
   const handleSendVoiceRecording = async () => {
@@ -2498,15 +2586,33 @@ export default function WhatsAppPage() {
         return;
       }
 
-      const extension = voiceAudioBlob.type.includes('ogg') ? 'ogg' : voiceAudioBlob.type.includes('mp4') ? 'm4a' : 'webm';
-      const formData = new FormData();
-      formData.append('file', new File([voiceAudioBlob], `voice-note-${Date.now()}.${extension}`, { type: voiceAudioBlob.type || 'audio/webm' }));
-      const uploadRes = await api.post('/integrations/whatsapp/media/upload', formData, {
-        params: selectedSenderId ? { integrationId: selectedSenderId } : undefined,
-      });
-      const uploadedMediaId = String(uploadRes.data?.id || '').trim();
+      const lsKey = `wa_voice_mediaId_${selectedConv.waId}`;
+      // Prefer in-memory cache, fall back to localStorage (same tab, conversation switch)
+      let uploadedMediaId = voicePendingMediaId || '';
+      if (!uploadedMediaId && typeof window !== 'undefined') {
+        try {
+          const stored = JSON.parse(localStorage.getItem(lsKey) || 'null');
+          // Meta media IDs are valid for 30 days; we use 25 for safety
+          if (stored?.mediaId && Date.now() - stored.ts < 25 * 24 * 60 * 60 * 1000) {
+            uploadedMediaId = stored.mediaId;
+            setVoicePendingMediaId(uploadedMediaId);
+          }
+        } catch { /* ignore */ }
+      }
       if (!uploadedMediaId) {
-        throw new Error('Voice upload did not return media id');
+        const extension = voiceAudioBlob.type.includes('ogg') ? 'ogg' : voiceAudioBlob.type.includes('mp4') ? 'm4a' : 'webm';
+        const formData = new FormData();
+        formData.append('file', new File([voiceAudioBlob], `voice-note-${Date.now()}.${extension}`, { type: voiceAudioBlob.type || 'audio/webm' }));
+        const uploadRes = await api.post('/integrations/whatsapp/media/upload', formData, {
+          params: selectedSenderId ? { integrationId: selectedSenderId } : undefined,
+        });
+        uploadedMediaId = String(uploadRes.data?.id || '').trim();
+        if (!uploadedMediaId) {
+          throw new Error('Voice upload did not return media id');
+        }
+        setVoicePendingMediaId(uploadedMediaId);
+        // Persist so it survives a conversation switch within the same tab
+        try { localStorage.setItem(lsKey, JSON.stringify({ mediaId: uploadedMediaId, ts: Date.now() })); } catch { /* ignore */ }
       }
       const body: Record<string, any> = { to: selectedConv.waId, audioId: uploadedMediaId };
       if (replyingTo?.messageId) {
@@ -2516,6 +2622,7 @@ export default function WhatsAppPage() {
         body.replyPreviewText = replyingTo.previewText;
       }
       await api.post('/integrations/whatsapp/send/audio', withSelectedSender(body));
+      try { localStorage.removeItem(lsKey); } catch { /* ignore */ }
       clearVoiceDraft();
       setReplyingTo(null);
       await fetchInbox();
@@ -4093,9 +4200,20 @@ export default function WhatsAppPage() {
             )}
             {(isVoiceRecording || voiceAudioBlob) && (
               <div className={`mb-2 rounded-xl border px-3 py-2 ${isVoiceRecording ? 'border-red-200 bg-red-50' : 'border-green-100 bg-green-50'}`}>
+                {/* Hold-mode hints: visible while user has finger on mic button */}
+                {isHoldMode && !isHoldLocked && (
+                  <div className="flex items-center justify-between mb-1.5 px-1">
+                    <span className={`text-[11px] font-semibold transition-colors ${holdSlideHint === 'cancel' ? 'text-red-600' : 'text-gray-400'}`}>
+                      ← Slide to cancel
+                    </span>
+                    <span className={`text-[11px] font-semibold transition-colors ${holdSlideHint === 'lock' ? 'text-green-600' : 'text-gray-400'}`}>
+                      ↑ Slide to lock
+                    </span>
+                  </div>
+                )}
                 <div className="flex items-center gap-2">
                   {/* Pulsing dot */}
-                  <span className={`h-2.5 w-2.5 rounded-full flex-shrink-0 ${isVoiceRecording ? 'bg-red-500 animate-pulse' : 'bg-green-500'}`} />
+                  <span className={`h-2.5 w-2.5 rounded-full flex-shrink-0 ${isVoiceRecording ? 'bg-red-500 animate-pulse' : isSending ? 'bg-amber-400 animate-pulse' : 'bg-green-500'}`} />
 
                   {/* Waveform canvas (recording) or ready icon (preview) */}
                   {isVoiceRecording ? (
@@ -4105,6 +4223,8 @@ export default function WhatsAppPage() {
                       height={30}
                       className="flex-1 min-w-0"
                     />
+                  ) : isSending ? (
+                    <span className="text-xs text-amber-700 flex-1">Sending…</span>
                   ) : (
                     <AudioLines className="h-4 w-4 flex-shrink-0 text-green-600" />
                   )}
@@ -4114,33 +4234,44 @@ export default function WhatsAppPage() {
                     {formatDuration(voiceRecordingSeconds)}
                   </span>
 
-                  {/* Actions */}
-                  <div className="flex items-center gap-1 flex-shrink-0 ml-auto">
-                    {isVoiceRecording ? (
+                  {/* Actions — only show when locked or when we have a draft (not in hold mode) */}
+                  {(!isHoldMode || isHoldLocked) && (
+                    <div className="flex items-center gap-1 flex-shrink-0 ml-auto">
+                      {isVoiceRecording ? (
+                        <>
+                          <button
+                            onClick={() => { autoSendOnStopRef.current = true; stopVoiceRecording(); }}
+                            className="px-2 py-1 rounded-md bg-green-600 text-white text-[11px] font-semibold hover:bg-green-700"
+                          >
+                            Send
+                          </button>
+                          <button
+                            onClick={stopVoiceRecording}
+                            className="px-2 py-1 rounded-md bg-red-100 text-red-700 text-[11px] font-semibold hover:bg-red-200"
+                          >
+                            Stop
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          onClick={handleSendVoiceRecording}
+                          disabled={isSending || !voiceAudioBlob}
+                          className="px-2 py-1 rounded-md bg-green-600 text-white text-[11px] font-semibold hover:bg-green-700 disabled:opacity-50 flex items-center gap-1"
+                        >
+                          {isSending ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                          Send
+                        </button>
+                      )}
                       <button
-                        onClick={stopVoiceRecording}
-                        className="px-2 py-1 rounded-md bg-red-100 text-red-700 text-[11px] font-semibold hover:bg-red-200"
+                        onClick={discardVoiceDraft}
+                        className="px-2 py-1 rounded-md bg-white text-gray-600 text-[11px] font-semibold border border-gray-200 hover:bg-gray-50"
                       >
-                        Stop
+                        ✕
                       </button>
-                    ) : (
-                      <button
-                        onClick={handleSendVoiceRecording}
-                        disabled={isSending || !voiceAudioBlob}
-                        className="px-2 py-1 rounded-md bg-green-600 text-white text-[11px] font-semibold hover:bg-green-700 disabled:opacity-50"
-                      >
-                        Send
-                      </button>
-                    )}
-                    <button
-                      onClick={discardVoiceDraft}
-                      className="px-2 py-1 rounded-md bg-white text-gray-600 text-[11px] font-semibold border border-gray-200 hover:bg-gray-50"
-                    >
-                      ✕
-                    </button>
-                  </div>
+                    </div>
+                  )}
                 </div>
-                {!isVoiceRecording && voiceAudioPreviewUrl && (
+                {!isVoiceRecording && voiceAudioPreviewUrl && !isSending && (
                   <audio controls src={voiceAudioPreviewUrl} className="mt-2 w-full h-8" />
                 )}
               </div>
@@ -4174,12 +4305,16 @@ export default function WhatsAppPage() {
                 <Mic className="h-4 w-4" />
               </button>
               <button
-                onClick={isVoiceRecording ? stopVoiceRecording : startVoiceRecording}
-                disabled={!voiceRecordingSupported || isSending}
-                className={`p-1.5 rounded-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
-                  isVoiceRecording ? 'bg-red-100 text-red-600' : 'hover:bg-gray-100 text-gray-500'
+                onPointerDown={handleVoicePointerDown}
+                onPointerMove={handleVoicePointerMove}
+                onPointerUp={handleVoicePointerUp}
+                onPointerCancel={handleVoicePointerCancel}
+                onClick={isVoiceRecording && !isHoldMode ? stopVoiceRecording : undefined}
+                disabled={!voiceRecordingSupported || isSending || !!voiceAudioBlob}
+                className={`p-1.5 rounded-lg transition-all select-none touch-none disabled:opacity-40 disabled:cursor-not-allowed ${
+                  isHoldMode ? 'bg-red-200 text-red-700 scale-110' : isVoiceRecording ? 'bg-red-100 text-red-600' : 'hover:bg-gray-100 text-gray-500'
                 }`}
-                title={voiceRecordingSupported ? (isVoiceRecording ? 'Stop voice note recording' : 'Record voice note') : 'Voice recording not supported'}
+                title={voiceRecordingSupported ? 'Hold to record voice note' : 'Voice recording not supported'}
               >
                 <AudioLines className="h-4 w-4" />
               </button>

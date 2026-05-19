@@ -23,6 +23,9 @@ FROM node:20-alpine
 
 WORKDIR /app
 
+# ffmpeg needed for audio format conversion (webm → ogg for WhatsApp uploads)
+RUN apk add --no-cache ffmpeg
+
 # Copy package files
 COPY package*.json ./
 
