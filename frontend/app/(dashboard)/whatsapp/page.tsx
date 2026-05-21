@@ -11,6 +11,8 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import api from '@/lib/api';
+import { authService, User as CurrentUser } from '@/lib/auth';
+import { hasChannelAccess } from '@/lib/channel-access';
 
 // ─── Interfaces ─────────────────────────────────────────────
 
@@ -842,6 +844,8 @@ export default function WhatsAppPage() {
   const [replyText, setReplyText] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [accessResolved, setAccessResolved] = useState(false);
+  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [search, setSearch] = useState('');
   const [sendError, setSendError] = useState('');
   const [senderAccounts, setSenderAccounts] = useState<WhatsAppSenderAccount[]>([]);
@@ -1059,9 +1063,33 @@ export default function WhatsAppPage() {
   const [flowTestPhone, setFlowTestPhone] = useState('');
   const [flowTestResult, setFlowTestResult] = useState<string | null>(null);
 
+  const canAccessWhatsApp = hasChannelAccess(currentUser, 'whatsapp');
+
   // ─── Effects ──────────────────────────────────────────────
 
   useEffect(() => {
+    let active = true;
+    void authService
+      .getCurrentUser()
+      .catch(() => authService.getUser())
+      .then((user) => {
+        if (!active) return;
+        setCurrentUser(user);
+        setAccessResolved(true);
+        if (!hasChannelAccess(user, 'whatsapp')) {
+          setIsLoading(false);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!accessResolved || !canAccessWhatsApp) {
+      return;
+    }
     fetchSenderAccounts();
     fetchWebhookInfo();
     fetchAutoResponses();
@@ -1069,9 +1097,12 @@ export default function WhatsAppPage() {
     fetchTypeformForms();
     fetchAssignments();
     fetchTeamUsers();
-  }, []);
+  }, [accessResolved, canAccessWhatsApp]);
 
   useEffect(() => {
+    if (!accessResolved || !canAccessWhatsApp) {
+      return;
+    }
     fetchInbox();
     const interval = setInterval(fetchInbox, INBOX_POLL_INTERVAL_MS);
     const onVisible = () => { if (document.visibilityState === 'visible') fetchInbox(); };
@@ -1080,7 +1111,7 @@ export default function WhatsAppPage() {
       clearInterval(interval);
       document.removeEventListener('visibilitychange', onVisible);
     };
-  }, []);
+  }, [accessResolved, canAccessWhatsApp]);
 
   useEffect(() => {
     if (!selectedSenderId) {
@@ -2200,7 +2231,10 @@ export default function WhatsAppPage() {
       const formData = new FormData();
       formData.append('file', file);
       const res = await api.post('/integrations/whatsapp/media/upload', formData, {
-        params: selectedSenderId ? { integrationId: selectedSenderId } : undefined,
+        params: {
+          ...(selectedSenderId ? { integrationId: selectedSenderId } : {}),
+          ...(attachmentType === 'audio' ? { voiceNote: '1' } : {}),
+        },
       });
       setAttachmentMediaId(res.data.id || '');
       setAttachmentFileName(file.name);
@@ -2284,8 +2318,8 @@ export default function WhatsAppPage() {
       } else if (attachmentType === 'audio') {
         endpoint = '/integrations/whatsapp/send/audio';
         body = attachmentMediaId
-          ? { to: selectedConv.waId, audioId: attachmentMediaId }
-          : { to: selectedConv.waId, audioUrl: attachmentUrl.trim() };
+          ? { to: selectedConv.waId, audioId: attachmentMediaId, isVoiceMessage: true }
+          : { to: selectedConv.waId, audioUrl: attachmentUrl.trim(), isVoiceMessage: true };
       } else {
         endpoint = '/integrations/whatsapp/send/document';
         body = attachmentMediaId
@@ -2604,7 +2638,10 @@ export default function WhatsAppPage() {
         const formData = new FormData();
         formData.append('file', new File([voiceAudioBlob], `voice-note-${Date.now()}.${extension}`, { type: voiceAudioBlob.type || 'audio/webm' }));
         const uploadRes = await api.post('/integrations/whatsapp/media/upload', formData, {
-          params: selectedSenderId ? { integrationId: selectedSenderId } : undefined,
+          params: {
+            ...(selectedSenderId ? { integrationId: selectedSenderId } : {}),
+            voiceNote: '1',
+          },
         });
         uploadedMediaId = String(uploadRes.data?.id || '').trim();
         if (!uploadedMediaId) {
@@ -2614,7 +2651,7 @@ export default function WhatsAppPage() {
         // Persist so it survives a conversation switch within the same tab
         try { localStorage.setItem(lsKey, JSON.stringify({ mediaId: uploadedMediaId, ts: Date.now() })); } catch { /* ignore */ }
       }
-      const body: Record<string, any> = { to: selectedConv.waId, audioId: uploadedMediaId };
+      const body: Record<string, any> = { to: selectedConv.waId, audioId: uploadedMediaId, isVoiceMessage: true };
       if (replyingTo?.messageId) {
         body.replyToMessageId = replyingTo.messageId;
       }
@@ -3131,6 +3168,17 @@ export default function WhatsAppPage() {
   };
 
   // ─── Render ───────────────────────────────────────────────
+
+  if (accessResolved && !canAccessWhatsApp) {
+    return (
+      <div className="rounded-2xl border border-gray-200 bg-white p-8 shadow-sm">
+        <h1 className="text-2xl font-bold text-gray-900">WhatsApp</h1>
+        <p className="mt-3 max-w-lg text-sm leading-6 text-gray-500">
+          Nu ai acces la canalul `WhatsApp` pe acest user. Un admin poate activa accesul din `Team Members`.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col h-[calc(100vh-64px)] bg-white rounded-2xl overflow-hidden shadow-sm border border-gray-100">

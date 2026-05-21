@@ -7,6 +7,7 @@ import { User } from '../database/entities/user.entity';
 import { Company } from '../database/entities/company.entity';
 import { Activity } from '../database/entities/activity.entity';
 import { Deal } from '../database/entities/deal.entity';
+import { PipelineStage } from '../database/entities/pipeline-stage.entity';
 import { CreateContactDto } from './dto/create-contact.dto';
 import { UpdateContactDto } from './dto/update-contact.dto';
 import { QueryContactsDto, SortField } from './dto/query-contacts.dto';
@@ -149,6 +150,82 @@ export class ContactsService {
     ContactSource.MANYCHAT,
   ]);
 
+  private normalizeTag(tag: unknown): string {
+    return String(tag || '').trim().replace(/\s+/g, ' ');
+  }
+
+  private dedupeTags(tags?: unknown[]): string[] {
+    if (!Array.isArray(tags)) return [];
+    const seen = new Set<string>();
+    const result: string[] = [];
+
+    for (const tag of tags) {
+      const normalized = this.normalizeTag(tag);
+      if (!normalized) continue;
+      const key = normalized.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      result.push(normalized);
+    }
+
+    return result;
+  }
+
+  private mergeTags(existing?: unknown[], incoming?: unknown[]): string[] {
+    return this.dedupeTags([...(Array.isArray(existing) ? existing : []), ...(Array.isArray(incoming) ? incoming : [])]);
+  }
+
+  private async moveTaggedContactToContactedStage(workspaceId: string, contact: Contact): Promise<boolean> {
+    if (!Array.isArray(contact.tags) || contact.tags.length === 0) {
+      return false;
+    }
+
+    const pipelineStageRepository = this.contactRepository.manager.getRepository(PipelineStage);
+
+    if (contact.pipelineStageId) {
+      const currentStage = await pipelineStageRepository.findOne({
+        where: { id: contact.pipelineStageId, workspaceId, deletedAt: null as any },
+      });
+      if (currentStage?.name && currentStage.name.toLowerCase().includes('contact')) {
+        return false;
+      }
+    }
+
+    const buildContactedQuery = () =>
+      pipelineStageRepository
+        .createQueryBuilder('stage')
+        .where('stage.workspaceId = :workspaceId', { workspaceId })
+        .andWhere('stage.deletedAt IS NULL')
+        .andWhere('LOWER(stage.name) LIKE :contactedPattern', { contactedPattern: '%contact%' })
+        .orderBy('stage.displayOrder', 'ASC');
+
+    let contactedStage: PipelineStage | null = null;
+    if (contact.pipelineId) {
+      contactedStage = await buildContactedQuery()
+        .andWhere('stage.pipelineId = :pipelineId', { pipelineId: contact.pipelineId })
+        .getOne();
+    }
+
+    if (!contactedStage) {
+      contactedStage = await buildContactedQuery().getOne();
+    }
+
+    if (!contactedStage || contact.pipelineStageId === contactedStage.id) {
+      return false;
+    }
+
+    contact.pipelineStageId = contactedStage.id;
+    if (!contact.pipelineId) {
+      contact.pipelineId = contactedStage.pipelineId;
+    }
+    if (contact.status === ContactStatus.LEAD) {
+      contact.status = ContactStatus.PROSPECT;
+    }
+    contact.lastContactedAt = new Date();
+
+    return true;
+  }
+
   private async findDuplicateByPhone(
     workspaceId: string,
     rawPhone?: string,
@@ -199,10 +276,9 @@ export class ContactsService {
     if (typeof dto.leadScore === 'number') next.leadScore = dto.leadScore;
     if (typeof dto.emailOptIn === 'boolean') next.emailOptIn = dto.emailOptIn;
 
-    const incomingTags = Array.isArray(dto.tags) ? dto.tags.filter(Boolean).map(tag => String(tag).trim()) : [];
+    const incomingTags = this.dedupeTags(dto.tags);
     if (incomingTags.length > 0) {
-      const existingTags = Array.isArray(next.tags) ? next.tags.filter(Boolean).map(tag => String(tag).trim()) : [];
-      next.tags = Array.from(new Set([...existingTags, ...incomingTags]));
+      next.tags = this.mergeTags(next.tags, incomingTags);
     }
 
     if (dto.leadScore === undefined) {
@@ -223,6 +299,7 @@ export class ContactsService {
       if (existingByPhone) {
         if (isExternal) {
           const updatedExisting = this.applyExternalDuplicateUpdates(existingByPhone, dto, normalizedPhone || undefined);
+          await this.moveTaggedContactToContactedStage(workspaceId, updatedExisting);
           const savedExisting = await this.contactRepository.save(updatedExisting);
           this.eventEmitter.emit('contact.updated', {
             contact: savedExisting,
@@ -309,6 +386,7 @@ export class ContactsService {
     const contact = this.contactRepository.create({
       ...dto,
       phoneNormalized: normalizedPhone || undefined,
+      tags: this.dedupeTags(dto.tags),
       workspaceId,
       pipelineId: pipelineId || dto.pipelineId,
       pipelineStageId: pipelineStageId || dto.pipelineStageId,
@@ -322,6 +400,7 @@ export class ContactsService {
       contact.updateLeadScore();
     }
 
+    await this.moveTaggedContactToContactedStage(workspaceId, contact);
     const savedContact = await this.contactRepository.save(contact);
 
     // Emit contact.created event for workflow triggers
@@ -373,12 +452,16 @@ export class ContactsService {
 
     // Update contact
     Object.assign(contact, dto);
+    if (dto.tags !== undefined) {
+      contact.tags = this.dedupeTags(dto.tags);
+    }
 
     // Recalculate lead score if relevant fields changed
     if (dto.email || dto.jobTitle || dto.companyId !== undefined) {
       contact.updateLeadScore();
     }
 
+    await this.moveTaggedContactToContactedStage(workspaceId, contact);
     const updatedContact = await this.contactRepository.save(contact);
 
     // Emit contact.updated event for workflow triggers
@@ -395,7 +478,7 @@ export class ContactsService {
     });
     this.logger.log(`Contact updated event emitted for contact ${updatedContact.id}`);
 
-    return this.findOne(workspaceId, id, ['owner', 'company']);
+    return this.findOne(workspaceId, id, ['owner', 'company', 'setter', 'caller', 'closer']);
   }
 
   async remove(workspaceId: string, id: string): Promise<void> {
@@ -822,13 +905,12 @@ export class ContactsService {
   async addTags(workspaceId: string, contactId: string, tags: string[]): Promise<Contact> {
     const contact = await this.findOne(workspaceId, contactId);
 
-    const currentTags = contact.tags || [];
-    const newTags = tags.filter(tag => !currentTags.includes(tag));
-
-    if (newTags.length > 0) {
-      contact.tags = [...currentTags, ...newTags];
+    const mergedTags = this.mergeTags(contact.tags, tags);
+    if (mergedTags.length !== (contact.tags || []).length) {
+      contact.tags = mergedTags;
+      await this.moveTaggedContactToContactedStage(workspaceId, contact);
       await this.contactRepository.save(contact);
-      this.logger.log(`Added tags ${newTags.join(', ')} to contact ${contactId}`);
+      this.logger.log(`Added tags to contact ${contactId}`);
     }
 
     return contact;
@@ -838,12 +920,39 @@ export class ContactsService {
     const contact = await this.findOne(workspaceId, contactId);
 
     if (contact.tags && contact.tags.length > 0) {
-      contact.tags = contact.tags.filter(tag => !tags.includes(tag));
+      const toRemove = new Set(this.dedupeTags(tags).map(tag => tag.toLowerCase()));
+      contact.tags = contact.tags.filter(tag => !toRemove.has(this.normalizeTag(tag).toLowerCase()));
       await this.contactRepository.save(contact);
-      this.logger.log(`Removed tags ${tags.join(', ')} from contact ${contactId}`);
+      this.logger.log(`Removed tags from contact ${contactId}`);
     }
 
     return contact;
+  }
+
+  async moveExistingTaggedContactsToContacted(workspaceId: string): Promise<{
+    checked: number;
+    moved: number;
+  }> {
+    const contacts = await this.contactRepository
+      .createQueryBuilder('contact')
+      .where('contact.workspaceId = :workspaceId', { workspaceId })
+      .andWhere('contact.deletedAt IS NULL')
+      .andWhere("COALESCE(contact.tags, '') != ''")
+      .getMany();
+
+    let moved = 0;
+    for (const contact of contacts) {
+      const shouldMove = await this.moveTaggedContactToContactedStage(workspaceId, contact);
+      if (!shouldMove) continue;
+      await this.contactRepository.save(contact);
+      moved += 1;
+    }
+
+    this.logger.log(`Backfilled tagged contacts to Contacted stage in workspace ${workspaceId}: ${moved}/${contacts.length}`);
+    return {
+      checked: contacts.length,
+      moved,
+    };
   }
 
   async getAnalyticsOverview(workspaceId: string, ownerId?: string): Promise<{

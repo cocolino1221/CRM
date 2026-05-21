@@ -67,7 +67,7 @@ export class ContactsController {
   @Get(':id')
   @ApiOperation({ summary: 'Get contact by ID' })
   @ApiParam({ name: 'id', description: 'Contact ID' })
-  @ApiQuery({ name: 'include', required: false, description: 'Relations to include (company,owner,deals,activities)' })
+  @ApiQuery({ name: 'include', required: false, description: 'Relations to include (company,owner,deals,activities,setter,caller,closer)' })
   @ApiResponse({ status: 200, description: 'Contact retrieved successfully' })
   @ApiResponse({ status: 404, description: 'Contact not found' })
   @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'support_agent')
@@ -76,7 +76,11 @@ export class ContactsController {
     @Param('id', ParseUUIDPipe) id: string,
     @Query('include') include?: string,
   ) {
-    const relations = include ? include.split(',').filter(r => ['company', 'owner', 'deals', 'activities'].includes(r)) : [];
+    const relations = include
+      ? include
+          .split(',')
+          .filter((relation) => ['company', 'owner', 'deals', 'activities', 'setter', 'caller', 'closer'].includes(relation))
+      : [];
     return this.contactsService.findOne(workspaceId, id, relations);
   }
 

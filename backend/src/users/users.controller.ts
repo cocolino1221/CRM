@@ -112,7 +112,13 @@ export class UsersController {
     @Body() updateUserDto: UpdateUserDto,
     @Req() req: any,
   ): Promise<UserResponseDto> {
-    return this.usersService.update(id, updateUserDto, req.user.workspaceId);
+    return this.usersService.update(
+      id,
+      updateUserDto,
+      req.user.workspaceId,
+      req.user.role,
+      req.user.id,
+    );
   }
 
   @Patch(':id/role')

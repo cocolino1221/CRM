@@ -118,14 +118,24 @@ export class IntegrationsService implements OnModuleInit {
    * Install a new integration
    */
   async install(workspaceId: string, userId: string, dto: InstallIntegrationDto): Promise<Integration> {
+    const providerKey = String(dto.config?.provider || dto.externalId || '')
+      .trim()
+      .toLowerCase();
+    const allowsMultipleSocialAccounts =
+      dto.type === IntegrationType.API &&
+      dto.authType === IntegrationAuthType.OAUTH2 &&
+      ['facebook', 'instagram', 'tiktok'].includes(providerKey);
+
     // Check if integration already exists
-    const existing = await this.integrationRepository.findOne({
-      where: {
-        workspaceId,
-        type: dto.type,
-        externalId: dto.externalId || undefined,
-      },
-    });
+    const existing = allowsMultipleSocialAccounts
+      ? null
+      : await this.integrationRepository.findOne({
+          where: {
+            workspaceId,
+            type: dto.type,
+            externalId: dto.externalId || undefined,
+          },
+        });
 
     if (existing) {
       // Update existing integration instead of blocking reconnection
@@ -257,7 +267,7 @@ export class IntegrationsService implements OnModuleInit {
       let credentials: any;
 
       switch (integration.authType) {
-        case IntegrationAuthType.OAUTH2:
+        case IntegrationAuthType.OAUTH2: {
           this.logger.log(`[${id}] Starting OAuth2 token exchange with code: ${authData.code?.substring(0, 10)}...`);
           credentials = await this.oauthService.exchangeCodeForTokens(integration, authData.code);
 
@@ -268,22 +278,26 @@ export class IntegrationsService implements OnModuleInit {
             throw new BadRequestException('OAuth provider did not return an access token');
           }
 
-          // For Google, refresh token is optional - it may not be returned if user already authorized
-          // For other providers, refresh token is usually required for long-term access
+          const oauthProvider = String(integration.config?.provider || integration.externalId || '').toLowerCase().trim();
+          const allowsAccessTokenOnly =
+            integration.type === IntegrationType.GOOGLE ||
+            (integration.type === IntegrationType.API && ['facebook', 'instagram', 'tiktok'].includes(oauthProvider));
+
+          // For Google and API social OAuth providers, refresh token is optional.
+          // For other providers, refresh token is usually required for long-term access.
           if (!credentials.refreshToken) {
-            if (integration.type === IntegrationType.GOOGLE) {
-              // Google can work without refresh token, but token will expire and user needs to reconnect
-              this.logger.warn(`[${id}] Google OAuth did not return a refresh token. Access token will expire in ~1 hour. User may need to reconnect.`);
-              
-              // Add a warning note to the integration config
+            if (allowsAccessTokenOnly) {
+              this.logger.warn(
+                `[${id}] OAuth provider did not return a refresh token for ${oauthProvider || integration.type}. ` +
+                'Integration may require periodic reconnect.'
+              );
+
               if (!integration.config) {
                 integration.config = {};
               }
-              integration.config.warning = 'No refresh token available. Access token will expire in ~1 hour. Please reconnect to get a refresh token for long-term access.';
-              
-              // Continue without throwing error - integration will work until token expires
+              integration.config.warning =
+                'No refresh token available. Access may expire and require reconnect.';
             } else {
-              // For other providers, refresh token is critical
               this.logger.warn(`[${id}] OAuth provider did not return a refresh token. Integration may fail when access token expires.`);
               throw new BadRequestException(
                 'OAuth provider did not return a refresh token. ' +
@@ -299,6 +313,7 @@ export class IntegrationsService implements OnModuleInit {
           }
 
           break;
+        }
         case IntegrationAuthType.API_KEY:
           credentials = { apiKey: authData.apiKey, apiSecret: authData.apiSecret };
           break;

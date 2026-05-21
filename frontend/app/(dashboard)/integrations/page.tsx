@@ -67,6 +67,7 @@ export default function IntegrationsPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [modalError, setModalError] = useState('');
   const [connectedIntegrations, setConnectedIntegrations] = useState<Record<string, any>>({});
+  const [connectedIntegrationRows, setConnectedIntegrationRows] = useState<any[]>([]);
   const [showWebhookModal, setShowWebhookModal] = useState(false);
   const [isWebhookSubmitting, setIsWebhookSubmitting] = useState(false);
   const [webhookError, setWebhookError] = useState('');
@@ -116,6 +117,58 @@ export default function IntegrationsPage() {
     });
 
     return map;
+  };
+
+  const getProviderKey = (integration: any): string =>
+    String(integration?.config?.provider || integration?.externalId || integration?.type || '')
+      .trim()
+      .toLowerCase();
+
+  const isSocialOAuthIntegration = (integration?: Integration | null) =>
+    ['facebook', 'instagram', 'tiktok'].includes(String(integration?.id || '').toLowerCase());
+
+  const getConnectedEntriesForIntegration = (integrationId: string) => {
+    const normalizedId = String(integrationId || '').trim().toLowerCase();
+    return connectedIntegrationRows
+      .filter((entry) => {
+        const typeKey = String(entry?.type || '').trim().toLowerCase();
+        const providerKey = getProviderKey(entry);
+
+        if (normalizedId === 'facebook' || normalizedId === 'instagram' || normalizedId === 'tiktok') {
+          return typeKey === 'api' && providerKey === normalizedId;
+        }
+
+        return typeKey === normalizedId || providerKey === normalizedId;
+      })
+      .sort((left, right) => {
+        const leftTime = new Date(left?.updatedAt || left?.createdAt || 0).getTime();
+        const rightTime = new Date(right?.updatedAt || right?.createdAt || 0).getTime();
+        return rightTime - leftTime;
+      });
+  };
+
+  const getConnectedCount = (integrationId: string) => getConnectedEntriesForIntegration(integrationId).length;
+
+  const getConnectedAccountLabel = (entry: any, integrationId?: string) => {
+    const providerKey = String(integrationId || getProviderKey(entry)).toLowerCase();
+
+    if (providerKey === 'facebook') {
+      return String(entry?.config?.pageName || entry?.name || 'Facebook Page').trim();
+    }
+
+    if (providerKey === 'instagram') {
+      const username = String(entry?.config?.igUsername || '').trim();
+      if (username) {
+        return `@${username.replace(/^@+/, '')}`;
+      }
+      return String(entry?.name || 'Instagram account').trim();
+    }
+
+    if (providerKey === 'tiktok') {
+      return String(entry?.name || 'TikTok account').trim();
+    }
+
+    return String(entry?.name || providerKey || 'Connected account').trim();
   };
 
   const [integrations, setIntegrations] = useState<Integration[]>([
@@ -772,45 +825,51 @@ export default function IntegrationsPage() {
     { id: 'productivity', name: 'Productivity' },
   ];
 
-  // Fetch available and connected integrations on mount
+  const refreshIntegrationCatalog = async () => {
+    try {
+      const availableResponse = await api.get('/integrations/available');
+      const available = availableResponse.data.integrations || [];
+
+      const connectedResponse = await api.get('/integrations');
+      const connected = connectedResponse.data.integrations || [];
+
+      const connectedMap = buildConnectedIntegrationMap(connected);
+
+      setConnectedIntegrationRows(connected);
+      setConnectedIntegrations(connectedMap);
+
+      setIntegrations(prev => prev.map(staticInt => {
+        const backendInt = available.find((b: any) => String(b.type || '').toLowerCase() === staticInt.id);
+        const connectedEntries = connected.filter((entry: any) => {
+          const typeKey = String(entry?.type || '').toLowerCase();
+          const providerKey = getProviderKey(entry);
+
+          if (isSocialOAuthIntegration(staticInt)) {
+            return typeKey === 'api' && providerKey === staticInt.id;
+          }
+
+          return typeKey === staticInt.id || providerKey === staticInt.id;
+        });
+        const connectedEntry = connectedMap[staticInt.id];
+        if (!backendInt && connectedEntries.length === 0) return staticInt;
+
+        const isConnected = connectedEntries.some((entry: any) =>
+          !['disabled', 'expired', 'suspended', 'error'].includes(String(entry.status || '').toLowerCase()),
+        );
+
+        return {
+          ...staticInt,
+          connected: isConnected,
+          status: connectedEntry?.status,
+        };
+      }));
+    } catch (error) {
+      console.error('Failed to fetch integrations:', error);
+    }
+  };
+
   useEffect(() => {
-    const fetchIntegrations = async () => {
-      try {
-        // Fetch available integrations from backend (only those with handlers)
-        const availableResponse = await api.get('/integrations/available');
-        const available = availableResponse.data.integrations || [];
-
-        // Fetch connected integrations
-        const connectedResponse = await api.get('/integrations');
-        const connected = connectedResponse.data.integrations || [];
-
-        const connectedMap = buildConnectedIntegrationMap(connected);
-
-        setConnectedIntegrations(connectedMap);
-
-        // Merge backend connection status into the static integrations list
-        // (preserves static configFields which are more detailed than the generic fallback)
-        setIntegrations(prev => prev.map(staticInt => {
-          const backendInt = available.find((b: any) => String(b.type || '').toLowerCase() === staticInt.id);
-          const connectedEntry = connectedMap[staticInt.id];
-          if (!backendInt && !connectedEntry) return staticInt;
-          // Webhook-only integrations (typeform, manychat, calendly) work without active API key test — treat pending as connected
-          const isConnected = connectedEntry
-            ? !['disabled', 'expired', 'suspended', 'error'].includes(String(connectedEntry.status || '').toLowerCase())
-            : false;
-          return {
-            ...staticInt,
-            connected: isConnected,
-            status: connectedEntry?.status,
-          };
-        }));
-      } catch (error) {
-        console.error('Failed to fetch integrations:', error);
-        // Keep hardcoded integrations as fallback
-      }
-    };
-
-    fetchIntegrations();
+    void refreshIntegrationCatalog();
   }, []);
 
   const filteredIntegrations = integrations.filter((integration) => {
@@ -835,45 +894,26 @@ export default function IntegrationsPage() {
     return result;
   };
 
-  const handleConnect = async (integration: Integration) => {
-    // If already connected, show manage modal
-    const existing = connectedIntegrations[integration.id];
+  const managedConnectedEntries = managingIntegration
+    ? getConnectedEntriesForIntegration(managingIntegration.id)
+    : [];
+  const managedPrimaryEntry = managingIntegration
+    ? connectedIntegrations[managingIntegration.id] || managedConnectedEntries[0] || null
+    : null;
+  const isManagingSocialIntegration = isSocialOAuthIntegration(managingIntegration);
 
-    if (integration.connected && existing) {
-      setManagingIntegration(integration);
-      setConfigData(buildPrefilledConfigData(integration, existing));
-      // Fetch Typeform forms if applicable
-      if (integration.id === 'typeform' && existing.id) {
-        setIsLoadingForms(true);
-        api.get(`/integrations/${existing.id}/typeform/forms`)
-          .then(res => setTypeformForms(res.data.forms || []))
-          .catch(() => setTypeformForms([]))
-          .finally(() => setIsLoadingForms(false));
-      }
-      return;
-    }
+  const mapProvider = (id?: string, provider?: string) => {
+    const p = (provider || id || '').toLowerCase().trim();
+    if (p === 'gmail' || p.includes('google')) return 'google';
+    return p;
+  };
 
-    // Normalize provider names (e.g. Gmail uses Google OAuth)
-    const mapProvider = (id?: string, provider?: string) => {
-      const p = (provider || id || '').toLowerCase().trim();
-      console.log('[mapProvider] Input - id:', id, 'provider:', provider, 'result p:', p);
-
-      // Map Gmail and Google Workspace to google
-      if (p === 'gmail' || p.includes('google')) return 'google';
-
-      // Return the provider as-is
-      const result = p;
-      console.log('[mapProvider] Output:', result);
-      return result;
-    };
-
-    // For OAuth integrations, redirect to integration OAuth flow
+  const startOAuthConnect = async (integration: Integration, existingIntegrationId?: string) => {
     if (integration.oauth) {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000/api/v1';
       const provider = mapProvider(integration.id, integration.oauthProvider);
 
       try {
-        // Fetch current user data from API to ensure we have the correct IDs
         const accessToken = localStorage.getItem('accessToken');
         if (!accessToken) {
           setModalError('Please log in first');
@@ -899,12 +939,8 @@ export default function IntegrationsPage() {
           return;
         }
 
-        // Redirect to OAuth endpoint with workspace and user context.
-        // If an integration record already exists (even if pending), reuse it to avoid "already connected" errors.
-        const integrationIdParam = existing?.id ? `&integration_id=${existing.id}` : '';
+        const integrationIdParam = existingIntegrationId ? `&integration_id=${existingIntegrationId}` : '';
         const oauthUrl = `${apiUrl}/integrations/oauth/${provider}?workspace_id=${workspaceId}&user_id=${userId}${integrationIdParam}`;
-        console.log('[OAuth] Redirecting to:', oauthUrl);
-        console.log('[OAuth] Integration details:', { id: integration.id, name: integration.name, provider, oauthProvider: integration.oauthProvider });
         window.location.href = oauthUrl;
         return;
       } catch (error) {
@@ -913,8 +949,29 @@ export default function IntegrationsPage() {
         return;
       }
     }
+  };
 
-    // For manual config integrations, show modal
+  const handleConnect = async (integration: Integration) => {
+    const existing = connectedIntegrations[integration.id];
+
+    if (integration.connected && existing) {
+      setManagingIntegration(integration);
+      setConfigData(buildPrefilledConfigData(integration, existing));
+      if (integration.id === 'typeform' && existing.id) {
+        setIsLoadingForms(true);
+        api.get(`/integrations/${existing.id}/typeform/forms`)
+          .then(res => setTypeformForms(res.data.forms || []))
+          .catch(() => setTypeformForms([]))
+          .finally(() => setIsLoadingForms(false));
+      }
+      return;
+    }
+
+    if (integration.oauth) {
+      await startOAuthConnect(integration, existing?.id);
+      return;
+    }
+
     setSelectedIntegration(integration);
     setModalError('');
     setConfigData({});
@@ -938,22 +995,33 @@ export default function IntegrationsPage() {
 
     try {
       await api.delete(`/integrations/${connected.id}`);
-
-      // Update local state
-      const newConnected = { ...connectedIntegrations };
-      delete newConnected[integration.id];
-      setConnectedIntegrations(newConnected);
-
-      setIntegrations(prevIntegrations =>
-        prevIntegrations.map(int =>
-          int.id === integration.id ? { ...int, connected: false } : int
-        )
-      );
-
+      await refreshIntegrationCatalog();
       setManagingIntegration(null);
     } catch (err: any) {
       console.error('Failed to disconnect integration:', err);
       setModalError(err.response?.data?.message || 'Failed to disconnect integration');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleDisconnectEntry = async (integration: Integration, entry: any) => {
+    setIsSubmitting(true);
+    setModalError('');
+
+    try {
+      await api.delete(`/integrations/${entry.id}`);
+      await refreshIntegrationCatalog();
+
+      const remainingEntries = getConnectedEntriesForIntegration(integration.id).filter(
+        (item) => item.id !== entry.id,
+      );
+      if (!remainingEntries.length) {
+        setManagingIntegration(null);
+      }
+    } catch (err: any) {
+      console.error('Failed to disconnect integration entry:', err);
+      setModalError(err.response?.data?.message || 'Failed to disconnect account');
     } finally {
       setIsSubmitting(false);
     }
@@ -1061,23 +1129,7 @@ export default function IntegrationsPage() {
         credentials,
       });
 
-      const connectedResponse = await api.get('/integrations');
-      const connected = connectedResponse.data.integrations || [];
-      const connectedMap = buildConnectedIntegrationMap(connected);
-      setConnectedIntegrations(connectedMap);
-
-      const refreshedEntry = connectedMap[managingIntegration.id];
-      setIntegrations((prevIntegrations) =>
-        prevIntegrations.map((int) =>
-          int.id === managingIntegration.id
-            ? {
-                ...int,
-                connected: true,
-                status: refreshedEntry?.status || int.status,
-              }
-            : int,
-        ),
-      );
+      await refreshIntegrationCatalog();
 
       alert('Configurarea integrarii a fost salvata.');
     } catch (err: any) {
@@ -1157,24 +1209,13 @@ export default function IntegrationsPage() {
       });
 
       // Refetch connected integrations to get the full integration data
-      const connectedResponse = await api.get('/integrations');
-      const connected = connectedResponse.data.integrations || [];
-
-      const connectedMap = buildConnectedIntegrationMap(connected);
-
-      setConnectedIntegrations(connectedMap);
-
-      // Update the integration status locally
-      const updatedIntegrations = integrations.map(int =>
-        int.id === selectedIntegration.id ? { ...int, connected: true } : int
-      );
-      setIntegrations(updatedIntegrations);
+      await refreshIntegrationCatalog();
 
       handleCloseModal();
 
       // Show success message with unique webhook URL
       const createdIntegration = response.data?.integration || response.data;
-      const createdIntegrationId = createdIntegration?.id || connectedMap[integrationId]?.id;
+      const createdIntegrationId = createdIntegration?.id || connectedIntegrations[integrationId]?.id;
       const apiUrl = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api/v1').replace('/api/v1', '');
       const needsWebhook = ['typeform', 'calendly', 'manychat'].includes(selectedIntegration.id);
 
@@ -1425,7 +1466,9 @@ export default function IntegrationsPage() {
                 {integration.connected && (
                   <div className="flex items-center gap-1 rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">
                     <Check className="h-3 w-3" />
-                    Connected
+                    {isSocialOAuthIntegration(integration) && getConnectedCount(integration.id) > 1
+                      ? `${getConnectedCount(integration.id)} accounts`
+                      : 'Connected'}
                   </div>
                 )}
               </div>
@@ -1825,7 +1868,9 @@ export default function IntegrationsPage() {
                   Manage {managingIntegration.name}
                 </h2>
                 <p className="text-sm text-gray-600">
-                  {connectedIntegrations[managingIntegration.id]?.status || 'active'} • Connected
+                  {isManagingSocialIntegration
+                    ? `${managedConnectedEntries.length} ${managedConnectedEntries.length === 1 ? 'account' : 'accounts'} connected`
+                    : `${managedPrimaryEntry?.status || 'active'} • Connected`}
                 </p>
               </div>
             </div>
@@ -1852,45 +1897,117 @@ export default function IntegrationsPage() {
             <div className="space-y-4 mb-6">
               <div className="grid grid-cols-2 gap-4">
                 <div className="rounded-xl bg-gray-50 p-4">
-                  <p className="text-sm font-medium text-gray-600 mb-1">Status</p>
+                  <p className="text-sm font-medium text-gray-600 mb-1">
+                    {isManagingSocialIntegration ? 'Connected Accounts' : 'Status'}
+                  </p>
                   <p className="text-lg font-semibold text-gray-900 capitalize">
-                    {connectedIntegrations[managingIntegration.id]?.status || 'Active'}
+                    {isManagingSocialIntegration
+                      ? managedConnectedEntries.length
+                      : managedPrimaryEntry?.status || 'Active'}
                   </p>
                 </div>
                 <div className="rounded-xl bg-gray-50 p-4">
                   <p className="text-sm font-medium text-gray-600 mb-1">Last Sync</p>
                   <p className="text-lg font-semibold text-gray-900">
-                    {connectedIntegrations[managingIntegration.id]?.lastActivityAt
-                      ? new Date(connectedIntegrations[managingIntegration.id].lastActivityAt).toLocaleDateString()
+                    {managedPrimaryEntry?.lastActivityAt
+                      ? new Date(managedPrimaryEntry.lastActivityAt).toLocaleDateString()
                       : 'Never'}
                   </p>
                 </div>
               </div>
 
-              {connectedIntegrations[managingIntegration.id]?.syncInfo && (
+              {managedPrimaryEntry?.syncInfo && (
                 <div className="rounded-xl bg-blue-50 p-4">
                   <p className="text-sm font-medium text-blue-900 mb-2">Last Sync Info</p>
                   <div className="text-sm text-blue-800">
-                    <p>Records Processed: {connectedIntegrations[managingIntegration.id].syncInfo.recordsProcessed || 0}</p>
-                    <p>Records Created: {connectedIntegrations[managingIntegration.id].syncInfo.recordsCreated || 0}</p>
-                    <p>Records Updated: {connectedIntegrations[managingIntegration.id].syncInfo.recordsUpdated || 0}</p>
+                    <p>Records Processed: {managedPrimaryEntry.syncInfo.recordsProcessed || 0}</p>
+                    <p>Records Created: {managedPrimaryEntry.syncInfo.recordsCreated || 0}</p>
+                    <p>Records Updated: {managedPrimaryEntry.syncInfo.recordsUpdated || 0}</p>
                   </div>
                 </div>
               )}
             </div>
 
+            {isManagingSocialIntegration && (
+              <div className="rounded-xl border border-gray-200 bg-white p-4 mb-6">
+                <div className="flex items-center justify-between gap-3 mb-4">
+                  <div>
+                    <h4 className="text-sm font-semibold text-gray-900">Connected accounts</h4>
+                    <p className="text-xs text-gray-500 mt-1">
+                      Poți conecta mai multe conturi pe același workspace și apoi le grupezi în `Messages` pe profile.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void startOAuthConnect(managingIntegration)}
+                    disabled={isSubmitting}
+                    className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    Add another account
+                  </button>
+                </div>
+
+                <div className="space-y-3">
+                  {managedConnectedEntries.map((entry) => (
+                    <div key={entry.id} className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+                      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                        <div>
+                          <div className="text-sm font-semibold text-gray-900">
+                            {getConnectedAccountLabel(entry, managingIntegration.id)}
+                          </div>
+                          <div className="mt-1 text-xs text-gray-500">
+                            {managingIntegration.id === 'instagram'
+                              ? (entry?.config?.pageName ? `Linked page: ${entry.config.pageName}` : 'Instagram Business account')
+                              : (entry?.config?.pageId ? `Page ID: ${entry.config.pageId}` : 'Facebook Page')}
+                          </div>
+                          <div className="mt-1 text-xs text-gray-500">
+                            Status: <span className="font-medium text-gray-700">{entry?.status || 'active'}</span>
+                            {entry?.createdAt ? ` • Added ${new Date(entry.createdAt).toLocaleDateString('ro-RO')}` : ''}
+                          </div>
+                        </div>
+
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={() => void startOAuthConnect(managingIntegration, entry.id)}
+                            disabled={isSubmitting}
+                            className="rounded-lg border border-indigo-300 bg-white px-3 py-2 text-xs font-semibold text-indigo-700 hover:bg-indigo-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            Reconnect
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (confirm(`Disconnect ${getConnectedAccountLabel(entry, managingIntegration.id)}?`)) {
+                                void handleDisconnectEntry(managingIntegration, entry);
+                              }
+                            }}
+                            disabled={isSubmitting}
+                            className="rounded-lg border border-red-300 bg-white px-3 py-2 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            Disconnect
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Webhook URL for webhook-based integrations (not WhatsApp — it has its own URL block above) */}
-            {getWebhookUrl(managingIntegration.id, connectedIntegrations[managingIntegration.id]) && (
+            {getWebhookUrl(managingIntegration.id, managedPrimaryEntry) && (
               <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 mb-6">
                 <p className="text-xs font-semibold text-blue-800 mb-2">Your Webhook URL (unique to your workspace)</p>
                 <div className="flex items-center gap-2">
                   <code className="flex-1 text-xs bg-white border border-blue-200 rounded-lg px-3 py-2 text-blue-900 break-all">
-                    {getWebhookUrl(managingIntegration.id, connectedIntegrations[managingIntegration.id])}
+                    {getWebhookUrl(managingIntegration.id, managedPrimaryEntry)}
                   </code>
                   <button
                     type="button"
                     onClick={() => {
-                      const url = getWebhookUrl(managingIntegration.id, connectedIntegrations[managingIntegration.id]);
+                      const url = getWebhookUrl(managingIntegration.id, managedPrimaryEntry);
                       if (url) {
                         navigator.clipboard?.writeText(url);
                       }
@@ -2131,60 +2248,64 @@ export default function IntegrationsPage() {
               </div>
             )}
 
-            {/* Action Buttons */}
-            <div className="flex gap-3">
-              <button
-                onClick={() => handleTestConnection(managingIntegration)}
-                disabled={isSubmitting}
-                className="flex-1 rounded-xl border border-indigo-300 bg-white px-6 py-3 text-sm font-semibold text-indigo-700 hover:bg-indigo-50 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-              >
-                {isSubmitting ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Testing...
-                  </>
-                ) : (
-                  <>
-                    <Zap className="h-4 w-4" />
-                    Test Connection
-                  </>
-                )}
-              </button>
-              {connectedIntegrations[managingIntegration.id]?.capabilities?.supportsSync !== false && (
-                <button
-                  onClick={() => handleSyncNow(managingIntegration)}
-                  disabled={isSubmitting}
-                  className="flex-1 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-6 py-3 text-sm font-semibold text-white shadow-lg hover:shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                >
-                  {isSubmitting ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      Syncing...
-                    </>
-                  ) : (
-                    <>
-                      <Check className="h-4 w-4" />
-                      Sync Now
-                    </>
+            {!isManagingSocialIntegration && (
+              <>
+                {/* Action Buttons */}
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => handleTestConnection(managingIntegration)}
+                    disabled={isSubmitting}
+                    className="flex-1 rounded-xl border border-indigo-300 bg-white px-6 py-3 text-sm font-semibold text-indigo-700 hover:bg-indigo-50 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  >
+                    {isSubmitting ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Testing...
+                      </>
+                    ) : (
+                      <>
+                        <Zap className="h-4 w-4" />
+                        Test Connection
+                      </>
+                    )}
+                  </button>
+                  {connectedIntegrations[managingIntegration.id]?.capabilities?.supportsSync !== false && (
+                    <button
+                      onClick={() => handleSyncNow(managingIntegration)}
+                      disabled={isSubmitting}
+                      className="flex-1 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-6 py-3 text-sm font-semibold text-white shadow-lg hover:shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                    >
+                      {isSubmitting ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          Syncing...
+                        </>
+                      ) : (
+                        <>
+                          <Check className="h-4 w-4" />
+                          Sync Now
+                        </>
+                      )}
+                    </button>
                   )}
-                </button>
-              )}
-            </div>
+                </div>
 
-            {/* Disconnect Button */}
-            <div className="mt-6 pt-6 border-t border-gray-200">
-              <button
-                onClick={() => {
-                  if (confirm(`Are you sure you want to disconnect ${managingIntegration.name}? This will remove all synced data and credentials.`)) {
-                    handleDisconnect(managingIntegration);
-                  }
-                }}
-                disabled={isSubmitting}
-                className="w-full rounded-xl border-2 border-red-300 bg-white px-6 py-3 text-sm font-semibold text-red-600 hover:bg-red-50 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {isSubmitting ? 'Disconnecting...' : 'Disconnect Integration'}
-              </button>
-            </div>
+                {/* Disconnect Button */}
+                <div className="mt-6 pt-6 border-t border-gray-200">
+                  <button
+                    onClick={() => {
+                      if (confirm(`Are you sure you want to disconnect ${managingIntegration.name}? This will remove all synced data and credentials.`)) {
+                        handleDisconnect(managingIntegration);
+                      }
+                    }}
+                    disabled={isSubmitting}
+                    className="w-full rounded-xl border-2 border-red-300 bg-white px-6 py-3 text-sm font-semibold text-red-600 hover:bg-red-50 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isSubmitting ? 'Disconnecting...' : 'Disconnect Integration'}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}

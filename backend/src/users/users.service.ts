@@ -140,7 +140,13 @@ export class UsersService {
     id: string,
     updateUserDto: UpdateUserDto,
     workspaceId: string,
+    currentUserRole: UserRole,
+    currentUserId: string,
   ): Promise<UserResponseDto> {
+    if (![UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.MANAGER].includes(currentUserRole)) {
+      throw new ForbiddenException('You do not have permission to update users');
+    }
+
     const user = await this.userRepository.findOne({
       where: { id, workspaceId },
     });
@@ -149,11 +155,43 @@ export class UsersService {
       throw new NotFoundException('User not found');
     }
 
+    if (currentUserRole === UserRole.MANAGER) {
+      if ([UserRole.ADMIN, UserRole.SUPER_ADMIN].includes(user.role)) {
+        throw new ForbiddenException('Managers cannot update ADMIN or SUPER_ADMIN users');
+      }
+      if (
+        updateUserDto.role &&
+        [UserRole.ADMIN, UserRole.SUPER_ADMIN].includes(updateUserDto.role)
+      ) {
+        throw new ForbiddenException('Managers cannot assign ADMIN or SUPER_ADMIN roles');
+      }
+    }
+
+    if (user.role === UserRole.SUPER_ADMIN && currentUserRole !== UserRole.SUPER_ADMIN) {
+      throw new ForbiddenException('Only platform super admins can modify SUPER_ADMIN users');
+    }
+
     // Hash password before saving if it was provided as plain text
     const dto: any = { ...updateUserDto };
     if (dto.password) {
       const bcryptRounds = this.configService.get<number>('auth.bcryptRounds') || 12;
       dto.password = await bcrypt.hash(dto.password, bcryptRounds);
+    }
+
+    if (currentUserId === id && dto.role && dto.role !== user.role) {
+      throw new ForbiddenException('You cannot change your own role from this screen');
+    }
+
+    if (dto.preferences) {
+      user.preferences = {
+        ...(user.preferences || {}),
+        ...dto.preferences,
+        channelAccess: {
+          ...((user.preferences as any)?.channelAccess || {}),
+          ...(dto.preferences.channelAccess || {}),
+        },
+      };
+      delete dto.preferences;
     }
 
     Object.assign(user, dto);

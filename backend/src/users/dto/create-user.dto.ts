@@ -6,6 +6,7 @@ import {
   IsOptional,
   MinLength,
   MaxLength,
+  IsObject,
 } from 'class-validator';
 import { UserRole } from '../../database/entities/user.entity';
 import { IsStrongPassword } from '../../auth/validators/password.validator';
@@ -67,4 +68,19 @@ export class CreateUserDto {
   @IsString()
   @IsOptional()
   slackUserId?: string;
+
+  @ApiPropertyOptional({
+    description: 'User preferences and access configuration',
+    example: {
+      channelAccess: {
+        whatsapp: true,
+        messenger: true,
+        instagram: false,
+        tiktok: false,
+      },
+    },
+  })
+  @IsObject()
+  @IsOptional()
+  preferences?: Record<string, any>;
 }

@@ -44,6 +44,10 @@ export class UserResponseDto {
   @Expose()
   lastLoginAt?: Date;
 
+  @ApiPropertyOptional()
+  @Expose()
+  preferences?: Record<string, any>;
+
   @ApiProperty()
   @Expose()
   createdAt: Date;

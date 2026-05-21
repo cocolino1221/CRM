@@ -16,6 +16,7 @@ import { CompaniesModule } from './companies/companies.module';
 import { ActivitiesModule } from './activities/activities.module';
 import { IntegrationsModule } from './integrations/integrations.module';
 import { WhatsAppModule } from './integrations/whatsapp/whatsapp.module';
+import { MetaMessagingModule } from './integrations/meta-messaging/meta-messaging.module';
 import { QueueModule } from './queues/queue.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { HealthModule } from './health/health.module';
@@ -156,6 +157,7 @@ import { validationSchema } from './config/env.validation';
     ActivitiesModule,
     IntegrationsModule,
     WhatsAppModule,
+    MetaMessagingModule,
     PipelineModule,
     NotificationsModule,
     EventsModule,

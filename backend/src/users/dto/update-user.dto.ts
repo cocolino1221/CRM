@@ -5,8 +5,10 @@ import {
   MinLength,
   MaxLength,
   IsEnum,
+  IsObject,
 } from 'class-validator';
 import { UserRole, UserStatus } from '../../database/entities/user.entity';
+import { IsStrongPassword } from '../../auth/validators/password.validator';
 
 export class UpdateUserDto {
   @ApiPropertyOptional({
@@ -44,6 +46,39 @@ export class UpdateUserDto {
   @IsString()
   @IsOptional()
   slackUserId?: string;
+
+  @ApiPropertyOptional({
+    description: 'User role',
+    enum: UserRole,
+    example: UserRole.CLOSER,
+  })
+  @IsEnum(UserRole)
+  @IsOptional()
+  role?: UserRole;
+
+  @ApiPropertyOptional({
+    description: 'New user password',
+    example: 'SecurePass123!',
+  })
+  @IsString()
+  @IsOptional()
+  @IsStrongPassword()
+  password?: string;
+
+  @ApiPropertyOptional({
+    description: 'User preferences and access configuration',
+    example: {
+      channelAccess: {
+        whatsapp: true,
+        messenger: true,
+        instagram: false,
+        tiktok: false,
+      },
+    },
+  })
+  @IsObject()
+  @IsOptional()
+  preferences?: Record<string, any>;
 }
 
 export class UpdateUserRoleDto {

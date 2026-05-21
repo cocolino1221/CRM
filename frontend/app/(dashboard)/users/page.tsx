@@ -30,9 +30,22 @@ import {
   XCircle,
   Send,
   Copy,
-  Check
+  Check,
 } from 'lucide-react';
 import api from '@/lib/api';
+import {
+  CHANNEL_LABELS,
+  ChannelAccess,
+  ChannelKey,
+  getDefaultChannelAccessForRole,
+  resolveChannelAccess,
+} from '@/lib/channel-access';
+import {
+  DEFAULT_WORKSPACE_CHANNEL_AVAILABILITY,
+  fetchWorkspaceChannelAvailability,
+  filterConnectedChannels,
+  WorkspaceChannelAvailability,
+} from '@/lib/workspace-channel-availability';
 
 interface User {
   id: string;
@@ -45,6 +58,9 @@ interface User {
   isActive: boolean;
   lastLoginAt?: string;
   createdAt: string;
+  preferences?: {
+    channelAccess?: Partial<ChannelAccess>;
+  };
 }
 
 type UserRole = 'admin' | 'manager' | 'closer' | 'setter' | 'caller' | 'sales_rep' | 'support_agent';
@@ -102,10 +118,15 @@ const ROLES: { value: UserRole; label: string; description: string; icon: React.
 ];
 
 export default function UsersPage() {
+  const CHANNEL_KEYS: ChannelKey[] = ['whatsapp', 'messenger', 'instagram', 'tiktok'];
   const [users, setUsers] = useState<User[]>([]);
   const [filteredUsers, setFilteredUsers] = useState<User[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [workspaceChannelAvailability, setWorkspaceChannelAvailability] = useState<WorkspaceChannelAvailability>(
+    DEFAULT_WORKSPACE_CHANNEL_AVAILABILITY,
+  );
+  const [channelsResolved, setChannelsResolved] = useState(false);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedRole, setSelectedRole] = useState<string>('all');
@@ -129,10 +150,36 @@ export default function UsersPage() {
     phone: '',
     role: 'sales_rep' as UserRole,
     password: '',
+    channelAccess: getDefaultChannelAccessForRole('sales_rep'),
   });
 
   useEffect(() => {
     fetchUsers();
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+
+    void fetchWorkspaceChannelAvailability()
+      .then((availability) => {
+        if (mounted) {
+          setWorkspaceChannelAvailability(availability);
+        }
+      })
+      .catch(() => {
+        if (mounted) {
+          setWorkspaceChannelAvailability(DEFAULT_WORKSPACE_CHANNEL_AVAILABILITY);
+        }
+      })
+      .finally(() => {
+        if (mounted) {
+          setChannelsResolved(true);
+        }
+      });
+
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -178,6 +225,55 @@ export default function UsersPage() {
     return ROLES.find((r) => r.value === role) || ROLES[5]; // Default to sales_rep
   };
 
+  const isLockedToFullAccess = (role: string) => ['admin', 'manager', 'super_admin'].includes(role);
+
+  const updateRoleWithAccess = (role: UserRole) => {
+    setFormData((current) => ({
+      ...current,
+      role,
+      channelAccess: isLockedToFullAccess(role)
+        ? getDefaultChannelAccessForRole(role)
+        : current.channelAccess,
+    }));
+  };
+
+  const setChannelAccessValue = (channel: ChannelKey, checked: boolean) => {
+    setFormData((current) => ({
+      ...current,
+      channelAccess: {
+        ...current.channelAccess,
+        [channel]: checked,
+      },
+    }));
+  };
+
+  const getAllowedChannels = (user: User) => {
+    const access = resolveChannelAccess(user);
+    return filterConnectedChannels(
+      workspaceChannelAvailability,
+      CHANNEL_KEYS.filter((channel) => access[channel]),
+    );
+  };
+
+  const availableChannelKeys = filterConnectedChannels(workspaceChannelAvailability, CHANNEL_KEYS);
+
+  const buildChannelAccessForCreate = () => {
+    const nextAccess = { ...formData.channelAccess };
+
+    CHANNEL_KEYS.forEach((channel) => {
+      if (isLockedToFullAccess(formData.role)) {
+        nextAccess[channel] = true;
+        return;
+      }
+
+      if (!workspaceChannelAvailability[channel]) {
+        nextAccess[channel] = false;
+      }
+    });
+
+    return nextAccess;
+  };
+
   const resetForm = () => {
     setFormData({
       email: '',
@@ -186,6 +282,7 @@ export default function UsersPage() {
       phone: '',
       role: 'sales_rep',
       password: '',
+      channelAccess: getDefaultChannelAccessForRole('sales_rep'),
     });
     setModalError('');
     setShowPassword(false);
@@ -197,7 +294,18 @@ export default function UsersPage() {
     setIsSubmitting(true);
 
     try {
-      const response = await api.post('/users', formData);
+      const createData = {
+        email: formData.email,
+        firstName: formData.firstName,
+        lastName: formData.lastName,
+        password: formData.password,
+        role: formData.role,
+        preferences: {
+          channelAccess: buildChannelAccessForCreate(),
+        },
+      };
+
+      const response = await api.post('/users', createData);
       setUsers([...users, response.data]);
       setShowAddModal(false);
       resetForm();
@@ -221,6 +329,9 @@ export default function UsersPage() {
         lastName: formData.lastName,
         phone: formData.phone,
         role: formData.role,
+        preferences: {
+          channelAccess: formData.channelAccess,
+        },
       };
 
       // Only include password if it's provided
@@ -303,6 +414,7 @@ export default function UsersPage() {
       phone: user.phone || '',
       role: user.role as UserRole,
       password: '',
+      channelAccess: resolveChannelAccess(user),
     });
     setShowEditModal(true);
   };
@@ -489,6 +601,9 @@ export default function UsersPage() {
                   Role
                 </th>
                 <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
+                  Channels
+                </th>
+                <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
                   Contact
                 </th>
                 <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
@@ -505,7 +620,7 @@ export default function UsersPage() {
             <tbody className="divide-y divide-gray-200">
               {activeUsers.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-6 py-12 text-center">
+                  <td colSpan={7} className="px-6 py-12 text-center">
                     <Users className="h-12 w-12 text-gray-300 mx-auto mb-3" />
                     <p className="text-gray-500">No users found</p>
                   </td>
@@ -533,6 +648,24 @@ export default function UsersPage() {
                           {roleInfo.icon}
                           {roleInfo.label}
                         </span>
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="flex flex-wrap gap-2">
+                          {getAllowedChannels(user).length > 0 ? (
+                            getAllowedChannels(user).map((channel) => (
+                              <span
+                                key={channel}
+                                className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-medium text-slate-700"
+                              >
+                                {CHANNEL_LABELS[channel]}
+                              </span>
+                            ))
+                          ) : (
+                            <span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-medium text-slate-500">
+                              {channelsResolved ? 'No connected channels' : 'Checking channels...'}
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="px-6 py-4">
                         <div className="space-y-1">
@@ -705,7 +838,7 @@ export default function UsersPage() {
                     <button
                       key={role.value}
                       type="button"
-                      onClick={() => setFormData({ ...formData, role: role.value })}
+                      onClick={() => updateRoleWithAccess(role.value)}
                       className={`p-4 rounded-xl border-2 text-left transition-all ${
                         formData.role === role.value
                           ? role.color + ' shadow-lg'
@@ -722,6 +855,51 @@ export default function UsersPage() {
                     </button>
                   ))}
                 </div>
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-semibold text-slate-900">Channel Access</h3>
+                    <p className="mt-1 text-xs leading-5 text-slate-500">
+                      Adminul poate decide la ce canale conectate are acces userul. Managerii și adminii au acces complet implicit.
+                    </p>
+                  </div>
+                  {isLockedToFullAccess(formData.role) && (
+                    <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-[11px] font-semibold text-emerald-700">
+                      Full access
+                    </span>
+                  )}
+                </div>
+
+                {availableChannelKeys.length === 0 ? (
+                  <div className="mt-4 rounded-xl border border-dashed border-slate-200 bg-white px-4 py-4 text-sm text-slate-500">
+                    {channelsResolved
+                      ? 'Nu există încă canale conectate în acest workspace.'
+                      : 'Verific canalele conectate din workspace...'}
+                  </div>
+                ) : (
+                <div className="mt-4 grid grid-cols-2 gap-3">
+                  {availableChannelKeys.map((channel) => (
+                    <label
+                      key={channel}
+                      className={`flex items-center justify-between rounded-xl border px-3 py-3 text-sm ${
+                        formData.channelAccess[channel]
+                          ? 'border-slate-300 bg-white text-slate-900'
+                          : 'border-slate-200 bg-white text-slate-500'
+                      }`}
+                    >
+                      <span>{CHANNEL_LABELS[channel]}</span>
+                      <input
+                        type="checkbox"
+                        checked={formData.channelAccess[channel]}
+                        disabled={isLockedToFullAccess(formData.role)}
+                        onChange={(event) => setChannelAccessValue(channel, event.target.checked)}
+                      />
+                    </label>
+                  ))}
+                </div>
+                )}
               </div>
 
               <div className="flex gap-4 pt-4">
@@ -956,7 +1134,7 @@ export default function UsersPage() {
                     <button
                       key={role.value}
                       type="button"
-                      onClick={() => setFormData({ ...formData, role: role.value })}
+                      onClick={() => updateRoleWithAccess(role.value)}
                       className={`p-4 rounded-xl border-2 text-left transition-all ${
                         formData.role === role.value
                           ? role.color + ' shadow-lg'
@@ -973,6 +1151,51 @@ export default function UsersPage() {
                     </button>
                   ))}
                 </div>
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-semibold text-slate-900">Channel Access</h3>
+                    <p className="mt-1 text-xs leading-5 text-slate-500">
+                      Controlezi aici ce canale conectate vede și folosește userul în workspace.
+                    </p>
+                  </div>
+                  {isLockedToFullAccess(formData.role) && (
+                    <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-[11px] font-semibold text-emerald-700">
+                      Full access
+                    </span>
+                  )}
+                </div>
+
+                {availableChannelKeys.length === 0 ? (
+                  <div className="mt-4 rounded-xl border border-dashed border-slate-200 bg-white px-4 py-4 text-sm text-slate-500">
+                    {channelsResolved
+                      ? 'Nu există încă canale conectate în acest workspace.'
+                      : 'Verific canalele conectate din workspace...'}
+                  </div>
+                ) : (
+                <div className="mt-4 grid grid-cols-2 gap-3">
+                  {availableChannelKeys.map((channel) => (
+                    <label
+                      key={channel}
+                      className={`flex items-center justify-between rounded-xl border px-3 py-3 text-sm ${
+                        formData.channelAccess[channel]
+                          ? 'border-slate-300 bg-white text-slate-900'
+                          : 'border-slate-200 bg-white text-slate-500'
+                      }`}
+                    >
+                      <span>{CHANNEL_LABELS[channel]}</span>
+                      <input
+                        type="checkbox"
+                        checked={formData.channelAccess[channel]}
+                        disabled={isLockedToFullAccess(formData.role)}
+                        onChange={(event) => setChannelAccessValue(channel, event.target.checked)}
+                      />
+                    </label>
+                  ))}
+                </div>
+                )}
               </div>
 
               <div className="flex gap-4 pt-4">
