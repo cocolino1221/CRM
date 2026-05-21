@@ -23,6 +23,7 @@ import {
 } from '../../database/entities/contact.entity';
 import {
   Integration,
+  IntegrationStatus,
   IntegrationType,
 } from '../../database/entities/integration.entity';
 import { User } from '../../database/entities/user.entity';
@@ -120,26 +121,67 @@ export class MetaMessagingService {
     return null;
   }
 
+  async verifyProviderWebhookToken(
+    provider: MetaProvider,
+    mode: string,
+    token: string,
+    challenge: string,
+  ): Promise<string | null> {
+    if (mode !== 'subscribe') return null;
+
+    const integrations = await this.findAllProviderIntegrations(provider);
+    const normalizedToken = String(token || '').trim();
+    const match = integrations.find(
+      (integration) => String(integration.config?.verifyToken || '').trim() === normalizedToken,
+    );
+
+    if (match) {
+      return challenge;
+    }
+
+    this.logger.warn(`Shared Meta webhook verification failed for provider=${provider}`);
+    return null;
+  }
+
   async getSetupInfo(workspaceId: string): Promise<any> {
     const integrations = await this.findMetaIntegrations(workspaceId);
     const appUrl = this.getAppBaseUrl();
+    const grouped = new Map<MetaProvider, Integration[]>();
+
+    for (const integration of integrations) {
+      const provider = this.getIntegrationProvider(integration);
+      if (!provider) continue;
+      const bucket = grouped.get(provider) || [];
+      bucket.push(integration);
+      grouped.set(provider, bucket);
+    }
 
     return Promise.all(
-      integrations.map(async (integration) => {
-        const provider = this.getIntegrationProvider(integration);
-        const verifyToken = await this.ensureVerifyToken(integration);
+      Array.from(grouped.entries()).map(async ([provider, providerIntegrations]) => {
+        const verifyToken = await this.ensureProviderVerifyToken(providerIntegrations);
+        const channelLabel = provider === 'facebook' ? 'Messenger' : 'Instagram';
+        const webhookUrl = `${appUrl}/api/v1/integrations/meta-messaging/webhook/${provider}`;
+        const accountNames = providerIntegrations
+          .map((integration) => String(integration.config?.igUsername || integration.config?.pageName || integration.name || '').trim())
+          .filter(Boolean);
+
         return {
-          integrationId: integration.id,
+          integrationId: `provider:${provider}`,
           provider,
-          name: integration.name,
-          status: integration.status,
-          webhookUrl: `${appUrl}/api/v1/integrations/meta-messaging/webhook/${provider}/${integration.id}`,
+          name: `${channelLabel} webhook`,
+          status: providerIntegrations.some((integration) => integration.status === IntegrationStatus.ACTIVE)
+            ? IntegrationStatus.ACTIVE
+            : providerIntegrations[0]?.status || 'pending',
+          webhookUrl,
           verifyToken,
+          accountCount: providerIntegrations.length,
+          accounts: accountNames,
           instructions: [
-            `1. In Meta for Developers, open the ${provider === 'facebook' ? 'Messenger' : 'Instagram'} product webhooks`,
-            `2. Set Callback URL to ${appUrl}/api/v1/integrations/meta-messaging/webhook/${provider}/${integration.id}`,
+            `1. In Meta for Developers, open the ${channelLabel} webhook settings`,
+            `2. Set Callback URL to ${webhookUrl}`,
             `3. Set Verify Token to ${verifyToken}`,
             '4. Subscribe to message-related webhook events',
+            '5. Only new incoming messages appear automatically; old history is not imported yet',
           ],
         };
       }),
@@ -149,15 +191,23 @@ export class MetaMessagingService {
   async getAccounts(workspaceId: string, refresh = false): Promise<any[]> {
     const integrations = await this.findMetaIntegrations(workspaceId);
     const results: any[] = [];
+    const seenAccounts = new Set<string>();
 
     for (const integration of integrations) {
       const provider = this.getIntegrationProvider(integration);
+      if (!provider) {
+        continue;
+      }
       let accountSummary: any = null;
       let liveReady = false;
       let warning: string | null = null;
 
       try {
-        if (refresh) {
+        const needsHydration = provider === 'facebook'
+          ? !integration.config?.pageId || !integration.credentials?.pageAccessToken
+          : !integration.config?.pageId || !integration.credentials?.pageAccessToken || !integration.config?.igUserId;
+
+        if (refresh || needsHydration) {
           if (provider === 'facebook') {
             accountSummary = await this.ensureFacebookPageCredentials(integration);
             liveReady = !!accountSummary.pageId && !!accountSummary.pageAccessToken;
@@ -176,6 +226,14 @@ export class MetaMessagingService {
       }
 
       const messageProfile = this.getMessageProfile(integration);
+      const dedupeKey = provider === 'facebook'
+        ? `facebook:${String(accountSummary?.pageId || integration.config?.pageId || integration.id).trim()}`
+        : `instagram:${String(accountSummary?.igUserId || integration.config?.igUserId || accountSummary?.pageId || integration.id).trim()}`;
+
+      if (seenAccounts.has(dedupeKey)) {
+        continue;
+      }
+      seenAccounts.add(dedupeKey);
 
       results.push({
         integrationId: integration.id,
@@ -543,6 +601,49 @@ export class MetaMessagingService {
     return { success: true };
   }
 
+  async handleProviderWebhook(
+    provider: MetaProvider,
+    payload: any,
+  ): Promise<{ success: boolean }> {
+    const integrations = await this.findAllProviderIntegrations(provider);
+    if (!integrations.length) {
+      this.logger.warn(`Shared Meta webhook received for provider=${provider}, but no matching integrations exist`);
+      return { success: true };
+    }
+
+    const ownerIdsByWorkspace = new Map<string, string>();
+    const entryList = Array.isArray(payload?.entry) ? payload.entry : [];
+
+    for (const entry of entryList) {
+      const messagingEvents = Array.isArray(entry?.messaging) ? entry.messaging : [];
+      for (const event of messagingEvents) {
+        const integration = this.resolveWebhookIntegration(provider, integrations, entry, event);
+        if (!integration) {
+          this.logger.warn(
+            `Shared Meta webhook could not resolve provider=${provider} entry=${String(entry?.id || '')} recipient=${String(event?.recipient?.id || '')}`,
+          );
+          continue;
+        }
+
+        let ownerId = ownerIdsByWorkspace.get(integration.workspaceId);
+        if (!ownerId) {
+          ownerId = integration.userId || (await this.getWorkspaceOwnerId(integration.workspaceId));
+          ownerIdsByWorkspace.set(integration.workspaceId, ownerId);
+        }
+
+        await this.ingestWebhookEvent(
+          provider,
+          integration,
+          integration.workspaceId,
+          ownerId,
+          event,
+        );
+      }
+    }
+
+    return { success: true };
+  }
+
   private async ingestWebhookEvent(
     provider: MetaProvider,
     integration: Integration,
@@ -826,6 +927,15 @@ export class MetaMessagingService {
     });
   }
 
+  private async findAllProviderIntegrations(provider: MetaProvider): Promise<Integration[]> {
+    const rows = await this.integrationRepository.find({
+      where: { type: IntegrationType.API },
+      order: { createdAt: 'ASC' },
+    });
+
+    return rows.filter((integration) => this.getIntegrationProvider(integration) === provider);
+  }
+
   private async findProviderIntegrationById(
     provider: MetaProvider,
     integrationId: string,
@@ -865,12 +975,13 @@ export class MetaMessagingService {
     return integration;
   }
 
-  private getIntegrationProvider(integration: Integration): MetaProvider {
+  private getIntegrationProvider(integration: Integration): MetaProvider | null {
     const provider = String(integration.config?.provider || integration.externalId || '')
       .trim()
       .toLowerCase();
     if (provider === 'facebook') return 'facebook';
-    return 'instagram';
+    if (provider === 'instagram') return 'instagram';
+    return null;
   }
 
   private channelToProvider(channel: MetaChannel): MetaProvider {
@@ -894,6 +1005,64 @@ export class MetaMessagingService {
     };
     await this.integrationRepository.save(integration);
     return String(integration.config.verifyToken);
+  }
+
+  private async ensureProviderVerifyToken(integrations: Integration[]): Promise<string> {
+    const existing = integrations
+      .map((integration) => String(integration.config?.verifyToken || '').trim())
+      .find(Boolean);
+    const verifyToken = existing || `meta_${nanoid(24)}`;
+
+    const pendingUpdates = integrations.filter(
+      (integration) => String(integration.config?.verifyToken || '').trim() !== verifyToken,
+    );
+
+    if (pendingUpdates.length) {
+      for (const integration of pendingUpdates) {
+        integration.config = {
+          ...(integration.config || {}),
+          verifyToken,
+        };
+      }
+      await this.integrationRepository.save(pendingUpdates);
+    }
+
+    return verifyToken;
+  }
+
+  private resolveWebhookIntegration(
+    provider: MetaProvider,
+    integrations: Integration[],
+    entry: any,
+    event: any,
+  ): Integration | null {
+    const candidates = new Set<string>();
+    const entryId = String(entry?.id || '').trim();
+    const recipientId = String(event?.recipient?.id || '').trim();
+
+    if (entryId) candidates.add(entryId);
+    if (recipientId) candidates.add(recipientId);
+
+    for (const integration of integrations) {
+      const pageId = String(integration.config?.pageId || '').trim();
+      const igUserId = String(integration.config?.igUserId || '').trim();
+
+      if (provider === 'facebook' && pageId && candidates.has(pageId)) {
+        return integration;
+      }
+
+      if (provider === 'instagram') {
+        if (igUserId && candidates.has(igUserId)) {
+          return integration;
+        }
+
+        if (pageId && candidates.has(pageId)) {
+          return integration;
+        }
+      }
+    }
+
+    return null;
   }
 
   private async ensureFacebookPageCredentials(integration: Integration): Promise<{

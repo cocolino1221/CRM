@@ -100,6 +100,8 @@ interface MetaSetupInfo {
   status: string;
   webhookUrl: string;
   verifyToken: string;
+  accountCount?: number;
+  accounts?: string[];
   instructions: string[];
 }
 
@@ -1415,17 +1417,17 @@ export default function MessagesPage() {
                 </div>
               ) : (
                 <div className="flex h-full items-center justify-center">
-                  <div className="max-w-md text-center">
-                    <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-slate-100 text-slate-500">
-                      <MessageSquare className="h-6 w-6" />
+                    <div className="max-w-md text-center">
+                      <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-slate-100 text-slate-500">
+                        <MessageSquare className="h-6 w-6" />
+                      </div>
+                      <h3 className="mt-4 text-lg font-medium text-slate-900">Selectează o conversație</h3>
+                      <p className="mt-2 text-sm leading-6 text-slate-500">
+                        Mesajele vechi nu se importă automat. După webhook setup, conversațiile noi intră aici din conturile conectate.
+                      </p>
                     </div>
-                    <h3 className="mt-4 text-lg font-medium text-slate-900">Selectează o conversație</h3>
-                    <p className="mt-2 text-sm leading-6 text-slate-500">
-                      Când intră conversațiile reale din conturile conectate, ele apar aici în același thread view curat.
-                    </p>
                   </div>
-                </div>
-              )}
+                )}
             </div>
 
             <div className="border-t border-slate-200 bg-white px-5 py-4">
@@ -1942,7 +1944,14 @@ export default function MessagesPage() {
                     return (
                       <div key={item.integrationId} className="space-y-3 rounded-xl border border-slate-200 p-3">
                         <div className="flex items-center justify-between gap-3">
-                          <ChannelBadge channel={channel} />
+                          <div className="flex items-center gap-2">
+                            <ChannelBadge channel={channel} />
+                            {item.accountCount ? (
+                              <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-medium text-slate-500">
+                                {item.accountCount} accounts
+                              </span>
+                            ) : null}
+                          </div>
                           <a
                             href="/integrations"
                             className="inline-flex items-center gap-1 text-xs font-medium text-slate-500 transition hover:text-slate-700"
@@ -1971,6 +1980,22 @@ export default function MessagesPage() {
                           </div>
                           <div className="mt-2 break-all text-sm text-slate-700">{item.verifyToken}</div>
                         </div>
+
+                        {item.accounts?.length ? (
+                          <div className="rounded-xl bg-slate-50 p-3">
+                            <div className="text-xs text-slate-400">Connected accounts on this webhook</div>
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              {item.accounts.map((accountName) => (
+                                <span
+                                  key={`${item.integrationId}:${accountName}`}
+                                  className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-600"
+                                >
+                                  {accountName}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        ) : null}
                       </div>
                     );
                   })

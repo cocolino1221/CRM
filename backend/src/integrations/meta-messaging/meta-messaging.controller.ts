@@ -22,6 +22,27 @@ export class MetaMessagingController {
   constructor(private readonly metaMessagingService: MetaMessagingService) {}
 
   @Public()
+  @Get('webhook/:provider')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Verify shared Messenger/Instagram webhook for a provider' })
+  async verifyProviderWebhook(
+    @Param('provider') provider: 'facebook' | 'instagram',
+    @Query('hub.mode') mode: string,
+    @Query('hub.verify_token') token: string,
+    @Query('hub.challenge') challenge: string,
+  ) {
+    const result = await this.metaMessagingService.verifyProviderWebhookToken(
+      provider,
+      mode,
+      token,
+      challenge,
+    );
+
+    if (result) return result;
+    throw new BadRequestException('Webhook verification failed');
+  }
+
+  @Public()
   @Get('webhook/:provider/:integrationId')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Verify Messenger/Instagram webhook for a specific integration' })
@@ -42,6 +63,17 @@ export class MetaMessagingController {
 
     if (result) return result;
     throw new BadRequestException('Webhook verification failed');
+  }
+
+  @Public()
+  @Post('webhook/:provider')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Receive shared Messenger/Instagram webhook events' })
+  async receiveProviderWebhook(
+    @Param('provider') provider: 'facebook' | 'instagram',
+    @Body() payload: any,
+  ) {
+    return this.metaMessagingService.handleProviderWebhook(provider, payload);
   }
 
   @Public()
