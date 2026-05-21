@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException, BadRequestException, Logger, OnModuleInit } from '@nestjs/common';
+import { HttpService } from '@nestjs/axios';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, FindOptionsWhere } from 'typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -38,6 +39,7 @@ export class IntegrationsService implements OnModuleInit {
     private oauthService: OAuthService,
     private webhookService: WebhookService,
     private syncService: SyncService,
+    private httpService: HttpService,
   ) { }
 
   /**
@@ -338,11 +340,16 @@ export class IntegrationsService implements OnModuleInit {
       }
 
       this.logger.log(`[${id}] Saving integration with valid credentials`);
-      const updated = await this.integrationRepository.save(integration);
+      let updated = await this.integrationRepository.save(integration);
+
+      if (integration.type === IntegrationType.API) {
+        updated = await this.materializeSocialOAuthAccounts(updated);
+        await this.ensureSocialWebhookSubscriptions(updated);
+      }
 
       // Test connection (but don't let it change status if we just authenticated successfully)
-      this.logger.log(`[${id}] Testing connection after authentication`);
-      const testResult = await this.testConnection(id, workspaceId);
+      this.logger.log(`[${updated.id}] Testing connection after authentication`);
+      const testResult = await this.testConnection(updated.id, workspaceId);
       
       // If test failed but we have access token for Google, keep it ACTIVE
       // (refresh token warning is not fatal)
@@ -350,24 +357,24 @@ export class IntegrationsService implements OnModuleInit {
         const isRefreshTokenWarning = testResult.message?.includes('refresh token') || 
                                      testResult.message?.includes('No refresh token');
         if (isRefreshTokenWarning) {
-          this.logger.log(`[${id}] Keeping integration ACTIVE despite refresh token warning - access token is valid`);
-          integration.status = IntegrationStatus.ACTIVE;
-          await this.integrationRepository.save(integration);
+          this.logger.log(`[${updated.id}] Keeping integration ACTIVE despite refresh token warning - access token is valid`);
+          updated.status = IntegrationStatus.ACTIVE;
+          await this.integrationRepository.save(updated);
         }
       }
 
       // Set up sync schedule if enabled
-      if (integration.config?.autoSync) {
-        await this.setupSyncSchedule(integration);
+      if (updated.config?.autoSync) {
+        await this.setupSyncSchedule(updated);
       }
 
       // Log authentication
-      await this.logActivity(id, 'info', 'Integration authenticated successfully');
+      await this.logActivity(updated.id, 'info', 'Integration authenticated successfully');
 
       // Emit authentication event
       this.eventEmitter.emit('integration.authenticated', {
         type: 'integration.authenticated',
-        integrationId: id,
+        integrationId: updated.id,
         workspaceId,
         data: updated,
         timestamp: new Date(),
@@ -384,6 +391,324 @@ export class IntegrationsService implements OnModuleInit {
 
       throw error;
     }
+  }
+
+  private async materializeSocialOAuthAccounts(integration: Integration): Promise<Integration> {
+    const providerKey = String(integration.config?.provider || integration.externalId || '')
+      .trim()
+      .toLowerCase();
+
+    if (providerKey === 'facebook') {
+      return this.materializeFacebookPageAccounts(integration);
+    }
+
+    if (providerKey === 'instagram') {
+      return this.materializeInstagramPageAccounts(integration);
+    }
+
+    return integration;
+  }
+
+  private async ensureSocialWebhookSubscriptions(integration: Integration): Promise<void> {
+    const providerKey = String(integration.config?.provider || integration.externalId || '')
+      .trim()
+      .toLowerCase();
+
+    try {
+      if (providerKey === 'facebook') {
+        await this.ensureFacebookWebhookSubscriptions(integration.workspaceId);
+        return;
+      }
+
+      if (providerKey === 'instagram') {
+        await this.ensureInstagramWebhookSubscriptions(integration.workspaceId);
+      }
+    } catch (error: any) {
+      this.logger.warn(
+        `[${integration.id}] Failed to auto-subscribe social webhooks: ${error?.message || 'unknown error'}`,
+      );
+    }
+  }
+
+  private async ensureFacebookWebhookSubscriptions(workspaceId: string): Promise<void> {
+    const rows = await this.integrationRepository.find({
+      where: { workspaceId, type: IntegrationType.API },
+      order: { createdAt: 'ASC' },
+    });
+
+    const facebookRows = rows.filter((row) => {
+      const provider = String(row.config?.provider || row.externalId || '').trim().toLowerCase();
+      return provider === 'facebook';
+    });
+
+    for (const row of facebookRows) {
+      const pageId = String(row.config?.pageId || '').trim();
+      const pageAccessToken =
+        String(row.credentials?.pageAccessToken || '').trim()
+        || String(row.credentials?.accessToken || '').trim();
+
+      if (!pageId || !pageAccessToken) continue;
+
+      try {
+        await this.httpService.axiosRef.post(
+          `https://graph.facebook.com/v23.0/${pageId}/subscribed_apps`,
+          null,
+          {
+            params: {
+              subscribed_fields: 'messages,messaging_feedback',
+              access_token: pageAccessToken,
+            },
+            timeout: 15000,
+          },
+        );
+
+        row.config = {
+          ...(row.config || {}),
+          webhookSubscribedAt: new Date().toISOString(),
+        };
+        await this.integrationRepository.save(row);
+      } catch (error: any) {
+        this.logger.warn(
+          `[${row.id}] Facebook page webhook auto-subscribe failed for page ${pageId}: ${error?.response?.data?.error?.message || error?.message || 'unknown error'}`,
+        );
+      }
+    }
+  }
+
+  private async ensureInstagramWebhookSubscriptions(workspaceId: string): Promise<void> {
+    const rows = await this.integrationRepository.find({
+      where: { workspaceId, type: IntegrationType.API },
+      order: { createdAt: 'ASC' },
+    });
+
+    const instagramRows = rows.filter((row) => {
+      const provider = String(row.config?.provider || row.externalId || '').trim().toLowerCase();
+      return provider === 'instagram';
+    });
+
+    for (const row of instagramRows) {
+      const igUserId = String(row.config?.igUserId || '').trim();
+      const userAccessToken = String(row.credentials?.accessToken || '').trim();
+
+      if (!igUserId || !userAccessToken) continue;
+
+      try {
+        await this.httpService.axiosRef.post(
+          `https://graph.instagram.com/v23.0/${igUserId}/subscribed_apps`,
+          null,
+          {
+            params: {
+              subscribed_fields: 'messages',
+              access_token: userAccessToken,
+            },
+            timeout: 15000,
+          },
+        );
+
+        row.config = {
+          ...(row.config || {}),
+          webhookSubscribedAt: new Date().toISOString(),
+        };
+        await this.integrationRepository.save(row);
+      } catch (error: any) {
+        this.logger.warn(
+          `[${row.id}] Instagram webhook auto-subscribe failed for IG user ${igUserId}: ${error?.response?.data?.error?.message || error?.message || 'unknown error'}`,
+        );
+      }
+    }
+  }
+
+  private async materializeFacebookPageAccounts(integration: Integration): Promise<Integration> {
+    const userAccessToken = String(integration.credentials?.accessToken || '').trim();
+    if (!userAccessToken) {
+      return integration;
+    }
+
+    const response = await this.httpService.axiosRef.get('https://graph.facebook.com/v23.0/me/accounts', {
+      params: {
+        fields: 'id,name,access_token',
+        access_token: userAccessToken,
+      },
+      timeout: 15000,
+    });
+
+    const pages = (Array.isArray(response.data?.data) ? response.data.data : [])
+      .filter((page: any) => String(page?.id || '').trim() && String(page?.access_token || '').trim());
+
+    if (!pages.length) {
+      return integration;
+    }
+
+    const existingRows = await this.integrationRepository.find({
+      where: { workspaceId: integration.workspaceId, type: IntegrationType.API },
+      order: { createdAt: 'ASC' },
+    });
+
+    const siblingRows = existingRows.filter((row) => {
+      if (row.id === integration.id) return false;
+      const provider = String(row.config?.provider || row.externalId || '').trim().toLowerCase();
+      return provider === 'facebook';
+    });
+
+    const currentPageId = String(integration.config?.pageId || '').trim();
+    const currentPage =
+      (currentPageId && pages.find((page: any) => String(page.id) === currentPageId))
+      || pages[0];
+
+    let primary = integration;
+
+    for (const page of pages) {
+      const pageId = String(page.id).trim();
+      const pageName = String(page.name || integration.name || 'Facebook Page').trim();
+      const pageAccessToken = String(page.access_token).trim();
+
+      const isCurrentTarget = String(currentPage?.id || '') === pageId;
+      const existing = siblingRows.find((row) => String(row.config?.pageId || '').trim() === pageId);
+      const target = isCurrentTarget
+        ? integration
+        : existing || this.integrationRepository.create({
+            workspaceId: integration.workspaceId,
+            userId: integration.userId,
+            type: IntegrationType.API,
+            name: pageName,
+            description: integration.description,
+            authType: IntegrationAuthType.OAUTH2,
+            externalId: 'facebook',
+            config: {},
+            credentials: {},
+            metadata: integration.metadata,
+            permissions: integration.permissions,
+            status: IntegrationStatus.ACTIVE,
+            isEnabled: integration.isEnabled,
+            isVerified: integration.isVerified,
+          });
+
+      target.name = pageName;
+      target.status = IntegrationStatus.ACTIVE;
+      target.lastActivityAt = new Date();
+      target.config = {
+        ...(target.config || {}),
+        ...(integration.config || {}),
+        provider: 'facebook',
+        pageId,
+        pageName,
+      };
+      target.credentials = {
+        ...(target.credentials || {}),
+        ...(integration.credentials || {}),
+        pageAccessToken,
+      };
+      target.clearErrors();
+
+      const saved = await this.integrationRepository.save(target);
+      if (isCurrentTarget) {
+        primary = saved;
+      }
+    }
+
+    return primary;
+  }
+
+  private async materializeInstagramPageAccounts(integration: Integration): Promise<Integration> {
+    const userAccessToken = String(integration.credentials?.accessToken || '').trim();
+    if (!userAccessToken) {
+      return integration;
+    }
+
+    const response = await this.httpService.axiosRef.get('https://graph.facebook.com/v23.0/me/accounts', {
+      params: {
+        fields: 'id,name,access_token,instagram_business_account{id,username},connected_instagram_account{id,username}',
+        access_token: userAccessToken,
+      },
+      timeout: 15000,
+    });
+
+    const rows = (Array.isArray(response.data?.data) ? response.data.data : [])
+      .map((page: any) => {
+        const igAccount = page?.instagram_business_account || page?.connected_instagram_account;
+        return {
+          pageId: String(page?.id || '').trim(),
+          pageName: String(page?.name || '').trim(),
+          pageAccessToken: String(page?.access_token || '').trim(),
+          igUserId: String(igAccount?.id || '').trim(),
+          igUsername: String(igAccount?.username || '').trim(),
+        };
+      })
+      .filter((item: any) => item.pageId && item.pageAccessToken && item.igUserId);
+
+    if (!rows.length) {
+      return integration;
+    }
+
+    const existingRows = await this.integrationRepository.find({
+      where: { workspaceId: integration.workspaceId, type: IntegrationType.API },
+      order: { createdAt: 'ASC' },
+    });
+
+    const siblingRows = existingRows.filter((row) => {
+      if (row.id === integration.id) return false;
+      const provider = String(row.config?.provider || row.externalId || '').trim().toLowerCase();
+      return provider === 'instagram';
+    });
+
+    const currentIgUserId = String(integration.config?.igUserId || '').trim();
+    const currentRow =
+      (currentIgUserId && rows.find((item) => item.igUserId === currentIgUserId))
+      || rows[0];
+
+    let primary = integration;
+
+    for (const item of rows) {
+      const accountName = item.igUsername
+        ? `@${item.igUsername.replace(/^@+/, '')}`
+        : (item.pageName || integration.name || 'Instagram');
+      const isCurrentTarget = currentRow.igUserId === item.igUserId;
+      const existing = siblingRows.find((row) => String(row.config?.igUserId || '').trim() === item.igUserId);
+      const target = isCurrentTarget
+        ? integration
+        : existing || this.integrationRepository.create({
+            workspaceId: integration.workspaceId,
+            userId: integration.userId,
+            type: IntegrationType.API,
+            name: accountName,
+            description: integration.description,
+            authType: IntegrationAuthType.OAUTH2,
+            externalId: 'instagram',
+            config: {},
+            credentials: {},
+            metadata: integration.metadata,
+            permissions: integration.permissions,
+            status: IntegrationStatus.ACTIVE,
+            isEnabled: integration.isEnabled,
+            isVerified: integration.isVerified,
+          });
+
+      target.name = accountName;
+      target.status = IntegrationStatus.ACTIVE;
+      target.lastActivityAt = new Date();
+      target.config = {
+        ...(target.config || {}),
+        ...(integration.config || {}),
+        provider: 'instagram',
+        pageId: item.pageId,
+        pageName: item.pageName || 'Facebook Page',
+        igUserId: item.igUserId,
+        igUsername: item.igUsername || accountName,
+      };
+      target.credentials = {
+        ...(target.credentials || {}),
+        ...(integration.credentials || {}),
+        pageAccessToken: item.pageAccessToken,
+      };
+      target.clearErrors();
+
+      const saved = await this.integrationRepository.save(target);
+      if (isCurrentTarget) {
+        primary = saved;
+      }
+    }
+
+    return primary;
   }
 
   /**
