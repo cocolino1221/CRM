@@ -112,6 +112,8 @@ interface WhatsAppTemplate {
   parameterCount: number;
   category: 'marketing' | 'utility' | 'authentication';
   headerMediaType?: '' | 'image' | 'video' | 'document';
+  headerMediaId?: string;
+  headerMediaUrl?: string;
 }
 
 interface QuickReply {
@@ -182,6 +184,8 @@ function toSendableTemplate(t: any): WhatsAppTemplate {
     parameterCount: paramCount,
     category: (t.category || 'utility').toLowerCase() as any,
     headerMediaType,
+    headerMediaId: String(t.headerMediaId || '').trim() || undefined,
+    headerMediaUrl: String(t.headerMediaUrl || '').trim() || undefined,
   };
 }
 
@@ -1412,6 +1416,8 @@ export default function WhatsAppPage() {
   }, [getTemplateMediaCacheKey]);
   const applyTemplateSelection = useCallback((template: WhatsAppTemplate, target: 'chat' | 'new') => {
     const cachedMedia = readTemplateHeaderMediaCache(template);
+    const resolvedMediaId = cachedMedia.headerMediaId || String(template.headerMediaId || '').trim();
+    const resolvedMediaUrl = cachedMedia.headerMediaUrl || String(template.headerMediaUrl || '').trim();
     if (target === 'chat') {
       setSelectedTemplate(template);
       setTemplateParams(Array(template.parameterCount).fill(''));
@@ -1419,8 +1425,8 @@ export default function WhatsAppPage() {
       setNewConvTemplate(template);
       setNewConvTemplateParams(Array(template.parameterCount).fill(''));
     }
-    setTemplateHeaderMediaId(cachedMedia.headerMediaId);
-    setTemplateHeaderMediaUrl(cachedMedia.headerMediaUrl);
+    setTemplateHeaderMediaId(resolvedMediaId);
+    setTemplateHeaderMediaUrl(resolvedMediaUrl);
   }, [readTemplateHeaderMediaCache]);
 
   const updateSelectedAutoSendRule = (updater: (rule: AutoSendRuleForm) => AutoSendRuleForm) => {
@@ -2149,10 +2155,8 @@ export default function WhatsAppPage() {
     }
     const normalizedHeaderMediaId = templateHeaderMediaId.trim();
     const normalizedHeaderMediaUrl = templateHeaderMediaUrl.trim();
-    if (template.headerMediaType && !normalizedHeaderMediaId && !normalizedHeaderMediaUrl) {
-      setSendError(`Template "${template.displayName}" needs ${template.headerMediaType} in header (media_id or URL).`);
-      return;
-    }
+    // No early block when media is missing: the backend reuses the cached media_id/URL
+    // from the DB for media templates, and surfaces an error only if none exists.
 
     setIsSending(true);
     setSendError('');
@@ -4201,7 +4205,7 @@ export default function WhatsAppPage() {
                     }} className="px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">Back</button>
                     <button
                       onClick={() => handleSendTemplate(selectedConv.waId, selectedTemplate, templateParams)}
-                      disabled={isSending || (!!selectedTemplate.headerMediaType && !templateHeaderMediaId.trim() && !templateHeaderMediaUrl.trim())}
+                      disabled={isSending}
                       className="px-4 py-1.5 text-sm font-medium text-white bg-green-500 hover:bg-green-600 rounded-lg disabled:opacity-50 flex items-center gap-2">
                       {isSending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
                       Send Template
@@ -4702,7 +4706,7 @@ export default function WhatsAppPage() {
               }}
                 className="flex-1 px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-xl transition-all">Cancel</button>
               <button onClick={() => { if (newConvPhone && newConvTemplate) handleSendTemplate(newConvPhone, newConvTemplate, newConvTemplateParams); }}
-                disabled={!newConvPhone || !newConvTemplate || isSending || (!!newConvTemplate?.headerMediaType && !templateHeaderMediaId.trim() && !templateHeaderMediaUrl.trim())}
+                disabled={!newConvPhone || !newConvTemplate || isSending}
                 className="flex-1 px-4 py-2 text-sm font-medium text-white bg-green-500 hover:bg-green-600 rounded-xl transition-all disabled:opacity-50 flex items-center justify-center gap-2">
                 {isSending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
                 Use template
