@@ -1675,8 +1675,8 @@ export default function IntegrationsPage() {
 
       {/* Configuration Modal */}
       {selectedIntegration && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm animate-fade-in">
-          <div className="relative w-full max-w-2xl mx-4 glass-effect rounded-2xl p-8 shadow-2xl animate-scale-in">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm animate-fade-in p-4 sm:p-6 overflow-y-auto">
+          <div className="relative w-full max-w-2xl my-auto max-h-[90vh] overflow-y-auto glass-effect rounded-2xl p-6 sm:p-8 shadow-2xl animate-scale-in">
             {/* Close Button */}
             <button
               onClick={handleCloseModal}
