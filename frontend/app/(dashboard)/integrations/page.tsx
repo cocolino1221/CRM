@@ -1554,8 +1554,8 @@ export default function IntegrationsPage() {
       </div>
 
       {showWebhookModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm animate-fade-in">
-          <div className="relative w-full max-w-2xl mx-4 glass-effect rounded-2xl p-8 shadow-2xl animate-scale-in">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm animate-fade-in p-4 sm:p-6 overflow-y-auto">
+          <div className="relative w-full max-w-2xl my-auto max-h-[90vh] overflow-y-auto glass-effect rounded-2xl p-6 sm:p-8 shadow-2xl animate-scale-in">
             <button
               onClick={() => setShowWebhookModal(false)}
               className="absolute right-4 top-4 rounded-xl p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-all"
@@ -1881,8 +1881,8 @@ export default function IntegrationsPage() {
 
       {/* Manage Integration Modal */}
       {managingIntegration && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm animate-fade-in">
-          <div className="relative w-full max-w-2xl mx-4 glass-effect rounded-2xl p-8 shadow-2xl animate-scale-in">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm animate-fade-in p-4 sm:p-6 overflow-y-auto">
+          <div className="relative w-full max-w-2xl my-auto max-h-[90vh] overflow-y-auto glass-effect rounded-2xl p-6 sm:p-8 shadow-2xl animate-scale-in">
             {/* Close Button */}
             <button
               onClick={() => {
