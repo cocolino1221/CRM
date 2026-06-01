@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Search, Check, ExternalLink, Zap, Settings, Webhook, X, Copy, Key, Lock, Link as LinkIcon, AlertCircle, Loader2, Plus, Trash2, FileText, Edit } from 'lucide-react';
+import { Search, Check, ExternalLink, Zap, Settings, Webhook, X, Copy, Key, Lock, Link as LinkIcon, AlertCircle, Loader2, Plus, Trash2, FileText, Edit, ChevronDown, Wrench } from 'lucide-react';
 import api from '@/lib/api';
 import { integrationIcons } from '@/lib/integration-icons';
 
@@ -65,6 +65,7 @@ export default function IntegrationsPage() {
   const [managingIntegration, setManagingIntegration] = useState<Integration | null>(null);
   const [configData, setConfigData] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showWhatsappManual, setShowWhatsappManual] = useState(false);
   const [modalError, setModalError] = useState('');
   const [connectedIntegrations, setConnectedIntegrations] = useState<Record<string, any>>({});
   const [connectedIntegrationRows, setConnectedIntegrationRows] = useState<any[]>([]);
@@ -183,6 +184,12 @@ export default function IntegrationsPage() {
       color: 'from-green-500 to-emerald-500',
       connected: false,
       features: ['Bulk messaging', 'Template messages', 'Two-way chat', 'Media sharing'],
+      configFields: [
+        { name: 'accessToken', label: 'Access Token', type: 'password', required: true, placeholder: 'EAA...', helpText: 'System-user token from Meta (Business Settings → System Users → Generate token, selecting your WhatsApp app).' },
+        { name: 'phoneNumberId', label: 'Phone Number ID', type: 'text', required: true, placeholder: '1062475710273374', helpText: 'Meta → WhatsApp → API Setup → Phone number ID (not the phone number itself).' },
+        { name: 'wabaId', label: 'WhatsApp Business Account ID', type: 'text', required: false, placeholder: '893595476989360', helpText: 'Needed to load and manage message templates.' },
+        { name: 'verifyToken', label: 'Webhook Verify Token', type: 'text', required: false, placeholder: 'any-secret-string', helpText: 'Choose any string; paste the same value in Meta webhook settings.' },
+      ],
     },
     {
       id: 'twilio',
@@ -879,7 +886,9 @@ export default function IntegrationsPage() {
     return matchesSearch && matchesFilter;
   });
 
-  const showManualConfigForm = Boolean(selectedIntegration && selectedIntegration.id !== 'whatsapp');
+  const showManualConfigForm = Boolean(
+    selectedIntegration && (selectedIntegration.id !== 'whatsapp' || showWhatsappManual),
+  );
 
   const buildPrefilledConfigData = (integration: Integration, existing?: any): Record<string, string> => {
     const result: Record<string, string> = {};
@@ -1075,6 +1084,7 @@ export default function IntegrationsPage() {
     setSelectedIntegration(null);
     setModalError('');
     setConfigData({});
+    setShowWhatsappManual(false);
   };
 
   const handleConfigChange = (fieldName: string, value: string) => {
@@ -1703,6 +1713,36 @@ export default function IntegrationsPage() {
                 }}
                 onError={(msg: string) => setModalError(msg)}
               />
+            )}
+
+            {/* Manual setup toggle for WhatsApp */}
+            {selectedIntegration.id === 'whatsapp' && (
+              <div className="mt-4">
+                <div className="flex items-center gap-3 mb-3">
+                  <div className="h-px flex-1 bg-gray-200" />
+                  <span className="text-xs font-medium text-gray-400 uppercase tracking-wide">or</span>
+                  <div className="h-px flex-1 bg-gray-200" />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowWhatsappManual((v) => !v)}
+                  aria-expanded={showWhatsappManual}
+                  className="group flex w-full items-center justify-between rounded-xl border border-gray-200 bg-white px-4 py-3 text-left transition-all hover:border-gray-300 hover:bg-gray-50"
+                >
+                  <span className="flex items-center gap-3">
+                    <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-gray-100 text-gray-600 group-hover:bg-gray-200 transition-colors">
+                      <Wrench className="h-4 w-4" />
+                    </span>
+                    <span>
+                      <span className="block text-sm font-semibold text-gray-800">Manual setup (advanced)</span>
+                      <span className="block text-xs text-gray-500">Paste your access token, phone number ID and WABA ID</span>
+                    </span>
+                  </span>
+                  <ChevronDown
+                    className={`h-5 w-5 text-gray-400 transition-transform duration-200 ${showWhatsappManual ? 'rotate-180' : ''}`}
+                  />
+                </button>
+              </div>
             )}
 
             {/* Error Message */}
