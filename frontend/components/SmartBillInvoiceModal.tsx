@@ -86,7 +86,7 @@ export default function SmartBillInvoiceModal({
   // Amount
   const [price, setPrice] = useState('');
   const [quantity, setQuantity] = useState('1');
-  const [vatPercentage, setVatPercentage] = useState('21');
+  const [vatOption, setVatOption] = useState<'normal' | 'redus' | 'none'>('normal');
   const [taxIncluded, setTaxIncluded] = useState(true);
   const [currency, setCurrency] = useState('RON');
 
@@ -126,7 +126,7 @@ export default function SmartBillInvoiceModal({
     setIsService(true);
     setPrice('');
     setQuantity('1');
-    setVatPercentage('21');
+    setVatOption('normal');
     setTaxIncluded(true);
     setCurrency('RON');
   };
@@ -259,7 +259,8 @@ export default function SmartBillInvoiceModal({
           measuringUnit: measuringUnit.trim() || 'buc',
           currency,
           isTaxIncluded: taxIncluded,
-          taxPercentage: parseFloat(vatPercentage) || 0,
+          taxPercentage: vatOption === 'normal' ? 21 : vatOption === 'redus' ? 11 : 0,
+          taxName: vatOption === 'normal' ? 'Normala' : vatOption === 'redus' ? 'Redusa' : undefined,
           isService,
         },
       });
@@ -502,8 +503,12 @@ export default function SmartBillInvoiceModal({
                   <input value={quantity} onChange={(e) => setQuantity(e.target.value)} type="number" min="0" step="0.01" className="w-full rounded-lg border border-gray-300 px-2 py-2 text-sm" />
                 </div>
                 <div>
-                  <label className="block text-[11px] text-gray-500 mb-1">TVA %</label>
-                  <input value={vatPercentage} onChange={(e) => setVatPercentage(e.target.value)} type="number" min="0" step="1" className="w-full rounded-lg border border-gray-300 px-2 py-2 text-sm" />
+                  <label className="block text-[11px] text-gray-500 mb-1">TVA</label>
+                  <select value={vatOption} onChange={(e) => setVatOption(e.target.value as 'normal' | 'redus' | 'none')} className="w-full rounded-lg border border-gray-300 px-2 py-2 text-sm bg-white">
+                    <option value="normal">Normală (21%)</option>
+                    <option value="redus">Redusă (11%)</option>
+                    <option value="none">Fără TVA</option>
+                  </select>
                 </div>
                 <div>
                   <label className="block text-[11px] text-gray-500 mb-1">Monedă</label>

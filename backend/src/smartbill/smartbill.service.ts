@@ -270,7 +270,8 @@ export class SmartBillService {
           quantity: dto.product.quantity,
           price: dto.product.price,
           isTaxIncluded: dto.product.isTaxIncluded ?? true,
-          taxName: dto.product.taxName?.trim() || 'Normala',
+          // For 0% VAT leave taxName unset so SmartBill applies its default "0% TVA Inclus".
+          taxName: dto.product.taxName?.trim() || (taxPercentage > 0 ? 'Normala' : undefined),
           taxPercentage,
           saveToDb: false,
           isService: dto.product.isService ?? true,
