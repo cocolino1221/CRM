@@ -16,6 +16,8 @@ interface ProductResult {
 }
 
 type ClientType = 'company' | 'person';
+type ClientStatus = 'idle' | 'found' | 'new';
+type Step = 'client' | 'product' | 'amount' | 'done';
 
 interface Props {
   open: boolean;
@@ -23,6 +25,12 @@ interface Props {
   defaultClientName?: string;
   defaultClientEmail?: string;
 }
+
+const STEPS: Array<{ key: Step; label: string }> = [
+  { key: 'client', label: 'Client' },
+  { key: 'product', label: 'Produs' },
+  { key: 'amount', label: 'Sumă' },
+];
 
 export default function SmartBillInvoiceModal({
   open,
@@ -34,7 +42,11 @@ export default function SmartBillInvoiceModal({
   const [series, setSeries] = useState<SeriesItem[]>([]);
   const [selectedSeries, setSelectedSeries] = useState('');
 
+  const [step, setStep] = useState<Step>('client');
+
+  // Client
   const [clientType, setClientType] = useState<ClientType>('company');
+  const [clientStatus, setClientStatus] = useState<ClientStatus>('idle');
   const [cui, setCui] = useState('');
   const [clientName, setClientName] = useState('');
   const [clientEmail, setClientEmail] = useState('');
@@ -43,12 +55,16 @@ export default function SmartBillInvoiceModal({
   const [isTaxPayer, setIsTaxPayer] = useState(false);
   const [lookupBusy, setLookupBusy] = useState(false);
 
+  // Product
   const [productQuery, setProductQuery] = useState('');
   const [productResults, setProductResults] = useState<ProductResult[]>([]);
   const [searchBusy, setSearchBusy] = useState(false);
+  const [productStatus, setProductStatus] = useState<ClientStatus>('idle');
   const [productName, setProductName] = useState('');
   const [measuringUnit, setMeasuringUnit] = useState('buc');
   const [isService, setIsService] = useState(true);
+
+  // Amount
   const [price, setPrice] = useState('');
   const [quantity, setQuantity] = useState('1');
   const [vatPercentage, setVatPercentage] = useState('21');
@@ -72,7 +88,9 @@ export default function SmartBillInvoiceModal({
     setError('');
     setSuccess('');
     setCreated(null);
+    setStep('client');
     setClientType('company');
+    setClientStatus('idle');
     setCui('');
     setClientName(defaultClientName || '');
     setClientEmail(defaultClientEmail || '');
@@ -81,6 +99,7 @@ export default function SmartBillInvoiceModal({
     setIsTaxPayer(false);
     setProductQuery('');
     setProductResults([]);
+    setProductStatus('idle');
     setProductName('');
     setMeasuringUnit('buc');
     setIsService(true);
@@ -108,6 +127,8 @@ export default function SmartBillInvoiceModal({
     }
   };
 
+  // ─── Client ──────────────────────────────────────────────────────────────
+
   const lookupCompany = async () => {
     if (!cui.trim()) {
       setError('Completează CUI-ul.');
@@ -122,12 +143,20 @@ export default function SmartBillInvoiceModal({
       setClientAddress(String(data.address || ''));
       setClientVatCode(String(data.vatCode || ''));
       setIsTaxPayer(!!data.isTaxPayer);
+      setClientStatus('found');
     } catch (err: any) {
-      setError(err?.response?.data?.message || 'Compania nu a fost găsită în ANAF.');
+      // Not in ANAF → treat as a brand new client to fill manually.
+      setClientStatus('new');
+      setClientVatCode(cui.trim());
+      setError(err?.response?.data?.message || 'Compania nu a fost găsită în ANAF — completează datele manual pentru un client nou.');
     } finally {
       setLookupBusy(false);
     }
   };
+
+  const canLeaveClient = clientName.trim().length > 0 && (clientType === 'person' || clientStatus !== 'idle');
+
+  // ─── Product ─────────────────────────────────────────────────────────────
 
   const searchProducts = async () => {
     setSearchBusy(true);
@@ -137,7 +166,7 @@ export default function SmartBillInvoiceModal({
         params: { query: productQuery.trim() || undefined },
       });
       setProductResults(Array.isArray(resp.data) ? resp.data : []);
-    } catch (err: any) {
+    } catch {
       setProductResults([]);
     } finally {
       setSearchBusy(false);
@@ -147,7 +176,17 @@ export default function SmartBillInvoiceModal({
   const pickProduct = (p: ProductResult) => {
     setProductName(p.name);
     if (p.measuringUnit) setMeasuringUnit(p.measuringUnit);
+    setProductStatus('found');
   };
+
+  const useNewProduct = () => {
+    setProductStatus('new');
+    setProductResults([]);
+  };
+
+  const canLeaveProduct = productName.trim().length > 0;
+
+  // ─── Amount / create ────────────────────────────────────────────────────
 
   const total = (() => {
     const p = parseFloat(price);
@@ -160,8 +199,6 @@ export default function SmartBillInvoiceModal({
     setError('');
     setSuccess('');
     if (!selectedSeries) return setError('Alege seria de facturare.');
-    if (!clientName.trim()) return setError('Completează numele clientului.');
-    if (!productName.trim()) return setError('Completează produsul.');
     const priceNum = parseFloat(price);
     const qtyNum = parseFloat(quantity);
     if (Number.isNaN(priceNum) || priceNum < 0) return setError('Preț invalid.');
@@ -194,6 +231,7 @@ export default function SmartBillInvoiceModal({
       const data = resp.data || {};
       setCreated({ series: String(data.series || selectedSeries), number: String(data.number || '') });
       setSuccess(`Factura ${data.series || selectedSeries}${data.number || ''} a fost creată în SmartBill.`);
+      setStep('done');
     } catch (err: any) {
       setError(err?.response?.data?.message || 'Crearea facturii a eșuat.');
     } finally {
@@ -229,12 +267,14 @@ export default function SmartBillInvoiceModal({
       const url = URL.createObjectURL(new Blob([resp.data], { type: 'application/pdf' }));
       window.open(url, '_blank');
       setTimeout(() => URL.revokeObjectURL(url), 60000);
-    } catch (err: any) {
+    } catch {
       setError('Nu am putut descărca PDF-ul.');
     }
   };
 
   if (!open) return null;
+
+  const stepIndex = STEPS.findIndex((s) => s.key === step);
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-4 overflow-y-auto">
@@ -244,7 +284,30 @@ export default function SmartBillInvoiceModal({
           <button onClick={onClose} className="text-gray-400 hover:text-gray-700 text-xl leading-none">×</button>
         </div>
 
-        <div className="p-5 space-y-5">
+        {/* Stepper */}
+        {connected && step !== 'done' && (
+          <div className="flex items-center justify-center gap-2 px-5 pt-4">
+            {STEPS.map((s, i) => {
+              const active = i === stepIndex;
+              const done = i < stepIndex;
+              return (
+                <div key={s.key} className="flex items-center gap-2">
+                  <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold ${
+                    active ? 'bg-emerald-600 text-white' : done ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-500'
+                  }`}>
+                    <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[11px] ${
+                      active ? 'bg-white text-emerald-700' : done ? 'bg-emerald-600 text-white' : 'bg-gray-300 text-white'
+                    }`}>{done ? '✓' : i + 1}</span>
+                    {s.label}
+                  </div>
+                  {i < STEPS.length - 1 && <span className="text-gray-300">→</span>}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        <div className="p-5 space-y-4">
           {connected === false && (
             <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm">
               SmartBill nu este conectat. Mergi în Integrations → SmartBill și completează API Token, Email și Company VAT.
@@ -254,44 +317,30 @@ export default function SmartBillInvoiceModal({
           {error && (
             <div className="p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-sm">{error}</div>
           )}
-          {success && (
+          {success && step !== 'done' && (
             <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm">{success}</div>
           )}
 
-          {connected && !created && (
-            <>
-              {/* Series */}
-              <div>
-                <label className="block text-xs font-semibold text-gray-600 uppercase mb-1">Serie facturare</label>
-                <select
-                  value={selectedSeries}
-                  onChange={(e) => setSelectedSeries(e.target.value)}
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
-                >
-                  {series.length === 0 && <option value="">(nicio serie găsită)</option>}
-                  {series.map((s) => (
-                    <option key={s.name} value={s.name}>{s.name}{s.nextNumber ? ` (următorul: ${s.nextNumber})` : ''}</option>
-                  ))}
-                </select>
+          {/* ── STEP: CLIENT ── */}
+          {connected && step === 'client' && (
+            <div className="space-y-3">
+              <div className="flex items-center gap-4">
+                <span className="text-sm font-semibold text-gray-800">Tip client</span>
+                <label className="flex items-center gap-1 text-sm">
+                  <input type="radio" checked={clientType === 'company'} onChange={() => { setClientType('company'); setClientStatus('idle'); }} /> Companie
+                </label>
+                <label className="flex items-center gap-1 text-sm">
+                  <input type="radio" checked={clientType === 'person'} onChange={() => { setClientType('person'); setClientStatus('new'); }} /> Persoană fizică
+                </label>
               </div>
 
-              {/* Client */}
-              <div className="rounded-lg border border-gray-200 p-4 space-y-3">
-                <div className="flex items-center gap-4">
-                  <span className="text-sm font-semibold text-gray-800">Client</span>
-                  <label className="flex items-center gap-1 text-sm">
-                    <input type="radio" checked={clientType === 'company'} onChange={() => setClientType('company')} /> Companie
-                  </label>
-                  <label className="flex items-center gap-1 text-sm">
-                    <input type="radio" checked={clientType === 'person'} onChange={() => setClientType('person')} /> Persoană fizică
-                  </label>
-                </div>
-
-                {clientType === 'company' && (
+              {clientType === 'company' && (
+                <>
                   <div className="flex gap-2">
                     <input
                       value={cui}
                       onChange={(e) => setCui(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && lookupCompany()}
                       placeholder="CUI (ex: 12345678 sau RO12345678)"
                       className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm"
                     />
@@ -300,143 +349,187 @@ export default function SmartBillInvoiceModal({
                       disabled={lookupBusy}
                       className="px-3 py-2 rounded-lg bg-blue-600 text-white text-sm hover:bg-blue-700 disabled:opacity-50"
                     >
-                      {lookupBusy ? 'Caut...' : 'Caută ANAF'}
+                      {lookupBusy ? 'Caut...' : 'Caută client'}
                     </button>
                   </div>
-                )}
 
+                  {clientStatus === 'found' && (
+                    <div className="p-2 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs">
+                      ✓ Client găsit în ANAF — verifică datele și continuă.
+                    </div>
+                  )}
+                  {clientStatus === 'new' && (
+                    <div className="p-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-xs">
+                      Client nou — completează datele. Se va crea automat în SmartBill la emiterea facturii.
+                    </div>
+                  )}
+                </>
+              )}
+
+              {(clientStatus !== 'idle' || clientType === 'person') && (
+                <div className="space-y-2">
+                  <input value={clientName} onChange={(e) => setClientName(e.target.value)} placeholder="Nume client" className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+                  <input value={clientEmail} onChange={(e) => setClientEmail(e.target.value)} placeholder="Email client (pentru trimitere)" className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+                  {clientType === 'company' && (
+                    <>
+                      <input value={clientVatCode} onChange={(e) => setClientVatCode(e.target.value)} placeholder="CUI / Cod fiscal" className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+                      <input value={clientAddress} onChange={(e) => setClientAddress(e.target.value)} placeholder="Adresă" className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── STEP: PRODUCT ── */}
+          {connected && step === 'product' && (
+            <div className="space-y-3">
+              <div className="flex gap-2">
                 <input
-                  value={clientName}
-                  onChange={(e) => setClientName(e.target.value)}
-                  placeholder="Nume client"
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                  value={productQuery}
+                  onChange={(e) => setProductQuery(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && searchProducts()}
+                  placeholder="Caută produs în SmartBill..."
+                  className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm"
                 />
-                <input
-                  value={clientEmail}
-                  onChange={(e) => setClientEmail(e.target.value)}
-                  placeholder="Email client (pentru trimitere)"
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
-                />
-                {clientType === 'company' && (
-                  <input
-                    value={clientAddress}
-                    onChange={(e) => setClientAddress(e.target.value)}
-                    placeholder="Adresă"
-                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
-                  />
-                )}
+                <button onClick={searchProducts} disabled={searchBusy} className="px-3 py-2 rounded-lg bg-blue-600 text-white text-sm hover:bg-blue-700 disabled:opacity-50">
+                  {searchBusy ? '...' : 'Caută'}
+                </button>
               </div>
 
-              {/* Product */}
-              <div className="rounded-lg border border-gray-200 p-4 space-y-3">
-                <span className="text-sm font-semibold text-gray-800">Produs / serviciu</span>
-                <div className="flex gap-2">
-                  <input
-                    value={productQuery}
-                    onChange={(e) => setProductQuery(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && searchProducts()}
-                    placeholder="Caută în SmartBill..."
-                    className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm"
-                  />
-                  <button
-                    onClick={searchProducts}
-                    disabled={searchBusy}
-                    className="px-3 py-2 rounded-lg bg-gray-800 text-white text-sm hover:bg-black disabled:opacity-50"
-                  >
-                    {searchBusy ? '...' : 'Caută'}
-                  </button>
+              {productResults.length > 0 && (
+                <div className="max-h-40 overflow-auto border border-gray-100 rounded-lg divide-y">
+                  {productResults.map((p) => (
+                    <button key={`${p.name}-${p.code || ''}`} onClick={() => pickProduct(p)} className="w-full text-left px-3 py-2 text-xs hover:bg-emerald-50">
+                      {p.name}{p.code ? ` · ${p.code}` : ''}{p.measuringUnit ? ` · ${p.measuringUnit}` : ''}
+                    </button>
+                  ))}
                 </div>
-                {productResults.length > 0 && (
-                  <div className="max-h-32 overflow-auto border border-gray-100 rounded-lg divide-y">
-                    {productResults.map((p) => (
-                      <button
-                        key={`${p.name}-${p.code || ''}`}
-                        onClick={() => pickProduct(p)}
-                        className="w-full text-left px-3 py-2 text-xs hover:bg-gray-50"
-                      >
-                        {p.name}{p.code ? ` · ${p.code}` : ''}{p.measuringUnit ? ` · ${p.measuringUnit}` : ''}
-                      </button>
-                    ))}
-                  </div>
-                )}
-                <input
-                  value={productName}
-                  onChange={(e) => setProductName(e.target.value)}
-                  placeholder="Nume produs (sau scrie unul nou)"
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
-                />
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  <div>
-                    <label className="block text-[11px] text-gray-500 mb-1">Preț</label>
-                    <input value={price} onChange={(e) => setPrice(e.target.value)} type="number" min="0" step="0.01" className="w-full rounded-lg border border-gray-300 px-2 py-2 text-sm" />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] text-gray-500 mb-1">Cantitate</label>
-                    <input value={quantity} onChange={(e) => setQuantity(e.target.value)} type="number" min="0" step="0.01" className="w-full rounded-lg border border-gray-300 px-2 py-2 text-sm" />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] text-gray-500 mb-1">TVA %</label>
-                    <input value={vatPercentage} onChange={(e) => setVatPercentage(e.target.value)} type="number" min="0" step="1" className="w-full rounded-lg border border-gray-300 px-2 py-2 text-sm" />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] text-gray-500 mb-1">U.M.</label>
-                    <input value={measuringUnit} onChange={(e) => setMeasuringUnit(e.target.value)} className="w-full rounded-lg border border-gray-300 px-2 py-2 text-sm" />
+              )}
+
+              <button onClick={useNewProduct} className="text-xs text-blue-600 hover:text-blue-800">+ Adaugă produs nou</button>
+
+              {productStatus === 'found' && (
+                <div className="p-2 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs">✓ Produs selectat din SmartBill.</div>
+              )}
+              {productStatus === 'new' && (
+                <div className="p-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-xs">Produs nou — completează numele mai jos.</div>
+              )}
+
+              {(productStatus !== 'idle') && (
+                <div className="space-y-2">
+                  <input value={productName} onChange={(e) => setProductName(e.target.value)} placeholder="Nume produs / serviciu" className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+                  <div className="flex items-center gap-4 text-sm">
+                    <div className="flex-1">
+                      <label className="block text-[11px] text-gray-500 mb-1">Unitate de măsură</label>
+                      <input value={measuringUnit} onChange={(e) => setMeasuringUnit(e.target.value)} className="w-full rounded-lg border border-gray-300 px-2 py-2 text-sm" />
+                    </div>
+                    <label className="flex items-center gap-1 mt-4">
+                      <input type="checkbox" checked={isService} onChange={(e) => setIsService(e.target.checked)} /> Serviciu
+                    </label>
                   </div>
                 </div>
-                <div className="flex items-center gap-4 text-sm">
-                  <label className="flex items-center gap-1">
-                    <input type="checkbox" checked={taxIncluded} onChange={(e) => setTaxIncluded(e.target.checked)} /> Preț cu TVA inclus
-                  </label>
-                  <label className="flex items-center gap-1">
-                    <input type="checkbox" checked={isService} onChange={(e) => setIsService(e.target.checked)} /> Serviciu
-                  </label>
-                  <select value={currency} onChange={(e) => setCurrency(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1 text-sm">
+              )}
+            </div>
+          )}
+
+          {/* ── STEP: AMOUNT ── */}
+          {connected && step === 'amount' && (
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 uppercase mb-1">Serie facturare</label>
+                <select value={selectedSeries} onChange={(e) => setSelectedSeries(e.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
+                  {series.length === 0 && <option value="">(nicio serie găsită)</option>}
+                  {series.map((s) => (
+                    <option key={s.name} value={s.name}>{s.name}{s.nextNumber ? ` (următorul: ${s.nextNumber})` : ''}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="rounded-lg border border-gray-200 p-3 text-sm text-gray-600 space-y-1">
+                <div><span className="text-gray-400">Client:</span> {clientName || '-'}</div>
+                <div><span className="text-gray-400">Produs:</span> {productName || '-'}</div>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                <div>
+                  <label className="block text-[11px] text-gray-500 mb-1">Preț</label>
+                  <input value={price} onChange={(e) => setPrice(e.target.value)} type="number" min="0" step="0.01" className="w-full rounded-lg border border-gray-300 px-2 py-2 text-sm" />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-gray-500 mb-1">Cantitate</label>
+                  <input value={quantity} onChange={(e) => setQuantity(e.target.value)} type="number" min="0" step="0.01" className="w-full rounded-lg border border-gray-300 px-2 py-2 text-sm" />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-gray-500 mb-1">TVA %</label>
+                  <input value={vatPercentage} onChange={(e) => setVatPercentage(e.target.value)} type="number" min="0" step="1" className="w-full rounded-lg border border-gray-300 px-2 py-2 text-sm" />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-gray-500 mb-1">Monedă</label>
+                  <select value={currency} onChange={(e) => setCurrency(e.target.value)} className="w-full rounded-lg border border-gray-300 px-2 py-2 text-sm">
                     <option value="RON">RON</option>
                     <option value="EUR">EUR</option>
                     <option value="USD">USD</option>
                   </select>
                 </div>
-                {total !== null && (
-                  <div className="text-sm text-gray-700">Total: <span className="font-semibold">{total.toFixed(2)} {currency}</span></div>
-                )}
               </div>
-
-              <div className="flex justify-end gap-2">
-                <button onClick={onClose} className="px-4 py-2 rounded-lg border border-gray-300 text-sm">Anulează</button>
-                <button
-                  onClick={createInvoice}
-                  disabled={busy}
-                  className="px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm hover:bg-emerald-700 disabled:opacity-50"
-                >
-                  {busy ? 'Se creează...' : 'Creează factura'}
-                </button>
-              </div>
-            </>
+              <label className="flex items-center gap-1 text-sm">
+                <input type="checkbox" checked={taxIncluded} onChange={(e) => setTaxIncluded(e.target.checked)} /> Preț cu TVA inclus
+              </label>
+              {total !== null && (
+                <div className="text-sm text-gray-700">Total: <span className="font-semibold">{total.toFixed(2)} {currency}</span></div>
+              )}
+            </div>
           )}
 
-          {created && (
+          {/* ── STEP: DONE ── */}
+          {step === 'done' && created && (
             <div className="space-y-4">
-              <div className="text-sm text-gray-700">
-                Factura <span className="font-semibold">{created.series}{created.number}</span> este în SmartBill.
+              <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm">
+                ✓ Factura <span className="font-semibold">{created.series}{created.number}</span> a fost creată în SmartBill.
               </div>
               <div className="flex flex-wrap gap-2">
-                <button
-                  onClick={sendByEmail}
-                  disabled={sendBusy}
-                  className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm hover:bg-blue-700 disabled:opacity-50"
-                >
+                <button onClick={sendByEmail} disabled={sendBusy} className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm hover:bg-blue-700 disabled:opacity-50">
                   {sendBusy ? 'Se trimite...' : `Trimite pe email${clientEmail ? ` (${clientEmail})` : ''}`}
                 </button>
-                <button onClick={downloadPdf} className="px-4 py-2 rounded-lg border border-gray-300 text-sm">
-                  Descarcă PDF
-                </button>
-                <button onClick={onClose} className="px-4 py-2 rounded-lg border border-gray-300 text-sm ml-auto">
-                  Închide
-                </button>
+                <button onClick={downloadPdf} className="px-4 py-2 rounded-lg border border-gray-300 text-sm">Descarcă PDF</button>
+                <button onClick={onClose} className="px-4 py-2 rounded-lg border border-gray-300 text-sm ml-auto">Închide</button>
               </div>
             </div>
           )}
         </div>
+
+        {/* Footer nav */}
+        {connected && step !== 'done' && (
+          <div className="flex items-center justify-between px-5 py-4 border-t border-gray-200">
+            <button
+              onClick={() => {
+                if (step === 'product') setStep('client');
+                else if (step === 'amount') setStep('product');
+                else onClose();
+              }}
+              className="px-4 py-2 rounded-lg border border-gray-300 text-sm"
+            >
+              {step === 'client' ? 'Anulează' : 'Înapoi'}
+            </button>
+
+            {step === 'client' && (
+              <button onClick={() => { setError(''); setStep('product'); }} disabled={!canLeaveClient} className="px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm hover:bg-emerald-700 disabled:opacity-50">
+                Continuă la produs
+              </button>
+            )}
+            {step === 'product' && (
+              <button onClick={() => { setError(''); setStep('amount'); }} disabled={!canLeaveProduct} className="px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm hover:bg-emerald-700 disabled:opacity-50">
+                Continuă la sumă
+              </button>
+            )}
+            {step === 'amount' && (
+              <button onClick={createInvoice} disabled={busy} className="px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm hover:bg-emerald-700 disabled:opacity-50">
+                {busy ? 'Se creează...' : 'Creează factura'}
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
