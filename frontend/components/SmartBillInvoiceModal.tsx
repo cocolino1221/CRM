@@ -185,11 +185,6 @@ export default function SmartBillInvoiceModal({
     setProductStatus('found');
   };
 
-  const useNewProduct = () => {
-    setProductStatus('new');
-    setProductResults([]);
-  };
-
   const canLeaveProduct = productName.trim().length > 0;
 
   // ─── Amount / create ────────────────────────────────────────────────────
@@ -402,52 +397,49 @@ export default function SmartBillInvoiceModal({
           {/* ── STEP: PRODUCT ── */}
           {connected && step === 'product' && (
             <div className="space-y-3">
-              <div className="flex gap-2">
-                <input
-                  value={productQuery}
-                  onChange={(e) => setProductQuery(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && searchProducts()}
-                  placeholder="Caută produs în SmartBill..."
-                  className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm"
-                />
-                <button onClick={searchProducts} disabled={searchBusy} className="px-3 py-2 rounded-lg bg-blue-600 text-white text-sm hover:bg-blue-700 disabled:opacity-50">
-                  {searchBusy ? '...' : 'Caută'}
-                </button>
+              <div className="space-y-2">
+                <input value={productName} onChange={(e) => setProductName(e.target.value)} placeholder="Nume produs / serviciu (ex: Consultanță nutrițională)" className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+                <div className="flex items-center gap-4 text-sm">
+                  <div className="flex-1">
+                    <label className="block text-[11px] text-gray-500 mb-1">Unitate de măsură</label>
+                    <input value={measuringUnit} onChange={(e) => setMeasuringUnit(e.target.value)} className="w-full rounded-lg border border-gray-300 px-2 py-2 text-sm" />
+                  </div>
+                  <label className="flex items-center gap-1 mt-4">
+                    <input type="checkbox" checked={isService} onChange={(e) => setIsService(e.target.checked)} /> Serviciu
+                  </label>
+                </div>
+                <p className="text-[11px] text-gray-400">Produsul/serviciul se salvează automat în SmartBill la emiterea facturii.</p>
               </div>
 
-              {productResults.length > 0 && (
-                <div className="max-h-40 overflow-auto border border-gray-100 rounded-lg divide-y">
-                  {productResults.map((p) => (
-                    <button key={`${p.name}-${p.code || ''}`} onClick={() => pickProduct(p)} className="w-full text-left px-3 py-2 text-xs hover:bg-emerald-50">
-                      {p.name}{p.code ? ` · ${p.code}` : ''}{p.measuringUnit ? ` · ${p.measuringUnit}` : ''}
+              {/* Căutare opțională, doar pentru firme cu modul de gestiune (stoc) */}
+              <details className="text-xs text-gray-500">
+                <summary className="cursor-pointer hover:text-gray-700">Caută în gestiune (doar produse cu stoc)</summary>
+                <div className="mt-2 space-y-2">
+                  <div className="flex gap-2">
+                    <input
+                      value={productQuery}
+                      onChange={(e) => setProductQuery(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && searchProducts()}
+                      placeholder="Caută produs în stoc..."
+                      className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                    />
+                    <button onClick={searchProducts} disabled={searchBusy} className="px-3 py-2 rounded-lg bg-blue-600 text-white text-sm hover:bg-blue-700 disabled:opacity-50">
+                      {searchBusy ? '...' : 'Caută'}
                     </button>
-                  ))}
-                </div>
-              )}
-
-              <button onClick={useNewProduct} className="text-xs text-blue-600 hover:text-blue-800">+ Adaugă produs nou</button>
-
-              {productStatus === 'found' && (
-                <div className="p-2 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs">✓ Produs selectat din SmartBill.</div>
-              )}
-              {productStatus === 'new' && (
-                <div className="p-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-xs">Produs nou — completează numele mai jos.</div>
-              )}
-
-              {(productStatus !== 'idle') && (
-                <div className="space-y-2">
-                  <input value={productName} onChange={(e) => setProductName(e.target.value)} placeholder="Nume produs / serviciu" className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
-                  <div className="flex items-center gap-4 text-sm">
-                    <div className="flex-1">
-                      <label className="block text-[11px] text-gray-500 mb-1">Unitate de măsură</label>
-                      <input value={measuringUnit} onChange={(e) => setMeasuringUnit(e.target.value)} className="w-full rounded-lg border border-gray-300 px-2 py-2 text-sm" />
-                    </div>
-                    <label className="flex items-center gap-1 mt-4">
-                      <input type="checkbox" checked={isService} onChange={(e) => setIsService(e.target.checked)} /> Serviciu
-                    </label>
                   </div>
+                  {productResults.length > 0 ? (
+                    <div className="max-h-40 overflow-auto border border-gray-100 rounded-lg divide-y">
+                      {productResults.map((p) => (
+                        <button key={`${p.name}-${p.code || ''}`} onClick={() => pickProduct(p)} className="w-full text-left px-3 py-2 text-xs hover:bg-emerald-50">
+                          {p.name}{p.code ? ` · ${p.code}` : ''}{p.measuringUnit ? ` · ${p.measuringUnit}` : ''}
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    searchBusy ? null : <p className="text-[11px] text-gray-400">Niciun produs în gestiune (normal dacă nu folosești modulul de stoc).</p>
+                  )}
                 </div>
-              )}
+              </details>
             </div>
           )}
 
