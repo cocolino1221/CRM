@@ -51,6 +51,8 @@ export default function SmartBillInvoiceModal({
   const [clientName, setClientName] = useState('');
   const [clientEmail, setClientEmail] = useState('');
   const [clientAddress, setClientAddress] = useState('');
+  const [clientCity, setClientCity] = useState('');
+  const [clientCounty, setClientCounty] = useState('');
   const [clientVatCode, setClientVatCode] = useState('');
   const [isTaxPayer, setIsTaxPayer] = useState(false);
   const [lookupBusy, setLookupBusy] = useState(false);
@@ -95,6 +97,8 @@ export default function SmartBillInvoiceModal({
     setClientName(defaultClientName || '');
     setClientEmail(defaultClientEmail || '');
     setClientAddress('');
+    setClientCity('');
+    setClientCounty('');
     setClientVatCode('');
     setIsTaxPayer(false);
     setProductQuery('');
@@ -141,6 +145,8 @@ export default function SmartBillInvoiceModal({
       const data = resp.data || {};
       setClientName(String(data.name || ''));
       setClientAddress(String(data.address || ''));
+      setClientCity(String(data.city || ''));
+      setClientCounty(String(data.county || ''));
       setClientVatCode(String(data.vatCode || ''));
       setIsTaxPayer(!!data.isTaxPayer);
       setClientStatus('found');
@@ -214,6 +220,8 @@ export default function SmartBillInvoiceModal({
           vatCode: clientType === 'company' ? clientVatCode.trim() || undefined : undefined,
           isTaxPayer: clientType === 'company' ? isTaxPayer : false,
           address: clientAddress.trim() || undefined,
+          city: clientCity.trim() || undefined,
+          county: clientCounty.trim() || undefined,
           email: clientEmail.trim() || undefined,
           country: 'Romania',
         },
@@ -363,6 +371,14 @@ export default function SmartBillInvoiceModal({
                       Client nou — completează datele. Se va crea automat în SmartBill la emiterea facturii.
                     </div>
                   )}
+                  {clientStatus === 'idle' && (
+                    <button
+                      onClick={() => { setError(''); setClientStatus('new'); setClientVatCode(cui.trim()); }}
+                      className="text-xs text-blue-600 hover:text-blue-800"
+                    >
+                      Sau completează datele manual →
+                    </button>
+                  )}
                 </>
               )}
 
@@ -371,11 +387,13 @@ export default function SmartBillInvoiceModal({
                   <input value={clientName} onChange={(e) => setClientName(e.target.value)} placeholder="Nume client" className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
                   <input value={clientEmail} onChange={(e) => setClientEmail(e.target.value)} placeholder="Email client (pentru trimitere)" className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
                   {clientType === 'company' && (
-                    <>
-                      <input value={clientVatCode} onChange={(e) => setClientVatCode(e.target.value)} placeholder="CUI / Cod fiscal" className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
-                      <input value={clientAddress} onChange={(e) => setClientAddress(e.target.value)} placeholder="Adresă" className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
-                    </>
+                    <input value={clientVatCode} onChange={(e) => setClientVatCode(e.target.value)} placeholder="CUI / Cod fiscal" className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
                   )}
+                  <input value={clientAddress} onChange={(e) => setClientAddress(e.target.value)} placeholder="Adresă (stradă, nr.)" className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+                  <div className="grid grid-cols-2 gap-2">
+                    <input value={clientCity} onChange={(e) => setClientCity(e.target.value)} placeholder="Localitate" className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+                    <input value={clientCounty} onChange={(e) => setClientCounty(e.target.value)} placeholder="Județ" className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+                  </div>
                 </div>
               )}
             </div>
