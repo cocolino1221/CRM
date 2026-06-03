@@ -32,6 +32,23 @@ const STEPS: Array<{ key: Step; label: string }> = [
   { key: 'amount', label: 'Sumă' },
 ];
 
+const RO_COUNTIES = [
+  'Alba', 'Arad', 'Argeș', 'Bacău', 'Bihor', 'Bistrița-Năsăud', 'Botoșani', 'Brașov',
+  'Brăila', 'București', 'Buzău', 'Caraș-Severin', 'Călărași', 'Cluj', 'Constanța',
+  'Covasna', 'Dâmbovița', 'Dolj', 'Galați', 'Giurgiu', 'Gorj', 'Harghita', 'Hunedoara',
+  'Ialomița', 'Iași', 'Ilfov', 'Maramureș', 'Mehedinți', 'Mureș', 'Neamț', 'Olt',
+  'Prahova', 'Satu Mare', 'Sălaj', 'Sibiu', 'Suceava', 'Teleorman', 'Timiș', 'Tulcea',
+  'Vaslui', 'Vâlcea', 'Vrancea',
+];
+
+const COUNTRIES = [
+  'Romania', 'Republica Moldova', 'Austria', 'Belgia', 'Bulgaria', 'Cehia', 'Cipru',
+  'Croația', 'Danemarca', 'Elveția', 'Estonia', 'Finlanda', 'Franța', 'Germania',
+  'Grecia', 'Irlanda', 'Italia', 'Letonia', 'Lituania', 'Luxemburg', 'Malta',
+  'Marea Britanie', 'Norvegia', 'Olanda', 'Polonia', 'Portugalia', 'Slovacia',
+  'Slovenia', 'Spania', 'Suedia', 'Ungaria', 'Statele Unite',
+];
+
 export default function SmartBillInvoiceModal({
   open,
   onClose,
@@ -53,15 +70,15 @@ export default function SmartBillInvoiceModal({
   const [clientAddress, setClientAddress] = useState('');
   const [clientCity, setClientCity] = useState('');
   const [clientCounty, setClientCounty] = useState('');
+  const [clientCountry, setClientCountry] = useState('Romania');
   const [clientVatCode, setClientVatCode] = useState('');
   const [isTaxPayer, setIsTaxPayer] = useState(false);
   const [lookupBusy, setLookupBusy] = useState(false);
 
   // Product
-  const [productQuery, setProductQuery] = useState('');
   const [productResults, setProductResults] = useState<ProductResult[]>([]);
   const [searchBusy, setSearchBusy] = useState(false);
-  const [productStatus, setProductStatus] = useState<ClientStatus>('idle');
+  const [showResults, setShowResults] = useState(false);
   const [productName, setProductName] = useState('');
   const [measuringUnit, setMeasuringUnit] = useState('buc');
   const [isService, setIsService] = useState(true);
@@ -99,11 +116,11 @@ export default function SmartBillInvoiceModal({
     setClientAddress('');
     setClientCity('');
     setClientCounty('');
+    setClientCountry('Romania');
     setClientVatCode('');
     setIsTaxPayer(false);
-    setProductQuery('');
     setProductResults([]);
-    setProductStatus('idle');
+    setShowResults(false);
     setProductName('');
     setMeasuringUnit('buc');
     setIsService(true);
@@ -146,7 +163,10 @@ export default function SmartBillInvoiceModal({
       setClientName(String(data.name || ''));
       setClientAddress(String(data.address || ''));
       setClientCity(String(data.city || ''));
-      setClientCounty(String(data.county || ''));
+      const rawCounty = String(data.county || '').trim();
+      const matchedCounty = RO_COUNTIES.find((j) => j.toLowerCase() === rawCounty.toLowerCase());
+      setClientCounty(matchedCounty || '');
+      setClientCountry('Romania');
       setClientVatCode(String(data.vatCode || ''));
       setIsTaxPayer(!!data.isTaxPayer);
       setClientStatus('found');
@@ -164,25 +184,37 @@ export default function SmartBillInvoiceModal({
 
   // ─── Product ─────────────────────────────────────────────────────────────
 
-  const searchProducts = async () => {
-    setSearchBusy(true);
-    setError('');
-    try {
-      const resp = await api.get('/integrations/smartbill/products', {
-        params: { query: productQuery.trim() || undefined },
-      });
-      setProductResults(Array.isArray(resp.data) ? resp.data : []);
-    } catch {
+  // Autocomplete: search SmartBill stock as the user types the product name.
+  useEffect(() => {
+    if (step !== 'product' || !showResults) return;
+    const term = productName.trim();
+    if (term.length < 2) {
       setProductResults([]);
-    } finally {
-      setSearchBusy(false);
+      return;
     }
-  };
+    let cancelled = false;
+    setSearchBusy(true);
+    const t = setTimeout(async () => {
+      try {
+        const resp = await api.get('/integrations/smartbill/products', {
+          params: { query: term },
+        });
+        if (!cancelled) setProductResults(Array.isArray(resp.data) ? resp.data : []);
+      } catch {
+        if (!cancelled) setProductResults([]);
+      } finally {
+        if (!cancelled) setSearchBusy(false);
+      }
+    }, 400);
+    return () => { cancelled = true; clearTimeout(t); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [productName, step, showResults]);
 
   const pickProduct = (p: ProductResult) => {
     setProductName(p.name);
     if (p.measuringUnit) setMeasuringUnit(p.measuringUnit);
-    setProductStatus('found');
+    setShowResults(false);
+    setProductResults([]);
   };
 
   const canLeaveProduct = productName.trim().length > 0;
@@ -216,9 +248,9 @@ export default function SmartBillInvoiceModal({
           isTaxPayer: clientType === 'company' ? isTaxPayer : false,
           address: clientAddress.trim() || undefined,
           city: clientCity.trim() || undefined,
-          county: clientCounty.trim() || undefined,
+          county: clientCountry === 'Romania' ? (clientCounty.trim() || undefined) : undefined,
           email: clientEmail.trim() || undefined,
-          country: 'Romania',
+          country: clientCountry,
         },
         product: {
           name: productName.trim(),
@@ -387,8 +419,16 @@ export default function SmartBillInvoiceModal({
                   <input value={clientAddress} onChange={(e) => setClientAddress(e.target.value)} placeholder="Adresă (stradă, nr.)" className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
                   <div className="grid grid-cols-2 gap-2">
                     <input value={clientCity} onChange={(e) => setClientCity(e.target.value)} placeholder="Localitate" className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
-                    <input value={clientCounty} onChange={(e) => setClientCounty(e.target.value)} placeholder="Județ" className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+                    <select value={clientCountry} onChange={(e) => setClientCountry(e.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white">
+                      {COUNTRIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                    </select>
                   </div>
+                  {clientCountry === 'Romania' && (
+                    <select value={clientCounty} onChange={(e) => setClientCounty(e.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white">
+                      <option value="">Județ...</option>
+                      {RO_COUNTIES.map((j) => <option key={j} value={j}>{j}</option>)}
+                    </select>
+                  )}
                 </div>
               )}
             </div>
@@ -398,7 +438,28 @@ export default function SmartBillInvoiceModal({
           {connected && step === 'product' && (
             <div className="space-y-3">
               <div className="space-y-2">
-                <input value={productName} onChange={(e) => setProductName(e.target.value)} placeholder="Nume produs / serviciu (ex: Consultanță nutrițională)" className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+                <div className="relative">
+                  <input
+                    value={productName}
+                    onChange={(e) => { setProductName(e.target.value); setShowResults(true); }}
+                    onFocus={() => setShowResults(true)}
+                    placeholder="Nume produs / serviciu (ex: Consultanță nutrițională)"
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                    autoComplete="off"
+                  />
+                  {showResults && (searchBusy || productResults.length > 0) && (
+                    <div className="absolute z-10 left-0 right-0 mt-1 max-h-44 overflow-auto bg-white border border-gray-200 rounded-lg shadow-lg divide-y">
+                      {searchBusy && productResults.length === 0 && (
+                        <div className="px-3 py-2 text-xs text-gray-400">Caut în SmartBill...</div>
+                      )}
+                      {productResults.map((p) => (
+                        <button key={`${p.name}-${p.code || ''}`} onClick={() => pickProduct(p)} className="w-full text-left px-3 py-2 text-xs hover:bg-emerald-50">
+                          {p.name}{p.code ? ` · ${p.code}` : ''}{p.measuringUnit ? ` · ${p.measuringUnit}` : ''}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
                 <div className="flex items-center gap-4 text-sm">
                   <div className="flex-1">
                     <label className="block text-[11px] text-gray-500 mb-1">Unitate de măsură</label>
@@ -408,38 +469,8 @@ export default function SmartBillInvoiceModal({
                     <input type="checkbox" checked={isService} onChange={(e) => setIsService(e.target.checked)} /> Serviciu
                   </label>
                 </div>
-                <p className="text-[11px] text-gray-400">Produsul/serviciul se salvează automat în SmartBill la emiterea facturii.</p>
+                <p className="text-[11px] text-gray-400">Scrie numele — dacă există în SmartBill apare în listă, altfel continuă cu ce ai scris (se salvează automat la emitere).</p>
               </div>
-
-              {/* Căutare opțională, doar pentru firme cu modul de gestiune (stoc) */}
-              <details className="text-xs text-gray-500">
-                <summary className="cursor-pointer hover:text-gray-700">Caută în gestiune (doar produse cu stoc)</summary>
-                <div className="mt-2 space-y-2">
-                  <div className="flex gap-2">
-                    <input
-                      value={productQuery}
-                      onChange={(e) => setProductQuery(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && searchProducts()}
-                      placeholder="Caută produs în stoc..."
-                      className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm"
-                    />
-                    <button onClick={searchProducts} disabled={searchBusy} className="px-3 py-2 rounded-lg bg-blue-600 text-white text-sm hover:bg-blue-700 disabled:opacity-50">
-                      {searchBusy ? '...' : 'Caută'}
-                    </button>
-                  </div>
-                  {productResults.length > 0 ? (
-                    <div className="max-h-40 overflow-auto border border-gray-100 rounded-lg divide-y">
-                      {productResults.map((p) => (
-                        <button key={`${p.name}-${p.code || ''}`} onClick={() => pickProduct(p)} className="w-full text-left px-3 py-2 text-xs hover:bg-emerald-50">
-                          {p.name}{p.code ? ` · ${p.code}` : ''}{p.measuringUnit ? ` · ${p.measuringUnit}` : ''}
-                        </button>
-                      ))}
-                    </div>
-                  ) : (
-                    searchBusy ? null : <p className="text-[11px] text-gray-400">Niciun produs în gestiune (normal dacă nu folosești modulul de stoc).</p>
-                  )}
-                </div>
-              </details>
             </div>
           )}
 
