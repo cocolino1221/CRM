@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import api from '@/lib/api';
+import SmartBillInvoiceModal from '@/components/SmartBillInvoiceModal';
 
 type PaymentStatus = 'paid' | 'failed' | 'pending';
 
@@ -204,6 +205,7 @@ export default function PaymentsPage() {
   const [loadingPayfunnel, setLoadingPayfunnel] = useState(true);
   const [payfunnelError, setPayfunnelError] = useState('');
   const [subscriptionSearch, setSubscriptionSearch] = useState('');
+  const [invoiceModalOpen, setInvoiceModalOpen] = useState(false);
 
   const queryStatus = status === 'all' ? undefined : status;
 
@@ -363,16 +365,26 @@ export default function PaymentsPage() {
           <h1 className="text-3xl font-bold text-gray-900">Payments</h1>
           <p className="text-sm text-gray-600 mt-1">Plati sincronizate din fluxul documentelor + webhook.</p>
         </div>
-        <button
-          onClick={() => {
-            fetchPayments();
-            fetchPayfunnelDashboard();
-          }}
-          className="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors"
-        >
-          Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setInvoiceModalOpen(true)}
+            className="px-4 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition-colors flex items-center gap-1"
+          >
+            <span className="text-lg leading-none">+</span> Factură nouă
+          </button>
+          <button
+            onClick={() => {
+              fetchPayments();
+              fetchPayfunnelDashboard();
+            }}
+            className="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors"
+          >
+            Refresh
+          </button>
+        </div>
       </div>
+
+      <SmartBillInvoiceModal open={invoiceModalOpen} onClose={() => setInvoiceModalOpen(false)} />
 
       {error && (
         <div className="p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-sm">
