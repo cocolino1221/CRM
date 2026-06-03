@@ -7,7 +7,7 @@ import { Integration, IntegrationStatus } from '../database/entities/integration
 
 const SMARTBILL_API = 'https://ws.smartbill.ro/SBORO/api';
 // Official ANAF VAT-payer lookup (free, no auth). Returns company data by CUI.
-const ANAF_API = 'https://webservicesp.anaf.ro/PlatitorTvaRest/api/v9/ws/tva';
+const ANAF_API = 'https://webservicesp.anaf.ro/api/PlatitorTvaRest/v9/tva';
 
 interface SmartBillCreds {
   email: string;
@@ -153,12 +153,19 @@ export class SmartBillService {
         throw new NotFoundException('Compania nu a fost găsită în ANAF pentru acest CUI.');
       }
       const general = found.date_generale || {};
+      const seat = found.adresa_sediu_social || {};
       const isVatPayer = !!found.inregistrare_scop_Tva?.scpTVA;
+      const street = [seat.sdenumire_Strada, seat.snumar_Strada]
+        .map((s: any) => String(s || '').trim())
+        .filter(Boolean)
+        .join(' nr. ');
       return {
         name: String(general.denumire || '').trim(),
         vatCode: (isVatPayer ? 'RO' : '') + digits,
         isTaxPayer: isVatPayer,
-        address: String(general.adresa || '').trim(),
+        address: street || String(general.adresa || '').trim(),
+        city: String(seat.sdenumire_Localitate || '').trim() || undefined,
+        county: String(seat.sdenumire_Judet || '').trim() || undefined,
         country: 'Romania',
       };
     } catch (error: any) {
@@ -257,7 +264,8 @@ export class SmartBillService {
         {
           name: dto.product.name.trim(),
           code: dto.product.code?.trim() || undefined,
-          measuringUnit: dto.product.measuringUnit?.trim() || 'buc',
+          measuringUnitName: dto.product.measuringUnit?.trim() || 'buc',
+          isDiscount: false,
           currency,
           quantity: dto.product.quantity,
           price: dto.product.price,
