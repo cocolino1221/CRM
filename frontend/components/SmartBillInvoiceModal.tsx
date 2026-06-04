@@ -180,7 +180,11 @@ export default function SmartBillInvoiceModal({
     }
   };
 
-  const canLeaveClient = clientName.trim().length > 0 && (clientType === 'person' || clientStatus !== 'idle');
+  const canLeaveClient =
+    clientName.trim().length > 0 &&
+    (clientType === 'person' || clientStatus !== 'idle') &&
+    clientAddress.trim().length > 0 &&
+    (clientCountry !== 'Romania' || clientCounty.trim().length > 0);
 
   // ─── Product ─────────────────────────────────────────────────────────────
 
@@ -417,7 +421,7 @@ export default function SmartBillInvoiceModal({
                   {clientType === 'company' && (
                     <input value={clientVatCode} onChange={(e) => setClientVatCode(e.target.value)} placeholder="CUI / Cod fiscal" className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
                   )}
-                  <input value={clientAddress} onChange={(e) => setClientAddress(e.target.value)} placeholder="Adresă (stradă, nr.)" className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+                  <input value={clientAddress} onChange={(e) => setClientAddress(e.target.value)} placeholder="Adresă (stradă, nr.) *" className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
                   <div className="grid grid-cols-2 gap-2">
                     <input value={clientCity} onChange={(e) => setClientCity(e.target.value)} placeholder="Localitate" className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
                     <select value={clientCountry} onChange={(e) => setClientCountry(e.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white">
@@ -426,7 +430,7 @@ export default function SmartBillInvoiceModal({
                   </div>
                   {clientCountry === 'Romania' && (
                     <select value={clientCounty} onChange={(e) => setClientCounty(e.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white">
-                      <option value="">Județ...</option>
+                      <option value="">Județ... *</option>
                       {RO_COUNTIES.map((j) => <option key={j} value={j}>{j}</option>)}
                     </select>
                   )}
