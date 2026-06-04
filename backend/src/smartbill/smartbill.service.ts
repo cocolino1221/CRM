@@ -193,7 +193,8 @@ export class SmartBillService {
           headers: { Authorization: this.authHeader(creds), Accept: 'application/json' },
         }),
       );
-      const warehouses = Array.isArray(response.data?.list) ? response.data.list : [];
+      const root = response.data?.stocks ?? response.data;
+      const warehouses = Array.isArray(root?.list) ? root.list : [];
       const products: Array<{ name: string; code?: string; measuringUnit?: string; quantity?: number }> = [];
       const seen = new Set<string>();
       for (const wh of warehouses) {
