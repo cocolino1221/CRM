@@ -84,6 +84,7 @@ export default function SmartBillInvoiceModal({
   const [productName, setProductName] = useState('');
   const [measuringUnit, setMeasuringUnit] = useState('buc');
   const [isService, setIsService] = useState(true);
+  const [addingProduct, setAddingProduct] = useState(false);
 
   // Amount
   const [price, setPrice] = useState('');
@@ -222,6 +223,25 @@ export default function SmartBillInvoiceModal({
     if (typeof p.price === 'number' && p.price > 0) setPrice(String(p.price));
     setShowResults(false);
     setProductResults([]);
+  };
+
+  const addProductToCatalog = async () => {
+    const name = productName.trim();
+    if (!name || addingProduct) return;
+    setAddingProduct(true);
+    try {
+      await api.post('/integrations/smartbill/products', {
+        name,
+        measuringUnit: measuringUnit.trim() || 'buc',
+        isService,
+      });
+      setShowResults(false);
+      setProductResults([]);
+    } catch {
+      // non-fatal — user can still continue with the typed name
+    } finally {
+      setAddingProduct(false);
+    }
   };
 
   const canLeaveProduct = productName.trim().length > 0;
@@ -455,7 +475,7 @@ export default function SmartBillInvoiceModal({
                     className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
                     autoComplete="off"
                   />
-                  {showResults && (searchBusy || productResults.length > 0) && (
+                  {showResults && (searchBusy || productResults.length > 0 || productName.trim().length >= 2) && (
                     <div className="absolute z-10 left-0 right-0 mt-1 max-h-44 overflow-auto bg-white border border-gray-200 rounded-lg shadow-lg divide-y">
                       {searchBusy && productResults.length === 0 && (
                         <div className="px-3 py-2 text-xs text-gray-400">Caut...</div>
@@ -466,6 +486,12 @@ export default function SmartBillInvoiceModal({
                           <span className={`shrink-0 text-[9px] px-1.5 py-0.5 rounded ${p.source === 'stock' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'}`}>{p.source === 'stock' ? 'stoc' : 'salvat'}</span>
                         </button>
                       ))}
+                      {!searchBusy && productName.trim().length >= 2 &&
+                        !productResults.some((p) => p.name.toLowerCase() === productName.trim().toLowerCase()) && (
+                        <button onClick={addProductToCatalog} disabled={addingProduct} className="w-full text-left px-3 py-2 text-xs text-emerald-700 hover:bg-emerald-50 disabled:opacity-50">
+                          {addingProduct ? 'Se adaugă...' : `➕ Adaugă «${productName.trim()}» în catalog`}
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>

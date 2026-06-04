@@ -9,6 +9,14 @@ const SMARTBILL_API = 'https://ws.smartbill.ro/SBORO/api';
 // Official ANAF VAT-payer lookup (free, no auth). Returns company data by CUI.
 const ANAF_API = 'https://webservicesp.anaf.ro/api/PlatitorTvaRest/v9/tva';
 
+// Seed products always available in the invoice wizard, even before the local
+// catalog has grown from emitted invoices.
+const DEFAULT_PRODUCTS: Array<{ name: string; measuringUnit: string; isService: boolean }> = [
+  { name: 'Servicii remodelare corporala TeamRa2', measuringUnit: 'buc', isService: true },
+  { name: 'Servicii consultanta', measuringUnit: 'buc', isService: true },
+  { name: 'Consultanta', measuringUnit: 'buc', isService: true },
+];
+
 interface SmartBillCreds {
   email: string;
   token: string;
@@ -122,6 +130,16 @@ export class SmartBillService {
     else catalog.push(entry);
     integration.config = { ...config, products: catalog };
     await this.integrationRepository.save(integration);
+  }
+
+  async addProductToCatalog(
+    workspaceId: string,
+    product: { name: string; measuringUnit?: string; isService?: boolean; price?: number },
+  ): Promise<{ saved: boolean }> {
+    if (!product?.name?.trim()) throw new BadRequestException('Numele produsului este obligatoriu.');
+    const integration = await this.getIntegration(workspaceId);
+    await this.saveProductToCatalog(integration, product);
+    return { saved: true };
   }
 
   private authHeader(creds: SmartBillCreds): string {
@@ -243,6 +261,11 @@ export class SmartBillService {
         price: typeof p?.lastPrice === 'number' ? p.lastPrice : undefined,
         source: 'catalog',
       });
+    }
+
+    // 1b) Seed products — always present even if the catalog is empty.
+    for (const p of DEFAULT_PRODUCTS) {
+      push({ name: p.name, measuringUnit: p.measuringUnit, source: 'catalog' });
     }
 
     // 2) SmartBill /stocks (gestiune inventory) — empty for services businesses.

@@ -45,6 +45,15 @@ export class SmartBillController {
     return this.smartbill.searchProducts(req.user.workspaceId, query);
   }
 
+  @Post('products')
+  @ApiOperation({ summary: 'Add a product to the local catalog' })
+  async addProduct(
+    @Req() req: any,
+    @Body() body: { name: string; measuringUnit?: string; isService?: boolean; price?: number },
+  ) {
+    return this.smartbill.addProductToCatalog(req.user.workspaceId, body);
+  }
+
   @Post('invoices')
   @ApiOperation({ summary: 'Create an invoice in SmartBill' })
   async createInvoice(@Req() req: any, @Body() body: CreateInvoiceDto) {
