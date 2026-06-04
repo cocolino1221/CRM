@@ -13,6 +13,8 @@ interface ProductResult {
   code?: string;
   measuringUnit?: string;
   quantity?: number;
+  price?: number;
+  source?: string;
 }
 
 type ClientType = 'company' | 'person';
@@ -217,6 +219,7 @@ export default function SmartBillInvoiceModal({
   const pickProduct = (p: ProductResult) => {
     setProductName(p.name);
     if (p.measuringUnit) setMeasuringUnit(p.measuringUnit);
+    if (typeof p.price === 'number' && p.price > 0) setPrice(String(p.price));
     setShowResults(false);
     setProductResults([]);
   };
@@ -455,11 +458,12 @@ export default function SmartBillInvoiceModal({
                   {showResults && (searchBusy || productResults.length > 0) && (
                     <div className="absolute z-10 left-0 right-0 mt-1 max-h-44 overflow-auto bg-white border border-gray-200 rounded-lg shadow-lg divide-y">
                       {searchBusy && productResults.length === 0 && (
-                        <div className="px-3 py-2 text-xs text-gray-400">Caut în SmartBill...</div>
+                        <div className="px-3 py-2 text-xs text-gray-400">Caut...</div>
                       )}
                       {productResults.map((p) => (
-                        <button key={`${p.name}-${p.code || ''}`} onClick={() => pickProduct(p)} className="w-full text-left px-3 py-2 text-xs hover:bg-emerald-50">
-                          {p.name}{p.code ? ` · ${p.code}` : ''}{p.measuringUnit ? ` · ${p.measuringUnit}` : ''}
+                        <button key={`${p.name}-${p.code || ''}`} onClick={() => pickProduct(p)} className="w-full text-left px-3 py-2 text-xs hover:bg-emerald-50 flex items-center justify-between gap-2">
+                          <span>{p.name}{p.code ? ` · ${p.code}` : ''}{p.measuringUnit ? ` · ${p.measuringUnit}` : ''}{typeof p.price === 'number' && p.price > 0 ? ` · ${p.price}` : ''}</span>
+                          <span className={`shrink-0 text-[9px] px-1.5 py-0.5 rounded ${p.source === 'stock' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'}`}>{p.source === 'stock' ? 'stoc' : 'salvat'}</span>
                         </button>
                       ))}
                     </div>
@@ -474,7 +478,7 @@ export default function SmartBillInvoiceModal({
                     <input type="checkbox" checked={isService} onChange={(e) => setIsService(e.target.checked)} /> Serviciu
                   </label>
                 </div>
-                <p className="text-[11px] text-gray-400">Scrie numele — dacă există în SmartBill apare în listă, altfel continuă cu ce ai scris (se salvează automat la emitere).</p>
+                <p className="text-[11px] text-gray-400">Scrie numele — produsele folosite anterior apar în listă; altfel continuă cu ce ai scris (se salvează automat la emitere).</p>
               </div>
             </div>
           )}

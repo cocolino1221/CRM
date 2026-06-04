@@ -62,7 +62,7 @@ export class SmartBillService {
 
   // ─── Credentials ──────────────────────────────────────────────────────────
 
-  private async getCreds(workspaceId: string): Promise<SmartBillCreds> {
+  private async getIntegration(workspaceId: string): Promise<Integration> {
     const integration = await this.integrationRepository
       .createQueryBuilder('integration')
       .where('integration.workspaceId = :workspaceId', { workspaceId })
@@ -77,7 +77,10 @@ export class SmartBillService {
     if (!integration) {
       throw new NotFoundException('SmartBill nu este conectat. Mergi în Integrations și conectează SmartBill.');
     }
+    return integration;
+  }
 
+  private credsFrom(integration: Integration): SmartBillCreds {
     const token = String((integration.credentials as any)?.apiToken || '').trim();
     const email = String((integration.config as any)?.email || '').trim();
     const companyVat = String((integration.config as any)?.companyVat || '').trim();
@@ -85,8 +88,40 @@ export class SmartBillService {
     if (!token || !email || !companyVat) {
       throw new BadRequestException('Configurarea SmartBill este incompletă (lipsește token, email sau Company VAT).');
     }
-
     return { email, token, companyVat };
+  }
+
+  private async getCreds(workspaceId: string): Promise<SmartBillCreds> {
+    return this.credsFrom(await this.getIntegration(workspaceId));
+  }
+
+  // ─── Local product catalog (config.products[]) ──────────────────────────────
+  // SmartBill has no product-nomenclature read API; /stocks only returns
+  // gestiune inventory (empty for services businesses). We keep a local catalog
+  // that auto-grows each time an invoice is emitted.
+
+  private async saveProductToCatalog(
+    integration: Integration,
+    product: { name: string; measuringUnit?: string; isService?: boolean; taxName?: string; price?: number },
+  ): Promise<void> {
+    const name = product.name.trim();
+    if (!name) return;
+    const config: any = integration.config || {};
+    const catalog: any[] = Array.isArray(config.products) ? config.products : [];
+    const idx = catalog.findIndex(
+      (p) => String(p?.name || '').trim().toLowerCase() === name.toLowerCase(),
+    );
+    const entry = {
+      name,
+      measuringUnit: product.measuringUnit?.trim() || 'buc',
+      isService: product.isService ?? true,
+      taxName: product.taxName?.trim() || undefined,
+      lastPrice: typeof product.price === 'number' ? product.price : undefined,
+    };
+    if (idx >= 0) catalog[idx] = { ...catalog[idx], ...entry };
+    else catalog.push(entry);
+    integration.config = { ...config, products: catalog };
+    await this.integrationRepository.save(integration);
   }
 
   private authHeader(creds: SmartBillCreds): string {
@@ -179,9 +214,38 @@ export class SmartBillService {
   async searchProducts(
     workspaceId: string,
     query?: string,
-  ): Promise<Array<{ name: string; code?: string; measuringUnit?: string; quantity?: number }>> {
-    const creds = await this.getCreds(workspaceId);
+  ): Promise<Array<{ name: string; code?: string; measuringUnit?: string; quantity?: number; price?: number; source?: string }>> {
+    const integration = await this.getIntegration(workspaceId);
+    const creds = this.credsFrom(integration);
     const today = new Date().toISOString().slice(0, 10);
+    const term = (query || '').trim().toLowerCase();
+
+    const products: Array<{ name: string; code?: string; measuringUnit?: string; quantity?: number; price?: number; source?: string }> = [];
+    const seen = new Set<string>();
+    const push = (p: { name: string; code?: string; measuringUnit?: string; quantity?: number; price?: number; source?: string }) => {
+      const name = p.name.trim();
+      if (!name) return;
+      const key = name.toLowerCase();
+      if (seen.has(key)) return;
+      if (term && !key.includes(term)) return;
+      seen.add(key);
+      products.push({ ...p, name });
+    };
+
+    // 1) Local catalog (auto-grown from past invoices) — always available.
+    const catalog: any[] = Array.isArray((integration.config as any)?.products)
+      ? (integration.config as any).products
+      : [];
+    for (const p of catalog) {
+      push({
+        name: String(p?.name || ''),
+        measuringUnit: String(p?.measuringUnit || '').trim() || undefined,
+        price: typeof p?.lastPrice === 'number' ? p.lastPrice : undefined,
+        source: 'catalog',
+      });
+    }
+
+    // 2) SmartBill /stocks (gestiune inventory) — empty for services businesses.
     try {
       const response = await firstValueFrom(
         this.httpService.get(`${SMARTBILL_API}/stocks`, {
@@ -195,31 +259,24 @@ export class SmartBillService {
       );
       const root = response.data?.stocks ?? response.data;
       const warehouses = Array.isArray(root?.list) ? root.list : [];
-      const products: Array<{ name: string; code?: string; measuringUnit?: string; quantity?: number }> = [];
-      const seen = new Set<string>();
       for (const wh of warehouses) {
         const items = Array.isArray(wh?.products) ? wh.products : [];
         for (const p of items) {
-          const name = String(p?.productName || '').trim();
-          if (!name) continue;
-          const key = name.toLowerCase();
-          if (seen.has(key)) continue;
-          seen.add(key);
-          products.push({
-            name,
+          push({
+            name: String(p?.productName || ''),
             code: String(p?.productCode || '').trim() || undefined,
             measuringUnit: String(p?.measuringUnit || '').trim() || undefined,
-            quantity: typeof p?.quantity === 'number' ? p.quantity : undefined,
+            quantity: Number(p?.quantity) || undefined,
+            source: 'stock',
           });
         }
       }
-      return products;
     } catch (error: any) {
-      // Stock tracking may be disabled for the company — return empty so the UI
-      // falls back to manual product entry instead of erroring.
+      // Stock tracking may be disabled — local catalog still serves results.
       this.logger.warn(`SmartBill /stocks lookup failed: ${this.smartbillError(error, 'unknown')}`);
-      return [];
     }
+
+    return products;
   }
 
   // ─── Create invoice ───────────────────────────────────────────────────────
@@ -228,7 +285,8 @@ export class SmartBillService {
     workspaceId: string,
     dto: CreateInvoiceDto,
   ): Promise<{ series: string; number: string }> {
-    const creds = await this.getCreds(workspaceId);
+    const integration = await this.getIntegration(workspaceId);
+    const creds = this.credsFrom(integration);
 
     if (!dto.seriesName?.trim()) throw new BadRequestException('Seria de facturare este obligatorie.');
     if (!dto.client?.name?.trim()) throw new BadRequestException('Numele clientului este obligatoriu.');
@@ -300,6 +358,17 @@ export class SmartBillService {
         throw new BadRequestException('SmartBill nu a returnat numărul facturii.');
       }
       this.logger.log(`SmartBill invoice created: ${series}${number} (ws=${workspaceId})`);
+      try {
+        await this.saveProductToCatalog(integration, {
+          name: dto.product.name,
+          measuringUnit: dto.product.measuringUnit,
+          isService: dto.product.isService,
+          taxName: dto.product.taxName,
+          price: dto.product.price,
+        });
+      } catch (e: any) {
+        this.logger.warn(`Could not save product to local catalog: ${e?.message || e}`);
+      }
       return { series, number };
     } catch (error: any) {
       if (error instanceof BadRequestException) throw error;
