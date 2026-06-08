@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AudioLines,
   ChevronRight,
@@ -15,9 +15,12 @@ import {
   MonitorPlay,
   Plus,
   RefreshCw,
+  Save,
   Search,
   Send,
   Settings2,
+  Square,
+  Trash2,
   UserCircle2,
   Webhook,
   X,
@@ -28,6 +31,14 @@ import { hasChannelAccess } from '@/lib/channel-access';
 import { cn } from '@/lib/utils';
 
 type MetaChannel = 'messenger' | 'instagram';
+
+interface MetaAudioTemplate {
+  id: string;
+  name: string;
+  attachmentId: string;
+  channel: MetaChannel;
+  createdAt: string;
+}
 type InboxFilter = 'all' | 'unread' | 'messenger' | 'instagram';
 type ComposerMode = 'text' | 'audio';
 type MessageDirection = 'inbound' | 'outbound' | 'internal';
@@ -342,6 +353,95 @@ function AssignmentPill({
   );
 }
 
+function upsertStreamMessage(
+  conversations: MetaConversation[],
+  payload: any,
+  isSelected: boolean,
+): MetaConversation[] {
+  const convData = payload.conversation || {};
+  const msg = payload.message || {};
+  const conversationId = String(convData.id || '');
+  if (!conversationId || !msg.id) return conversations;
+
+  const message: MetaMessage = {
+    id: String(msg.id),
+    direction: msg.direction,
+    description: msg.description || '',
+    occurredAt: msg.occurredAt,
+    metadata: msg.metadata || {},
+  };
+  const inbound = message.direction === 'inbound';
+  const index = conversations.findIndex((conversation) => conversation.id === conversationId);
+
+  if (index === -1) {
+    const fresh: MetaConversation = {
+      id: conversationId,
+      channel: convData.channel,
+      externalUserId: convData.externalUserId,
+      externalThreadId: convData.externalThreadId || convData.externalUserId,
+      integrationId: convData.integrationId ?? null,
+      accountId: convData.accountId ?? null,
+      accountName: convData.accountName ?? null,
+      messageProfileId: convData.messageProfileId ?? null,
+      messageProfileName: convData.messageProfileName ?? null,
+      contactId: convData.contactId ?? null,
+      contactName: convData.contactName || 'Unknown',
+      contactSource: convData.contactSource ?? null,
+      lastMessage: message.description,
+      lastMessageTime: message.occurredAt,
+      unreadCount: inbound && !isSelected ? 1 : 0,
+      messages: [message],
+    };
+    return [fresh, ...conversations];
+  }
+
+  const existing = conversations[index];
+  if (existing.messages.some((item) => item.id === message.id)) {
+    return conversations;
+  }
+
+  const updated: MetaConversation = {
+    ...existing,
+    contactId: convData.contactId ?? existing.contactId,
+    contactName: convData.contactName || existing.contactName,
+    accountName: convData.accountName ?? existing.accountName,
+    messageProfileName: convData.messageProfileName ?? existing.messageProfileName,
+    lastMessage: message.description || existing.lastMessage,
+    lastMessageTime: message.occurredAt,
+    unreadCount: existing.unreadCount + (inbound && !isSelected ? 1 : 0),
+    messages: [...existing.messages, message],
+  };
+
+  return [updated, ...conversations.filter((_, position) => position !== index)];
+}
+
+function applyStreamDeletion(conversations: MetaConversation[], payload: any): MetaConversation[] {
+  if (payload.messageId) {
+    return conversations
+      .map((conversation) => {
+        if (!conversation.messages.some((item) => item.id === payload.messageId)) return conversation;
+        const messages = conversation.messages.filter((item) => item.id !== payload.messageId);
+        const last = messages[messages.length - 1];
+        return {
+          ...conversation,
+          messages,
+          lastMessage: last?.description || '',
+          lastMessageTime: last?.occurredAt || conversation.lastMessageTime,
+        };
+      })
+      .filter((conversation) => conversation.messages.length > 0);
+  }
+
+  if (payload.externalUserId && payload.channel) {
+    return conversations.filter(
+      (conversation) =>
+        !(conversation.channel === payload.channel && conversation.externalUserId === payload.externalUserId),
+    );
+  }
+
+  return conversations;
+}
+
 export default function MessagesPage() {
   const [loading, setLoading] = useState(true);
   const [accessResolved, setAccessResolved] = useState(false);
@@ -368,6 +468,15 @@ export default function MessagesPage() {
   const [outboundText, setOutboundText] = useState('');
   const [outboundAudioUrl, setOutboundAudioUrl] = useState('');
   const [outboundAudioName, setOutboundAudioName] = useState('');
+  const [audioTemplates, setAudioTemplates] = useState<MetaAudioTemplate[]>([]);
+  const [templatesBusy, setTemplatesBusy] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null);
+  const [recordedPreviewUrl, setRecordedPreviewUrl] = useState('');
+  const [newTemplateName, setNewTemplateName] = useState('');
+  const audioRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const audioStreamRef = useRef<MediaStream | null>(null);
   const [simulateOutbound, setSimulateOutbound] = useState(false);
   const [sendError, setSendError] = useState('');
   const [sendSuccess, setSendSuccess] = useState('');
@@ -634,6 +743,45 @@ export default function MessagesPage() {
     };
   }, []);
 
+  const selectedIdRef = useRef(selectedId);
+  useEffect(() => {
+    selectedIdRef.current = selectedId;
+  }, [selectedId]);
+
+  // Live inbox sync via Server-Sent Events — zero DB polling (keeps Neon asleep).
+  // EventSource can't set headers, so the JWT rides as ?token= (see jwt.strategy).
+  useEffect(() => {
+    if (!hasMessagesAccess || typeof window === 'undefined') return;
+
+    const token = localStorage.getItem('accessToken');
+    const base = process.env.NEXT_PUBLIC_API_URL || 'https://slackcrm-backend.fly.dev/api/v1';
+    const url = `${base}/integrations/meta-messaging/stream${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+    const source = new EventSource(url, { withCredentials: true });
+
+    source.onmessage = (event) => {
+      let payload: any;
+      try {
+        payload = JSON.parse(event.data);
+      } catch {
+        return;
+      }
+      if (!payload || typeof payload !== 'object') return;
+
+      if (payload.type === 'message' && payload.conversation && payload.message) {
+        const conversationId = String(payload.conversation.id || '');
+        const isSelected = selectedIdRef.current === conversationId;
+        setConversations((prev) => upsertStreamMessage(prev, payload, isSelected));
+      } else if (payload.type === 'deleted') {
+        setConversations((prev) => applyStreamDeletion(prev, payload));
+      }
+    };
+
+    // EventSource reconnects automatically on transient errors; nothing to do here.
+    source.onerror = () => {};
+
+    return () => source.close();
+  }, [hasMessagesAccess]);
+
   useEffect(() => {
     if (activeFilter === 'messenger' && !canAccessMessenger) {
       setActiveFilter('all');
@@ -703,6 +851,11 @@ export default function MessagesPage() {
       setSimIntegrationId(available[0].integrationId);
     }
   }, [instagramAccounts, messengerAccounts, simChannel, simIntegrationId]);
+
+  useEffect(() => {
+    void loadAudioTemplates();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeChannel, activeIntegration?.integrationId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -834,6 +987,41 @@ export default function MessagesPage() {
       setSendError(error?.response?.data?.message || error?.message || 'Could not refresh messages');
     } finally {
       setRefreshing(false);
+    }
+  };
+
+  const deleteSingleMessage = async (messageId: string) => {
+    if (typeof window !== 'undefined' && !window.confirm('Sigur vrei să ștergi acest mesaj?')) return;
+    setConversations((prev) => applyStreamDeletion(prev, { messageId }));
+    try {
+      await api.delete(`/integrations/meta-messaging/inbox/message/${messageId}`);
+    } catch (error: any) {
+      setSendError(error?.response?.data?.message || error?.message || 'Nu am putut șterge mesajul.');
+    }
+  };
+
+  const deleteSelectedConversation = async () => {
+    if (!selectedConversation) return;
+    if (typeof window !== 'undefined' && !window.confirm('Sigur vrei să ștergi toată conversația?')) return;
+
+    const removedId = selectedConversation.id;
+    setActionBusy(true);
+    setSendError('');
+    setSendSuccess('');
+    try {
+      await api.delete('/integrations/meta-messaging/inbox/conversation', {
+        data: {
+          channel: selectedConversation.channel,
+          externalUserId: selectedConversation.externalUserId,
+          integrationId: selectedConversation.integrationId || undefined,
+        },
+      });
+      setConversations((prev) => prev.filter((conversation) => conversation.id !== removedId));
+      setSelectedId('');
+    } catch (error: any) {
+      setSendError(error?.response?.data?.message || error?.message || 'Nu am putut șterge conversația.');
+    } finally {
+      setActionBusy(false);
     }
   };
 
@@ -1007,6 +1195,200 @@ export default function MessagesPage() {
     }
   };
 
+  const loadAudioTemplates = async () => {
+    if (activeChannel !== 'messenger') {
+      setAudioTemplates([]);
+      return;
+    }
+    try {
+      const response = await api.get('/integrations/meta-messaging/audio-templates', {
+        params: {
+          channel: 'messenger',
+          integrationId: activeIntegration?.integrationId,
+        },
+      });
+      setAudioTemplates(Array.isArray(response.data) ? response.data : []);
+    } catch {
+      setAudioTemplates([]);
+    }
+  };
+
+  const stopAudioStream = () => {
+    audioStreamRef.current?.getTracks().forEach((track) => track.stop());
+    audioStreamRef.current = null;
+  };
+
+  const startRecording = async () => {
+    if (isRecording) return;
+    setSendError('');
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioStreamRef.current = stream;
+      audioChunksRef.current = [];
+      const candidates = ['audio/webm;codecs=opus', 'audio/ogg;codecs=opus', 'audio/webm'];
+      const mimeType = candidates.find(
+        (c) => typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(c),
+      );
+      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+      audioRecorderRef.current = recorder;
+      recorder.ondataavailable = (event: BlobEvent) => {
+        if (event.data?.size) audioChunksRef.current.push(event.data);
+      };
+      recorder.onstop = () => {
+        stopAudioStream();
+        setIsRecording(false);
+        const blob = new Blob(audioChunksRef.current, { type: recorder.mimeType || 'audio/webm' });
+        audioChunksRef.current = [];
+        if (!blob.size) {
+          setSendError('Înregistrarea audio este goală. Încearcă din nou.');
+          return;
+        }
+        setRecordedBlob(blob);
+        setRecordedPreviewUrl((prev) => {
+          if (prev) URL.revokeObjectURL(prev);
+          return URL.createObjectURL(blob);
+        });
+      };
+      recorder.start(250);
+      setIsRecording(true);
+    } catch (error: any) {
+      stopAudioStream();
+      setIsRecording(false);
+      const name = String(error?.name || '').trim();
+      setSendError(
+        name === 'NotAllowedError' || name === 'SecurityError'
+          ? 'Permisiunea pentru microfon a fost refuzată. Activează accesul în setările browserului.'
+          : 'Nu am putut porni înregistrarea audio.',
+      );
+    }
+  };
+
+  const stopRecording = () => {
+    if (audioRecorderRef.current && audioRecorderRef.current.state !== 'inactive') {
+      audioRecorderRef.current.stop();
+    }
+  };
+
+  const discardRecording = () => {
+    setRecordedBlob(null);
+    setRecordedPreviewUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return '';
+    });
+    setNewTemplateName('');
+  };
+
+  const recordedToFile = (): File => {
+    const ext = (recordedBlob?.type || '').includes('ogg') ? 'ogg' : 'webm';
+    return new File([recordedBlob as Blob], `recording.${ext}`, {
+      type: recordedBlob?.type || 'audio/webm',
+    });
+  };
+
+  const sendRecordingNow = async () => {
+    if (!recordedBlob) {
+      setSendError('Înregistrează mai întâi un mesaj audio.');
+      return;
+    }
+    if (!activeRecipient) {
+      setSendError('Alege o conversație sau completează recipientul manual.');
+      return;
+    }
+    setActionBusy(true);
+    setSendError('');
+    setSendSuccess('');
+    try {
+      const formData = new FormData();
+      formData.append('file', recordedToFile());
+      formData.append('channel', activeChannel);
+      formData.append('to', activeRecipient);
+      if (activeIntegration?.integrationId) formData.append('integrationId', activeIntegration.integrationId);
+      if (outboundWillSimulate) formData.append('simulate', 'true');
+      const response = await api.post('/integrations/meta-messaging/send/audio-file', formData);
+      const simulated = !!response.data?.simulated;
+      setSendSuccess(simulated ? 'Audio-ul a fost simulat local și salvat în inbox.' : 'Audio-ul a fost trimis ca mesaj redabil.');
+      discardRecording();
+      await refreshAll(false, {
+        channel: activeChannel,
+        externalUserId: activeRecipient,
+        integrationId: activeIntegration?.integrationId,
+      });
+    } catch (error: any) {
+      setSendError(error?.response?.data?.message || error?.message || 'Nu am putut trimite audio-ul.');
+    } finally {
+      setActionBusy(false);
+    }
+  };
+
+  const saveRecordingAsTemplate = async () => {
+    if (!recordedBlob) {
+      setSendError('Înregistrează mai întâi un mesaj audio.');
+      return;
+    }
+    setTemplatesBusy(true);
+    setSendError('');
+    setSendSuccess('');
+    try {
+      const formData = new FormData();
+      formData.append('file', recordedToFile());
+      formData.append('channel', 'messenger');
+      formData.append('name', newTemplateName.trim() || `Audio ${new Date().toLocaleDateString()}`);
+      if (activeIntegration?.integrationId) formData.append('integrationId', activeIntegration.integrationId);
+      await api.post('/integrations/meta-messaging/audio-templates', formData);
+      setSendSuccess('Template audio salvat.');
+      discardRecording();
+      await loadAudioTemplates();
+    } catch (error: any) {
+      setSendError(error?.response?.data?.message || error?.message || 'Nu am putut salva template-ul audio.');
+    } finally {
+      setTemplatesBusy(false);
+    }
+  };
+
+  const sendTemplate = async (templateId: string) => {
+    if (!activeRecipient) {
+      setSendError('Alege o conversație sau completează recipientul manual.');
+      return;
+    }
+    setActionBusy(true);
+    setSendError('');
+    setSendSuccess('');
+    try {
+      const response = await api.post('/integrations/meta-messaging/send/audio-template', {
+        channel: 'messenger',
+        to: activeRecipient,
+        templateId,
+        integrationId: activeIntegration?.integrationId,
+        simulate: outboundWillSimulate,
+      });
+      const simulated = !!response.data?.simulated;
+      setSendSuccess(simulated ? 'Template-ul a fost simulat local și salvat în inbox.' : 'Template-ul audio a fost trimis.');
+      await refreshAll(false, {
+        channel: activeChannel,
+        externalUserId: activeRecipient,
+        integrationId: activeIntegration?.integrationId,
+      });
+    } catch (error: any) {
+      setSendError(error?.response?.data?.message || error?.message || 'Nu am putut trimite template-ul.');
+    } finally {
+      setActionBusy(false);
+    }
+  };
+
+  const deleteTemplate = async (templateId: string) => {
+    setTemplatesBusy(true);
+    try {
+      await api.delete(`/integrations/meta-messaging/audio-templates/${templateId}`, {
+        params: { integrationId: activeIntegration?.integrationId },
+      });
+      await loadAudioTemplates();
+    } catch (error: any) {
+      setSendError(error?.response?.data?.message || error?.message || 'Nu am putut șterge template-ul.');
+    } finally {
+      setTemplatesBusy(false);
+    }
+  };
+
   const simulateInbound = async () => {
     if (!simSenderId.trim()) {
       setSendError('Sender ID este obligatoriu pentru simulare.');
@@ -1102,7 +1484,7 @@ export default function MessagesPage() {
 
   return (
     <>
-      <div className="overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-sm">
+      <div className="flex flex-col overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-sm xl:h-[calc(100dvh-6.5rem)]">
         <div className="border-b border-slate-200 px-5 py-4">
           <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
             <div>
@@ -1210,11 +1592,11 @@ export default function MessagesPage() {
 
         <div
           className={cn(
-            'grid min-h-[780px]',
+            'grid min-h-[600px] xl:min-h-0 xl:flex-1 xl:overflow-hidden',
             showDetails ? 'xl:grid-cols-[300px_minmax(0,1fr)_280px]' : 'xl:grid-cols-[300px_minmax(0,1fr)]',
           )}
         >
-          <aside className="border-r border-slate-200 bg-white">
+          <aside className="flex min-h-0 flex-col border-r border-slate-200 bg-white">
             <div className="border-b border-slate-200 px-4 py-3">
               <div className="flex items-center justify-between gap-3">
                 <div>
@@ -1234,7 +1616,7 @@ export default function MessagesPage() {
               </div>
             </div>
 
-            <div className="max-h-[780px] overflow-y-auto">
+            <div className="max-h-[600px] overflow-y-auto xl:max-h-none xl:flex-1">
               {visibleConversations.length === 0 ? (
                 <div className="p-6 text-sm text-slate-500">Nu există conversații pe filtrul curent.</div>
               ) : (
@@ -1347,6 +1729,17 @@ export default function MessagesPage() {
                   >
                     {showDetails ? 'Hide details' : 'Show details'}
                   </button>
+                  {selectedConversation && (
+                    <button
+                      onClick={deleteSelectedConversation}
+                      disabled={actionBusy}
+                      title="Șterge conversația"
+                      className="inline-flex items-center gap-2 rounded-xl border border-rose-200 px-3 py-2 text-sm font-medium text-rose-600 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                      Șterge
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -1389,9 +1782,18 @@ export default function MessagesPage() {
                     const theme = channelTheme[selectedConversation?.channel || activeChannel];
 
                     return (
-                      <div key={message.id} className={cn('flex', inbound ? 'justify-start' : 'justify-end')}>
+                      <div key={message.id} className={cn('group flex', inbound ? 'justify-start' : 'justify-end')}>
                         <div className="max-w-[78%]">
-                          <div className="mb-1 px-1 text-xs text-slate-400">{formatTime(message.occurredAt)}</div>
+                          <div className={cn('mb-1 flex items-center gap-2 px-1 text-xs text-slate-400', inbound ? 'justify-start' : 'justify-end')}>
+                            <span>{formatTime(message.occurredAt)}</span>
+                            <button
+                              onClick={() => deleteSingleMessage(message.id)}
+                              title="Șterge mesajul"
+                              className="opacity-0 transition hover:text-rose-600 group-hover:opacity-100"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
                           <div
                             className={cn(
                               'rounded-[22px] border px-4 py-3 text-[15px] shadow-sm',
@@ -1479,44 +1881,155 @@ export default function MessagesPage() {
                   </button>
                 </div>
               ) : (
-                <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_220px_140px]">
-                  <input
-                    value={outboundAudioUrl}
-                    onChange={(event) => setOutboundAudioUrl(event.target.value)}
-                    placeholder="Audio URL"
-                    className="rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-slate-400"
-                  />
-                  <label className="flex cursor-pointer items-center justify-center gap-2 rounded-2xl border border-dashed border-slate-300 px-4 py-3 text-sm font-medium text-slate-600 transition hover:bg-slate-50">
-                    <AudioLines className="h-4 w-4" />
-                    {outboundAudioName || 'Upload audio'}
-                    <input
-                      type="file"
-                      accept="audio/*"
-                      className="hidden"
-                      onChange={async (event) => {
-                        const file = event.target.files?.[0];
-                        if (!file) return;
-                        setActionBusy(true);
-                        setSendError('');
-                        try {
-                          await uploadAudioFile(file, 'outbound');
-                        } catch (error: any) {
-                          setSendError(error?.response?.data?.message || error?.message || 'Nu am putut urca audio-ul outbound.');
-                        } finally {
-                          setActionBusy(false);
-                          event.target.value = '';
-                        }
-                      }}
-                    />
-                  </label>
-                  <button
-                    onClick={sendAudio}
-                    disabled={actionBusy}
-                    className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 px-4 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {actionBusy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <AudioLines className="h-4 w-4" />}
-                    Send
-                  </button>
+                <div className="mt-4 space-y-4">
+                  {/* Record / send a playable audio message */}
+                  <div className="flex flex-wrap items-center gap-3">
+                    {!isRecording && !recordedBlob && (
+                      <button
+                        onClick={startRecording}
+                        className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-4 py-3 text-sm font-medium text-white transition hover:bg-slate-800"
+                      >
+                        <Mic className="h-4 w-4" />
+                        Înregistrează
+                      </button>
+                    )}
+                    {isRecording && (
+                      <button
+                        onClick={stopRecording}
+                        className="inline-flex items-center gap-2 rounded-2xl bg-red-600 px-4 py-3 text-sm font-medium text-white transition hover:bg-red-500"
+                      >
+                        <Square className="h-4 w-4" />
+                        Oprește înregistrarea
+                      </button>
+                    )}
+                    {recordedBlob && (
+                      <>
+                        <audio controls src={recordedPreviewUrl} className="h-10" />
+                        <button
+                          onClick={sendRecordingNow}
+                          disabled={actionBusy || !activeRecipient}
+                          className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-4 py-3 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {actionBusy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                          Trimite acum
+                        </button>
+                        <button
+                          onClick={discardRecording}
+                          disabled={actionBusy}
+                          className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 px-4 py-3 text-sm font-medium text-slate-600 transition hover:bg-slate-50"
+                        >
+                          <X className="h-4 w-4" />
+                          Renunță
+                        </button>
+                      </>
+                    )}
+                  </div>
+
+                  {/* Save recording as a reusable template (Messenger only) */}
+                  {recordedBlob && activeChannel === 'messenger' && (
+                    <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-dashed border-slate-300 p-3">
+                      <input
+                        value={newTemplateName}
+                        onChange={(event) => setNewTemplateName(event.target.value)}
+                        placeholder="Nume template (ex. Salut inițial)"
+                        className="flex-1 rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none transition focus:border-slate-400"
+                      />
+                      <button
+                        onClick={saveRecordingAsTemplate}
+                        disabled={templatesBusy}
+                        className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {templatesBusy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                        Salvează ca template
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Saved templates picker (Messenger only) */}
+                  {activeChannel === 'messenger' && audioTemplates.length > 0 && (
+                    <div className="space-y-2">
+                      <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
+                        Template-uri audio salvate
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {audioTemplates.map((template) => (
+                          <div
+                            key={template.id}
+                            className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white py-1 pl-3 pr-1 text-sm"
+                          >
+                            <button
+                              onClick={() => sendTemplate(template.id)}
+                              disabled={actionBusy || !activeRecipient}
+                              className="inline-flex items-center gap-1.5 font-medium text-slate-700 transition hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              <AudioLines className="h-3.5 w-3.5" />
+                              {template.name}
+                            </button>
+                            <button
+                              onClick={() => deleteTemplate(template.id)}
+                              disabled={templatesBusy}
+                              className="rounded-full p-1 text-slate-400 transition hover:bg-slate-100 hover:text-red-500 disabled:opacity-60"
+                              aria-label="Șterge template"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {activeChannel === 'messenger' && (
+                    <p className="text-xs text-slate-400">
+                      Pe Messenger audio apare ca player redabil (nu ca fișier). Voice note-ul nativ cu waveform nu e suportat de API-ul Meta.
+                    </p>
+                  )}
+
+                  {/* Manual URL / file upload fallback */}
+                  <details className="rounded-2xl border border-slate-200 p-3">
+                    <summary className="cursor-pointer text-sm font-medium text-slate-600">
+                      Trimite din URL sau fișier (avansat)
+                    </summary>
+                    <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1fr)_200px_120px]">
+                      <input
+                        value={outboundAudioUrl}
+                        onChange={(event) => setOutboundAudioUrl(event.target.value)}
+                        placeholder="Audio URL"
+                        className="rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-slate-400"
+                      />
+                      <label className="flex cursor-pointer items-center justify-center gap-2 rounded-2xl border border-dashed border-slate-300 px-4 py-3 text-sm font-medium text-slate-600 transition hover:bg-slate-50">
+                        <AudioLines className="h-4 w-4" />
+                        {outboundAudioName || 'Upload audio'}
+                        <input
+                          type="file"
+                          accept="audio/*"
+                          className="hidden"
+                          onChange={async (event) => {
+                            const file = event.target.files?.[0];
+                            if (!file) return;
+                            setActionBusy(true);
+                            setSendError('');
+                            try {
+                              await uploadAudioFile(file, 'outbound');
+                            } catch (error: any) {
+                              setSendError(error?.response?.data?.message || error?.message || 'Nu am putut urca audio-ul outbound.');
+                            } finally {
+                              setActionBusy(false);
+                              event.target.value = '';
+                            }
+                          }}
+                        />
+                      </label>
+                      <button
+                        onClick={sendAudio}
+                        disabled={actionBusy}
+                        className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 px-4 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {actionBusy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <AudioLines className="h-4 w-4" />}
+                        Send
+                      </button>
+                    </div>
+                  </details>
                 </div>
               )}
             </div>

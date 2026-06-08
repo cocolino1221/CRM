@@ -6,10 +6,18 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { InjectRepository } from '@nestjs/typeorm';
 import { firstValueFrom } from 'rxjs';
 import { Repository } from 'typeorm';
 import { nanoid } from 'nanoid';
+import { createReadStream, promises as fsPromises } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
+
+const execFileAsync = promisify(execFile);
 import {
   Activity,
   ActivityDirection,
@@ -41,7 +49,7 @@ interface MetaSendContext {
   simulate?: boolean;
 }
 
-interface MetaOutboundResult {
+export interface MetaOutboundResult {
   simulated: boolean;
   channel: MetaChannel;
   messageId: string;
@@ -54,6 +62,20 @@ interface MetaAttachmentInfo {
   mimeType?: string;
   name?: string;
   type: 'audio' | 'image' | 'video' | 'file';
+}
+
+export interface MetaAudioTemplate {
+  id: string;
+  name: string;
+  attachmentId: string;
+  channel: MetaChannel;
+  createdAt: string;
+}
+
+export interface MetaUploadedAudioFile {
+  path: string;
+  mimetype?: string;
+  originalname?: string;
 }
 
 interface MetaActivityMetadata {
@@ -83,7 +105,12 @@ interface MetaActivityMetadata {
 export class MetaMessagingService {
   private readonly logger = new Logger(MetaMessagingService.name);
   private readonly facebookApiUrl = 'https://graph.facebook.com/v23.0';
-  private readonly instagramApiUrl = 'https://graph.instagram.com/v23.0';
+  // In-memory dedup for webhook deliveries. Meta retries/echoes the same
+  // message id, sometimes near-simultaneously — the async DB check can't catch
+  // that race. A synchronous check+mark (before any await) closes it on a
+  // single instance. mid -> last-seen epoch ms.
+  private readonly recentMessageIds = new Map<string, number>();
+  private static readonly RECENT_ID_TTL_MS = 10 * 60 * 1000;
 
   constructor(
     private readonly httpService: HttpService,
@@ -97,7 +124,10 @@ export class MetaMessagingService {
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
     private readonly notificationsService: NotificationsService,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
+
+  static readonly STREAM_EVENT = 'meta.message';
 
   async verifyWebhookToken(
     provider: MetaProvider,
@@ -421,6 +451,55 @@ export class MetaMessagingService {
     };
   }
 
+  async deleteConversation(
+    workspaceId: string,
+    input: { channel: MetaChannel; externalUserId: string; integrationId?: string },
+  ): Promise<{ deleted: number }> {
+    const channel = this.normalizeChannel(input.channel);
+    const externalUserId = String(input.externalUserId || '').trim();
+    const integrationId = String(input.integrationId || '').trim() || undefined;
+
+    if (!externalUserId) {
+      throw new BadRequestException('External user id is required');
+    }
+
+    const qb = this.activityRepository
+      .createQueryBuilder()
+      .delete()
+      .from(Activity)
+      .where('workspaceId = :workspaceId', { workspaceId })
+      .andWhere('type = :type', { type: ActivityType.OTHER })
+      .andWhere("metadata->>'channel' = :channel", { channel })
+      .andWhere("metadata->>'externalUserId' = :externalUserId", { externalUserId });
+
+    if (integrationId) {
+      qb.andWhere("metadata->>'senderIntegrationId' = :integrationId", { integrationId });
+    }
+
+    const result = await qb.execute();
+    this.emitInboxDeletion(workspaceId, { channel, externalUserId });
+    return { deleted: result.affected || 0 };
+  }
+
+  async deleteMessage(workspaceId: string, activityId: string): Promise<{ deleted: number }> {
+    const activity = await this.activityRepository.findOne({
+      where: { id: activityId, workspaceId, type: ActivityType.OTHER },
+    });
+
+    if (!activity) {
+      throw new NotFoundException('Message not found');
+    }
+
+    const channel = String((activity.metadata as MetaActivityMetadata)?.channel || '');
+    if (channel !== 'messenger' && channel !== 'instagram') {
+      throw new BadRequestException('Not a Messenger/Instagram message');
+    }
+
+    await this.activityRepository.delete({ id: activityId, workspaceId });
+    this.emitInboxDeletion(workspaceId, { messageId: activityId, channel: channel as MetaChannel });
+    return { deleted: 1 };
+  }
+
   async simulateInbound(
     workspaceId: string,
     userId: string,
@@ -514,7 +593,7 @@ export class MetaMessagingService {
         }
 
         return this.sendInstagramPayload(
-          resolved.igUserId,
+          resolved.pageId,
           resolved.accessToken,
           {
             recipient: { id: body.to },
@@ -565,7 +644,7 @@ export class MetaMessagingService {
         }
 
         return this.sendInstagramPayload(
-          resolved.igUserId,
+          resolved.pageId,
           resolved.accessToken,
           {
             recipient: { id: body.to },
@@ -578,6 +657,231 @@ export class MetaMessagingService {
           },
         );
       },
+    });
+  }
+
+  // Converts any audio file to mp3 and uploads it to Meta as a REUSABLE
+  // attachment. Returns an attachment_id that renders as an inline audio
+  // player on Messenger and survives deploys (Meta hosts the file, not us).
+  private async uploadMessengerAudioAttachment(
+    integration: Integration,
+    filePath: string,
+  ): Promise<string> {
+    const { pageId, pageAccessToken } = await this.ensureFacebookPageCredentials(integration);
+
+    const convertedPath = join(tmpdir(), `meta_audio_${Date.now()}_${nanoid(8)}.mp3`);
+    try {
+      await execFileAsync('ffmpeg', [
+        '-i', filePath,
+        '-vn',
+        '-c:a', 'libmp3lame',
+        '-b:a', '64k',
+        '-ac', '1',
+        '-y',
+        convertedPath,
+      ]);
+    } catch (convErr: any) {
+      this.logger.error(`Messenger audio ffmpeg conversion failed: ${convErr?.message || convErr}`);
+      throw new BadRequestException('Audio conversion failed — ffmpeg error');
+    }
+
+    try {
+      const FormData = require('form-data');
+      const form = new FormData();
+      form.append(
+        'message',
+        JSON.stringify({ attachment: { type: 'audio', payload: { is_reusable: true } } }),
+      );
+      form.append('filedata', createReadStream(convertedPath), {
+        filename: 'audio.mp3',
+        contentType: 'audio/mpeg',
+      });
+
+      const response = await firstValueFrom(
+        this.httpService.post(`${this.facebookApiUrl}/${pageId}/message_attachments`, form, {
+          params: { access_token: pageAccessToken },
+          headers: { ...form.getHeaders() },
+          maxContentLength: 64 * 1024 * 1024,
+          maxBodyLength: 64 * 1024 * 1024,
+        }),
+      );
+
+      const attachmentId = String(response.data?.attachment_id || '').trim();
+      if (!attachmentId) {
+        throw new BadRequestException('Meta did not return an attachment_id');
+      }
+      this.logger.log(`Messenger audio attachment uploaded: ${attachmentId} (page=${pageId})`);
+      return attachmentId;
+    } catch (error: any) {
+      const metaMessage = String(
+        error?.response?.data?.error?.message || error?.message || 'Unknown upload error',
+      );
+      this.logger.error(`Messenger attachment upload failed integration=${integration.id}: ${metaMessage}`);
+      throw new BadRequestException(`Messenger attachment upload failed: ${metaMessage}`);
+    } finally {
+      await fsPromises.unlink(convertedPath).catch(() => undefined);
+    }
+  }
+
+  private getAudioTemplates(integration: Integration): MetaAudioTemplate[] {
+    const raw = (integration.config as any)?.audioTemplates;
+    return Array.isArray(raw) ? (raw as MetaAudioTemplate[]) : [];
+  }
+
+  private requireMessengerChannel(channel: MetaChannel): void {
+    if (channel !== 'messenger') {
+      throw new BadRequestException('Saved audio templates are currently supported on Messenger only');
+    }
+  }
+
+  async listAudioTemplates(
+    workspaceId: string,
+    channel: MetaChannel = 'messenger',
+    integrationId?: string,
+  ): Promise<MetaAudioTemplate[]> {
+    this.requireMessengerChannel(channel);
+    const integration = integrationId
+      ? await this.findProviderIntegrationById('facebook', integrationId, workspaceId)
+      : await this.findDefaultProviderIntegration(workspaceId, 'facebook');
+    return this.getAudioTemplates(integration);
+  }
+
+  async createAudioTemplate(
+    workspaceId: string,
+    body: { name?: string; channel?: MetaChannel; integrationId?: string },
+    file: MetaUploadedAudioFile,
+  ): Promise<MetaAudioTemplate> {
+    const channel = this.normalizeChannel(body.channel || 'messenger');
+    this.requireMessengerChannel(channel);
+    if (!file?.path) {
+      throw new BadRequestException('Audio file is required');
+    }
+
+    const integration = body.integrationId
+      ? await this.findProviderIntegrationById('facebook', body.integrationId, workspaceId)
+      : await this.findDefaultProviderIntegration(workspaceId, 'facebook');
+
+    try {
+      const attachmentId = await this.uploadMessengerAudioAttachment(integration, file.path);
+      const template: MetaAudioTemplate = {
+        id: nanoid(12),
+        name: String(body.name || '').trim() || `Audio ${new Date().toISOString().slice(0, 10)}`,
+        attachmentId,
+        channel,
+        createdAt: new Date().toISOString(),
+      };
+
+      const templates = [...this.getAudioTemplates(integration), template];
+      integration.config = { ...(integration.config || {}), audioTemplates: templates };
+      await this.integrationRepository.save(integration);
+
+      return template;
+    } finally {
+      await fsPromises.unlink(file.path).catch(() => undefined);
+    }
+  }
+
+  async deleteAudioTemplate(
+    workspaceId: string,
+    templateId: string,
+    integrationId?: string,
+  ): Promise<{ success: boolean }> {
+    const integration = integrationId
+      ? await this.findProviderIntegrationById('facebook', integrationId, workspaceId)
+      : await this.findDefaultProviderIntegration(workspaceId, 'facebook');
+
+    const templates = this.getAudioTemplates(integration);
+    const next = templates.filter((tpl) => tpl.id !== templateId);
+    if (next.length === templates.length) {
+      throw new NotFoundException('Audio template not found');
+    }
+
+    integration.config = { ...(integration.config || {}), audioTemplates: next };
+    await this.integrationRepository.save(integration);
+    return { success: true };
+  }
+
+  // One-off: convert + upload + send immediately (no template saved).
+  async sendAudioFile(
+    workspaceId: string,
+    userId: string,
+    body: { channel?: MetaChannel; to: string; integrationId?: string; simulate?: boolean },
+    file: MetaUploadedAudioFile,
+  ): Promise<MetaOutboundResult> {
+    const channel = this.normalizeChannel(body.channel || 'messenger');
+    this.requireMessengerChannel(channel);
+    if (!file?.path) {
+      throw new BadRequestException('Audio file is required');
+    }
+
+    const integration = body.integrationId
+      ? await this.findProviderIntegrationById('facebook', body.integrationId, workspaceId)
+      : await this.findDefaultProviderIntegration(workspaceId, 'facebook');
+
+    try {
+      const attachmentId = await this.uploadMessengerAudioAttachment(integration, file.path);
+      return this.sendMessengerAudioByAttachmentId(workspaceId, userId, {
+        to: body.to,
+        integrationId: integration.id,
+        simulate: body.simulate,
+      }, attachmentId);
+    } finally {
+      await fsPromises.unlink(file.path).catch(() => undefined);
+    }
+  }
+
+  async sendAudioTemplate(
+    workspaceId: string,
+    userId: string,
+    body: { channel?: MetaChannel; to: string; templateId: string; integrationId?: string; simulate?: boolean },
+  ): Promise<MetaOutboundResult> {
+    const channel = this.normalizeChannel(body.channel || 'messenger');
+    this.requireMessengerChannel(channel);
+
+    const integration = body.integrationId
+      ? await this.findProviderIntegrationById('facebook', body.integrationId, workspaceId)
+      : await this.findDefaultProviderIntegration(workspaceId, 'facebook');
+
+    const template = this.getAudioTemplates(integration).find((tpl) => tpl.id === body.templateId);
+    if (!template) {
+      throw new NotFoundException('Audio template not found');
+    }
+
+    return this.sendMessengerAudioByAttachmentId(workspaceId, userId, {
+      to: body.to,
+      integrationId: integration.id,
+      simulate: body.simulate,
+    }, template.attachmentId);
+  }
+
+  private async sendMessengerAudioByAttachmentId(
+    workspaceId: string,
+    userId: string,
+    body: { to: string; integrationId?: string; simulate?: boolean },
+    attachmentId: string,
+  ): Promise<MetaOutboundResult> {
+    const context: MetaSendContext = {
+      channel: 'messenger',
+      to: body.to,
+      integrationId: body.integrationId,
+      simulate: body.simulate,
+    };
+
+    return this.sendOutboundMessage(workspaceId, userId, context, {
+      type: 'audio',
+      description: '[Audio message]',
+      attachmentInfo: { type: 'audio', mimeType: 'audio/mpeg' },
+      send: async (resolved) =>
+        this.sendMessengerPayload(resolved.pageId, resolved.accessToken, {
+          recipient: { id: body.to },
+          messaging_type: 'RESPONSE',
+          message: {
+            attachment: {
+              type: 'audio',
+              payload: { attachment_id: attachmentId },
+            },
+          },
+        }),
     });
   }
 
@@ -659,6 +963,7 @@ export class MetaMessagingService {
     const message = event?.message || {};
     const postback = event?.postback;
     const quickReply = message?.quick_reply;
+    const isEcho = !!message?.is_echo;
     const text = String(message?.text || quickReply?.payload || postback?.title || '').trim();
     const attachment = Array.isArray(message?.attachments) ? message.attachments[0] : undefined;
     const attachmentType = this.normalizeInboundAttachmentType(attachment?.type);
@@ -667,6 +972,53 @@ export class MetaMessagingService {
       ? '[Audio message]'
       : text || `[${attachmentType || 'message'}]`;
     const externalMessageId = String(message?.mid || postback?.mid || `meta_${nanoid(16)}`);
+    const realMessageId = String(message?.mid || postback?.mid || '');
+
+    // Dedupe step 1 (synchronous, race-safe): mark this id as seen BEFORE any
+    // await. Two simultaneous deliveries of the same id: the second returns here.
+    if (realMessageId && !this.markMessageSeen(realMessageId)) {
+      return;
+    }
+
+    // Dedupe step 2 (persistent backstop): handles restarts/echoes of our own
+    // sends that were already stored in the DB.
+    if (realMessageId && (await this.activityExistsByExternalMessageId(workspaceId, externalMessageId))) {
+      return;
+    }
+
+    // Echo = a message the Page/IG account sent (either from our CRM, already
+    // saved at send time, or from the Meta app). Record it as OUTBOUND to the
+    // real participant (recipient), not as an inbound from the page itself.
+    if (isEcho) {
+      const outboundContact = await this.findExistingSocialContact(workspaceId, channel, recipientId);
+      await this.saveOutboundActivity(
+        workspaceId,
+        ownerId,
+        {
+          channel,
+          provider,
+          externalUserId: recipientId,
+          externalThreadId: recipientId,
+          externalMessageId,
+          messageType: attachmentType || (text ? 'text' : 'event'),
+          senderIntegrationId: integration.id,
+          senderPageId: String(integration.config?.pageId || senderId),
+          senderPageName: String(integration.config?.pageName || integration.name || ''),
+          senderAccountId: provider === 'instagram' ? String(integration.config?.igUserId || senderId) : undefined,
+          senderAccountName: provider === 'instagram' ? String(integration.config?.igUsername || integration.name || '') : undefined,
+          ...this.getMessageProfileMetadata(integration),
+          attachmentUrl,
+          attachmentMimeType: this.guessMimeTypeFromUrl(attachmentUrl, attachmentType),
+          attachmentName: this.extractFilename(attachmentUrl),
+          messageStatus: 'sent',
+          isEcho: true,
+        },
+        description,
+        recipientId,
+        outboundContact || undefined,
+      );
+      return;
+    }
 
     const senderName = await this.fetchSenderName(provider, integration, senderId);
     const contact = await this.findOrCreateSocialContact(
@@ -703,6 +1055,61 @@ export class MetaMessagingService {
     );
   }
 
+  private isAuthError(error: any): boolean {
+    const status = error?.response?.status;
+    const metaCode = error?.response?.data?.error?.code;
+    const message = String(error?.message || error?.response?.data?.error?.message || '');
+    return (
+      status === 401 ||
+      metaCode === 190 ||
+      metaCode === 102 ||
+      message.includes('401') ||
+      /access token|session has expired|code 190/i.test(message)
+    );
+  }
+
+  private async clearCachedPageCredentials(integration: Integration): Promise<void> {
+    // Drop only the cached Page token; keep pageId/igUserId so the refresh
+    // re-selects the same Page (matters for multi-page accounts).
+    integration.credentials = {
+      ...(integration.credentials || {}),
+      pageAccessToken: '',
+    };
+    await this.integrationRepository.save(integration);
+  }
+
+  // Returns true if the id was newly marked (process it); false if already seen
+  // recently (drop it). Synchronous on purpose — must not yield before marking.
+  private markMessageSeen(messageId: string): boolean {
+    const now = Date.now();
+    if (this.recentMessageIds.has(messageId)) {
+      return false;
+    }
+    this.recentMessageIds.set(messageId, now);
+    if (this.recentMessageIds.size > 5000) {
+      for (const [id, ts] of this.recentMessageIds) {
+        if (now - ts > MetaMessagingService.RECENT_ID_TTL_MS) {
+          this.recentMessageIds.delete(id);
+        }
+      }
+    }
+    return true;
+  }
+
+  private async activityExistsByExternalMessageId(
+    workspaceId: string,
+    externalMessageId: string,
+  ): Promise<boolean> {
+    if (!externalMessageId) return false;
+    const existing = await this.activityRepository
+      .createQueryBuilder('activity')
+      .where('activity.workspaceId = :workspaceId', { workspaceId })
+      .andWhere('activity.type = :type', { type: ActivityType.OTHER })
+      .andWhere("activity.metadata->>'externalMessageId' = :externalMessageId", { externalMessageId })
+      .getExists();
+    return existing;
+  }
+
   private async sendOutboundMessage(
     workspaceId: string,
     userId: string,
@@ -734,28 +1141,47 @@ export class MetaMessagingService {
       : await this.findDefaultProviderIntegration(workspaceId, provider);
 
     const ownerId = userId || integration?.userId || (await this.getWorkspaceOwnerId(workspaceId));
-    const liveConfig = channel === 'messenger'
-      ? {
-          ...(await this.ensureFacebookPageCredentials(integration)),
-          igUserId: '',
-          igUsername: undefined as string | undefined,
-        }
-      : await this.ensureInstagramMessagingCredentials(integration);
+    const resolveLiveConfig = async () =>
+      channel === 'messenger'
+        ? {
+            ...(await this.ensureFacebookPageCredentials(integration)),
+            igUserId: '',
+            igUsername: undefined as string | undefined,
+          }
+        : await this.ensureInstagramMessagingCredentials(integration);
+
+    let liveConfig = await resolveLiveConfig();
 
     const simulated = !!body.simulate;
     let externalResponse: any = null;
     let externalMessageId = `sim_${nanoid(16)}`;
 
-    if (!simulated) {
-      externalResponse = await options.send({
+    const runSend = (config: typeof liveConfig) =>
+      options.send({
         channel,
-        accessToken: liveConfig.pageAccessToken,
-        pageId: liveConfig.pageId,
-        pageName: liveConfig.pageName,
-        igUserId: liveConfig.igUserId || '',
-        igUsername: liveConfig.igUsername,
+        accessToken: config.pageAccessToken,
+        pageId: config.pageId,
+        pageName: config.pageName,
+        igUserId: config.igUserId || '',
+        igUsername: config.igUsername,
         integration,
       });
+
+    if (!simulated) {
+      try {
+        externalResponse = await runSend(liveConfig);
+      } catch (error: any) {
+        // A cached Page access token can go stale (Meta error code 190 / 401).
+        // Drop it, re-derive from the user token via /me/accounts, retry once.
+        if (this.isAuthError(error)) {
+          this.logger.warn(`Meta ${channel} send hit an auth error — refreshing Page token and retrying once`);
+          await this.clearCachedPageCredentials(integration);
+          liveConfig = await resolveLiveConfig();
+          externalResponse = await runSend(liveConfig);
+        } else {
+          throw error;
+        }
+      }
       externalMessageId = String(
         externalResponse?.message_id ||
         externalResponse?.messageId ||
@@ -822,6 +1248,7 @@ export class MetaMessagingService {
     });
 
     await this.activityRepository.save(activity);
+    this.emitInboxEvent(workspaceId, metadata, activity, contact, description);
   }
 
   private async saveOutboundActivity(
@@ -830,12 +1257,14 @@ export class MetaMessagingService {
     metadata: MetaActivityMetadata,
     description: string,
     recipientExternalUserId: string,
+    resolvedContact?: Contact,
   ): Promise<void> {
-    const contact = await this.findExistingSocialContact(
-      workspaceId,
-      metadata.channel,
-      recipientExternalUserId,
-    );
+    const contact = resolvedContact
+      || (await this.findExistingSocialContact(
+        workspaceId,
+        metadata.channel,
+        recipientExternalUserId,
+      ));
     const titlePrefix = metadata.channel === 'messenger' ? 'Messenger' : 'Instagram';
     const titleTarget = contact
       ? `${contact.firstName} ${contact.lastName}`.trim()
@@ -855,6 +1284,69 @@ export class MetaMessagingService {
     });
 
     await this.activityRepository.save(activity);
+    this.emitInboxEvent(workspaceId, metadata, activity, contact || undefined, description);
+  }
+
+  private emitInboxEvent(
+    workspaceId: string,
+    metadata: MetaActivityMetadata,
+    activity: Activity,
+    contact: Contact | undefined,
+    description: string,
+  ): void {
+    const channel = metadata.channel;
+    const externalUserId = String(metadata.externalUserId || '').trim();
+    if (!channel || !externalUserId) return;
+
+    const messageType = String(metadata.messageType || 'text');
+    this.eventEmitter.emit(MetaMessagingService.STREAM_EVENT, {
+      workspaceId,
+      type: 'message',
+      conversation: {
+        id: this.buildConversationKey(channel, externalUserId, metadata),
+        channel,
+        externalUserId,
+        externalThreadId: metadata.externalThreadId || externalUserId,
+        integrationId: metadata.senderIntegrationId || null,
+        accountId: this.getConversationAccountId(channel, metadata) || null,
+        accountName: this.getConversationAccountName(channel, metadata, activity) || null,
+        messageProfileId: metadata.senderProfileId || null,
+        messageProfileName: metadata.senderProfileName || null,
+        contactId: contact?.id || null,
+        contactName: this.getContactDisplayName(contact, channel, externalUserId),
+        contactSource: contact?.source || null,
+      },
+      message: {
+        id: activity.id,
+        direction: activity.direction,
+        description: description || '',
+        occurredAt: activity.occurredAt.toISOString(),
+        metadata: {
+          externalMessageId: metadata.externalMessageId,
+          externalThreadId: metadata.externalThreadId,
+          externalUserId: metadata.externalUserId,
+          messageType,
+          attachmentUrl: metadata.attachmentUrl,
+          attachmentMimeType: metadata.attachmentMimeType,
+          attachmentName: metadata.attachmentName,
+          senderPageName: metadata.senderPageName,
+          senderAccountName: metadata.senderAccountName,
+          isSimulated: !!metadata.isSimulated,
+          messageStatus: metadata.messageStatus,
+        },
+      },
+    });
+  }
+
+  private emitInboxDeletion(
+    workspaceId: string,
+    payload: { conversationId?: string; messageId?: string; channel?: MetaChannel; externalUserId?: string },
+  ): void {
+    this.eventEmitter.emit(MetaMessagingService.STREAM_EVENT, {
+      workspaceId,
+      type: 'deleted',
+      ...payload,
+    });
   }
 
   private async findOrCreateSocialContact(
@@ -1190,29 +1682,41 @@ export class MetaMessagingService {
   }
 
   private async sendMessengerPayload(pageId: string, accessToken: string, payload: any): Promise<any> {
-    const response = await firstValueFrom(
-      this.httpService.post(`${this.facebookApiUrl}/${pageId}/messages`, payload, {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          'Content-Type': 'application/json',
-        },
-      }),
-    );
-
-    return response.data;
+    return this.postToGraph('messenger', `${this.facebookApiUrl}/${pageId}/messages`, accessToken, payload);
   }
 
-  private async sendInstagramPayload(igUserId: string, accessToken: string, payload: any): Promise<any> {
-    const response = await firstValueFrom(
-      this.httpService.post(`${this.instagramApiUrl}/${igUserId}/messages`, payload, {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          'Content-Type': 'application/json',
-        },
-      }),
-    );
+  // Instagram messaging via the Facebook-Login flow is sent through the linked
+  // Page edge on graph.facebook.com (NOT graph.instagram.com), using the Page
+  // access token. The recipient id is the Instagram-scoped user id.
+  private async sendInstagramPayload(pageId: string, accessToken: string, payload: any): Promise<any> {
+    return this.postToGraph('instagram', `${this.facebookApiUrl}/${pageId}/messages`, accessToken, payload);
+  }
 
-    return response.data;
+  private async postToGraph(
+    channel: MetaChannel,
+    url: string,
+    accessToken: string,
+    payload: any,
+  ): Promise<any> {
+    try {
+      const response = await firstValueFrom(
+        this.httpService.post(url, payload, {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+        }),
+      );
+      return response.data;
+    } catch (error: any) {
+      const metaError = error?.response?.data?.error;
+      const metaMessage = String(metaError?.message || error?.message || 'Unknown Meta send error');
+      const code = metaError?.code ? ` (code ${metaError.code})` : '';
+      this.logger.error(
+        `${channel} send failed: ${metaMessage}${code} :: ${JSON.stringify(metaError || {})}`,
+      );
+      throw new BadRequestException(`Meta ${channel} send failed: ${metaMessage}${code}`);
+    }
   }
 
   private async fetchSenderName(
@@ -1236,9 +1740,9 @@ export class MetaMessagingService {
       }
 
       const { pageAccessToken } = await this.ensureInstagramMessagingCredentials(integration);
-      const response = await this.httpService.axiosRef.get(`${this.instagramApiUrl}/${senderId}`, {
+      const response = await this.httpService.axiosRef.get(`${this.facebookApiUrl}/${senderId}`, {
         params: {
-          fields: 'username,name',
+          fields: 'name,username',
           access_token: pageAccessToken,
         },
         timeout: 10000,

@@ -25,6 +25,9 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         (request) => request?.cookies?.accessToken,
         // Fallback to Authorization header (for backward compatibility and API clients)
         ExtractJwt.fromAuthHeaderAsBearerToken(),
+        // SSE/EventSource cannot set custom headers — allow a query-param token
+        // for streaming endpoints (e.g. the meta-inbox live stream).
+        ExtractJwt.fromUrlQueryParameter('token'),
       ]),
       ignoreExpiration: false,
       secretOrKey: configService.get('auth.jwtSecret'),
