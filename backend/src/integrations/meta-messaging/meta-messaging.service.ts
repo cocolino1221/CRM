@@ -1357,7 +1357,16 @@ export class MetaMessagingService {
     senderName?: string,
   ): Promise<Contact> {
     let contact = await this.findExistingSocialContact(workspaceId, channel, externalUserId);
-    if (contact) return contact;
+    if (contact) {
+      const realName = String(senderName || '').trim();
+      if (realName && this.isPlaceholderSocialName(contact, channel, externalUserId)) {
+        const parts = realName.split(/\s+/).filter(Boolean);
+        contact.firstName = parts[0] || contact.firstName;
+        contact.lastName = parts.slice(1).join(' ') || '';
+        contact = await this.contactRepository.save(contact);
+      }
+      return contact;
+    }
 
     const nameParts = String(senderName || '').trim().split(/\s+/).filter(Boolean);
     const firstName = nameParts[0]
@@ -1382,6 +1391,27 @@ export class MetaMessagingService {
     });
 
     return this.contactRepository.save(contact);
+  }
+
+  private isPlaceholderSocialName(
+    contact: Contact,
+    channel: MetaChannel,
+    externalUserId: string,
+  ): boolean {
+    const first = String(contact.firstName || '').trim();
+    const last = String(contact.lastName || '').trim();
+    const full = `${first} ${last}`.trim();
+    if (!full) return true;
+
+    const placeholders = new Set([
+      'Messenger Contact',
+      'Instagram Contact',
+      `Messenger ${externalUserId}`,
+      `Instagram ${externalUserId}`,
+    ]);
+    if (placeholders.has(full)) return true;
+
+    return (first === 'Messenger' || first === 'Instagram') && (last === 'Contact' || last === '');
   }
 
   private async findExistingSocialContact(
@@ -1748,7 +1778,13 @@ export class MetaMessagingService {
         timeout: 10000,
       });
       return String(response.data?.name || response.data?.username || '').trim() || undefined;
-    } catch {
+    } catch (error: any) {
+      const metaError = error?.response?.data?.error;
+      this.logger.warn(
+        `fetchSenderName failed provider=${provider} senderId=${senderId}: ${
+          metaError ? `${metaError.message} (code ${metaError.code})` : error?.message || 'unknown error'
+        }`,
+      );
       return undefined;
     }
   }
