@@ -28,6 +28,7 @@ import {
   ScrollText,
   Mail,
   CreditCard,
+  Layout,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { authService, User } from '@/lib/auth';
@@ -94,6 +95,7 @@ const campaignsNavigation: NavigationItem[] = [
   { name: 'Campaigns', href: '/email-campaigns', icon: Mail, color: 'from-sky-500 to-indigo-500' },
   { name: 'Automation', href: '/automation', icon: Bot, color: 'from-violet-500 to-fuchsia-500' },
   { name: 'Forms', href: '/forms', icon: FileText, color: 'from-emerald-500 to-green-500' },
+  { name: 'Landing Pages', href: '/landing-pages', icon: Layout, color: 'from-fuchsia-500 to-pink-500' },
 ] ;
 
 const teamNavigation: NavigationItem[] = [
@@ -115,6 +117,7 @@ const groupedNavigationHrefs = new Set([
   '/email-campaigns',
   '/automation',
   '/forms',
+  '/landing-pages',
   '/users',
   '/settings',
   '/integrations',
@@ -158,7 +161,7 @@ export default function Sidebar({ isOpen = true, onClose, isCollapsed = false, o
     pathname.startsWith('/documents') || pathname.startsWith('/payments'),
   );
   const [isCampaignsOpen, setIsCampaignsOpen] = useState(
-    pathname.startsWith('/email-campaigns') || pathname.startsWith('/automation') || pathname.startsWith('/forms'),
+    pathname.startsWith('/email-campaigns') || pathname.startsWith('/automation') || pathname.startsWith('/forms') || pathname.startsWith('/landing-pages'),
   );
   const [isTeamOpen, setIsTeamOpen] = useState(
     pathname.startsWith('/users') || pathname.startsWith('/settings') || pathname.startsWith('/integrations') || pathname.startsWith('/admin'),
@@ -207,7 +210,7 @@ export default function Sidebar({ isOpen = true, onClose, isCollapsed = false, o
     if (pathname.startsWith('/documents') || pathname.startsWith('/payments')) {
       setIsDocumentsOpen(true);
     }
-    if (pathname.startsWith('/email-campaigns') || pathname.startsWith('/automation') || pathname.startsWith('/forms')) {
+    if (pathname.startsWith('/email-campaigns') || pathname.startsWith('/automation') || pathname.startsWith('/forms') || pathname.startsWith('/landing-pages')) {
       setIsCampaignsOpen(true);
     }
     if (pathname.startsWith('/users') || pathname.startsWith('/settings') || pathname.startsWith('/integrations') || pathname.startsWith('/admin')) {
