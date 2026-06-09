@@ -16,6 +16,7 @@ import { Task } from './task.entity';
 import { Activity } from './activity.entity';
 import { Pipeline } from './pipeline.entity';
 import { PipelineStage } from './pipeline-stage.entity';
+import { normalizePhoneE164 } from '../../common/utils/phone.util';
 
 export enum ContactStatus {
   ACTIVE = 'active',
@@ -44,6 +45,7 @@ export enum ContactSource {
   GOOGLE_ADS = 'google-ads',
   KAJABI = 'kajabi',
   MANYCHAT = 'manychat',
+  LANDING_PAGE = 'landing_page',
   OTHER = 'other',
 }
 
@@ -52,6 +54,7 @@ export enum ContactSource {
 @Index('IDX_contacts_workspace_owner', ['workspaceId', 'ownerId'])
 @Index('IDX_contacts_email_idx', ['email'])
 @Index('IDX_contacts_lead_score_idx', ['leadScore'])
+@Index('IDX_contacts_workspace_phone_normalized', ['workspaceId', 'phoneNormalized'])
 export class Contact extends WorkspaceEntity {
   @Column({
     type: 'varchar',
@@ -82,6 +85,14 @@ export class Contact extends WorkspaceEntity {
     comment: 'Contact phone number',
   })
   phone?: string;
+
+  @Column({
+    type: 'varchar',
+    length: 20,
+    nullable: true,
+    comment: 'Phone normalized to E.164-like format',
+  })
+  phoneNormalized?: string;
 
   @Column({
     type: 'varchar',
@@ -234,6 +245,12 @@ export class Contact extends WorkspaceEntity {
   validateData() {
     if (this.email) {
       this.email = this.email.toLowerCase().trim();
+    }
+
+    if (this.phone) {
+      this.phoneNormalized = normalizePhoneE164(this.phone) || undefined;
+    } else {
+      this.phoneNormalized = undefined;
     }
   }
 
