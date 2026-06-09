@@ -51,15 +51,16 @@ export class LandingPagesController {
     @Param('slug') slug: string,
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
-    @Ip() ip: string,
     @Headers('user-agent') userAgent: string,
+    @Query('track') track?: string,
   ) {
+    const skipView = track === 'false';
     const cookieName = `lp_v_${slug}`;
     const alreadyViewed = Boolean((req as any).cookies?.[cookieName]);
     const isBot = BOT_UA.test(userAgent || '');
     const countUnique = !alreadyViewed && !isBot;
 
-    if (countUnique) {
+    if (!skipView && countUnique) {
       res.cookie(cookieName, '1', {
         maxAge: 24 * 60 * 60 * 1000,
         httpOnly: true,
@@ -67,7 +68,7 @@ export class LandingPagesController {
       });
     }
 
-    return this.landingPagesService.findPublicBySlug(slug, { countUnique });
+    return this.landingPagesService.getPublicView(slug, { countUnique, skipView });
   }
 
   @Post('public/:slug/submit')

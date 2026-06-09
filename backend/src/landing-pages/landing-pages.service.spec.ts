@@ -183,4 +183,42 @@ describe('LandingPagesService', () => {
     expect(copy.slug).not.toBe('promo');
     expect(copy.slug).toContain('promo-copy');
   });
+
+  it('getPublicView attaches the form for native pages', async () => {
+    const page: any = {
+      id: 'lp1', slug: 'promo', status: LandingPageStatus.ACTIVE,
+      captureType: LandingPageCaptureType.NATIVE, formId: 'f1', workspaceId: 'w1',
+      viewCount: 0, uniqueViewCount: 0,
+    };
+    repo.findOne.mockResolvedValue(page);
+    formsService.findFormById.mockResolvedValue({
+      id: 'f1', name: 'Lead form', fields: [{ id: 'e', type: 'email', label: 'Email' }], settings: {},
+    });
+    const res = await service.getPublicView('promo', { countUnique: true });
+    expect(res.page.id).toBe('lp1');
+    expect(res.form?.id).toBe('f1');
+    expect(res.form?.fields).toHaveLength(1);
+  });
+
+  it('getPublicView returns null form when the referenced form is gone', async () => {
+    const page: any = {
+      id: 'lp1', slug: 'promo', status: LandingPageStatus.ACTIVE,
+      captureType: LandingPageCaptureType.NATIVE, formId: 'gone', workspaceId: 'w1',
+      viewCount: 0, uniqueViewCount: 0,
+    };
+    repo.findOne.mockResolvedValue(page);
+    formsService.findFormById.mockResolvedValue(null);
+    const res = await service.getPublicView('promo', { countUnique: false });
+    expect(res.form).toBeNull();
+  });
+
+  it('skipView avoids bumping counters', async () => {
+    const page: any = {
+      id: 'lp1', slug: 'promo', status: LandingPageStatus.ACTIVE,
+      captureType: LandingPageCaptureType.TYPEFORM, viewCount: 3, uniqueViewCount: 1,
+    };
+    repo.findOne.mockResolvedValue(page);
+    await service.findPublicBySlug('promo', { countUnique: true, skipView: true });
+    expect(repo.update).not.toHaveBeenCalled();
+  });
 });

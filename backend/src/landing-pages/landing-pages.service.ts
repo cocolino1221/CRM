@@ -142,7 +142,7 @@ export class LandingPagesService {
 
   async findPublicBySlug(
     slug: string,
-    opts: { countUnique: boolean },
+    opts: { countUnique: boolean; skipView?: boolean },
   ): Promise<LandingPage> {
     const page = await this.landingPageRepository.findOne({
       where: { slug, status: LandingPageStatus.ACTIVE },
@@ -151,13 +151,33 @@ export class LandingPagesService {
       throw new NotFoundException('Landing page not found');
     }
 
-    const updates: Partial<LandingPage> = { viewCount: page.viewCount + 1 };
-    if (opts.countUnique) {
-      updates.uniqueViewCount = page.uniqueViewCount + 1;
+    if (!opts.skipView) {
+      const updates: Partial<LandingPage> = { viewCount: page.viewCount + 1 };
+      if (opts.countUnique) {
+        updates.uniqueViewCount = page.uniqueViewCount + 1;
+      }
+      await this.landingPageRepository.update(page.id, updates);
     }
-    await this.landingPageRepository.update(page.id, updates);
 
     return page;
+  }
+
+  async getPublicView(
+    slug: string,
+    opts: { countUnique: boolean; skipView?: boolean },
+  ): Promise<{
+    page: LandingPage;
+    form: { id: string; name: string; fields: any; settings: any } | null;
+  }> {
+    const page = await this.findPublicBySlug(slug, opts);
+    let form: { id: string; name: string; fields: any; settings: any } | null = null;
+    if (page.captureType === LandingPageCaptureType.NATIVE && page.formId) {
+      const f = await this.formsService.findFormById(page.formId, page.workspaceId);
+      if (f) {
+        form = { id: f.id, name: f.name, fields: f.fields, settings: f.settings };
+      }
+    }
+    return { page, form };
   }
 
   async submitPublic(
