@@ -25,7 +25,7 @@ global.console = {
 // Mock external services
 jest.mock('@sendgrid/mail', () => ({
   setApiKey: jest.fn(),
-  send: jest.fn().mockResolvedValue([{ statusCode: 202 }]),
+  send: jest.fn<() => Promise<unknown>>().mockResolvedValue([{ statusCode: 202 }]),
 }));
 
 jest.mock('@slack/bolt', () => ({

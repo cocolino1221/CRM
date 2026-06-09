@@ -8,6 +8,7 @@ module.exports = {
   transform: {
     '^.+\\.(t|j)s$': 'ts-jest',
   },
+  transformIgnorePatterns: ['/node_modules/(?!nanoid/)'],
   collectCoverageFrom: [
     '**/*.(t|j)s',
     '!**/*.spec.ts',
