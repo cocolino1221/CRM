@@ -136,34 +136,61 @@ export class FormsService {
       }
     }
 
-    // Validate required fields
-    this.validateSubmission(form, submitFormDto.data);
+    const { submission } = await this.createSubmissionForForm(
+      form,
+      submitFormDto.data,
+      { ...metadata, trackingData: submitFormDto.trackingData },
+      ContactSource.WEBSITE,
+    );
 
-    // Create submission
+    this.logger.log(`Form submission received for form: ${form.name}`);
+
+    return submission;
+  }
+
+  /** Lookup a form by id within a workspace, regardless of status. */
+  async findFormById(formId: string, workspaceId: string): Promise<Form | null> {
+    return this.formRepository.findOne({ where: { id: formId, workspaceId } });
+  }
+
+  /**
+   * Validate + persist a submission against a known Form entity, create/link a
+   * Contact with the given source, bump form stats. Shared by forms public
+   * submit and landing-pages native submit.
+   */
+  async createSubmissionForForm(
+    form: Form,
+    data: Record<string, any>,
+    metadata: {
+      ipAddress?: string;
+      userAgent?: string;
+      referrer?: string;
+      trackingData?: Record<string, any>;
+    },
+    source: ContactSource = ContactSource.WEBSITE,
+  ): Promise<{ submission: FormSubmission; contact: Contact | null }> {
+    this.validateSubmission(form, data);
+
     const submission = this.submissionRepository.create({
       formId: form.id,
-      data: submitFormDto.data,
+      data,
       status: SubmissionStatus.NEW,
-      ipAddress: metadata?.ipAddress,
-      userAgent: metadata?.userAgent,
-      referrer: metadata?.referrer,
-      trackingData: submitFormDto.trackingData,
+      ipAddress: metadata.ipAddress,
+      userAgent: metadata.userAgent,
+      referrer: metadata.referrer,
+      trackingData: metadata.trackingData,
     });
 
     const savedSubmission = await this.submissionRepository.save(submission);
 
-    // Update form stats
     await this.formRepository.update(form.id, {
       submissionCount: form.submissionCount + 1,
       lastSubmittedAt: new Date(),
     });
 
-    // Try to create or link contact if email is provided
-    await this.processSubmissionContact(form, savedSubmission);
+    const contact = await this.processSubmissionContact(form, savedSubmission, source);
 
-    this.logger.log(`Form submission received for form: ${form.name}`);
-
-    return savedSubmission;
+    return { submission: savedSubmission, contact };
   }
 
   async getSubmissions(
@@ -276,11 +303,12 @@ export class FormsService {
   private async processSubmissionContact(
     form: Form,
     submission: FormSubmission,
-  ): Promise<void> {
+    source: ContactSource = ContactSource.WEBSITE,
+  ): Promise<Contact | null> {
     try {
       const emailField = form.fields.find((f) => f.type === 'email');
       if (!emailField || !submission.data[emailField.id]) {
-        return;
+        return null;
       }
 
       const email = submission.data[emailField.id];
@@ -306,7 +334,7 @@ export class FormsService {
           firstName: firstNameField ? submission.data[firstNameField.id] : 'Form',
           lastName: lastNameField ? submission.data[lastNameField.id] : 'Lead',
           phone: phoneField ? submission.data[phoneField.id] : undefined,
-          source: ContactSource.WEBSITE,
+          source,
           workspaceId: form.workspaceId,
           ownerId: form.createdById,
           notes: `Submitted form: ${form.name}`,
@@ -318,8 +346,10 @@ export class FormsService {
       // Link submission to contact
       submission.contactId = contact.id;
       await this.submissionRepository.save(submission);
+      return contact;
     } catch (error) {
       this.logger.error(`Failed to process submission contact: ${error.message}`);
+      return null;
     }
   }
 
