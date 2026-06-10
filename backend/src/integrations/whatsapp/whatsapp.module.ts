@@ -13,6 +13,8 @@ import { User } from '../../database/entities/user.entity';
 import { PipelineStage } from '../../database/entities/pipeline-stage.entity';
 import { WhatsAppCampaign } from '../../database/entities/whatsapp-campaign.entity';
 import { NotificationsModule } from '../../notifications/notifications.module';
+import { CampaignDispatchModule } from '../../scheduler/campaign-dispatch.module';
+import { UploadModule } from '../../upload/upload.module';
 
 @Module({
   imports: [
@@ -20,6 +22,8 @@ import { NotificationsModule } from '../../notifications/notifications.module';
     ConfigModule,
     TypeOrmModule.forFeature([Contact, Activity, Integration, User, PipelineStage, WhatsAppCampaign]),
     NotificationsModule,
+    CampaignDispatchModule,
+    UploadModule,
   ],
   controllers: [WhatsAppController],
   providers: [WhatsAppService, WhatsAppAIService, WhatsAppCampaignsService],

@@ -160,6 +160,49 @@ export class UploadService {
     return Promise.all(files.map((file) => this.saveFile(file, subfolder)));
   }
 
+  // Persist a raw buffer to storage and return its public URL. Unlike saveFile,
+  // this skips the CRM attachment MIME allowlist — callers use it to mirror
+  // media that an upstream service (e.g. Meta/WhatsApp) has already accepted.
+  async saveBufferToStorage(
+    buffer: Buffer,
+    mimetype: string,
+    originalName: string,
+    subfolder?: string,
+  ): Promise<UploadedFileInfo> {
+    const filename = this.generateFilename(originalName || 'media.bin');
+    const relativePath = subfolder ? `${subfolder}/${filename}` : filename;
+
+    let url: string;
+    if (this.usesR2) {
+      await this.s3Client!.send(
+        new PutObjectCommand({
+          Bucket: this.r2Bucket!,
+          Key: relativePath,
+          Body: buffer,
+          ContentType: mimetype || 'application/octet-stream',
+        }),
+      );
+      url = `${this.r2PublicUrl}/${relativePath}`;
+    } else {
+      const folderPath = subfolder ? join(this.uploadPath, subfolder) : this.uploadPath;
+      await fs.mkdir(folderPath, { recursive: true });
+      await fs.writeFile(join(folderPath, filename), buffer);
+      url = `${this.getPublicBaseUrl()}/uploads/${relativePath}`;
+    }
+
+    this.logger.log(`Buffer saved: ${relativePath}`);
+
+    return {
+      originalName,
+      filename,
+      path: relativePath,
+      url,
+      size: buffer.length,
+      mimetype,
+      uploadedAt: new Date(),
+    };
+  }
+
   async deleteFile(filePath: string): Promise<void> {
     try {
       if (this.usesR2) {

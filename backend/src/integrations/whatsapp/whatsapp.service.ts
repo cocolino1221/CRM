@@ -18,6 +18,7 @@ import { PipelineStage } from '../../database/entities/pipeline-stage.entity';
 import { NotificationsService, CreateNotificationDto } from '../../notifications/notifications.service';
 import { NotificationType } from '../../database/entities/notification.entity';
 import { WhatsAppAIService } from './whatsapp-ai.service';
+import { UploadService } from '../../upload/upload.service';
 import { normalizePhoneDigits, normalizePhoneE164 } from '../../common/utils/phone.util';
 
 const execFileAsync = promisify(execFile);
@@ -172,6 +173,7 @@ export class WhatsAppService {
     private readonly notificationsService: NotificationsService,
     private readonly whatsAppAIService: WhatsAppAIService,
     private readonly eventEmitter: EventEmitter2,
+    private readonly uploadService: UploadService,
   ) {}
 
   /**
@@ -2135,7 +2137,7 @@ export class WhatsAppService {
     filename: string,
     integrationId?: string,
     options?: { forceVoiceNote?: boolean },
-  ): Promise<{ id: string }> {
+  ): Promise<{ id: string; url?: string }> {
     const integration = await this.resolveWorkspaceSendIntegration(workspaceId, integrationId);
     const { accessToken, phoneNumberId } = this.getCredentials(this.getIntegrationCredentials(integration), false);
     const forceVoiceNote = options?.forceVoiceNote === true;
@@ -2224,7 +2226,33 @@ export class WhatsAppService {
       );
 
       this.logger.log(`Media uploaded: ${response.data.id} (${uploadMimeType}, ${uploadFilename})`);
-      return { id: response.data.id };
+
+      // Mirror visual/document media to R2 so template headers keep a permanent
+      // URL fallback. A Meta media_id is scoped to the uploading number and
+      // expires, so the stored URL is what lets auto-send recover (see
+      // isLikelyStaleHeaderMediaError). Audio (voice notes) is transient — skip it.
+      let mirrorUrl: string | undefined;
+      const isHeaderMedia = uploadMimeType.startsWith('image/')
+        || uploadMimeType.startsWith('video/')
+        || uploadMimeType.startsWith('application/');
+      if (isHeaderMedia) {
+        try {
+          const buffer = await fsPromises.readFile(actualFilePath);
+          const saved = await this.uploadService.saveBufferToStorage(
+            buffer,
+            uploadMimeType,
+            uploadFilename,
+            'whatsapp-media',
+          );
+          mirrorUrl = saved.url;
+        } catch (mirrorErr: any) {
+          this.logger.warn(
+            `R2 mirror failed for media ${response.data.id} (${uploadMimeType}): ${mirrorErr?.message || mirrorErr}`,
+          );
+        }
+      }
+
+      return { id: response.data.id, url: mirrorUrl };
     } catch (error: any) {
       const metaMessage = String(error?.response?.data?.error?.message || error?.message || 'Unknown upload error');
       const metaCode = String(error?.response?.data?.error?.code || '').trim();

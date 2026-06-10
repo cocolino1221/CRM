@@ -2200,10 +2200,12 @@ export default function WhatsAppPage() {
         params: selectedSenderId ? { integrationId: selectedSenderId } : undefined,
       });
       const uploadedMediaId = String(res.data.id || '').trim();
+      const uploadedMediaUrl = String(res.data.url || '').trim();
       setTemplateHeaderMediaId(uploadedMediaId);
+      if (uploadedMediaUrl) setTemplateHeaderMediaUrl(uploadedMediaUrl);
       const activeTemplate = selectedTemplate || newConvTemplate;
       if (activeTemplate && uploadedMediaId) {
-        persistTemplateHeaderMediaCache(activeTemplate, uploadedMediaId, templateHeaderMediaUrl.trim());
+        persistTemplateHeaderMediaCache(activeTemplate, uploadedMediaId, uploadedMediaUrl || templateHeaderMediaUrl.trim());
       }
     } catch (err: any) {
       setSendError(`Upload failed: ${err.response?.data?.message || err.message}`);
@@ -5564,7 +5566,7 @@ export default function WhatsAppPage() {
                                   const res = await api.post('/integrations/whatsapp/media/upload', formData, {
                                     params: selectedSenderId ? { integrationId: selectedSenderId } : undefined,
                                   });
-                                  updateSelectedAutoSendRule(rule => ({ ...rule, headerMediaId: res.data.id || '' }));
+                                  updateSelectedAutoSendRule(rule => ({ ...rule, headerMediaId: res.data.id || '', headerMediaUrl: res.data.url || rule.headerMediaUrl }));
                                 } catch (err: any) {
                                   setAutoSendSaveError(`Upload failed: ${err?.response?.data?.message || err.message}`);
                                 } finally {
@@ -6119,7 +6121,7 @@ export default function WhatsAppPage() {
                                               params: selectedSenderId ? { integrationId: selectedSenderId } : undefined,
                                             });
                                             updateFlowStep(si, 'mediaId', res.data.id);
-                                            updateFlowStep(si, 'mediaUrl', undefined);
+                                            updateFlowStep(si, 'mediaUrl', res.data.url || undefined);
                                             updateFlowStep(si, 'mediaFileName', file.name);
                                           } catch (err: any) {
                                             updateFlowStep(si, 'mediaFileName', undefined);
