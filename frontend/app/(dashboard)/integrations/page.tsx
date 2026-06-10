@@ -186,8 +186,8 @@ export default function IntegrationsPage() {
       features: ['Bulk messaging', 'Template messages', 'Two-way chat', 'Media sharing'],
       configFields: [
         { name: 'accessToken', label: 'Access Token', type: 'password', required: true, placeholder: 'EAA...', helpText: 'System-user token from Meta (Business Settings → System Users → Generate token, selecting your WhatsApp app).' },
-        { name: 'phoneNumberId', label: 'Phone Number ID', type: 'text', required: true, placeholder: '1062475710273374', helpText: 'Meta → WhatsApp → API Setup → Phone number ID (not the phone number itself).' },
-        { name: 'wabaId', label: 'WhatsApp Business Account ID', type: 'text', required: false, placeholder: '893595476989360', helpText: 'Needed to load and manage message templates.' },
+        { name: 'phoneNumberId', label: 'Phone Number ID', type: 'text', required: true, placeholder: 'e.g. 100000000000000', helpText: 'Meta → WhatsApp → API Setup → Phone number ID (not the phone number itself).' },
+        { name: 'wabaId', label: 'WhatsApp Business Account ID', type: 'text', required: false, placeholder: 'e.g. 100000000000000', helpText: 'Needed to load and manage message templates.' },
         { name: 'verifyToken', label: 'Webhook Verify Token', type: 'text', required: false, placeholder: 'any-secret-string', helpText: 'Choose any string; paste the same value in Meta webhook settings.' },
       ],
     },
@@ -858,7 +858,9 @@ export default function IntegrationsPage() {
           return typeKey === staticInt.id || providerKey === staticInt.id;
         });
         const connectedEntry = connectedMap[staticInt.id];
-        if (!backendInt && connectedEntries.length === 0) return staticInt;
+        if (!backendInt && connectedEntries.length === 0) {
+          return { ...staticInt, connected: false, status: undefined };
+        }
 
         const isConnected = connectedEntries.some((entry: any) =>
           !['disabled', 'expired', 'suspended', 'error'].includes(String(entry.status || '').toLowerCase()),
