@@ -97,7 +97,11 @@ export default function LandingPageRender({ slug, initialPage, initialForm }: Pr
   return (
     <div
       className="min-h-screen px-6 py-12"
-      style={{ background: theme.backgroundColor || '#f8fafc', color: theme.textColor || '#0f172a' }}
+      style={{
+        background: theme.backgroundColor || '#f8fafc',
+        color: theme.textColor || '#0f172a',
+        fontFamily: theme.fontFamily || undefined,
+      }}
     >
       <div className="mx-auto max-w-2xl">
         {hero.logo && <img src={hero.logo} alt="" className="mb-8 h-10" />}
@@ -117,7 +121,10 @@ export default function LandingPageRender({ slug, initialPage, initialForm }: Pr
           </ul>
         )}
 
-        <div className="rounded-2xl border border-gray-200 bg-white p-8 text-gray-900 shadow-sm">
+        <div
+          className="rounded-2xl border border-gray-200 p-8 text-gray-900 shadow-sm"
+          style={{ background: theme.cardColor || '#ffffff' }}
+        >
           {isTypeform ? (
             page.typeformConfig?.formId ? (
               <iframe
@@ -181,7 +188,9 @@ export default function LandingPageRender({ slug, initialPage, initialForm }: Pr
                 className="w-full rounded-lg px-4 py-3 font-medium text-white disabled:opacity-60"
                 style={{ background: accent }}
               >
-                {submitting ? 'Submitting…' : form.settings?.submitButtonText || 'Submit'}
+                {submitting
+                  ? 'Submitting…'
+                  : page.content?.submitButtonText || form.settings?.submitButtonText || 'Submit'}
               </button>
             </form>
           )}

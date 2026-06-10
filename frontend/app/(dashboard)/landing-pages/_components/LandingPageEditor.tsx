@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Save, Plus, Trash2 } from 'lucide-react';
+import { Save, Plus, Trash2, Upload } from 'lucide-react';
 import api from '@/lib/api';
 import {
   LandingPage,
@@ -22,6 +22,52 @@ interface Props {
 
 type Draft = Partial<LandingPage>;
 
+function ImageField({
+  label,
+  value,
+  onChange,
+  fieldKey,
+  uploading,
+  onUpload,
+}: {
+  label: string;
+  value?: string;
+  onChange: (url: string) => void;
+  fieldKey: string;
+  uploading: string | null;
+  onUpload: (file: File, onDone: (url: string) => void, key: string) => void;
+}) {
+  return (
+    <div className="mb-2">
+      <div className="flex gap-2">
+        <input
+          value={value || ''}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={`${label} URL`}
+          className="flex-1 rounded-lg border border-gray-200 px-3 py-2"
+        />
+        <label className="inline-flex cursor-pointer items-center gap-1 rounded-lg bg-gray-100 px-3 py-2 text-sm text-gray-700 hover:bg-gray-200">
+          <Upload size={14} />
+          {uploading === fieldKey ? 'Uploading…' : 'Upload'}
+          <input
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) onUpload(f, onChange, fieldKey);
+              e.target.value = '';
+            }}
+          />
+        </label>
+      </div>
+      {value && (
+        <img src={value} alt="" className="mt-2 h-16 rounded-lg border border-gray-200 object-contain" />
+      )}
+    </div>
+  );
+}
+
 export default function LandingPageEditor({ initial }: Props) {
   const router = useRouter();
   const [draft, setDraft] = useState<Draft>(
@@ -38,6 +84,7 @@ export default function LandingPageEditor({ initial }: Props) {
   const [presets, setPresets] = useState<ThemePreset[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [uploading, setUploading] = useState<string | null>(null);
 
   useEffect(() => {
     api.get<FormOption[]>('/forms').then((r) => setForms(r.data)).catch(() => {});
@@ -52,12 +99,30 @@ export default function LandingPageEditor({ initial }: Props) {
     setDraft((d) => ({ ...d, content: { ...d.content, hero: { ...d.content?.hero, ...patch } } }));
   const setBenefits = (next: string[]) =>
     setDraft((d) => ({ ...d, content: { ...d.content, benefits: next } }));
+  const setTheme = (patch: Partial<typeof theme>) =>
+    setDraft((d) => ({ ...d, content: { ...d.content, theme: { ...d.content?.theme, ...patch } } }));
   const applyPreset = (key: string) => {
     const preset = presets.find((p) => p.key === key);
     setDraft((d) => ({
       ...d,
       content: { ...d.content, themePreset: key, theme: { ...(preset?.theme || {}) } },
     }));
+  };
+
+  const uploadImage = async (file: File, onDone: (url: string) => void, key: string) => {
+    setError(null);
+    setUploading(key);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      fd.append('subfolder', 'landing-pages');
+      const res = await api.post('/upload/single', fd);
+      onDone(res.data.url);
+    } catch (e: any) {
+      setError(e?.response?.data?.message || 'Image upload failed.');
+    } finally {
+      setUploading(null);
+    }
   };
 
   const isTypeform = draft.captureType === LandingPageCaptureType.TYPEFORM;
@@ -146,11 +211,23 @@ export default function LandingPageEditor({ initial }: Props) {
               placeholder="Subtitle"
               className="mb-2 w-full rounded-lg border border-gray-200 px-3 py-2"
             />
-            <input
-              value={hero.image || ''}
-              onChange={(e) => setHero({ image: e.target.value })}
-              placeholder="Hero image URL"
-              className="mb-2 w-full rounded-lg border border-gray-200 px-3 py-2"
+            <label className="mb-1 block text-xs font-medium text-gray-500">Logo</label>
+            <ImageField
+              label="Logo"
+              value={hero.logo}
+              onChange={(url) => setHero({ logo: url })}
+              fieldKey="logo"
+              uploading={uploading}
+              onUpload={uploadImage}
+            />
+            <label className="mb-1 block text-xs font-medium text-gray-500">Hero image</label>
+            <ImageField
+              label="Hero image"
+              value={hero.image}
+              onChange={(url) => setHero({ image: url })}
+              fieldKey="heroImage"
+              uploading={uploading}
+              onUpload={uploadImage}
             />
             <div className="flex items-center gap-2">
               <label className="text-sm text-gray-600">Accent</label>
@@ -174,6 +251,48 @@ export default function LandingPageEditor({ initial }: Props) {
               {presets.map((p) => (
                 <option key={p.key} value={p.key}>{p.label}</option>
               ))}
+            </select>
+          </section>
+
+          {/* Colors & font */}
+          <section>
+            <h3 className="mb-3 font-semibold text-gray-900">Colors &amp; font</h3>
+            <div className="grid grid-cols-3 gap-3">
+              <label className="flex flex-col gap-1 text-sm text-gray-600">
+                Background
+                <input
+                  type="color"
+                  value={theme.backgroundColor || '#f8fafc'}
+                  onChange={(e) => setTheme({ backgroundColor: e.target.value })}
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-sm text-gray-600">
+                Text
+                <input
+                  type="color"
+                  value={theme.textColor || '#0f172a'}
+                  onChange={(e) => setTheme({ textColor: e.target.value })}
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-sm text-gray-600">
+                Card
+                <input
+                  type="color"
+                  value={theme.cardColor || '#ffffff'}
+                  onChange={(e) => setTheme({ cardColor: e.target.value })}
+                />
+              </label>
+            </div>
+            <select
+              value={theme.fontFamily || ''}
+              onChange={(e) => setTheme({ fontFamily: e.target.value })}
+              className="mt-3 w-full rounded-lg border border-gray-200 px-3 py-2"
+            >
+              <option value="">Default font</option>
+              <option value="system-ui, sans-serif">System sans-serif</option>
+              <option value="Georgia, serif">Georgia (serif)</option>
+              <option value="'Courier New', monospace">Monospace</option>
+              <option value="'Trebuchet MS', sans-serif">Trebuchet</option>
             </select>
           </section>
 
@@ -227,16 +346,26 @@ export default function LandingPageEditor({ initial }: Props) {
                 className="w-full rounded-lg border border-gray-200 px-3 py-2"
               />
             ) : (
-              <select
-                value={draft.formId || ''}
-                onChange={(e) => setDraft({ ...draft, formId: e.target.value })}
-                className="w-full rounded-lg border border-gray-200 px-3 py-2"
-              >
-                <option value="">Select a form…</option>
-                {forms.map((f) => (
-                  <option key={f.id} value={f.id}>{f.name}</option>
-                ))}
-              </select>
+              <>
+                <select
+                  value={draft.formId || ''}
+                  onChange={(e) => setDraft({ ...draft, formId: e.target.value })}
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2"
+                >
+                  <option value="">Select a form…</option>
+                  {forms.map((f) => (
+                    <option key={f.id} value={f.id}>{f.name}</option>
+                  ))}
+                </select>
+                <input
+                  value={draft.content?.submitButtonText || ''}
+                  onChange={(e) =>
+                    setDraft((d) => ({ ...d, content: { ...d.content, submitButtonText: e.target.value } }))
+                  }
+                  placeholder="Submit button text (default: Submit)"
+                  className="mt-2 w-full rounded-lg border border-gray-200 px-3 py-2"
+                />
+              </>
             )}
           </section>
 
@@ -328,8 +457,13 @@ export default function LandingPageEditor({ initial }: Props) {
         {/* PREVIEW */}
         <div
           className="overflow-y-auto p-10"
-          style={{ background: theme.backgroundColor || '#f8fafc', color: theme.textColor || '#0f172a' }}
+          style={{
+            background: theme.backgroundColor || '#f8fafc',
+            color: theme.textColor || '#0f172a',
+            fontFamily: theme.fontFamily || undefined,
+          }}
         >
+          {hero.logo && <img src={hero.logo} alt="" className="mb-6 h-10 object-contain" />}
           {hero.image && <img src={hero.image} alt="" className="mb-6 w-full rounded-xl object-cover" />}
           <h1 className="mb-3 text-3xl font-bold" style={{ color: hero.accentColor || theme.accentColor }}>
             {hero.title || 'Your headline here'}
@@ -344,15 +478,27 @@ export default function LandingPageEditor({ initial }: Props) {
               ))}
             </ul>
           )}
-          <div className="rounded-xl border border-gray-200 bg-white p-6 text-gray-900">
+          <div
+            className="rounded-xl border border-gray-200 p-6 text-gray-900"
+            style={{ background: theme.cardColor || '#ffffff' }}
+          >
             {isTypeform ? (
               <p className="text-sm text-gray-500">
                 Typeform embed ({draft.typeformConfig?.formId || 'no form ID'})
               </p>
             ) : (
-              <p className="text-sm text-gray-500">
-                Native form ({forms.find((f) => f.id === draft.formId)?.name || 'no form selected'})
-              </p>
+              <>
+                <p className="mb-3 text-sm text-gray-500">
+                  Native form ({forms.find((f) => f.id === draft.formId)?.name || 'no form selected'})
+                </p>
+                <button
+                  type="button"
+                  className="rounded-lg px-4 py-2 text-sm font-medium text-white"
+                  style={{ background: hero.accentColor || theme.accentColor || '#2563eb' }}
+                >
+                  {draft.content?.submitButtonText || 'Submit'}
+                </button>
+              </>
             )}
           </div>
         </div>

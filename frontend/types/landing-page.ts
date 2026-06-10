@@ -31,6 +31,7 @@ export interface LandingPageContent {
   benefits?: string[];
   theme?: LandingPageTheme;
   themePreset?: string;
+  submitButtonText?: string;
 }
 
 export interface LandingPageTypeformConfig {
