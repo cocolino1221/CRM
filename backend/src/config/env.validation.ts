@@ -10,6 +10,7 @@ export const validationSchema = Joi.object({
   PORT: Joi.number().default(3000),
   FRONTEND_URL: Joi.string().uri().required(),
   MOBILE_FRONTEND_URL: Joi.string().uri().optional(),
+  MOBILE_URL: Joi.string().uri().optional(),
   APP_URL: Joi.string().uri().optional().default('http://localhost:3000'),
 
   // Database - Either DATABASE_URL or individual connection parameters
@@ -196,6 +197,14 @@ export const validationSchema = Joi.object({
 
   // Phone normalization
   CONTACT_PHONE_DEFAULT_COUNTRY_CODE: Joi.string().pattern(/^\d{1,3}$/).default('40'),
+
+  // Cloudflare R2 object storage (optional - falls back to local disk if unset)
+  R2_ACCOUNT_ID: Joi.string().optional(),
+  R2_ACCESS_KEY_ID: Joi.string().optional(),
+  R2_SECRET_ACCESS_KEY: Joi.string().optional(),
+  R2_BUCKET: Joi.string().optional(),
+  R2_PUBLIC_URL: Joi.string().uri().optional(),
+  R2_ENDPOINT: Joi.string().uri().optional(), // override for EU/jurisdiction buckets
 });
 
 /**

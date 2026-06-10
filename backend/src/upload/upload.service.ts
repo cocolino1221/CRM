@@ -1,5 +1,11 @@
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import {
+  S3Client,
+  PutObjectCommand,
+  DeleteObjectCommand,
+  HeadObjectCommand,
+} from '@aws-sdk/client-s3';
 import { promises as fs } from 'fs';
 import { join } from 'path';
 import { v4 as uuidv4 } from 'uuid';
@@ -21,6 +27,10 @@ export class UploadService {
   private readonly maxFileSize: number;
   private readonly allowedMimeTypes: string[];
 
+  private readonly s3Client?: S3Client;
+  private readonly r2Bucket?: string;
+  private readonly r2PublicUrl?: string;
+
   constructor(private readonly configService: ConfigService) {
     this.uploadPath = this.configService.get('UPLOAD_PATH', './uploads');
     this.maxFileSize = this.configService.get('MAX_FILE_SIZE', 10 * 1024 * 1024); // 10MB
@@ -29,6 +39,13 @@ export class UploadService {
       'image/png',
       'image/gif',
       'image/webp',
+      'audio/mpeg',
+      'audio/mp4',
+      'audio/x-m4a',
+      'audio/aac',
+      'audio/ogg',
+      'audio/opus',
+      'audio/wav',
       'application/pdf',
       'application/msword',
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -37,10 +54,37 @@ export class UploadService {
       'text/csv',
       'text/plain',
     ];
+
+    const accountId = this.configService.get<string>('R2_ACCOUNT_ID');
+    const accessKeyId = this.configService.get<string>('R2_ACCESS_KEY_ID');
+    const secretAccessKey = this.configService.get<string>('R2_SECRET_ACCESS_KEY');
+    const bucket = this.configService.get<string>('R2_BUCKET');
+    const publicUrl = this.configService.get<string>('R2_PUBLIC_URL');
+    // EU/FedRAMP buckets need a jurisdiction-specific endpoint; allow an explicit override.
+    const endpoint =
+      this.configService.get<string>('R2_ENDPOINT') ||
+      `https://${accountId}.r2.cloudflarestorage.com`;
+
+    if (accountId && accessKeyId && secretAccessKey && bucket && publicUrl) {
+      this.s3Client = new S3Client({
+        region: 'auto',
+        endpoint,
+        credentials: { accessKeyId, secretAccessKey },
+      });
+      this.r2Bucket = bucket;
+      this.r2PublicUrl = publicUrl.replace(/\/+$/, '');
+      this.logger.log(`Upload storage: Cloudflare R2 (bucket "${bucket}")`);
+    } else {
+      this.logger.log('Upload storage: local disk (R2 not configured)');
+    }
+  }
+
+  private get usesR2(): boolean {
+    return Boolean(this.s3Client && this.r2Bucket && this.r2PublicUrl);
   }
 
   async onModuleInit() {
-    // Ensure upload directory exists
+    if (this.usesR2) return;
     try {
       await fs.mkdir(this.uploadPath, { recursive: true });
       this.logger.log(`Upload directory ensured at: ${this.uploadPath}`);
@@ -76,26 +120,33 @@ export class UploadService {
     this.validateFile(file);
 
     const filename = this.generateFilename(file.originalname);
-    const folderPath = subfolder ? join(this.uploadPath, subfolder) : this.uploadPath;
+    const relativePath = subfolder ? `${subfolder}/${filename}` : filename;
 
-    // Ensure subfolder exists
-    await fs.mkdir(folderPath, { recursive: true });
-
-    const filePath = join(folderPath, filename);
-    const relativePath = subfolder ? join(subfolder, filename) : filename;
-
-    // Write file to disk
-    await fs.writeFile(filePath, file.buffer);
+    let url: string;
+    if (this.usesR2) {
+      await this.s3Client!.send(
+        new PutObjectCommand({
+          Bucket: this.r2Bucket!,
+          Key: relativePath,
+          Body: file.buffer,
+          ContentType: file.mimetype,
+        }),
+      );
+      url = `${this.r2PublicUrl}/${relativePath}`;
+    } else {
+      const folderPath = subfolder ? join(this.uploadPath, subfolder) : this.uploadPath;
+      await fs.mkdir(folderPath, { recursive: true });
+      await fs.writeFile(join(folderPath, filename), file.buffer);
+      url = `${this.getPublicBaseUrl()}/uploads/${relativePath}`;
+    }
 
     this.logger.log(`File saved: ${relativePath}`);
-
-    const baseUrl = this.configService.get('APP_URL', 'http://localhost:4000');
 
     return {
       originalName: file.originalname,
       filename,
       path: relativePath,
-      url: `${baseUrl}/uploads/${relativePath}`,
+      url,
       size: file.size,
       mimetype: file.mimetype,
       uploadedAt: new Date(),
@@ -111,8 +162,13 @@ export class UploadService {
 
   async deleteFile(filePath: string): Promise<void> {
     try {
-      const fullPath = join(this.uploadPath, filePath);
-      await fs.unlink(fullPath);
+      if (this.usesR2) {
+        await this.s3Client!.send(
+          new DeleteObjectCommand({ Bucket: this.r2Bucket!, Key: filePath }),
+        );
+      } else {
+        await fs.unlink(join(this.uploadPath, filePath));
+      }
       this.logger.log(`File deleted: ${filePath}`);
     } catch (error) {
       this.logger.error(`Failed to delete file ${filePath}: ${error.message}`);
@@ -121,8 +177,17 @@ export class UploadService {
   }
 
   async getFileUrl(filePath: string): Promise<string> {
-    const baseUrl = this.configService.get('APP_URL', 'http://localhost:4000');
-    return `${baseUrl}/uploads/${filePath}`;
+    if (this.usesR2) {
+      return `${this.r2PublicUrl}/${filePath}`;
+    }
+    return `${this.getPublicBaseUrl()}/uploads/${filePath}`;
+  }
+
+  // Static uploads are mounted at /uploads, OUTSIDE the api/v1 global prefix,
+  // so the public URL must not carry the prefix that APP_URL may include.
+  private getPublicBaseUrl(): string {
+    const appUrl = this.configService.get('APP_URL', 'http://localhost:4000');
+    return appUrl.replace(/\/api\/v1\/?$/, '');
   }
 
   getFilePath(filename: string, subfolder?: string): string {
@@ -131,8 +196,13 @@ export class UploadService {
 
   async fileExists(filePath: string): Promise<boolean> {
     try {
-      const fullPath = join(this.uploadPath, filePath);
-      await fs.access(fullPath);
+      if (this.usesR2) {
+        await this.s3Client!.send(
+          new HeadObjectCommand({ Bucket: this.r2Bucket!, Key: filePath }),
+        );
+        return true;
+      }
+      await fs.access(join(this.uploadPath, filePath));
       return true;
     } catch {
       return false;
