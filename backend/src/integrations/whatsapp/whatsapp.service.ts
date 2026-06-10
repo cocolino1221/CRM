@@ -39,6 +39,7 @@ export interface WhatsAppMessage {
     id?: string;  // Meta media_id from upload
     caption?: string;
     filename?: string;
+    voice?: boolean;
   };
   interactive?: {
     type: 'button' | 'list';
@@ -117,6 +118,18 @@ interface AutoSendRule extends AutoSendConfig {
   id: string;
   name: string;
   priority: number;
+}
+
+interface TemplateHeaderMediaCacheEntry {
+  headerMediaType: AutoSendHeaderMediaType;
+  headerMediaId?: string;
+  headerMediaUrl?: string;
+  updatedAt: string;
+}
+
+interface TemplateHeaderMediaActivityLookup {
+  byExactTemplate: Record<string, TemplateHeaderMediaCacheEntry>;
+  byTemplateName: Record<string, TemplateHeaderMediaCacheEntry>;
 }
 
 interface CampaignRecipient {
@@ -549,10 +562,235 @@ export class WhatsAppService {
     };
   }
 
+  private buildTemplateHeaderMediaCacheKey(templateName?: string, language?: string): string {
+    return `${String(templateName || '').trim().toLowerCase()}::${String(language || '').trim().toLowerCase()}`;
+  }
+
+  private buildTemplateHeaderMediaNameKey(templateName?: string): string {
+    return String(templateName || '').trim().toLowerCase();
+  }
+
+  private getTemplateHeaderMediaCache(integration?: Integration | null): Record<string, TemplateHeaderMediaCacheEntry> {
+    const rawCache = integration?.config?.templateHeaderMediaCache;
+    if (!rawCache || typeof rawCache !== 'object' || Array.isArray(rawCache)) {
+      return {};
+    }
+
+    const normalized: Record<string, TemplateHeaderMediaCacheEntry> = {};
+    for (const [rawKey, rawValue] of Object.entries(rawCache as Record<string, any>)) {
+      const key = String(rawKey || '').trim().toLowerCase();
+      if (!key || !rawValue || typeof rawValue !== 'object') continue;
+
+      const headerMediaType = String((rawValue as any).headerMediaType || '').trim().toLowerCase();
+      if (!['image', 'video', 'document'].includes(headerMediaType)) continue;
+
+      const normalizedHeaderMedia = this.normalizeHeaderMediaInput(
+        String((rawValue as any).headerMediaId || '').trim() || undefined,
+        String((rawValue as any).headerMediaUrl || '').trim() || undefined,
+      );
+
+      if (!normalizedHeaderMedia.mediaId && !normalizedHeaderMedia.mediaUrl) continue;
+
+      normalized[key] = {
+        headerMediaType: headerMediaType as AutoSendHeaderMediaType,
+        headerMediaId: normalizedHeaderMedia.mediaId,
+        headerMediaUrl: normalizedHeaderMedia.mediaUrl,
+        updatedAt: String((rawValue as any).updatedAt || '').trim() || new Date().toISOString(),
+      };
+    }
+
+    return normalized;
+  }
+
+  private getCachedTemplateHeaderMedia(
+    integration: Integration | null | undefined,
+    templateName?: string,
+    language?: string,
+  ): TemplateHeaderMediaCacheEntry | undefined {
+    const cacheKey = this.buildTemplateHeaderMediaCacheKey(templateName, language);
+    if (!cacheKey || cacheKey === '::') return undefined;
+    return this.getTemplateHeaderMediaCache(integration)[cacheKey];
+  }
+
+  // Resolve the header media (image/video/document) for a template from the DB cache
+  // (integration.config.templateHeaderMediaCache) or, failing that, recent outbound
+  // template activities. Lets a send to a brand-new number reuse a previously used
+  // media_id/URL without forcing a manual re-upload.
+  private async resolveCachedTemplateHeaderMedia(
+    workspaceId: string,
+    integrationId: string | undefined,
+    templateName?: string,
+    language?: string,
+  ): Promise<TemplateHeaderMediaCacheEntry | undefined> {
+    const integrations = await this.listWorkspaceWhatsAppIntegrations(workspaceId);
+    if (!integrations.length) return undefined;
+
+    const requestedIntegrationId = String(integrationId || '').trim();
+    const cacheIntegration = (requestedIntegrationId
+      ? integrations.find((integration) => integration.id === requestedIntegrationId)
+      : null)
+      || this.chooseDefaultWorkspaceIntegration(integrations)
+      || integrations[0];
+
+    const cached = this.getCachedTemplateHeaderMedia(cacheIntegration, templateName, language);
+    if (cached && (cached.headerMediaId || cached.headerMediaUrl)) return cached;
+
+    const activityLookup = await this.getRecentTemplateHeaderMediaActivityLookup(workspaceId, cacheIntegration);
+    const fallback = activityLookup.byExactTemplate[this.buildTemplateHeaderMediaCacheKey(templateName, language)]
+      || activityLookup.byTemplateName[this.buildTemplateHeaderMediaNameKey(templateName)];
+    if (fallback && (fallback.headerMediaId || fallback.headerMediaUrl)) return fallback;
+
+    return undefined;
+  }
+
+  private extractTemplateNameFromActivity(activity?: Pick<Activity, 'description' | 'metadata'>): string | undefined {
+    const metadataName = String(activity?.metadata?.templateName || '').trim();
+    if (metadataName) return metadataName;
+
+    const description = String(activity?.description || '').trim();
+    if (!description) return undefined;
+
+    const match = description.match(
+      /^\[(?:template|broadcast template|auto-send template|csv import template|flow template):\s*([^\]]+)\]/i,
+    );
+    return String(match?.[1] || '').trim() || undefined;
+  }
+
+  private async getRecentTemplateHeaderMediaActivityLookup(
+    workspaceId: string,
+    integration?: Integration | null,
+  ): Promise<TemplateHeaderMediaActivityLookup> {
+    const integrationId = String(integration?.id || '').trim();
+    if (!workspaceId || !integrationId) {
+      return { byExactTemplate: {}, byTemplateName: {} };
+    }
+
+    try {
+      const activities = await this.activityRepository.find({
+        where: {
+          workspaceId,
+          type: ActivityType.WHATSAPP_MESSAGE,
+          direction: ActivityDirection.OUTBOUND,
+        },
+        order: {
+          occurredAt: 'DESC',
+          createdAt: 'DESC',
+        },
+        take: 250,
+      });
+
+      const byExactTemplate: Record<string, TemplateHeaderMediaCacheEntry> = {};
+      const byTemplateName: Record<string, TemplateHeaderMediaCacheEntry> = {};
+
+      for (const activity of activities) {
+        const metadata = activity.metadata || {};
+        if (String(metadata.messageType || '').trim().toLowerCase() !== 'template') continue;
+        if (String(metadata.senderIntegrationId || '').trim() !== integrationId) continue;
+
+        const headerMediaType = String(metadata.headerMediaType || metadata.mediaType || '').trim().toLowerCase();
+        if (!['image', 'video', 'document'].includes(headerMediaType)) continue;
+
+        const normalizedHeaderMedia = this.normalizeHeaderMediaInput(
+          String(metadata.headerMediaId || metadata.mediaId || '').trim() || undefined,
+          String(metadata.headerMediaUrl || metadata.mediaUrl || '').trim() || undefined,
+        );
+        if (!normalizedHeaderMedia.mediaId && !normalizedHeaderMedia.mediaUrl) continue;
+
+        const templateName = this.extractTemplateNameFromActivity(activity);
+        const templateNameKey = this.buildTemplateHeaderMediaNameKey(templateName);
+        if (!templateNameKey) continue;
+
+        const entry: TemplateHeaderMediaCacheEntry = {
+          headerMediaType: headerMediaType as AutoSendHeaderMediaType,
+          headerMediaId: normalizedHeaderMedia.mediaId,
+          headerMediaUrl: normalizedHeaderMedia.mediaUrl,
+          updatedAt: activity.occurredAt?.toISOString?.()
+            || activity.createdAt?.toISOString?.()
+            || new Date().toISOString(),
+        };
+
+        const templateLanguage = String(metadata.templateLanguage || '').trim();
+        if (templateLanguage) {
+          const exactKey = this.buildTemplateHeaderMediaCacheKey(templateName, templateLanguage);
+          if (exactKey && exactKey !== '::' && !byExactTemplate[exactKey]) {
+            byExactTemplate[exactKey] = entry;
+          }
+        }
+
+        if (!byTemplateName[templateNameKey]) {
+          byTemplateName[templateNameKey] = entry;
+        }
+      }
+
+      return { byExactTemplate, byTemplateName };
+    } catch (error: any) {
+      this.logger.warn(`Failed to inspect recent template media activities: ${error?.message || error}`);
+      return { byExactTemplate: {}, byTemplateName: {} };
+    }
+  }
+
+  private async persistTemplateHeaderMediaCacheEntry(
+    workspaceId: string,
+    integrationId: string | undefined,
+    templateName: string,
+    language: string,
+    headerMediaType: AutoSendHeaderMediaType,
+    headerMediaId?: string,
+    headerMediaUrl?: string,
+  ): Promise<void> {
+    const normalizedIntegrationId = String(integrationId || '').trim();
+    const normalizedTemplateName = String(templateName || '').trim();
+    const normalizedLanguage = String(language || '').trim();
+    if (!normalizedIntegrationId || !normalizedTemplateName || !normalizedLanguage) return;
+
+    const normalizedHeaderMedia = this.normalizeHeaderMediaInput(
+      String(headerMediaId || '').trim() || undefined,
+      String(headerMediaUrl || '').trim() || undefined,
+    );
+    if (!normalizedHeaderMedia.mediaId && !normalizedHeaderMedia.mediaUrl) return;
+
+    const integration = await this.integrationRepository.findOne({
+      where: {
+        id: normalizedIntegrationId,
+        workspaceId,
+        type: IntegrationType.WHATSAPP,
+      },
+    });
+    if (!integration) return;
+
+    const cacheKey = this.buildTemplateHeaderMediaCacheKey(normalizedTemplateName, normalizedLanguage);
+    const nextCache = {
+      ...this.getTemplateHeaderMediaCache(integration),
+      [cacheKey]: {
+        headerMediaType,
+        headerMediaId: normalizedHeaderMedia.mediaId,
+        headerMediaUrl: normalizedHeaderMedia.mediaUrl,
+        updatedAt: new Date().toISOString(),
+      },
+    };
+
+    integration.config = {
+      ...(integration.config || {}),
+      templateHeaderMediaCache: nextCache,
+    };
+    await this.integrationRepository.save(integration);
+  }
+
   private isInvalidWhatsAppMediaAttachmentIdError(error: any): boolean {
     const msg = String(error?.message || '').toLowerCase();
     return msg.includes('media attachment id')
       || msg.includes('not a valid whatsapp business account media');
+  }
+
+  // A media_id is scoped to the phone number that uploaded it and expires, so
+  // after a token/app/number change a stale id is rejected — often as a generic
+  // (#200) Permissions error rather than an explicit "media attachment id" message.
+  // When we also hold a header URL, treat #200 as a stale-media signal so the
+  // caller can retry with the URL instead of failing the whole send.
+  private isLikelyStaleHeaderMediaError(error: any): boolean {
+    if (this.isInvalidWhatsAppMediaAttachmentIdError(error)) return true;
+    const msg = String(error?.message || '').toLowerCase();
+    return msg.includes('(#200)') || msg.includes('permissions error');
   }
 
   private normalizeCampaignRecipients(value: any): CampaignRecipient[] {
@@ -1173,9 +1411,26 @@ export class WhatsAppService {
       String(payload.headerMediaId || '').trim(),
       String(payload.headerMediaUrl || '').trim(),
     );
-    const headerMediaId = normalizedHeaderMedia.mediaId || '';
-    const headerMediaUrl = normalizedHeaderMedia.mediaUrl || '';
-    const hasHeaderMedia = ['image', 'video', 'document'].includes(headerType) && (headerMediaId || headerMediaUrl);
+    let headerMediaId = normalizedHeaderMedia.mediaId || '';
+    let headerMediaUrl = normalizedHeaderMedia.mediaUrl || '';
+    const isMediaHeader = ['image', 'video', 'document'].includes(headerType);
+
+    // No media supplied in the request → reuse the cached media_id/URL from the DB so
+    // sending to a new number doesn't force a manual re-upload.
+    if (isMediaHeader && !headerMediaId && !headerMediaUrl) {
+      const cached = await this.resolveCachedTemplateHeaderMedia(
+        workspaceId,
+        payload.integrationId,
+        payload.templateName,
+        language,
+      );
+      if (cached) {
+        headerMediaId = String(cached.headerMediaId || '').trim();
+        headerMediaUrl = String(cached.headerMediaUrl || '').trim();
+      }
+    }
+
+    const hasHeaderMedia = isMediaHeader && (headerMediaId || headerMediaUrl);
 
     const sendTemplate = async (preferHeaderUrl = false): Promise<{ result: any; sender: ReturnType<WhatsAppService['getIntegrationSenderInfo']> }> => {
       const parameters = hasHeaderMedia
@@ -1206,9 +1461,20 @@ export class WhatsAppService {
 
     try {
       const sent = await sendTemplate(false);
+      if (hasHeaderMedia) {
+        await this.persistTemplateHeaderMediaCacheEntry(
+          workspaceId,
+          sent.sender.senderIntegrationId,
+          payload.templateName,
+          language,
+          headerType as AutoSendHeaderMediaType,
+          headerMediaId || undefined,
+          headerMediaUrl || undefined,
+        );
+      }
       return { ...sent, usedHeaderUrlFallback: false };
     } catch (error: any) {
-      const canRetryWithUrl = !!headerMediaId && !!headerMediaUrl && this.isInvalidWhatsAppMediaAttachmentIdError(error);
+      const canRetryWithUrl = !!headerMediaId && !!headerMediaUrl && this.isLikelyStaleHeaderMediaError(error);
       if (!canRetryWithUrl) {
         throw error;
       }
@@ -1217,6 +1483,17 @@ export class WhatsAppService {
         `Template send: media_id invalid for workspace=${workspaceId}; retrying with header URL`,
       );
       const sent = await sendTemplate(true);
+      if (hasHeaderMedia) {
+        await this.persistTemplateHeaderMediaCacheEntry(
+          workspaceId,
+          sent.sender.senderIntegrationId,
+          payload.templateName,
+          language,
+          headerType as AutoSendHeaderMediaType,
+          undefined,
+          headerMediaUrl || undefined,
+        );
+      }
       return { ...sent, usedHeaderUrlFallback: true };
     }
   }
@@ -1708,6 +1985,7 @@ export class WhatsAppService {
       case 'audio': {
         const aud: any = {};
         if (message.media!.id) aud.id = message.media!.id; else aud.link = message.media!.url;
+        if (message.media?.voice) aud.voice = true;
         return { ...base, ...contextPayload, type: 'audio', audio: aud };
       }
       case 'interactive': return { ...base, ...contextPayload, type: 'interactive', interactive: message.interactive };
@@ -1856,9 +2134,11 @@ export class WhatsAppService {
     mimeType: string,
     filename: string,
     integrationId?: string,
+    options?: { forceVoiceNote?: boolean },
   ): Promise<{ id: string }> {
     const integration = await this.resolveWorkspaceSendIntegration(workspaceId, integrationId);
     const { accessToken, phoneNumberId } = this.getCredentials(this.getIntegrationCredentials(integration), false);
+    const forceVoiceNote = options?.forceVoiceNote === true;
 
     // Some mobile clients provide generic or mismatched MIME types. Normalize by extension first.
     const inputExtension = extname(String(filename || '')).toLowerCase();
@@ -1881,7 +2161,8 @@ export class WhatsAppService {
     const acceptedAudioMimeTypes = new Set(['audio/aac', 'audio/mp4', 'audio/mpeg', 'audio/amr', 'audio/ogg']);
     const needsAudioConversion = uploadMimeType.startsWith('audio/')
       && (
-        uploadMimeType.startsWith('audio/webm')
+        forceVoiceNote
+        || uploadMimeType.startsWith('audio/webm')
         || uploadMimeType === 'audio/caf'
         || uploadMimeType === 'audio/x-caf'
         || uploadMimeType === 'audio/wav'
@@ -1902,13 +2183,17 @@ export class WhatsAppService {
       try {
         await execFileAsync('ffmpeg', [
           '-i', filePath,
+          '-vn',
           '-c:a', 'libopus',
           '-b:a', '32k',
+          '-ac', '1',
           '-y',
           convertedPath,
         ]);
         actualFilePath = convertedPath;
-        this.logger.log(`Converted audio to ogg: ${filePath} (${mimeType || 'unknown'}) → ${convertedPath}`);
+        this.logger.log(
+          `Converted audio to ogg${forceVoiceNote ? ' (voice note)' : ''}: ${filePath} (${mimeType || 'unknown'}) → ${convertedPath}`,
+        );
       } catch (convErr: any) {
         this.logger.error(`ffmpeg conversion failed: ${convErr?.message || convErr}`);
         throw new BadRequestException('Audio conversion failed — ffmpeg error');
@@ -1967,12 +2252,25 @@ export class WhatsAppService {
   /**
    * List message templates from Meta (requires WABA ID)
    */
-  async listTemplates(workspaceId: string): Promise<any[]> {
-    const integration = await this.integrationRepository.findOne({
-      where: { type: IntegrationType.WHATSAPP, workspaceId },
-    });
-    const { accessToken } = this.getCredentials(integration?.credentials);
-    const wabaId = integration?.credentials?.wabaId || integration?.config?.wabaId
+  async listTemplates(workspaceId: string, integrationId?: string): Promise<any[]> {
+    const integrations = await this.listWorkspaceWhatsAppIntegrations(workspaceId);
+    if (!integrations.length) return [];
+
+    const requestedIntegrationId = String(integrationId || '').trim();
+    const selectedIntegration = requestedIntegrationId
+      ? integrations.find((integration) => integration.id === requestedIntegrationId) || null
+      : null;
+    const cacheIntegration = selectedIntegration
+      || this.chooseDefaultWorkspaceIntegration(integrations)
+      || integrations[0];
+    const apiIntegration = (selectedIntegration && this.hasIntegrationSendCredentials(selectedIntegration))
+      ? selectedIntegration
+      : integrations.find((integration) => this.isIntegrationUsable(integration) && this.hasIntegrationSendCredentials(integration))
+        || cacheIntegration;
+
+    const credentials = this.getIntegrationCredentials(apiIntegration);
+    const { accessToken } = this.getCredentials(credentials);
+    const wabaId = credentials?.wabaId || credentials?.waba_id || apiIntegration?.config?.wabaId
       || this.configService.get<string>('WHATSAPP_WABA_ID');
     if (!wabaId) return [];
     try {
@@ -1981,7 +2279,64 @@ export class WhatsAppService {
           headers: { Authorization: `Bearer ${accessToken}` },
         }),
       );
-      return response.data.data || [];
+      const templates = Array.isArray(response.data?.data) ? response.data.data : [];
+      const needsActivityFallback = templates.some((template: any) => !this.getCachedTemplateHeaderMedia(
+        cacheIntegration,
+        String(template?.name || ''),
+        String(template?.language || ''),
+      ));
+      const activityLookup = needsActivityFallback
+        ? await this.getRecentTemplateHeaderMediaActivityLookup(workspaceId, cacheIntegration)
+        : { byExactTemplate: {}, byTemplateName: {} };
+
+      const recoveredCacheEntries = new Map<string, { templateName: string; language: string; entry: TemplateHeaderMediaCacheEntry }>();
+      const hydratedTemplates = templates.map((template: any) => {
+        const templateName = String(template?.name || '');
+        const templateLanguage = String(template?.language || '');
+        const cachedHeaderMedia = this.getCachedTemplateHeaderMedia(
+          cacheIntegration,
+          templateName,
+          templateLanguage,
+        );
+        const fallbackHeaderMedia = cachedHeaderMedia
+          || activityLookup.byExactTemplate[this.buildTemplateHeaderMediaCacheKey(templateName, templateLanguage)]
+          || activityLookup.byTemplateName[this.buildTemplateHeaderMediaNameKey(templateName)];
+
+        if (!fallbackHeaderMedia) return template;
+
+        if (!cachedHeaderMedia) {
+          recoveredCacheEntries.set(
+            this.buildTemplateHeaderMediaCacheKey(templateName, templateLanguage),
+            { templateName, language: templateLanguage, entry: fallbackHeaderMedia },
+          );
+        }
+
+        return {
+          ...template,
+          headerMediaType: fallbackHeaderMedia.headerMediaType,
+          headerMediaId: fallbackHeaderMedia.headerMediaId,
+          headerMediaUrl: fallbackHeaderMedia.headerMediaUrl,
+          cachedHeaderMediaUpdatedAt: fallbackHeaderMedia.updatedAt,
+        };
+      });
+
+      if (cacheIntegration?.id && recoveredCacheEntries.size > 0) {
+        await Promise.all(
+          Array.from(recoveredCacheEntries.values()).map(async ({ templateName, language, entry }) => {
+            await this.persistTemplateHeaderMediaCacheEntry(
+              workspaceId,
+              cacheIntegration.id,
+              templateName,
+              language,
+              entry.headerMediaType,
+              entry.headerMediaId,
+              entry.headerMediaUrl,
+            );
+          }),
+        );
+      }
+
+      return hydratedTemplates;
     } catch (error) {
       this.logger.warn(`Failed to fetch templates: ${error.message}`);
       return [];
@@ -2246,6 +2601,8 @@ export class WhatsAppService {
           );
           const msgId = msgResult?.messages?.[0]?.id;
           await this.saveOutboundActivity(phone, `[Broadcast template: ${template.name}]`, 'template', workspaceId, '', msgId, {
+            templateName: template.name,
+            templateLanguage: template.language,
             ...(context?.campaignId || context?.campaignName ? {
               campaignId: context?.campaignId,
               campaignName: context?.campaignName,
@@ -2309,6 +2666,8 @@ export class WhatsAppService {
         );
         const msgId = msgResult?.messages?.[0]?.id;
         await this.saveOutboundActivity(phone, `[Broadcast template: ${template.name}]`, 'template', workspaceId, contact.ownerId || '', msgId, {
+          templateName: template.name,
+          templateLanguage: template.language,
           ...(context?.campaignId || context?.campaignName ? {
             campaignId: context?.campaignId,
             campaignName: context?.campaignName,
@@ -2550,7 +2909,7 @@ export class WhatsAppService {
           break;
         } catch (err: any) {
           lastError = err;
-          const canRetryWithUrl = !!headerMediaId && !!headerMediaUrl && this.isInvalidWhatsAppMediaAttachmentIdError(err);
+          const canRetryWithUrl = !!headerMediaId && !!headerMediaUrl && this.isLikelyStaleHeaderMediaError(err);
           if (canRetryWithUrl) {
             this.logger.warn(
               `Auto-send: media_id invalid for sender ${candidateIntegration.id}, retrying with header URL for contact ${contact.id}`,
@@ -2598,8 +2957,13 @@ export class WhatsAppService {
         ownerId || fallbackUserId,
         msgId,
         {
+          templateName,
+          templateLanguage: language,
+          headerMediaType: ['image', 'video', 'document'].includes(headerMediaType) ? headerMediaType : undefined,
+          headerMediaId: usedHeaderUrlFallback ? undefined : (headerMediaId || undefined),
+          headerMediaUrl: headerMediaUrl || undefined,
           mediaType: ['image', 'video', 'document'].includes(headerMediaType) ? headerMediaType : undefined,
-          mediaId: headerMediaId || undefined,
+          mediaId: usedHeaderUrlFallback ? undefined : (headerMediaId || undefined),
           mediaUrl: headerMediaUrl || undefined,
           ...this.getIntegrationSenderInfo(senderIntegration),
         },
@@ -3244,7 +3608,20 @@ export class WhatsAppService {
         template: { name: step.templateName, language: step.templateLanguage || 'en_US', parameters: components },
       });
       const btnLabels = step.buttons?.map(b => b.title).join(', ') || '';
-      await this.saveOutboundActivity(waId, `[Flow template: ${step.templateName}]${btnLabels ? ` [${btnLabels}]` : ''}`, 'template', workspaceId, '', undefined);
+      await this.saveOutboundActivity(
+        waId,
+        `[Flow template: ${step.templateName}]${btnLabels ? ` [${btnLabels}]` : ''}`,
+        'template',
+        workspaceId,
+        '',
+        undefined,
+        {
+          templateName: step.templateName,
+          templateLanguage: step.templateLanguage || 'en_US',
+          headerMediaType: step.headerMediaType || undefined,
+          headerMediaUrl: step.headerMediaUrl || undefined,
+        },
+      );
     } else if (step.buttons?.length) {
       // Send media first if attached, then interactive buttons
       const hasMedia = (step.mediaUrl || step.mediaId) && step.mediaType;
