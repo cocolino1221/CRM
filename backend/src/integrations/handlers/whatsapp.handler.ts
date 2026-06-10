@@ -34,7 +34,7 @@ export class WhatsAppIntegrationHandler implements IntegrationHandler {
 
   async testConnection(integration: Integration): Promise<{ success: boolean; message?: string; data?: any }> {
     try {
-      const accessToken = integration.credentials?.accessToken;
+      const accessToken = integration.credentials?.accessToken?.replace(/\s+/g, '');
       if (!accessToken) {
         return { success: false, message: 'Access token not found' };
       }
@@ -88,7 +88,7 @@ export class WhatsAppIntegrationHandler implements IntegrationHandler {
 
   async syncData(integration: Integration, options?: any): Promise<any> {
     try {
-      const accessToken = integration.credentials?.accessToken;
+      const accessToken = integration.credentials?.accessToken?.replace(/\s+/g, '');
       if (!accessToken) {
         throw new Error('Access token not found');
       }
@@ -352,7 +352,7 @@ export class WhatsAppIntegrationHandler implements IntegrationHandler {
     integration: Integration,
     groupIds: string[],
   ): Promise<{ totalImported: number; groups: any[] }> {
-    const accessToken = integration.credentials?.accessToken;
+    const accessToken = integration.credentials?.accessToken?.replace(/\s+/g, '');
     if (!accessToken) {
       throw new Error('Access token not found');
     }

@@ -120,6 +120,13 @@ export class IntegrationsService implements OnModuleInit {
    * Install a new integration
    */
   async install(workspaceId: string, userId: string, dto: InstallIntegrationDto): Promise<Integration> {
+    // Meta system-user tokens are ~210 chars and routinely pick up stray
+    // whitespace/newlines on copy-paste, which makes Graph reject them with
+    // "Cannot parse access token". Strip all whitespace before storing.
+    if (dto.type === IntegrationType.WHATSAPP && dto.credentials?.accessToken) {
+      dto.credentials.accessToken = String(dto.credentials.accessToken).replace(/\s+/g, '');
+    }
+
     const providerKey = String(dto.config?.provider || dto.externalId || '')
       .trim()
       .toLowerCase();
