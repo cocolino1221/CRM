@@ -30,6 +30,7 @@ import { ConfigService } from '@nestjs/config';
 import { ContactsService } from '../contacts/contacts.service';
 import { QueueService } from '../queues/queue.service';
 import { QUEUE_NAMES } from '../queues/queue.constants';
+import { DocumentsService } from '../documents/documents.service';
 import { CreateIntegrationDto, UpdateIntegrationDto, InstallIntegrationDto } from './dto/integration.dto';
 import { Integration, IntegrationType, IntegrationStatus, IntegrationAuthType } from '../database/entities/integration.entity';
 import { TypeformIntegrationHandler } from './handlers/typeform.handler';
@@ -49,6 +50,7 @@ export class IntegrationsController {
     private readonly configService: ConfigService,
     private readonly contactsService: ContactsService,
     private readonly queueService: QueueService,
+    private readonly documentsService: DocumentsService,
     @InjectRepository(Integration)
     private readonly integrationRepository: Repository<Integration>,
     private readonly typeformHandler: TypeformIntegrationHandler,
@@ -437,6 +439,9 @@ export class IntegrationsController {
     try {
       this.logger.log(`OAuth request received - Provider: ${provider}, WorkspaceId: ${workspaceId}, UserId: ${userId}`);
 
+      const normalizedProvider = provider.toLowerCase().trim();
+      const socialApiProviders = new Set(['facebook', 'instagram', 'tiktok']);
+
       // Map provider name to IntegrationType
       const typeMap: Record<string, IntegrationType> = {
         'google': IntegrationType.GOOGLE,
@@ -450,11 +455,14 @@ export class IntegrationsController {
         'zoom': IntegrationType.ZOOM,
         'docusign': IntegrationType.DOCUSIGN,
         'calendly': IntegrationType.CALENDLY,
+        'facebook': IntegrationType.API,
+        'instagram': IntegrationType.API,
+        'tiktok': IntegrationType.API,
       };
 
-      const type = typeMap[provider.toLowerCase()];
+      const type = typeMap[normalizedProvider];
       if (!type) {
-        this.logger.error(`Unsupported OAuth provider: ${provider} (lowercase: ${provider.toLowerCase()})`);
+        this.logger.error(`Unsupported OAuth provider: ${provider} (lowercase: ${normalizedProvider})`);
         res.redirect(`${frontendUrl}/integrations/callback?error=${encodeURIComponent('Unsupported OAuth provider')}`);
         return;
       }
@@ -468,12 +476,45 @@ export class IntegrationsController {
       let integration: Integration;
 
       if (integrationId) {
-        integration = await this.integrationsService.findOne(integrationId, workspaceId);
+        const existingIntegration = await this.integrationsService.findOne(integrationId, workspaceId);
+
+        // If an old/stale integration id is passed for another provider/type,
+        // create a fresh OAuth integration instead of mutating the wrong one.
+        if (existingIntegration.type !== type) {
+          integration = await this.integrationsService.install(workspaceId, userId, {
+            type,
+            authType: IntegrationAuthType.OAUTH2,
+            externalId: type === IntegrationType.API && socialApiProviders.has(normalizedProvider)
+              ? normalizedProvider
+              : undefined,
+            config: type === IntegrationType.API && socialApiProviders.has(normalizedProvider)
+              ? { provider: normalizedProvider }
+              : undefined,
+          });
+        } else {
+          integration = existingIntegration;
+
+          // Keep provider metadata in sync for API-based OAuth providers
+          if (type === IntegrationType.API && socialApiProviders.has(normalizedProvider)) {
+            integration.externalId = normalizedProvider;
+            integration.config = {
+              ...(integration.config || {}),
+              provider: normalizedProvider,
+            };
+            await this.integrationRepository.save(integration);
+          }
+        }
       } else {
         // Create temporary integration for OAuth flow
         integration = await this.integrationsService.install(workspaceId, userId, {
           type,
           authType: IntegrationAuthType.OAUTH2,
+          externalId: type === IntegrationType.API && socialApiProviders.has(normalizedProvider)
+            ? normalizedProvider
+            : undefined,
+          config: type === IntegrationType.API && socialApiProviders.has(normalizedProvider)
+            ? { provider: normalizedProvider }
+            : undefined,
         });
       }
 
@@ -532,6 +573,34 @@ export class IntegrationsController {
     @Req() req: any,
   ): Promise<{ success: boolean; message?: string }> {
     try {
+      const integration = await this.integrationRepository.findOne({
+        where: { id: integrationId },
+      });
+
+      const providerKey = String(
+        integration?.config?.provider || integration?.externalId || '',
+      ).trim().toLowerCase();
+
+      // Route webhook-first API providers to DocumentsService domain logic
+      // so contract/payment state and notifications are updated correctly.
+      if (integration?.type === IntegrationType.API && (providerKey === 'payfunnels' || providerKey === 'payfunnel')) {
+        const result = await this.documentsService.processPayfunnelWebhook(
+          integrationId,
+          payload,
+          req.headers as Record<string, string | string[] | undefined>,
+        );
+        return { success: result.success, message: result.message };
+      }
+
+      if (integration?.type === IntegrationType.API && providerKey === 'esemneaza') {
+        const result = await this.documentsService.processEsemneazaWebhook(
+          integrationId,
+          payload,
+          req.headers as Record<string, string | string[] | undefined>,
+        );
+        return { success: result.success, message: result.message };
+      }
+
       const result = await this.webhookService.processWebhook(integrationId, payload, {
         headers: req.headers as Record<string, string>,
         method: req.method,
@@ -1073,5 +1142,55 @@ export class IntegrationsController {
     await this.integrationRepository.save(integration);
 
     return { success: true };
+  }
+
+  @Post(':id/typeform/forms/:formId/register-webhook')
+  @ApiOperation({ summary: 'Register (or re-register) Typeform webhook for a form' })
+  async registerTypeformWebhook(
+    @Param('id') id: string,
+    @Param('formId') formId: string,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const integration = await this.integrationRepository.findOne({
+      where: { id, workspaceId: req.user.workspaceId },
+    });
+    if (!integration) {
+      return { success: false, message: 'Integration not found' };
+    }
+
+    const apiKey =
+      integration.credentials?.apiToken ||
+      integration.credentials?.apiKey ||
+      integration.config?.apiToken ||
+      integration.config?.apiKey;
+    if (!apiKey) {
+      return { success: false, message: 'No API key configured for this integration' };
+    }
+
+    const appUrl = integration.config?.backendUrl || this.configService.get<string>('APP_URL') || '';
+    if (!appUrl) {
+      return { success: false, message: 'APP_URL is not configured on the server' };
+    }
+
+    const webhookUrl = `${appUrl}/api/v1/integrations/webhooks/${integration.id}`;
+    const tag = `slackcrm_${formId.substring(0, 8)}`;
+
+    try {
+      await (this.typeformHandler as any).createWebhook(formId, webhookUrl, tag, apiKey);
+
+      // Mark form as webhookRegistered in the stored config
+      const forms: any[] = Array.isArray(integration.config?.typeformForms)
+        ? integration.config.typeformForms
+        : [];
+      const updatedForms = forms.map((f: any) =>
+        f.formId === formId ? { ...f, webhookRegistered: true } : f,
+      );
+      integration.config = { ...integration.config, typeformForms: updatedForms };
+      await this.integrationRepository.save(integration);
+
+      return { success: true, webhookUrl };
+    } catch (err) {
+      return { success: false, message: err.message };
+    }
   }
 }

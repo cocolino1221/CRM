@@ -513,7 +513,8 @@ export class TypeformIntegrationHandler {
     };
 
     // Register webhook with Typeform API
-    const webhookUrl = `${integration.config?.backendUrl || process.env.BACKEND_URL || ''}/api/v1/integrations/webhooks/${integration.id}`;
+    const appUrl = integration.config?.backendUrl || this.configService.get<string>('APP_URL') || '';
+    const webhookUrl = appUrl ? `${appUrl}/api/v1/integrations/webhooks/${integration.id}` : '';
     if (apiKey && webhookUrl) {
       try {
         const tag = `slackcrm_${formId.substring(0, 8)}`;

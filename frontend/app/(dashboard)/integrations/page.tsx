@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Search, Check, ExternalLink, Zap, Settings, Webhook, X, Copy, Key, Lock, Link as LinkIcon, AlertCircle, Loader2, Plus, Trash2, FileText, Edit, ChevronDown, Wrench } from 'lucide-react';
+import { Search, Check, ExternalLink, Zap, Settings, Webhook, X, Copy, Key, Lock, Link as LinkIcon, AlertCircle, Loader2, Plus, Trash2, FileText, Edit, ChevronDown, Wrench, RefreshCw } from 'lucide-react';
 import api from '@/lib/api';
 import { integrationIcons } from '@/lib/integration-icons';
 
@@ -2135,9 +2135,31 @@ export default function IntegrationsPage() {
                           )}
                         </div>
                         <div className="flex items-center gap-2 ml-3">
-                          <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${form.enabled !== false ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
-                            {form.enabled !== false ? 'Active' : 'Disabled'}
+                          <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${form.webhookRegistered ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>
+                            {form.webhookRegistered ? 'Webhook OK' : 'No Webhook'}
                           </span>
+                          {!form.webhookRegistered && (
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                try {
+                                  const res = await api.post(`/integrations/${connectedIntegrations[managingIntegration.id].id}/typeform/forms/${form.formId}/register-webhook`);
+                                  if (res.data.success) {
+                                    setTypeformForms(prev => prev.map(f => f.formId === form.formId ? { ...f, webhookRegistered: true } : f));
+                                    alert('Webhook registered successfully!');
+                                  } else {
+                                    alert(`Failed: ${res.data.message}`);
+                                  }
+                                } catch (err: any) {
+                                  alert(err.response?.data?.message || 'Failed to register webhook');
+                                }
+                              }}
+                              className="p-1.5 text-yellow-600 hover:bg-yellow-50 rounded-lg transition-all"
+                              title="Register webhook with Typeform"
+                            >
+                              <RefreshCw className="h-3.5 w-3.5" />
+                            </button>
+                          )}
                           <button
                             type="button"
                             onClick={async () => {
