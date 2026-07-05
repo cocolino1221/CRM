@@ -303,12 +303,15 @@ function getMediaKind(message: MetaMessage): MediaKind {
   const m = message.metadata;
   const type = String(m.messageType || '').toLowerCase();
   const mime = String(m.attachmentMimeType || '').toLowerCase();
+  const url = m.attachmentUrl || '';
   if (type === 'share') return 'share';
-  if (!m.attachmentUrl) return null;
-  if (type === 'audio' || mime.startsWith('audio/')) return 'audio';
-  if (type === 'image' || mime.startsWith('image/')) return 'image';
-  if (type === 'video' || mime.startsWith('video/')) return 'video';
-  return 'file';
+  if (!url) return null;
+  if (type === 'audio' || mime.startsWith('audio/') || /\.(mp3|m4a|ogg|wav|aac)(\?|$)/i.test(url)) return 'audio';
+  if (type === 'image' || mime.startsWith('image/') || /\.(jpe?g|png|gif|webp)(\?|$)/i.test(url)) return 'image';
+  if (type === 'video' || mime.startsWith('video/') || /\.(mp4|mov|webm|m4v)(\?|$)/i.test(url)) return 'video';
+  // Anything else with a URL in a social DM is almost always a shared post,
+  // reel, story or profile — render it as a rich card, not a bare file chip.
+  return 'share';
 }
 
 function looksLikeImageUrl(url?: string, mime?: string): boolean {
@@ -506,6 +509,7 @@ export default function MessagesPage() {
   const audioRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const audioStreamRef = useRef<MediaStream | null>(null);
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const [sendError, setSendError] = useState('');
   const [sendSuccess, setSendSuccess] = useState('');
   const [actionBusy, setActionBusy] = useState(false);
@@ -656,6 +660,13 @@ export default function MessagesPage() {
       (a, b) => new Date(a.occurredAt).getTime() - new Date(b.occurredAt).getTime(),
     );
   }, [selectedConversation]);
+
+  // Jump to the latest message when opening a conversation or when a new one
+  // arrives — the thread should always start at the bottom, not the top.
+  useEffect(() => {
+    if (!selectedMessages.length) return;
+    messagesEndRef.current?.scrollIntoView({ block: 'end' });
+  }, [selectedId, selectedMessages.length]);
 
   const setterOptions = useMemo(() => buildAssignableUsers(teamUsers, 'setter'), [teamUsers]);
   const closerOptions = useMemo(() => buildAssignableUsers(teamUsers, 'closer'), [teamUsers]);
@@ -1795,35 +1806,30 @@ export default function MessagesPage() {
                                         inbound ? 'border-slate-200 bg-slate-50 text-slate-800' : 'border-white/25 bg-white/10 text-white',
                                       )}
                                     >
-                                      {url && looksLikeImageUrl(url, message.metadata.attachmentMimeType) ? (
+                                      {url ? (
+                                        // Attempt a thumbnail; Meta share/story URLs expire, so hide on error.
                                         // eslint-disable-next-line @next/next/no-img-element
-                                        <img src={url} alt="" className="h-14 w-14 flex-shrink-0 rounded-xl object-cover" />
+                                        <img
+                                          src={url}
+                                          alt=""
+                                          className="h-14 w-14 flex-shrink-0 rounded-xl object-cover"
+                                          onError={(e) => {
+                                            (e.currentTarget as HTMLImageElement).style.display = 'none';
+                                          }}
+                                        />
                                       ) : (
                                         <Share2 className="h-5 w-5 flex-shrink-0 opacity-70" />
                                       )}
                                       <div className="min-w-0">
                                         <div className="truncate text-sm font-medium">
-                                          {message.metadata.attachmentTitle || 'Shared post'}
+                                          {message.metadata.attachmentTitle
+                                            || message.metadata.attachmentName
+                                            || 'Shared post'}
                                         </div>
                                         <div className="flex items-center gap-1 text-xs opacity-70">
-                                          <ExternalLink className="h-3 w-3" /> Open
+                                          <ExternalLink className="h-3 w-3" /> Open in {selectedConversation?.channel === 'instagram' ? 'Instagram' : 'Messenger'}
                                         </div>
                                       </div>
-                                    </a>
-                                  )}
-
-                                  {kind === 'file' && url && (
-                                    <a
-                                      href={url}
-                                      target="_blank"
-                                      rel="noreferrer"
-                                      className={cn(
-                                        'mt-1 flex items-center gap-2 rounded-2xl border p-3 text-sm no-underline',
-                                        inbound ? 'border-slate-200 bg-slate-50 text-slate-800' : 'border-white/25 bg-white/10 text-white',
-                                      )}
-                                    >
-                                      <Paperclip className="h-4 w-4 flex-shrink-0 opacity-70" />
-                                      <span className="truncate">{message.metadata.attachmentName || 'Attachment'}</span>
                                     </a>
                                   )}
                                 </>
@@ -1834,6 +1840,7 @@ export default function MessagesPage() {
                       </div>
                     );
                   })}
+                  <div ref={messagesEndRef} />
                 </div>
               ) : (
                 <div className="flex h-full items-center justify-center">
