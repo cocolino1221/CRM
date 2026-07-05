@@ -48,7 +48,7 @@ export default function AudioLibraryPicker({
     setLoading(true);
     setError('');
     try {
-      const res = await api.get('/integrations/audio-library');
+      const res = await api.get('/audio-library');
       setItems(Array.isArray(res.data) ? res.data : []);
     } catch (err: any) {
       setError(err?.response?.data?.message || err?.message || 'Could not load audio library');
@@ -70,7 +70,7 @@ export default function AudioLibraryPicker({
         const form = new FormData();
         form.append('file', file);
         if (name.trim()) form.append('name', name.trim());
-        const res = await api.post('/integrations/audio-library', form);
+        const res = await api.post('/audio-library', form);
         setItems((prev) => [...prev, res.data]);
         setName('');
       } catch (err: any) {
@@ -87,7 +87,7 @@ export default function AudioLibraryPicker({
     setDeletingId(id);
     setError('');
     try {
-      await api.delete(`/integrations/audio-library/${id}`);
+      await api.delete(`/audio-library/${id}`);
       setItems((prev) => prev.filter((i) => i.id !== id));
     } catch (err: any) {
       setError(err?.response?.data?.message || err?.message || 'Could not delete clip');
@@ -103,7 +103,7 @@ export default function AudioLibraryPicker({
       setError('');
       setNotice('');
       try {
-        await api.post(`/integrations/audio-library/${id}/send`, {
+        await api.post(`/audio-library/${id}/send`, {
           channel,
           to,
           integrationId: integrationId || undefined,

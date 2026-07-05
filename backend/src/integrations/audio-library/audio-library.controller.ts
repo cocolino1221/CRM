@@ -30,7 +30,9 @@ const audioUploadInterceptor = AnyFilesInterceptor({
 });
 
 @ApiTags('Audio Library')
-@Controller('integrations/audio-library')
+// Top-level path (not under integrations/) to avoid colliding with the
+// integrations/:id route, which otherwise swallowed GET/POST on this list.
+@Controller('audio-library')
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
 export class AudioLibraryController {
