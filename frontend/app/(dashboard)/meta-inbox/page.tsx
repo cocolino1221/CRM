@@ -697,7 +697,9 @@ export default function MessagesPage() {
         ? messengerAccounts.find((item) => item.integrationId === manualIntegrationId) || messengerAccounts[0] || null
         : instagramAccounts.find((item) => item.integrationId === manualIntegrationId) || instagramAccounts[0] || null
     );
-  const outboundWillSimulate = !activeIntegration?.liveReady;
+  // Always send for real. The old behaviour simulated whenever liveReady was
+  // false (which it often is on first load), so replies never reached Meta.
+  const outboundWillSimulate = false;
   const activeAccountName = getAccountDisplayName(selectedConversation, activeIntegration);
   const activeProfileName = getMessageProfileDisplayName(selectedConversation, activeIntegration);
 

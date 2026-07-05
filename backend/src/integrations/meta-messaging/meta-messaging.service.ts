@@ -1617,25 +1617,45 @@ export class MetaMessagingService {
     if (entryId) candidates.add(entryId);
     if (recipientId) candidates.add(recipientId);
 
+    // Instagram and Facebook expose several id namespaces (page id, IG business
+    // id, IG-scoped id, app-scoped id). Match the webhook entry/recipient
+    // against every id we might have stored so a single mismatched field does
+    // not drop the whole conversation.
+    const integrationIds = (integration: Integration): string[] =>
+      [
+        integration.config?.pageId,
+        integration.config?.igUserId,
+        (integration.config as any)?.igId,
+        (integration.config as any)?.instagramId,
+        (integration.config as any)?.igBusinessId,
+        (integration.config as any)?.igScopedId,
+        integration.externalId,
+      ]
+        .map((value) => String(value || '').trim())
+        .filter(Boolean);
+
     for (const integration of integrations) {
-      const pageId = String(integration.config?.pageId || '').trim();
-      const igUserId = String(integration.config?.igUserId || '').trim();
-
-      if (provider === 'facebook' && pageId && candidates.has(pageId)) {
+      if (integrationIds(integration).some((id) => candidates.has(id))) {
         return integration;
-      }
-
-      if (provider === 'instagram') {
-        if (igUserId && candidates.has(igUserId)) {
-          return integration;
-        }
-
-        if (pageId && candidates.has(pageId)) {
-          return integration;
-        }
       }
     }
 
+    // Fallback: a single connected account for this provider in one workspace
+    // is unambiguous even if its stored id doesn't match the webhook namespace.
+    const workspaces = new Set(integrations.map((integration) => integration.workspaceId));
+    if (integrations.length === 1 || workspaces.size === 1) {
+      const byRecipient = integrations.find((integration) =>
+        integrationIds(integration).length === 0,
+      );
+      if (integrations.length === 1) return integrations[0];
+      if (byRecipient) return byRecipient;
+    }
+
+    this.logger.warn(
+      `resolveWebhookIntegration miss provider=${provider} candidates=[${[...candidates].join(',')}] stored=[${integrations
+        .map((i) => `${i.id.slice(0, 8)}:pg=${i.config?.pageId || ''}/ig=${i.config?.igUserId || ''}/ext=${i.externalId || ''}`)
+        .join(' | ')}]`,
+    );
     return null;
   }
 
