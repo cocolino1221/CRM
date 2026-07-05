@@ -13,6 +13,21 @@ export interface WorkspaceSettings {
   timezone: string;
   dateFormat: string;
   currency: string;
+  billing?: {
+    grandfathered?: boolean;
+    package?: 'legacy' | 'starter' | 'growth' | 'scale';
+    billingProvider?: 'manual' | 'stripe';
+    billingStatus?: 'inactive' | 'trialing' | 'active' | 'past_due' | 'canceled' | 'unpaid';
+    stripeCustomerId?: string;
+    stripeSubscriptionId?: string;
+    stripePriceId?: string;
+    trialEndsAt?: string;
+    currentPeriodEndAt?: string;
+  };
+  limits?: {
+    maxUsers?: number | null;
+    maxWhatsAppNumbers?: number | null;
+  };
   features: {
     aiEnabled: boolean;
     slackIntegration: boolean;
@@ -27,6 +42,18 @@ export interface WorkspaceSettings {
     marketingEnabled?: boolean;
     mobileAppEnabled?: boolean;
   };
+  // Shared voice-note library, sent across Messenger/Instagram/WhatsApp inside
+  // an open conversation. Capped at AUDIO_LIBRARY_MAX items. Files live in R2.
+  audioLibrary?: WorkspaceAudioTemplate[];
+}
+
+export interface WorkspaceAudioTemplate {
+  id: string;
+  name: string;
+  url: string;
+  mimeType: string;
+  sizeBytes: number;
+  createdAt: string;
 }
 
 @Entity('workspaces')

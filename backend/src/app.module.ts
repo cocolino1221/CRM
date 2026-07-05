@@ -17,6 +17,7 @@ import { ActivitiesModule } from './activities/activities.module';
 import { IntegrationsModule } from './integrations/integrations.module';
 import { WhatsAppModule } from './integrations/whatsapp/whatsapp.module';
 import { MetaMessagingModule } from './integrations/meta-messaging/meta-messaging.module';
+import { AudioLibraryModule } from './integrations/audio-library/audio-library.module';
 import { SmartBillModule } from './smartbill/smartbill.module';
 import { QueueModule } from './queues/queue.module';
 import { AnalyticsModule } from './analytics/analytics.module';
@@ -160,6 +161,7 @@ import { validationSchema } from './config/env.validation';
     IntegrationsModule,
     WhatsAppModule,
     MetaMessagingModule,
+    AudioLibraryModule,
     SmartBillModule,
     PipelineModule,
     NotificationsModule,

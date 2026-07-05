@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import api from '@/lib/api';
+import AudioLibraryPicker from '@/components/audio/AudioLibraryPicker';
 import { authService, User as CurrentUser } from '@/lib/auth';
 import { hasChannelAccess } from '@/lib/channel-access';
 
@@ -4456,6 +4457,13 @@ export default function WhatsAppPage() {
 
             {/* Text input + send */}
             <div className="flex items-end gap-2">
+              <AudioLibraryPicker
+                channel="whatsapp"
+                to={selectedConv?.waId}
+                integrationId={selectedSenderId || undefined}
+                disabled={!sessionOpen}
+                onSent={() => void fetchInbox()}
+              />
               <textarea value={replyText}
                 onChange={e => {
                   const val = e.target.value;
