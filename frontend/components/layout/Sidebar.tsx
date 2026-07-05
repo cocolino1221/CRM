@@ -29,6 +29,7 @@ import {
   Mail,
   CreditCard,
   Layout,
+  Radio,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { authService, User } from '@/lib/auth';
@@ -71,6 +72,13 @@ const messageNavigation: NavigationItem[] = [
     matchPaths: ['/messages', '/meta-inbox'],
     icon: MessageSquare,
     color: 'from-sky-500 to-indigo-500',
+  },
+  {
+    name: 'Channels',
+    href: '/channels',
+    matchPaths: ['/channels'],
+    icon: Radio,
+    color: 'from-fuchsia-500 to-pink-500',
   },
 ] ;
 
@@ -149,7 +157,7 @@ export default function Sidebar({ isOpen = true, onClose, isCollapsed = false, o
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [channelAvailability, setChannelAvailability] = useState(DEFAULT_WORKSPACE_CHANNEL_AVAILABILITY);
   const [isMessagesOpen, setIsMessagesOpen] = useState(
-    pathname.startsWith('/messages') || pathname.startsWith('/meta-inbox') || pathname.startsWith('/whatsapp'),
+    pathname.startsWith('/messages') || pathname.startsWith('/meta-inbox') || pathname.startsWith('/whatsapp') || pathname.startsWith('/channels'),
   );
   const [isLeadsOpen, setIsLeadsOpen] = useState(
     pathname.startsWith('/contacts') || pathname.startsWith('/leads') || pathname.startsWith('/pipeline') || pathname.startsWith('/companies'),
@@ -198,7 +206,7 @@ export default function Sidebar({ isOpen = true, onClose, isCollapsed = false, o
   }, []);
 
   useEffect(() => {
-    if (pathname.startsWith('/messages') || pathname.startsWith('/meta-inbox') || pathname.startsWith('/whatsapp')) {
+    if (pathname.startsWith('/messages') || pathname.startsWith('/meta-inbox') || pathname.startsWith('/whatsapp') || pathname.startsWith('/channels')) {
       setIsMessagesOpen(true);
     }
     if (pathname.startsWith('/contacts') || pathname.startsWith('/leads') || pathname.startsWith('/pipeline') || pathname.startsWith('/companies')) {
@@ -226,9 +234,13 @@ export default function Sidebar({ isOpen = true, onClose, isCollapsed = false, o
       return canOpenWhatsApp;
     }
 
+    if (item.href === '/channels') {
+      return showMessagesGroup;
+    }
+
     return canOpenSocialMessages;
   });
-  const messagesGroupIsActive = pathname.startsWith('/messages') || pathname.startsWith('/meta-inbox') || pathname.startsWith('/whatsapp');
+  const messagesGroupIsActive = pathname.startsWith('/messages') || pathname.startsWith('/meta-inbox') || pathname.startsWith('/whatsapp') || pathname.startsWith('/channels');
   const collapsedMessagesHref = canOpenSocialMessages ? '/messages' : '/whatsapp';
   const hasLiveMessageChannels =
     channelAvailability.whatsapp || channelAvailability.messenger || channelAvailability.instagram;
