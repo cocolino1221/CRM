@@ -13,12 +13,14 @@ import {
   MessageSquare,
   Mic,
   MonitorPlay,
+  Paperclip,
   Plus,
   RefreshCw,
   Save,
   Search,
   Send,
   Settings2,
+  Share2,
   Square,
   Trash2,
   UserCircle2,
@@ -29,6 +31,7 @@ import api from '@/lib/api';
 import { authService, User } from '@/lib/auth';
 import { hasChannelAccess } from '@/lib/channel-access';
 import { cn } from '@/lib/utils';
+import AudioLibraryPicker from '@/components/audio/AudioLibraryPicker';
 
 type MetaChannel = 'messenger' | 'instagram';
 
@@ -61,6 +64,7 @@ interface MetaMessage {
     attachmentUrl?: string;
     attachmentMimeType?: string;
     attachmentName?: string;
+    attachmentTitle?: string;
     senderPageName?: string;
     senderAccountName?: string;
     isSimulated?: boolean;
@@ -293,6 +297,31 @@ function isAudioMessage(message: MetaMessage) {
   return message.metadata.messageType === 'audio';
 }
 
+type MediaKind = 'audio' | 'image' | 'video' | 'share' | 'file' | null;
+
+function getMediaKind(message: MetaMessage): MediaKind {
+  const m = message.metadata;
+  const type = String(m.messageType || '').toLowerCase();
+  const mime = String(m.attachmentMimeType || '').toLowerCase();
+  if (type === 'share') return 'share';
+  if (!m.attachmentUrl) return null;
+  if (type === 'audio' || mime.startsWith('audio/')) return 'audio';
+  if (type === 'image' || mime.startsWith('image/')) return 'image';
+  if (type === 'video' || mime.startsWith('video/')) return 'video';
+  return 'file';
+}
+
+function looksLikeImageUrl(url?: string, mime?: string): boolean {
+  if (mime && mime.toLowerCase().startsWith('image/')) return true;
+  return /\.(jpe?g|png|gif|webp)(\?|$)/i.test(url || '');
+}
+
+// Hide the "[Photo]" / "[Video]" style placeholder text when we actually render
+// the media inline; keep real captions.
+function isBracketPlaceholder(text?: string): boolean {
+  return /^\[(photo|video|audio message|file|shared post|message)\]$/i.test(String(text || '').trim());
+}
+
 function getConversationProfileKey(
   conversation: Pick<MetaConversation, 'channel' | 'integrationId' | 'accountName' | 'messageProfileId' | 'messageProfileName'>,
 ) {
@@ -333,7 +362,7 @@ function StatusBadge({ liveReady }: { liveReady: boolean }) {
       )}
     >
       <CircleDot className="h-3 w-3" />
-      {liveReady ? 'Live' : 'Simulated'}
+      {liveReady ? 'Live' : 'Not live'}
     </span>
   );
 }
@@ -477,16 +506,8 @@ export default function MessagesPage() {
   const audioRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const audioStreamRef = useRef<MediaStream | null>(null);
-  const [simulateOutbound, setSimulateOutbound] = useState(false);
   const [sendError, setSendError] = useState('');
   const [sendSuccess, setSendSuccess] = useState('');
-  const [simChannel, setSimChannel] = useState<MetaChannel>('messenger');
-  const [simIntegrationId, setSimIntegrationId] = useState('');
-  const [simSenderId, setSimSenderId] = useState('demo_user_1001');
-  const [simSenderName, setSimSenderName] = useState('Demo Client');
-  const [simText, setSimText] = useState('Salut! Testăm inboxul Meta în CRM.');
-  const [simAudioUrl, setSimAudioUrl] = useState('');
-  const [simAudioName, setSimAudioName] = useState('');
   const [actionBusy, setActionBusy] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [activeFilter, setActiveFilter] = useState<InboxFilter>('all');
@@ -665,7 +686,7 @@ export default function MessagesPage() {
         ? messengerAccounts.find((item) => item.integrationId === manualIntegrationId) || messengerAccounts[0] || null
         : instagramAccounts.find((item) => item.integrationId === manualIntegrationId) || instagramAccounts[0] || null
     );
-  const outboundWillSimulate = simulateOutbound || !activeIntegration?.liveReady;
+  const outboundWillSimulate = !activeIntegration?.liveReady;
   const activeAccountName = getAccountDisplayName(selectedConversation, activeIntegration);
   const activeProfileName = getMessageProfileDisplayName(selectedConversation, activeIntegration);
 
@@ -820,13 +841,7 @@ export default function MessagesPage() {
     if (!canAccessInstagram && manualChannel === 'instagram' && canAccessMessenger) {
       setManualChannel('messenger');
     }
-    if (!canAccessMessenger && simChannel === 'messenger' && canAccessInstagram) {
-      setSimChannel('instagram');
-    }
-    if (!canAccessInstagram && simChannel === 'instagram' && canAccessMessenger) {
-      setSimChannel('messenger');
-    }
-  }, [canAccessInstagram, canAccessMessenger, manualChannel, simChannel]);
+  }, [canAccessInstagram, canAccessMessenger, manualChannel]);
 
   useEffect(() => {
     const available = manualChannel === 'messenger' ? messengerAccounts : instagramAccounts;
@@ -839,18 +854,6 @@ export default function MessagesPage() {
       setManualIntegrationId(available[0].integrationId);
     }
   }, [instagramAccounts, manualChannel, manualIntegrationId, messengerAccounts]);
-
-  useEffect(() => {
-    const available = simChannel === 'messenger' ? messengerAccounts : instagramAccounts;
-    if (!available.length) {
-      if (simIntegrationId) setSimIntegrationId('');
-      return;
-    }
-
-    if (!available.some((item) => item.integrationId === simIntegrationId)) {
-      setSimIntegrationId(available[0].integrationId);
-    }
-  }, [instagramAccounts, messengerAccounts, simChannel, simIntegrationId]);
 
   useEffect(() => {
     void loadAudioTemplates();
@@ -1099,7 +1102,7 @@ export default function MessagesPage() {
     }
   };
 
-  const uploadAudioFile = async (file: File, target: 'outbound' | 'simulate') => {
+  const uploadAudioFile = async (file: File) => {
     const formData = new FormData();
     formData.append('file', file);
     formData.append('subfolder', 'meta-audio');
@@ -1110,13 +1113,8 @@ export default function MessagesPage() {
       throw new Error('Upload did not return a URL');
     }
 
-    if (target === 'outbound') {
-      setOutboundAudioUrl(url);
-      setOutboundAudioName(file.name);
-    } else {
-      setSimAudioUrl(url);
-      setSimAudioName(file.name);
-    }
+    setOutboundAudioUrl(url);
+    setOutboundAudioName(file.name);
   };
 
   const sendText = async () => {
@@ -1386,47 +1384,6 @@ export default function MessagesPage() {
       setSendError(error?.response?.data?.message || error?.message || 'Nu am putut șterge template-ul.');
     } finally {
       setTemplatesBusy(false);
-    }
-  };
-
-  const simulateInbound = async () => {
-    if (!simSenderId.trim()) {
-      setSendError('Sender ID este obligatoriu pentru simulare.');
-      return;
-    }
-
-    if (!simText.trim() && !simAudioUrl.trim()) {
-      setSendError('Pentru simulare adaugă text sau audio URL.');
-      return;
-    }
-
-    setActionBusy(true);
-    setSendError('');
-    setSendSuccess('');
-    try {
-      await api.post('/integrations/meta-messaging/simulate/inbound', {
-        channel: simChannel,
-        from: simSenderId.trim(),
-        senderName: simSenderName.trim() || undefined,
-        text: simText.trim() || undefined,
-        audioUrl: simAudioUrl.trim() || undefined,
-        attachmentName: simAudioName || undefined,
-        integrationId:
-          simIntegrationId || undefined,
-      });
-      setSendSuccess('Mesajul inbound a fost simulat și salvat în CRM.');
-      setSimText('');
-      setSimAudioUrl('');
-      setSimAudioName('');
-      await refreshAll(false, {
-        channel: simChannel,
-        externalUserId: simSenderId.trim(),
-        integrationId: simIntegrationId || undefined,
-      });
-    } catch (error: any) {
-      setSendError(error?.response?.data?.message || error?.message || 'Nu am putut simula mesajul inbound.');
-    } finally {
-      setActionBusy(false);
     }
   };
 
@@ -1715,14 +1672,6 @@ export default function MessagesPage() {
                 </div>
 
                 <div className="flex items-center gap-2">
-                  <label className="inline-flex items-center gap-2 rounded-full border border-slate-200 px-3 py-2 text-xs font-medium text-slate-500">
-                    <input
-                      type="checkbox"
-                      checked={simulateOutbound}
-                      onChange={(event) => setSimulateOutbound(event.target.checked)}
-                    />
-                    Simulate outbound
-                  </label>
                   <button
                     onClick={() => setShowDetails((value) => !value)}
                     className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-50"
@@ -1800,17 +1749,86 @@ export default function MessagesPage() {
                               inbound ? 'border-slate-200 bg-white text-slate-800' : `border-transparent ${theme.outboundBubble}`,
                             )}
                           >
-                            <p className="whitespace-pre-wrap leading-6">{message.description}</p>
+                            {(() => {
+                              const kind = getMediaKind(message);
+                              const url = message.metadata.attachmentUrl;
+                              const showText =
+                                message.description && !(kind && isBracketPlaceholder(message.description));
+                              return (
+                                <>
+                                  {showText && (
+                                    <p className="whitespace-pre-wrap leading-6">{message.description}</p>
+                                  )}
 
-                            {message.metadata.attachmentUrl && isAudioMessage(message) && (
-                              <div className={cn('mt-3 rounded-2xl p-3', inbound ? 'bg-slate-50' : 'bg-white/10')}>
-                                <div className={cn('mb-2 flex items-center gap-2 text-xs', inbound ? 'text-slate-500' : 'text-white/75')}>
-                                  <Mic className="h-3.5 w-3.5" />
-                                  {message.metadata.attachmentName || 'Audio message'}
-                                </div>
-                                <audio className="w-full" controls src={message.metadata.attachmentUrl} />
-                              </div>
-                            )}
+                                  {kind === 'image' && url && (
+                                    <a href={url} target="_blank" rel="noreferrer">
+                                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                                      <img
+                                        src={url}
+                                        alt={message.metadata.attachmentName || 'Photo'}
+                                        className="mt-1 max-h-80 rounded-2xl object-cover"
+                                      />
+                                    </a>
+                                  )}
+
+                                  {kind === 'video' && url && (
+                                    <video controls src={url} className="mt-1 max-h-80 w-full rounded-2xl" />
+                                  )}
+
+                                  {kind === 'audio' && url && (
+                                    <div className={cn('mt-2 rounded-2xl p-3', inbound ? 'bg-slate-50' : 'bg-white/10')}>
+                                      <div className={cn('mb-2 flex items-center gap-2 text-xs', inbound ? 'text-slate-500' : 'text-white/75')}>
+                                        <Mic className="h-3.5 w-3.5" />
+                                        {message.metadata.attachmentName || 'Audio message'}
+                                      </div>
+                                      <audio className="w-full" controls src={url} />
+                                    </div>
+                                  )}
+
+                                  {kind === 'share' && (
+                                    <a
+                                      href={url || '#'}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className={cn(
+                                        'mt-1 flex items-center gap-3 rounded-2xl border p-3 no-underline',
+                                        inbound ? 'border-slate-200 bg-slate-50 text-slate-800' : 'border-white/25 bg-white/10 text-white',
+                                      )}
+                                    >
+                                      {url && looksLikeImageUrl(url, message.metadata.attachmentMimeType) ? (
+                                        // eslint-disable-next-line @next/next/no-img-element
+                                        <img src={url} alt="" className="h-14 w-14 flex-shrink-0 rounded-xl object-cover" />
+                                      ) : (
+                                        <Share2 className="h-5 w-5 flex-shrink-0 opacity-70" />
+                                      )}
+                                      <div className="min-w-0">
+                                        <div className="truncate text-sm font-medium">
+                                          {message.metadata.attachmentTitle || 'Shared post'}
+                                        </div>
+                                        <div className="flex items-center gap-1 text-xs opacity-70">
+                                          <ExternalLink className="h-3 w-3" /> Open
+                                        </div>
+                                      </div>
+                                    </a>
+                                  )}
+
+                                  {kind === 'file' && url && (
+                                    <a
+                                      href={url}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className={cn(
+                                        'mt-1 flex items-center gap-2 rounded-2xl border p-3 text-sm no-underline',
+                                        inbound ? 'border-slate-200 bg-slate-50 text-slate-800' : 'border-white/25 bg-white/10 text-white',
+                                      )}
+                                    >
+                                      <Paperclip className="h-4 w-4 flex-shrink-0 opacity-70" />
+                                      <span className="truncate">{message.metadata.attachmentName || 'Attachment'}</span>
+                                    </a>
+                                  )}
+                                </>
+                              );
+                            })()}
                           </div>
                         </div>
                       </div>
@@ -1863,22 +1881,38 @@ export default function MessagesPage() {
               </div>
 
               {composerMode === 'text' ? (
-                <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_140px]">
-                  <textarea
-                    value={outboundText}
-                    onChange={(event) => setOutboundText(event.target.value)}
-                    placeholder="Write a reply..."
-                    rows={3}
-                    className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-slate-400"
-                  />
-                  <button
-                    onClick={sendText}
-                    disabled={actionBusy}
-                    className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-950 px-4 py-3 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {actionBusy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-                    Send
-                  </button>
+                <div className="mt-4 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <AudioLibraryPicker
+                      channel={activeChannel}
+                      to={selectedConversation?.externalUserId}
+                      integrationId={activeIntegration?.integrationId}
+                      onSent={() =>
+                        void refreshAll(false, {
+                          channel: activeChannel,
+                          externalUserId: selectedConversation?.externalUserId || '',
+                          integrationId: activeIntegration?.integrationId,
+                        })
+                      }
+                    />
+                  </div>
+                  <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_140px]">
+                    <textarea
+                      value={outboundText}
+                      onChange={(event) => setOutboundText(event.target.value)}
+                      placeholder="Write a reply..."
+                      rows={3}
+                      className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-slate-400"
+                    />
+                    <button
+                      onClick={sendText}
+                      disabled={actionBusy}
+                      className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-950 px-4 py-3 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {actionBusy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                      Send
+                    </button>
+                  </div>
                 </div>
               ) : (
                 <div className="mt-4 space-y-4">
@@ -2010,7 +2044,7 @@ export default function MessagesPage() {
                             setActionBusy(true);
                             setSendError('');
                             try {
-                              await uploadAudioFile(file, 'outbound');
+                              await uploadAudioFile(file);
                             } catch (error: any) {
                               setSendError(error?.response?.data?.message || error?.message || 'Nu am putut urca audio-ul outbound.');
                             } finally {

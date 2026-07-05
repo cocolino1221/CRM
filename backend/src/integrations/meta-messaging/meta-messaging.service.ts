@@ -95,6 +95,7 @@ interface MetaActivityMetadata {
   attachmentUrl?: string;
   attachmentMimeType?: string;
   attachmentName?: string;
+  attachmentTitle?: string;
   isSimulated?: boolean;
   messageStatus?: string;
   replyToMessageId?: string;
@@ -348,6 +349,7 @@ export class MetaMessagingService {
           attachmentUrl: metadata.attachmentUrl,
           attachmentMimeType: metadata.attachmentMimeType,
           attachmentName: metadata.attachmentName,
+          attachmentTitle: metadata.attachmentTitle,
           senderPageName: metadata.senderPageName,
           senderAccountName: metadata.senderAccountName,
           isSimulated: !!metadata.isSimulated,
@@ -960,6 +962,11 @@ export class MetaMessagingService {
     if (!senderId) return;
 
     const recipientId = String(event?.recipient?.id || '').trim() || senderId;
+    // Skip non-message events (delivery/read receipts, reactions, feedback).
+    // They carry sender.id but no message body, so they'd otherwise be stored
+    // as empty "[message]" bubbles after a send.
+    if (!event?.message && !event?.postback) return;
+
     const message = event?.message || {};
     const postback = event?.postback;
     const quickReply = message?.quick_reply;
@@ -968,9 +975,13 @@ export class MetaMessagingService {
     const attachment = Array.isArray(message?.attachments) ? message.attachments[0] : undefined;
     const attachmentType = this.normalizeInboundAttachmentType(attachment?.type);
     const attachmentUrl = String(attachment?.payload?.url || '').trim() || undefined;
-    const description = attachmentType === 'audio'
-      ? '[Audio message]'
-      : text || `[${attachmentType || 'message'}]`;
+    const attachmentTitle = String(attachment?.payload?.title || '').trim() || undefined;
+
+    // No text, no attachment, no postback/quick reply = an empty message event
+    // (reaction, edit, delivery echo). Skip so we never store a "[message]" bubble.
+    if (!text && !attachmentType && !postback && !quickReply) return;
+
+    const description = text || this.describeAttachment(attachmentType, attachmentTitle);
     const externalMessageId = String(message?.mid || postback?.mid || `meta_${nanoid(16)}`);
     const realMessageId = String(message?.mid || postback?.mid || '');
 
@@ -1010,6 +1021,7 @@ export class MetaMessagingService {
           attachmentUrl,
           attachmentMimeType: this.guessMimeTypeFromUrl(attachmentUrl, attachmentType),
           attachmentName: this.extractFilename(attachmentUrl),
+          attachmentTitle,
           messageStatus: 'sent',
           isEcho: true,
         },
@@ -1049,6 +1061,7 @@ export class MetaMessagingService {
         attachmentUrl,
         attachmentMimeType: this.guessMimeTypeFromUrl(attachmentUrl, attachmentType),
         attachmentName: this.extractFilename(attachmentUrl),
+        attachmentTitle,
         rawEvent: event,
       },
       description,
@@ -1329,6 +1342,7 @@ export class MetaMessagingService {
           attachmentUrl: metadata.attachmentUrl,
           attachmentMimeType: metadata.attachmentMimeType,
           attachmentName: metadata.attachmentName,
+          attachmentTitle: metadata.attachmentTitle,
           senderPageName: metadata.senderPageName,
           senderAccountName: metadata.senderAccountName,
           isSimulated: !!metadata.isSimulated,
@@ -1770,9 +1784,12 @@ export class MetaMessagingService {
       }
 
       const { pageAccessToken } = await this.ensureInstagramMessagingCredentials(integration);
+      // The Instagram messaging user-profile endpoint reliably exposes `name`
+      // (and profile_pic). `username` is NOT a valid field here and makes the
+      // whole request fail — which is why senders showed as "Instagram <id>".
       const response = await this.httpService.axiosRef.get(`${this.facebookApiUrl}/${senderId}`, {
         params: {
-          fields: 'name,username',
+          fields: 'name',
           access_token: pageAccessToken,
         },
         timeout: 10000,
@@ -1918,7 +1935,30 @@ export class MetaMessagingService {
     if (normalized === 'audio') return 'audio';
     if (normalized === 'image') return 'image';
     if (normalized === 'video') return 'video';
+    // Shared posts, reels, profiles, story mentions and link previews arrive
+    // under a handful of type names — group them so the UI can render a card
+    // instead of a generic "[file]".
+    if (['share', 'story_mention', 'ig_reel', 'reel', 'fallback', 'link', 'template'].includes(normalized)) {
+      return 'share';
+    }
     return 'file';
+  }
+
+  private describeAttachment(type?: string, title?: string): string {
+    switch (type) {
+      case 'audio':
+        return '[Audio message]';
+      case 'image':
+        return '[Photo]';
+      case 'video':
+        return '[Video]';
+      case 'share':
+        return title || '[Shared post]';
+      case 'file':
+        return '[File]';
+      default:
+        return '[Message]';
+    }
   }
 
   private guessMimeTypeFromUrl(url?: string, type?: string): string | undefined {
@@ -1963,6 +2003,8 @@ export class MetaMessagingService {
       this.configService.get('BACKEND_URL') ||
       'http://localhost:4000',
     ).trim();
-    return configured.replace(/\/$/, '');
+    // APP_URL may already include the global /api/v1 prefix; strip it so callers
+    // that append their own path (e.g. webhook URLs) don't duplicate it.
+    return configured.replace(/\/$/, '').replace(/\/api\/v1$/, '');
   }
 }
