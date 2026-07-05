@@ -2231,7 +2231,7 @@ export default function MessagesPage() {
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <div className="text-lg font-semibold text-slate-950">Tools & profiles</div>
-                  <div className="mt-1 text-sm text-slate-500">Aici stau simulările, profilurile, conturile și setup-ul live, separat de inboxul curat.</div>
+                  <div className="mt-1 text-sm text-slate-500">Aici stau profilurile, conturile și setup-ul live, separat de inboxul curat.</div>
                 </div>
                 <button
                   onClick={() => setShowTools(false)}
@@ -2243,89 +2243,6 @@ export default function MessagesPage() {
             </div>
 
             <div className="space-y-6 p-5">
-              <section className="space-y-3 rounded-2xl border border-slate-200 p-4">
-                <div className="flex items-center gap-2">
-                  <MonitorPlay className="h-4 w-4 text-slate-500" />
-                  <h3 className="text-sm font-semibold text-slate-950">Simulare inbound</h3>
-                </div>
-
-                <select
-                  value={simChannel}
-                  onChange={(event) => setSimChannel(event.target.value as MetaChannel)}
-                  className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none transition focus:border-slate-400"
-                >
-                  {canAccessMessenger && <option value="messenger">Messenger</option>}
-                  {canAccessInstagram && <option value="instagram">Instagram</option>}
-                </select>
-                <select
-                  value={simIntegrationId}
-                  onChange={(event) => setSimIntegrationId(event.target.value)}
-                  className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none transition focus:border-slate-400"
-                >
-                  {(simChannel === 'messenger' ? messengerAccounts : instagramAccounts).map((account) => (
-                    <option key={account.integrationId} value={account.integrationId}>
-                      {getAccountDisplayName(null, account)}
-                    </option>
-                  ))}
-                </select>
-                <input
-                  value={simSenderId}
-                  onChange={(event) => setSimSenderId(event.target.value)}
-                  placeholder="Sender ID / PSID / IGSID"
-                  className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none transition focus:border-slate-400"
-                />
-                <input
-                  value={simSenderName}
-                  onChange={(event) => setSimSenderName(event.target.value)}
-                  placeholder="Nume client"
-                  className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none transition focus:border-slate-400"
-                />
-                <textarea
-                  value={simText}
-                  onChange={(event) => setSimText(event.target.value)}
-                  placeholder="Mesaj text inbound"
-                  rows={4}
-                  className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none transition focus:border-slate-400"
-                />
-                <input
-                  value={simAudioUrl}
-                  onChange={(event) => setSimAudioUrl(event.target.value)}
-                  placeholder="Sau audio URL inbound"
-                  className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none transition focus:border-slate-400"
-                />
-                <label className="flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed border-slate-300 px-3 py-2.5 text-sm font-medium text-slate-600 transition hover:bg-slate-50">
-                  <AudioLines className="h-4 w-4" />
-                  {simAudioName || 'Upload audio pentru simulare'}
-                  <input
-                    type="file"
-                    accept="audio/*"
-                    className="hidden"
-                    onChange={async (event) => {
-                      const file = event.target.files?.[0];
-                      if (!file) return;
-                      setActionBusy(true);
-                      setSendError('');
-                      try {
-                        await uploadAudioFile(file, 'simulate');
-                      } catch (error: any) {
-                        setSendError(error?.response?.data?.message || error?.message || 'Nu am putut urca audio-ul de simulare.');
-                      } finally {
-                        setActionBusy(false);
-                        event.target.value = '';
-                      }
-                    }}
-                  />
-                </label>
-                <button
-                  onClick={simulateInbound}
-                  disabled={actionBusy}
-                  className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 py-3 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {actionBusy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <MonitorPlay className="h-4 w-4" />}
-                  Creează mesaj inbound
-                </button>
-              </section>
-
               <section className="space-y-3 rounded-2xl border border-slate-200 p-4">
                 <div className="flex items-center gap-2">
                   <UserCircle2 className="h-4 w-4 text-slate-500" />
