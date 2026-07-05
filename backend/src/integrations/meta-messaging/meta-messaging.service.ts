@@ -35,6 +35,7 @@ import {
   IntegrationType,
 } from '../../database/entities/integration.entity';
 import { User } from '../../database/entities/user.entity';
+import { Workspace } from '../../database/entities/workspace.entity';
 import { NotificationType } from '../../database/entities/notification.entity';
 import { NotificationsService } from '../../notifications/notifications.service';
 
@@ -124,6 +125,8 @@ export class MetaMessagingService {
     private readonly integrationRepository: Repository<Integration>,
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
+    @InjectRepository(Workspace)
+    private readonly workspaceRepository: Repository<Workspace>,
     private readonly notificationsService: NotificationsService,
     private readonly eventEmitter: EventEmitter2,
   ) {}
@@ -285,6 +288,7 @@ export class MetaMessagingService {
   async getInbox(workspaceId: string, channel?: MetaChannel): Promise<any> {
     const integrations = await this.findMetaIntegrations(workspaceId);
     const integrationsById = new Map(integrations.map((integration) => [integration.id, integration]));
+    const reads = await this.getInboxReads(workspaceId);
     const qb = this.activityRepository
       .createQueryBuilder('activity')
       .leftJoinAndSelect('activity.contact', 'contact')
@@ -316,6 +320,7 @@ export class MetaMessagingService {
         const accountName = this.getConversationAccountName(activityChannel, metadata, activity, integration) || null;
         conversations.set(key, {
           id: key,
+          readAt: reads[key] ? new Date(reads[key]).getTime() : 0,
           channel: activityChannel,
           externalUserId,
           externalThreadId: metadata.externalThreadId || externalUserId,
@@ -360,16 +365,49 @@ export class MetaMessagingService {
       conversation.messages.push(message);
       conversation.lastMessage = activity.description || `[${messageType}]`;
       conversation.lastMessageTime = activity.occurredAt.toISOString();
-      if (activity.direction === ActivityDirection.INBOUND) {
+      if (
+        activity.direction === ActivityDirection.INBOUND &&
+        activity.occurredAt.getTime() > (conversation.readAt as number)
+      ) {
         conversation.unreadCount += 1;
       }
     }
 
-    const conversationList = Array.from(conversations.values()).sort(
-      (a, b) => new Date(b.lastMessageTime).getTime() - new Date(a.lastMessageTime).getTime(),
-    );
+    const conversationList = Array.from(conversations.values())
+      .map(({ readAt, ...conversation }) => conversation)
+      .sort((a, b) => new Date(b.lastMessageTime).getTime() - new Date(a.lastMessageTime).getTime());
 
     return { data: conversationList };
+  }
+
+  private async getInboxReads(workspaceId: string): Promise<Record<string, string>> {
+    const workspace = await this.workspaceRepository.findOne({ where: { id: workspaceId } });
+    const raw = (workspace?.settings as any)?.metaInboxReads;
+    return raw && typeof raw === 'object' ? (raw as Record<string, string>) : {};
+  }
+
+  async markConversationRead(
+    workspaceId: string,
+    conversationId: string,
+    read = true,
+  ): Promise<{ success: boolean; unread: boolean }> {
+    const key = String(conversationId || '').trim();
+    if (!key) throw new BadRequestException('conversationId is required');
+
+    const workspace = await this.workspaceRepository.findOne({ where: { id: workspaceId } });
+    if (!workspace) throw new NotFoundException('Workspace not found');
+
+    const reads: Record<string, string> = { ...((workspace.settings as any)?.metaInboxReads || {}) };
+    if (read) {
+      reads[key] = new Date().toISOString();
+    } else {
+      // Marking unread drops the marker so newer inbound messages count again.
+      delete reads[key];
+    }
+
+    workspace.settings = { ...(workspace.settings || ({} as any)), metaInboxReads: reads };
+    await this.workspaceRepository.save(workspace);
+    return { success: true, unread: !read };
   }
 
   async ensureConversationContact(

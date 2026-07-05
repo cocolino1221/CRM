@@ -45,6 +45,10 @@ export interface WorkspaceSettings {
   // Shared voice-note library, sent across Messenger/Instagram/WhatsApp inside
   // an open conversation. Capped at AUDIO_LIBRARY_MAX items. Files live in R2.
   audioLibrary?: WorkspaceAudioTemplate[];
+  // Read markers for the Messenger/Instagram inbox, keyed by conversation id
+  // (channel:account:sender) → ISO timestamp last marked read. Inbound messages
+  // newer than this count as unread; absence of a key means fully unread.
+  metaInboxReads?: Record<string, string>;
 }
 
 export interface WorkspaceAudioTemplate {

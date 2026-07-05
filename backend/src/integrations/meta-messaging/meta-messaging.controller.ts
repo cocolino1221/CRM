@@ -155,6 +155,21 @@ export class MetaMessagingController {
     return merge(events$, heartbeat$);
   }
 
+  @Post('inbox/read')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Mark a Messenger/Instagram conversation as read or unread' })
+  async markRead(
+    @Req() req: any,
+    @Body() body: { conversationId: string; unread?: boolean },
+  ) {
+    return this.metaMessagingService.markConversationRead(
+      req.user.workspaceId,
+      body.conversationId,
+      !body.unread,
+    );
+  }
+
   @Delete('inbox/conversation')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()

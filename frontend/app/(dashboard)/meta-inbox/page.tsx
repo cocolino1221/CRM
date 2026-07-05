@@ -1039,6 +1039,33 @@ export default function MessagesPage() {
     }
   };
 
+  const setConversationRead = async (conversationId: string, unread = false) => {
+    if (!conversationId) return;
+    // Optimistic: clear/raise the local badge immediately.
+    setConversations((prev) =>
+      prev.map((conversation) =>
+        conversation.id === conversationId
+          ? { ...conversation, unreadCount: unread ? Math.max(1, conversation.unreadCount || 1) : 0 }
+          : conversation,
+      ),
+    );
+    try {
+      await api.post('/integrations/meta-messaging/inbox/read', { conversationId, unread });
+    } catch {
+      // Non-fatal — the next inbox refresh reconciles the real state.
+    }
+  };
+
+  const selectConversation = (conversationId: string) => {
+    setSelectedId(conversationId);
+    void setConversationRead(conversationId, false);
+  };
+
+  const markSelectedUnread = () => {
+    if (!selectedConversation) return;
+    void setConversationRead(selectedConversation.id, true);
+  };
+
   const saveMessageProfile = async (account: MetaAccount) => {
     const draft = profileDrafts[account.integrationId] || {
       selection: account.messageProfileId || 'standalone',
@@ -1457,7 +1484,6 @@ export default function MessagesPage() {
           <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
             <div>
               <h1 className="text-[28px] font-semibold tracking-tight text-slate-950">Messages</h1>
-              <p className="mt-1 text-sm text-slate-500">Inbox curat pentru Messenger și Instagram, cu assignment de setter și closer.</p>
             </div>
 
             <div className="flex flex-1 items-center justify-end gap-3 xl:max-w-3xl">
@@ -1596,7 +1622,7 @@ export default function MessagesPage() {
                   return (
                     <button
                       key={conversation.id}
-                      onClick={() => setSelectedId(conversation.id)}
+                      onClick={() => selectConversation(conversation.id)}
                       className={cn(
                         'flex w-full items-start gap-3 border-b border-slate-100 px-4 py-3 text-left transition',
                         active ? 'bg-slate-50' : 'bg-white hover:bg-slate-50/70',
@@ -1689,6 +1715,16 @@ export default function MessagesPage() {
                   >
                     {showDetails ? 'Hide details' : 'Show details'}
                   </button>
+                  {selectedConversation && (
+                    <button
+                      onClick={markSelectedUnread}
+                      title="Marchează ca necitit"
+                      className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-50"
+                    >
+                      <CircleDot className="h-4 w-4" />
+                      Necitit
+                    </button>
+                  )}
                   {selectedConversation && (
                     <button
                       onClick={deleteSelectedConversation}
