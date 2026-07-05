@@ -125,6 +125,18 @@ export default function IntegrationsPage() {
       .trim()
       .toLowerCase();
 
+  // Facebook/Instagram/TikTok connections are stored as the generic "API" type
+  // with a provider marker, so show the provider name instead of "api".
+  const getIntegrationTypeLabel = (integration: any): string => {
+    const provider = getProviderKey(integration);
+    const labels: Record<string, string> = {
+      facebook: 'Facebook',
+      instagram: 'Instagram',
+      tiktok: 'TikTok',
+    };
+    return labels[provider] || String(integration?.type || 'Integration');
+  };
+
   const isSocialOAuthIntegration = (integration?: Integration | null) =>
     ['facebook', 'instagram', 'tiktok'].includes(String(integration?.id || '').toLowerCase());
 
@@ -137,6 +149,12 @@ export default function IntegrationsPage() {
 
         if (normalizedId === 'facebook' || normalizedId === 'instagram' || normalizedId === 'tiktok') {
           return typeKey === 'api' && providerKey === normalizedId;
+        }
+
+        // The generic "Custom API" card must not claim social OAuth pages, which
+        // are also stored as type "api" but carry a provider marker.
+        if (normalizedId === 'api') {
+          return typeKey === 'api' && !['facebook', 'instagram', 'tiktok'].includes(providerKey);
         }
 
         return typeKey === normalizedId || providerKey === normalizedId;
@@ -1595,7 +1613,7 @@ export default function IntegrationsPage() {
                   <option value="">Select integration</option>
                   {connectedIntegrationOptions.map((integration: any) => (
                     <option key={integration.id} value={integration.id}>
-                      {integration.name} ({integration.type})
+                      {integration.name} ({getIntegrationTypeLabel(integration)})
                     </option>
                   ))}
                 </select>
