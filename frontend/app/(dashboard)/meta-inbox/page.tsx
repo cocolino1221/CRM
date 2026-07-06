@@ -605,8 +605,10 @@ export default function MessagesPage() {
 
     for (const conversation of filteredConversations) {
       const account = conversation.integrationId ? accountsById.get(conversation.integrationId) || null : null;
-      const key = getConversationProfileKey(conversation);
       const label = getMessageProfileDisplayName(conversation, account) || getAccountDisplayName(conversation, account);
+      // Dedupe by account name so duplicate integrations for the same account
+      // (e.g. two "andrei.ra2" rows from repeated connects) collapse to one chip.
+      const key = String(label || '').trim().toLowerCase();
       const current = labels.get(key);
 
       if (current) {
@@ -634,8 +636,14 @@ export default function MessagesPage() {
     const query = searchTerm.trim().toLowerCase();
 
     return filteredConversations.filter((conversation) => {
-      if (activeAccountFilter !== 'all' && getConversationProfileKey(conversation) !== activeAccountFilter) {
-        return false;
+      if (activeAccountFilter !== 'all') {
+        const account = conversation.integrationId ? accountsById.get(conversation.integrationId) || null : null;
+        const label = String(
+          getMessageProfileDisplayName(conversation, account) || getAccountDisplayName(conversation, account) || '',
+        )
+          .trim()
+          .toLowerCase();
+        if (label !== activeAccountFilter) return false;
       }
 
       if (!query) return true;
@@ -653,7 +661,7 @@ export default function MessagesPage() {
 
       return haystack.includes(query);
     });
-  }, [activeAccountFilter, filteredConversations, searchTerm]);
+  }, [accountsById, activeAccountFilter, filteredConversations, searchTerm]);
 
   const selectedMessages = useMemo(() => {
     if (!selectedConversation?.messages?.length) return [];
