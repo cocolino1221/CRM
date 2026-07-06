@@ -148,7 +148,13 @@ export default function IntegrationsPage() {
         const providerKey = getProviderKey(entry);
 
         if (normalizedId === 'facebook' || normalizedId === 'instagram' || normalizedId === 'tiktok') {
-          return typeKey === 'api' && providerKey === normalizedId;
+          if (typeKey !== 'api' || providerKey !== normalizedId) return false;
+          // Hide orphan/incomplete connections (aborted OAuth that never
+          // materialized a page or IG account) so they don't pile up as
+          // "Custom API / pending" rows.
+          const pageId = String(entry?.config?.pageId || '').trim();
+          const igUserId = String(entry?.config?.igUserId || '').trim();
+          return !!pageId || !!igUserId;
         }
 
         // The generic "Custom API" card must not claim social OAuth pages, which

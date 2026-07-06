@@ -613,6 +613,8 @@ export class IntegrationsService implements OnModuleInit {
       }
     }
 
+    await this.removeOrphanSocialIntegrations(siblingRows);
+
     return primary;
   }
 
@@ -715,7 +717,30 @@ export class IntegrationsService implements OnModuleInit {
       }
     }
 
+    await this.removeOrphanSocialIntegrations(siblingRows);
+
     return primary;
+  }
+
+  // Delete leftover orphan social rows (aborted OAuth that never materialized a
+  // page or IG account, no token) so they don't accumulate as
+  // "Custom API / pending" entries. Best-effort — never blocks a connect.
+  private async removeOrphanSocialIntegrations(rows: Integration[]): Promise<void> {
+    const orphans = rows.filter((row) => {
+      const igUserId = String(row.config?.igUserId || '').trim();
+      const pageId = String(row.config?.pageId || '').trim();
+      const hasToken =
+        !!String(row.credentials?.accessToken || '').trim() ||
+        !!String(row.credentials?.pageAccessToken || '').trim();
+      return !igUserId && !pageId && !hasToken;
+    });
+    if (!orphans.length) return;
+    try {
+      await this.integrationRepository.remove(orphans);
+      this.logger.log(`Removed ${orphans.length} orphan social integration(s)`);
+    } catch (error: any) {
+      this.logger.warn(`Failed to remove orphan social integrations: ${error?.message || error}`);
+    }
   }
 
   /**
