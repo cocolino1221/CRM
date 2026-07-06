@@ -793,6 +793,7 @@ export default function MessagesPage() {
 
   // Live inbox sync via Server-Sent Events — zero DB polling (keeps Neon asleep).
   // EventSource can't set headers, so the JWT rides as ?token= (see jwt.strategy).
+  const [streamEpoch, setStreamEpoch] = useState(0);
   useEffect(() => {
     if (!hasMessagesAccess || typeof window === 'undefined') return;
 
@@ -801,7 +802,16 @@ export default function MessagesPage() {
     const url = `${base}/integrations/meta-messaging/stream${token ? `?token=${encodeURIComponent(token)}` : ''}`;
     const source = new EventSource(url, { withCredentials: true });
 
+    // Track stream liveness. The backend pings every 25s; if we hear nothing for
+    // 45s the connection is a zombie (open TCP, no data), so force a reconnect.
+    let lastActivity = Date.now();
+    const markActive = () => {
+      lastActivity = Date.now();
+    };
+    source.addEventListener('ping', markActive);
+
     source.onmessage = (event) => {
+      markActive();
       let payload: any;
       try {
         payload = JSON.parse(event.data);
@@ -823,11 +833,40 @@ export default function MessagesPage() {
       }
     };
 
-    // EventSource reconnects automatically on transient errors; nothing to do here.
+    // On every (re)connection after the first, re-sync the inbox so messages
+    // that arrived while the stream was dropped appear immediately instead of
+    // trickling in on the next reconnect. Event-driven, so no constant polling.
+    let firstOpen = true;
+    source.onopen = () => {
+      markActive();
+      // Skip only the very first connection on initial mount (the page already
+      // loaded the inbox). Auto-reconnects and watchdog rebuilds (epoch > 0)
+      // always resync so nothing that arrived while offline is missed.
+      if (streamEpoch === 0 && firstOpen) {
+        firstOpen = false;
+        return;
+      }
+      void refreshAll(false);
+    };
+
     source.onerror = () => {};
 
-    return () => source.close();
-  }, [hasMessagesAccess]);
+    // Watchdog: if the stream goes silent (no ping/message for 45s), tear it
+    // down and bump the epoch to rebuild a fresh EventSource + resync.
+    const watchdog = window.setInterval(() => {
+      if (Date.now() - lastActivity > 45000) {
+        source.close();
+        window.clearInterval(watchdog);
+        setStreamEpoch((epoch) => epoch + 1);
+      }
+    }, 15000);
+
+    return () => {
+      window.clearInterval(watchdog);
+      source.removeEventListener('ping', markActive);
+      source.close();
+    };
+  }, [hasMessagesAccess, streamEpoch]);
 
   useEffect(() => {
     if (activeFilter === 'messenger' && !canAccessMessenger) {
