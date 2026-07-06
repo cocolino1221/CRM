@@ -976,7 +976,10 @@ export class MetaMessagingService {
     for (const entry of entryList) {
       const messagingEvents = Array.isArray(entry?.messaging) ? entry.messaging : [];
       for (const event of messagingEvents) {
-        const integration = this.resolveWebhookIntegration(provider, integrations, entry, event);
+        let integration = this.resolveWebhookIntegration(provider, integrations, entry, event);
+        if (!integration && provider === 'instagram') {
+          integration = await this.selfHealInstagramMatch(integrations, entry, event);
+        }
         if (!integration) {
           this.logger.warn(
             `Shared Meta webhook could not resolve provider=${provider} entry=${String(entry?.id || '')} recipient=${String(event?.recipient?.id || '')}`,
@@ -1682,6 +1685,46 @@ export class MetaMessagingService {
         .map((i) => `${i.id.slice(0, 8)}:pg=${i.config?.pageId || ''}/ig=${i.config?.igUserId || ''}/ext=${i.externalId || ''}`)
         .join(' | ')}]`,
     );
+    return null;
+  }
+
+  // Instagram exposes a different account id to the messaging webhook than the
+  // one captured at connect time, so stored ids never match. Identify the
+  // owning account by asking each usable integration's token to resolve the
+  // webhook account id, then cache it as igScopedId so future webhooks match
+  // instantly (see resolveWebhookIntegration).
+  private async selfHealInstagramMatch(
+    integrations: Integration[],
+    entry: any,
+    event: any,
+  ): Promise<Integration | null> {
+    const targetId = String(event?.recipient?.id || entry?.id || '').trim();
+    if (!targetId) return null;
+
+    const usable = integrations.filter((integration) => this.integrationHasUsableToken(integration));
+    for (const integration of usable) {
+      try {
+        const { pageAccessToken } = await this.ensureInstagramMessagingCredentials(integration);
+        if (!pageAccessToken) continue;
+
+        const res = await this.httpService.axiosRef.get(`${this.facebookApiUrl}/${targetId}`, {
+          params: { fields: 'id', access_token: pageAccessToken },
+          timeout: 8000,
+        });
+
+        if (String(res.data?.id || '').trim() === targetId) {
+          integration.config = { ...(integration.config || {}), igScopedId: targetId };
+          await this.integrationRepository.save(integration);
+          this.logger.log(
+            `Self-healed IG webhook match: integration=${integration.id.slice(0, 8)} igScopedId=${targetId}`,
+          );
+          return integration;
+        }
+      } catch {
+        // This account's token cannot resolve the id — not the owner. Try next.
+      }
+    }
+
     return null;
   }
 
