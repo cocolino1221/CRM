@@ -32,6 +32,7 @@ import { authService, User } from '@/lib/auth';
 import { hasChannelAccess } from '@/lib/channel-access';
 import { cn } from '@/lib/utils';
 import AudioLibraryPicker from '@/components/audio/AudioLibraryPicker';
+import { playNewMessageChime } from '@/lib/notificationSound';
 
 type MetaChannel = 'messenger' | 'instagram';
 
@@ -804,6 +805,10 @@ export default function MessagesPage() {
       if (payload.type === 'message' && payload.conversation && payload.message) {
         const conversationId = String(payload.conversation.id || '');
         const isSelected = selectedIdRef.current === conversationId;
+        // Soft chime only for genuinely new inbound messages (not our own echoes).
+        if (payload.message.direction === 'inbound') {
+          playNewMessageChime();
+        }
         setConversations((prev) => upsertStreamMessage(prev, payload, isSelected));
       } else if (payload.type === 'deleted') {
         setConversations((prev) => applyStreamDeletion(prev, payload));
