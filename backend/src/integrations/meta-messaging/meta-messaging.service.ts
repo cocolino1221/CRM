@@ -222,6 +222,13 @@ export class MetaMessagingService {
     );
   }
 
+  private integrationHasUsableToken(integration?: Integration | null): boolean {
+    return (
+      !!String(integration?.credentials?.accessToken || '').trim() ||
+      !!String(integration?.credentials?.pageAccessToken || '').trim()
+    );
+  }
+
   async getAccounts(workspaceId: string, refresh = false): Promise<any[]> {
     const integrations = await this.findMetaIntegrations(workspaceId);
     const results: any[] = [];
@@ -232,6 +239,14 @@ export class MetaMessagingService {
       if (!provider) {
         continue;
       }
+
+      // Skip orphan/incomplete connections (e.g. an aborted OAuth that left a
+      // bare "Custom API" row). Without any token they can never hydrate, so
+      // they'd only show as a dead "Needs reconnect" card.
+      if (!this.integrationHasUsableToken(integration)) {
+        continue;
+      }
+
       let accountSummary: any = null;
       let liveReady = false;
       let warning: string | null = null;
@@ -1187,9 +1202,23 @@ export class MetaMessagingService {
     }
 
     const provider = this.channelToProvider(channel);
-    const integration = body.integrationId
+    let integration = body.integrationId
       ? await this.findProviderIntegrationById(provider, body.integrationId, workspaceId)
       : await this.findDefaultProviderIntegration(workspaceId, provider);
+
+    // The conversation may be linked to an orphan integration (aborted OAuth,
+    // no token). Fall back to a usable account for this provider so the reply
+    // still goes out instead of failing with "missing an access token".
+    if (!integration || !this.integrationHasUsableToken(integration)) {
+      const usable = (await this.findMetaIntegrations(workspaceId)).filter(
+        (candidate) =>
+          this.getIntegrationProvider(candidate) === provider &&
+          this.integrationHasUsableToken(candidate),
+      );
+      if (usable.length) {
+        integration = usable[0];
+      }
+    }
 
     const ownerId = userId || integration?.userId || (await this.getWorkspaceOwnerId(workspaceId));
     const resolveLiveConfig = async () =>
@@ -1640,15 +1669,12 @@ export class MetaMessagingService {
       }
     }
 
-    // Fallback: a single connected account for this provider in one workspace
-    // is unambiguous even if its stored id doesn't match the webhook namespace.
-    const workspaces = new Set(integrations.map((integration) => integration.workspaceId));
-    if (integrations.length === 1 || workspaces.size === 1) {
-      const byRecipient = integrations.find((integration) =>
-        integrationIds(integration).length === 0,
-      );
-      if (integrations.length === 1) return integrations[0];
-      if (byRecipient) return byRecipient;
+    // Fallback: if exactly one account for this provider actually has usable
+    // credentials, the message is unambiguous even when its stored id doesn't
+    // match the webhook's id namespace. Never fall back to a tokenless orphan.
+    const usable = integrations.filter((integration) => this.integrationHasUsableToken(integration));
+    if (usable.length === 1) {
+      return usable[0];
     }
 
     this.logger.warn(
