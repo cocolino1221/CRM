@@ -297,6 +297,9 @@ export class MetaMessagingService {
       });
     }
 
+    this.logger.log(
+      `[inbox] getAccounts ws=${workspaceId} total=${results.length} providers=[${results.map((r) => `${r.provider}:${r.liveReady ? 'live' : 'off'}`).join(', ')}]`,
+    );
     return results;
   }
 
