@@ -123,8 +123,11 @@ export class IntegrationsService implements OnModuleInit {
     // Meta system-user tokens are ~210 chars and routinely pick up stray
     // whitespace/newlines on copy-paste, which makes Graph reject them with
     // "Cannot parse access token". Strip all whitespace before storing.
-    if (dto.type === IntegrationType.WHATSAPP && dto.credentials?.accessToken) {
+    if (dto.credentials?.accessToken) {
       dto.credentials.accessToken = String(dto.credentials.accessToken).replace(/\s+/g, '');
+    }
+    if ((dto.credentials as any)?.pageAccessToken) {
+      (dto.credentials as any).pageAccessToken = String((dto.credentials as any).pageAccessToken).replace(/\s+/g, '');
     }
 
     const providerKey = String(dto.config?.provider || dto.externalId || '')
@@ -451,8 +454,8 @@ export class IntegrationsService implements OnModuleInit {
     for (const row of facebookRows) {
       const pageId = String(row.config?.pageId || '').trim();
       const pageAccessToken =
-        String(row.credentials?.pageAccessToken || '').trim()
-        || String(row.credentials?.accessToken || '').trim();
+        String(row.credentials?.pageAccessToken || '').replace(/\s+/g, '')
+        || String(row.credentials?.accessToken || '').replace(/\s+/g, '');
 
       if (!pageId || !pageAccessToken) continue;
 
@@ -495,7 +498,7 @@ export class IntegrationsService implements OnModuleInit {
 
     for (const row of instagramRows) {
       const igUserId = String(row.config?.igUserId || '').trim();
-      const userAccessToken = String(row.credentials?.accessToken || '').trim();
+      const userAccessToken = String(row.credentials?.accessToken || '').replace(/\s+/g, '');
 
       if (!igUserId || !userAccessToken) continue;
 
@@ -526,7 +529,7 @@ export class IntegrationsService implements OnModuleInit {
   }
 
   private async materializeFacebookPageAccounts(integration: Integration): Promise<Integration> {
-    const userAccessToken = String(integration.credentials?.accessToken || '').trim();
+    const userAccessToken = String(integration.credentials?.accessToken || '').replace(/\s+/g, '');
     if (!userAccessToken) {
       return integration;
     }
@@ -619,7 +622,7 @@ export class IntegrationsService implements OnModuleInit {
   }
 
   private async materializeInstagramPageAccounts(integration: Integration): Promise<Integration> {
-    const userAccessToken = String(integration.credentials?.accessToken || '').trim();
+    const userAccessToken = String(integration.credentials?.accessToken || '').replace(/\s+/g, '');
     if (!userAccessToken) {
       return integration;
     }

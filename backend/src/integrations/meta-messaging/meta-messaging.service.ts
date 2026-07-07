@@ -1734,7 +1734,7 @@ export class MetaMessagingService {
     pageAccessToken: string;
   }> {
     const existingPageId = String(integration.config?.pageId || '').trim();
-    const existingPageAccessToken = String(integration.credentials?.pageAccessToken || '').trim();
+    const existingPageAccessToken = String(integration.credentials?.pageAccessToken || '').replace(/\s+/g, '');
     const existingPageName = String(integration.config?.pageName || '').trim() || undefined;
 
     if (existingPageId && existingPageAccessToken) {
@@ -1745,7 +1745,7 @@ export class MetaMessagingService {
       };
     }
 
-    const userAccessToken = String(integration.credentials?.accessToken || '').trim();
+    const userAccessToken = String(integration.credentials?.accessToken || '').replace(/\s+/g, '');
     if (!userAccessToken) {
       throw new BadRequestException('Facebook integration is missing an access token');
     }
@@ -1791,7 +1791,7 @@ export class MetaMessagingService {
     igUsername?: string;
   }> {
     const existingPageId = String(integration.config?.pageId || '').trim();
-    const existingPageAccessToken = String(integration.credentials?.pageAccessToken || '').trim();
+    const existingPageAccessToken = String(integration.credentials?.pageAccessToken || '').replace(/\s+/g, '');
     const existingIgUserId = String(integration.config?.igUserId || '').trim();
     const existingPageName = String(integration.config?.pageName || '').trim() || undefined;
     const existingIgUsername = String(integration.config?.igUsername || '').trim() || undefined;
@@ -1806,7 +1806,7 @@ export class MetaMessagingService {
       };
     }
 
-    const userAccessToken = String(integration.credentials?.accessToken || '').trim();
+    const userAccessToken = String(integration.credentials?.accessToken || '').replace(/\s+/g, '');
     if (!userAccessToken) {
       throw new BadRequestException('Instagram integration is missing an access token');
     }
