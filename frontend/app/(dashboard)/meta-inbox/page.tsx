@@ -720,16 +720,27 @@ export default function MessagesPage() {
       ? '/integrations/meta-messaging/accounts?refresh=1'
       : '/integrations/meta-messaging/accounts';
 
-    const [inboxRes, accountRes, setupRes] = await Promise.all([
+    // Load independently: a failure in accounts/setup must NOT blank the inbox.
+    // (Promise.all would reject the whole batch and drop the conversations.)
+    const [inboxRes, accountRes, setupRes] = await Promise.allSettled([
       api.get('/integrations/meta-messaging/inbox'),
       api.get(accountQuery),
       api.get('/integrations/meta-messaging/setup'),
     ]);
 
-    const nextConversations = Array.isArray(inboxRes.data?.data) ? inboxRes.data.data : [];
+    if (accountRes.status === 'fulfilled') {
+      setAccounts(Array.isArray(accountRes.value.data) ? accountRes.value.data : []);
+    }
+    if (setupRes.status === 'fulfilled') {
+      setSetupInfo(Array.isArray(setupRes.value.data) ? setupRes.value.data : []);
+    }
+
+    if (inboxRes.status !== 'fulfilled') {
+      throw inboxRes.reason;
+    }
+
+    const nextConversations = Array.isArray(inboxRes.value.data?.data) ? inboxRes.value.data.data : [];
     setConversations(nextConversations);
-    setAccounts(Array.isArray(accountRes.data) ? accountRes.data : []);
-    setSetupInfo(Array.isArray(setupRes.data) ? setupRes.data : []);
     setSelectedId((prev) => {
       if (preferredSelection) {
         const match = nextConversations.find(
