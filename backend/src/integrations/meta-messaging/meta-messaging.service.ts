@@ -396,6 +396,10 @@ export class MetaMessagingService {
       .map(({ readAt, ...conversation }) => conversation)
       .sort((a, b) => new Date(b.lastMessageTime).getTime() - new Date(a.lastMessageTime).getTime());
 
+    const msgr = conversationList.filter((c) => c.channel === 'messenger').length;
+    const insta = conversationList.filter((c) => c.channel === 'instagram').length;
+    this.logger.log(`[inbox] getInbox conversations total=${conversationList.length} messenger=${msgr} instagram=${insta}`);
+
     return { data: conversationList };
   }
 
