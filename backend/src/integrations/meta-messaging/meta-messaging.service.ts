@@ -317,6 +317,7 @@ export class MetaMessagingService {
     }
 
     const activities = await qb.getMany();
+    this.logger.log(`[inbox] getInbox ws=${workspaceId} channel=${channel || 'all'} activities=${activities.length}`);
     const conversations = new Map<string, any>();
 
     for (const activity of activities) {
@@ -1330,7 +1331,10 @@ export class MetaMessagingService {
       metadata,
     });
 
-    await this.activityRepository.save(activity);
+    const saved = await this.activityRepository.save(activity);
+    this.logger.log(
+      `[inbox] stored INBOUND ${metadata.channel} activity=${saved.id.slice(0, 8)} ws=${workspaceId} contact=${contact.id.slice(0, 8)} sender=${metadata.externalUserId}`,
+    );
     this.emitInboxEvent(workspaceId, metadata, activity, contact, description);
   }
 
