@@ -1333,7 +1333,7 @@ export class MetaMessagingService {
 
     const saved = await this.activityRepository.save(activity);
     this.logger.log(
-      `[inbox] stored INBOUND ${metadata.channel} activity=${saved.id.slice(0, 8)} ws=${workspaceId} contact=${contact.id.slice(0, 8)} sender=${metadata.externalUserId}`,
+      `[inbox] stored INBOUND ${metadata.channel} activity=${saved.id.slice(0, 8)} ws=${workspaceId} contact=${contact.id.slice(0, 8)} sender=${String(metadata.externalUserId || '').slice(0, 8)}…`,
     );
     this.emitInboxEvent(workspaceId, metadata, activity, contact, description);
   }
