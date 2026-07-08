@@ -1715,24 +1715,35 @@ export class MetaMessagingService {
     const usable = integrations.filter((integration) => this.integrationHasUsableToken(integration));
     for (const integration of usable) {
       try {
-        const { pageAccessToken } = await this.ensureInstagramMessagingCredentials(integration);
-        if (!pageAccessToken) continue;
+        const { pageId, pageAccessToken } = await this.ensureInstagramMessagingCredentials(integration);
+        if (!pageAccessToken || !pageId) continue;
 
-        const res = await this.httpService.axiosRef.get(`${this.facebookApiUrl}/${targetId}`, {
-          params: { fields: 'id', access_token: pageAccessToken },
+        // Fetch the linked IG account's ids. The messaging webhook may use the
+        // Instagram-scoped `ig_id` rather than the Graph `id` we stored, so
+        // compare the target against both namespaces.
+        const res = await this.httpService.axiosRef.get(`${this.facebookApiUrl}/${pageId}`, {
+          params: {
+            fields: 'instagram_business_account{id,ig_id,username}',
+            access_token: pageAccessToken,
+          },
           timeout: 8000,
         });
 
-        if (String(res.data?.id || '').trim() === targetId) {
+        const iga = res.data?.instagram_business_account;
+        const ownIds = [iga?.id, iga?.ig_id]
+          .map((value) => String(value || '').trim())
+          .filter(Boolean);
+
+        if (ownIds.includes(targetId)) {
           integration.config = { ...(integration.config || {}), igScopedId: targetId };
           await this.integrationRepository.save(integration);
           this.logger.log(
-            `Self-healed IG webhook match: integration=${integration.id.slice(0, 8)} igScopedId=${targetId}`,
+            `Self-healed IG webhook match: integration=${integration.id.slice(0, 8)} igScopedId=${targetId} via @${iga?.username || ''}`,
           );
           return integration;
         }
       } catch {
-        // This account's token cannot resolve the id — not the owner. Try next.
+        // Couldn't read this account's ids — not the owner or token issue. Next.
       }
     }
 
