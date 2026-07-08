@@ -93,6 +93,7 @@ interface MetaActivityMetadata {
   senderAccountName?: string;
   senderProfileId?: string;
   senderProfileName?: string;
+  senderAvatarUrl?: string;
   attachmentUrl?: string;
   attachmentMimeType?: string;
   attachmentName?: string;
@@ -351,6 +352,7 @@ export class MetaMessagingService {
           contactId: activity.contact?.id || null,
           contactName: this.getContactDisplayName(activity.contact, activityChannel, externalUserId),
           contactSource: activity.contact?.source || null,
+          avatarUrl: metadata.senderAvatarUrl || null,
           lastMessage: '',
           lastMessageTime: activity.occurredAt.toISOString(),
           unreadCount: 0,
@@ -359,6 +361,10 @@ export class MetaMessagingService {
       }
 
       const conversation = conversations.get(key);
+      // Keep the most recent known avatar for the sender.
+      if (metadata.senderAvatarUrl) {
+        conversation.avatarUrl = metadata.senderAvatarUrl;
+      }
       const messageType = String(metadata.messageType || 'text');
       const message = {
         id: activity.id,
@@ -1096,13 +1102,13 @@ export class MetaMessagingService {
       return;
     }
 
-    const senderName = await this.fetchSenderName(provider, integration, senderId);
+    const senderProfile = await this.fetchSenderProfile(provider, integration, senderId);
     const contact = await this.findOrCreateSocialContact(
       workspaceId,
       ownerId,
       channel,
       senderId,
-      senderName,
+      senderProfile.name,
     );
 
     await this.saveInboundActivity(
@@ -1121,6 +1127,7 @@ export class MetaMessagingService {
         senderPageName: String(integration.config?.pageName || integration.name || ''),
         senderAccountId: provider === 'instagram' ? String(integration.config?.igUserId || recipientId) : undefined,
         senderAccountName: provider === 'instagram' ? String(integration.config?.igUsername || integration.name || '') : undefined,
+        senderAvatarUrl: senderProfile.avatarUrl,
         ...this.getMessageProfileMetadata(integration),
         attachmentUrl,
         attachmentMimeType: this.guessMimeTypeFromUrl(attachmentUrl, attachmentType),
@@ -1912,46 +1919,51 @@ export class MetaMessagingService {
     }
   }
 
-  private async fetchSenderName(
+  private async fetchSenderProfile(
     provider: MetaProvider,
     integration: Integration,
     senderId: string,
-  ): Promise<string | undefined> {
+  ): Promise<{ name?: string; avatarUrl?: string }> {
     try {
       if (provider === 'facebook') {
         const { pageAccessToken } = await this.ensureFacebookPageCredentials(integration);
         const response = await this.httpService.axiosRef.get(`${this.facebookApiUrl}/${senderId}`, {
           params: {
-            fields: 'first_name,last_name',
+            fields: 'first_name,last_name,profile_pic',
             access_token: pageAccessToken,
           },
           timeout: 10000,
         });
         const firstName = String(response.data?.first_name || '').trim();
         const lastName = String(response.data?.last_name || '').trim();
-        return `${firstName} ${lastName}`.trim() || undefined;
+        return {
+          name: `${firstName} ${lastName}`.trim() || undefined,
+          avatarUrl: String(response.data?.profile_pic || '').trim() || undefined,
+        };
       }
 
       const { pageAccessToken } = await this.ensureInstagramMessagingCredentials(integration);
-      // The Instagram messaging user-profile endpoint reliably exposes `name`
-      // (and profile_pic). `username` is NOT a valid field here and makes the
-      // whole request fail — which is why senders showed as "Instagram <id>".
+      // The Instagram messaging user-profile endpoint exposes `name` and
+      // `profile_pic`. `username` is NOT valid here and fails the whole request.
       const response = await this.httpService.axiosRef.get(`${this.facebookApiUrl}/${senderId}`, {
         params: {
-          fields: 'name',
+          fields: 'name,profile_pic',
           access_token: pageAccessToken,
         },
         timeout: 10000,
       });
-      return String(response.data?.name || response.data?.username || '').trim() || undefined;
+      return {
+        name: String(response.data?.name || response.data?.username || '').trim() || undefined,
+        avatarUrl: String(response.data?.profile_pic || '').trim() || undefined,
+      };
     } catch (error: any) {
       const metaError = error?.response?.data?.error;
       this.logger.warn(
-        `fetchSenderName failed provider=${provider} senderId=${senderId}: ${
+        `fetchSenderProfile failed provider=${provider}: ${
           metaError ? `${metaError.message} (code ${metaError.code})` : error?.message || 'unknown error'
         }`,
       );
-      return undefined;
+      return {};
     }
   }
 

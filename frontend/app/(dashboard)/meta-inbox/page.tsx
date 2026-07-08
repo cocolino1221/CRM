@@ -86,6 +86,7 @@ interface MetaConversation {
   contactId?: string | null;
   contactName: string;
   contactSource?: string | null;
+  avatarUrl?: string | null;
   lastMessage: string;
   lastMessageTime: string;
   unreadCount: number;
@@ -233,6 +234,35 @@ function getInitials(name: string) {
       .slice(0, 2)
       .map((part) => part[0]?.toUpperCase() || '')
       .join('') || 'CL'
+  );
+}
+
+// Renders the contact's profile photo when available, falling back to initials
+// (initials sit underneath, so a broken/expired photo URL degrades gracefully).
+function ContactAvatar({
+  name,
+  avatarUrl,
+  className,
+}: {
+  name: string;
+  avatarUrl?: string | null;
+  className?: string;
+}) {
+  return (
+    <div className={cn('relative shrink-0 overflow-hidden rounded-full', className)}>
+      <span className="flex h-full w-full items-center justify-center">{getInitials(name)}</span>
+      {avatarUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={avatarUrl}
+          alt={name}
+          className="absolute inset-0 h-full w-full object-cover"
+          onError={(e) => {
+            (e.currentTarget as HTMLImageElement).style.display = 'none';
+          }}
+        />
+      ) : null}
+    </div>
   );
 }
 
@@ -1693,9 +1723,11 @@ export default function MessagesPage() {
                         active ? 'bg-slate-50' : 'bg-white hover:bg-slate-50/70',
                       )}
                     >
-                      <div className={cn('mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-xs font-semibold', theme.subtleIcon)}>
-                        {getInitials(conversation.contactName)}
-                      </div>
+                      <ContactAvatar
+                        name={conversation.contactName}
+                        avatarUrl={conversation.avatarUrl}
+                        className={cn('mt-0.5 h-10 w-10 text-xs font-semibold', theme.subtleIcon)}
+                      />
 
                       <div className="min-w-0 flex-1">
                         <div className="flex items-start justify-between gap-3">
@@ -1739,9 +1771,11 @@ export default function MessagesPage() {
                 <div>
                   {selectedConversation ? (
                     <div className="flex items-center gap-3">
-                      <div className={cn('flex h-11 w-11 items-center justify-center rounded-full text-xs font-semibold', channelTheme[selectedConversation.channel].subtleIcon)}>
-                        {getInitials(selectedConversation.contactName)}
-                      </div>
+                      <ContactAvatar
+                        name={selectedConversation.contactName}
+                        avatarUrl={selectedConversation.avatarUrl}
+                        className={cn('h-11 w-11 text-xs font-semibold', channelTheme[selectedConversation.channel].subtleIcon)}
+                      />
                       <div>
                         <div className="flex flex-wrap items-center gap-2">
                           <h2 className="text-lg font-semibold text-slate-950">{selectedConversation.contactName}</h2>
@@ -2188,9 +2222,11 @@ export default function MessagesPage() {
                   <>
                     <div>
                       <div className="flex items-center gap-3">
-                        <div className={cn('flex h-12 w-12 items-center justify-center rounded-full text-xs font-semibold', channelTheme[selectedConversation.channel].subtleIcon)}>
-                          {getInitials(selectedConversation.contactName)}
-                        </div>
+                        <ContactAvatar
+                          name={selectedConversation.contactName}
+                          avatarUrl={selectedConversation.avatarUrl}
+                          className={cn('h-12 w-12 text-xs font-semibold', channelTheme[selectedConversation.channel].subtleIcon)}
+                        />
                         <div>
                           <div className="font-medium text-slate-950">{selectedConversation.contactName}</div>
                           <div className="mt-1 text-slate-500">{selectedConversation.contactSource || 'Meta contact'}</div>
