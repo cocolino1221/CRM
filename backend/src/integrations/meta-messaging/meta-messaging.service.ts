@@ -974,14 +974,26 @@ export class MetaMessagingService {
     return { success: true };
   }
 
+  // Respond to Meta immediately, then process in the background. Meta throttles
+  // or disables a webhook that responds slowly (the resolve/self-heal Graph
+  // calls can take seconds), so the HTTP handler must return in milliseconds.
   async handleProviderWebhook(
     provider: MetaProvider,
     payload: any,
   ): Promise<{ success: boolean }> {
+    void this.processProviderWebhook(provider, payload).catch((error) => {
+      this.logger.error(
+        `processProviderWebhook failed provider=${provider}: ${error?.message || error}`,
+      );
+    });
+    return { success: true };
+  }
+
+  private async processProviderWebhook(provider: MetaProvider, payload: any): Promise<void> {
     const integrations = await this.findAllProviderIntegrations(provider);
     if (!integrations.length) {
       this.logger.warn(`Shared Meta webhook received for provider=${provider}, but no matching integrations exist`);
-      return { success: true };
+      return;
     }
 
     const ownerIdsByWorkspace = new Map<string, string>();
@@ -1016,8 +1028,6 @@ export class MetaMessagingService {
         );
       }
     }
-
-    return { success: true };
   }
 
   private async ingestWebhookEvent(
