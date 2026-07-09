@@ -984,13 +984,24 @@ export class MetaMessagingService {
 
     const entryList = Array.isArray(payload?.entry) ? payload.entry : [];
     for (const entry of entryList) {
-      const messagingEvents = Array.isArray(entry?.messaging) ? entry.messaging : [];
+      const messagingEvents = this.extractMessagingEvents(entry);
       for (const event of messagingEvents) {
         await this.ingestWebhookEvent(provider, integration, workspaceId, ownerId, event);
       }
     }
 
     return { success: true };
+  }
+
+  // `messaging` carries events for threads this app controls; `standby`
+  // carries the same events when another app (handover-protocol primary,
+  // e.g. ManyChat) owns the thread. Ingest both so the inbox never goes
+  // blind while a page also runs an external bot.
+  private extractMessagingEvents(entry: any): any[] {
+    return [
+      ...(Array.isArray(entry?.messaging) ? entry.messaging : []),
+      ...(Array.isArray(entry?.standby) ? entry.standby : []),
+    ];
   }
 
   // Respond to Meta immediately, then process in the background. Meta throttles
@@ -1019,7 +1030,7 @@ export class MetaMessagingService {
     const entryList = Array.isArray(payload?.entry) ? payload.entry : [];
 
     for (const entry of entryList) {
-      const messagingEvents = Array.isArray(entry?.messaging) ? entry.messaging : [];
+      const messagingEvents = this.extractMessagingEvents(entry);
       for (const event of messagingEvents) {
         let integration = this.resolveWebhookIntegration(provider, integrations, entry, event);
         if (!integration && provider === 'instagram') {
@@ -1168,6 +1179,26 @@ export class MetaMessagingService {
     );
   }
 
+  // Meta refuses Send API calls from an app that doesn't own the conversation
+  // thread (handover protocol) with error code 10 / thread-control wording.
+  private isThreadControlError(error: any): boolean {
+    const metaCode = error?.response?.data?.error?.code;
+    const message = String(error?.message || error?.response?.data?.error?.message || '');
+    return metaCode === 10 || /thread control|thread owner|\(code 10\)/i.test(message);
+  }
+
+  private async takeThreadControl(
+    pageId: string,
+    pageAccessToken: string,
+    recipientId: string,
+  ): Promise<void> {
+    await this.httpService.axiosRef.post(
+      `${this.facebookApiUrl}/${pageId}/take_thread_control`,
+      { recipient: { id: recipientId } },
+      { params: { access_token: pageAccessToken }, timeout: 10000 },
+    );
+  }
+
   private isAuthError(error: any): boolean {
     const status = error?.response?.status;
     const metaCode = error?.response?.data?.error?.code;
@@ -1310,6 +1341,12 @@ export class MetaMessagingService {
           this.logger.warn(`Meta ${channel} send hit an auth error — refreshing Page token and retrying once`);
           await this.clearCachedPageCredentials(integration);
           liveConfig = await resolveLiveConfig();
+          externalResponse = await runSend(liveConfig);
+        } else if (channel === 'messenger' && this.isThreadControlError(error)) {
+          // Another app (handover-protocol owner, e.g. ManyChat) controls this
+          // conversation. Take the thread over, then retry the send once.
+          this.logger.warn('Messenger send blocked by thread control — taking thread control and retrying once');
+          await this.takeThreadControl(liveConfig.pageId, liveConfig.pageAccessToken, to);
           externalResponse = await runSend(liveConfig);
         } else {
           throw error;

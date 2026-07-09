@@ -460,12 +460,16 @@ export class IntegrationsService implements OnModuleInit {
       if (!pageId || !pageAccessToken) continue;
 
       try {
+        // `standby` keeps messages flowing to the CRM even when another app
+        // (e.g. ManyChat) holds thread control via the handover protocol.
+        // `message_echoes` mirrors what the Page itself sends (Business Suite
+        // replies, ManyChat automations) so conversations are complete.
         await this.httpService.axiosRef.post(
           `https://graph.facebook.com/v23.0/${pageId}/subscribed_apps`,
           null,
           {
             params: {
-              subscribed_fields: 'messages,messaging_feedback',
+              subscribed_fields: 'messages,messaging_feedback,standby,messaging_handovers,message_echoes',
               access_token: pageAccessToken,
             },
             timeout: 15000,

@@ -177,21 +177,30 @@ const channelTheme: Record<
     badge: string;
     subtleIcon: string;
     outboundBubble: string;
+    listAccent: string;
+    avatarRing: string;
+    rowAccent: string;
   }
 > = {
   messenger: {
     label: 'Messenger',
     icon: MessageCircle,
-    badge: 'border-sky-200 bg-sky-50 text-sky-700',
-    subtleIcon: 'bg-sky-50 text-sky-700',
+    badge: 'border-[#0078ff]/40 bg-[#e8f1ff] text-[#0057d9]',
+    subtleIcon: 'bg-[#e8f1ff] text-[#0057d9]',
     outboundBubble: 'bg-[#0078ff] text-white',
+    listAccent: 'text-[#0078ff]',
+    avatarRing: 'ring-2 ring-[#0078ff]/60',
+    rowAccent: 'border-l-[3px] border-l-[#0078ff]',
   },
   instagram: {
     label: 'Instagram',
     icon: Instagram,
-    badge: 'border-fuchsia-200 bg-fuchsia-50 text-fuchsia-700',
-    subtleIcon: 'bg-fuchsia-50 text-fuchsia-700',
+    badge: 'border-fuchsia-400/50 bg-fuchsia-50 text-fuchsia-700',
+    subtleIcon: 'bg-[linear-gradient(135deg,#fdf2f8_0%,#faf5ff_100%)] text-fuchsia-700',
     outboundBubble: 'bg-[linear-gradient(135deg,#7c3aed_0%,#d946ef_100%)] text-white',
+    listAccent: 'text-fuchsia-600',
+    avatarRing: 'ring-2 ring-fuchsia-500/60',
+    rowAccent: 'border-l-[3px] border-l-fuchsia-500',
   },
 };
 
@@ -1720,13 +1729,14 @@ export default function MessagesPage() {
                       onClick={() => selectConversation(conversation.id)}
                       className={cn(
                         'flex w-full items-start gap-3 border-b border-slate-100 px-4 py-3 text-left transition',
+                        theme.rowAccent,
                         active ? 'bg-slate-50' : 'bg-white hover:bg-slate-50/70',
                       )}
                     >
                       <ContactAvatar
                         name={conversation.contactName}
                         avatarUrl={conversation.avatarUrl}
-                        className={cn('mt-0.5 h-10 w-10 text-xs font-semibold', theme.subtleIcon)}
+                        className={cn('mt-0.5 h-10 w-10 text-xs font-semibold', theme.subtleIcon, theme.avatarRing)}
                       />
 
                       <div className="min-w-0 flex-1">
@@ -1737,8 +1747,8 @@ export default function MessagesPage() {
                               {conversation.unreadCount > 0 && <span className="h-2 w-2 rounded-full bg-[#0a66ff]" />}
                             </div>
                             <div className="mt-0.5 flex items-center gap-2 text-[11px] text-slate-400">
-                              <Icon className="h-3.5 w-3.5" />
-                              <span>{theme.label}</span>
+                              <Icon className={cn('h-3.5 w-3.5', theme.listAccent)} />
+                              <span className={cn('font-semibold', theme.listAccent)}>{theme.label}</span>
                               {conversation.messageProfileName && (
                                 <>
                                   <span>•</span>
@@ -1774,7 +1784,11 @@ export default function MessagesPage() {
                       <ContactAvatar
                         name={selectedConversation.contactName}
                         avatarUrl={selectedConversation.avatarUrl}
-                        className={cn('h-11 w-11 text-xs font-semibold', channelTheme[selectedConversation.channel].subtleIcon)}
+                        className={cn(
+                          'h-11 w-11 text-xs font-semibold',
+                          channelTheme[selectedConversation.channel].subtleIcon,
+                          channelTheme[selectedConversation.channel].avatarRing,
+                        )}
                       />
                       <div>
                         <div className="flex flex-wrap items-center gap-2">
@@ -2225,7 +2239,11 @@ export default function MessagesPage() {
                         <ContactAvatar
                           name={selectedConversation.contactName}
                           avatarUrl={selectedConversation.avatarUrl}
-                          className={cn('h-12 w-12 text-xs font-semibold', channelTheme[selectedConversation.channel].subtleIcon)}
+                          className={cn(
+                            'h-12 w-12 text-xs font-semibold',
+                            channelTheme[selectedConversation.channel].subtleIcon,
+                            channelTheme[selectedConversation.channel].avatarRing,
+                          )}
                         />
                         <div>
                           <div className="font-medium text-slate-950">{selectedConversation.contactName}</div>
