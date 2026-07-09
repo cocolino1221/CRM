@@ -230,6 +230,12 @@ export class MetaMessagingService {
     );
   }
 
+  // Instagram Login (Business Login) accounts authenticate with an Instagram
+  // user token on graph.instagram.com — no Facebook Page in the picture.
+  private isInstagramLoginIntegration(integration?: Integration | null): boolean {
+    return integration?.config?.igLoginFlow === true;
+  }
+
   async getAccounts(workspaceId: string, refresh = false): Promise<any[]> {
     const integrations = await this.findMetaIntegrations(workspaceId);
     const results: any[] = [];
@@ -248,14 +254,23 @@ export class MetaMessagingService {
         continue;
       }
 
+      // A connect waiting for the page picker isn't an account yet — hydrating
+      // it would silently auto-attach the grant's first page.
+      if (integration.config?.pendingPageSelection === true) {
+        continue;
+      }
+
       let accountSummary: any = null;
       let liveReady = false;
       let warning: string | null = null;
 
       try {
+        const igLogin = this.isInstagramLoginIntegration(integration);
         const needsHydration = provider === 'facebook'
           ? !integration.config?.pageId || !integration.credentials?.pageAccessToken
-          : !integration.config?.pageId || !integration.credentials?.pageAccessToken || !integration.config?.igUserId;
+          : igLogin
+            ? !integration.config?.igUserId || !integration.credentials?.accessToken
+            : !integration.config?.pageId || !integration.credentials?.pageAccessToken || !integration.config?.igUserId;
 
         if (refresh || needsHydration) {
           if (provider === 'facebook') {
@@ -269,7 +284,9 @@ export class MetaMessagingService {
           accountSummary = this.readAccountSummary(integration, provider);
           liveReady = provider === 'facebook'
             ? !!integration.credentials?.pageAccessToken && !!integration.config?.pageId
-            : !!integration.credentials?.pageAccessToken && !!integration.config?.igUserId;
+            : igLogin
+              ? !!integration.credentials?.accessToken && !!integration.config?.igUserId
+              : !!integration.credentials?.pageAccessToken && !!integration.config?.igUserId;
         }
       } catch (error: any) {
         warning = error?.message || 'Could not refresh account details';
@@ -668,6 +685,7 @@ export class MetaMessagingService {
             recipient: { id: body.to },
             message: { text: message },
           },
+          this.isInstagramLoginIntegration(resolved.integration),
         );
       },
     });
@@ -724,6 +742,7 @@ export class MetaMessagingService {
               },
             },
           },
+          this.isInstagramLoginIntegration(resolved.integration),
         );
       },
     });
@@ -1163,6 +1182,12 @@ export class MetaMessagingService {
   }
 
   private async clearCachedPageCredentials(integration: Integration): Promise<void> {
+    // Instagram Login accounts have no derived Page token to refresh — an auth
+    // error there means the 60-day IG token expired and needs a reconnect.
+    if (this.isInstagramLoginIntegration(integration)) {
+      return;
+    }
+
     // Drop only the cached Page token; keep pageId/igUserId so the refresh
     // re-selects the same Page (matters for multi-page accounts).
     integration.credentials = {
@@ -1689,6 +1714,9 @@ export class MetaMessagingService {
         (integration.config as any)?.instagramId,
         (integration.config as any)?.igBusinessId,
         (integration.config as any)?.igScopedId,
+        (integration.config as any)?.igAppScopedId,
+        (integration.config as any)?.igLegacyBusinessId,
+        integration.credentials?.providerUserId,
         integration.externalId,
       ]
         .map((value) => String(value || '').trim())
@@ -1732,6 +1760,29 @@ export class MetaMessagingService {
     const usable = integrations.filter((integration) => this.integrationHasUsableToken(integration));
     for (const integration of usable) {
       try {
+        // Instagram Login accounts: ask graph.instagram.com which ids this
+        // token owns and compare against the webhook's account id.
+        if (this.isInstagramLoginIntegration(integration)) {
+          const igToken = String(integration.credentials?.accessToken || '').replace(/\s+/g, '');
+          if (!igToken) continue;
+          const meRes = await this.httpService.axiosRef.get('https://graph.instagram.com/v23.0/me', {
+            params: { fields: 'id,user_id,username', access_token: igToken },
+            timeout: 8000,
+          });
+          const ownIds = [meRes.data?.id, meRes.data?.user_id]
+            .map((value) => String(value || '').trim())
+            .filter(Boolean);
+          if (ownIds.includes(targetId)) {
+            integration.config = { ...(integration.config || {}), igScopedId: targetId };
+            await this.integrationRepository.save(integration);
+            this.logger.log(
+              `Self-healed IG webhook match (IG Login): integration=${integration.id.slice(0, 8)} igScopedId=${targetId} via @${meRes.data?.username || ''}`,
+            );
+            return integration;
+          }
+          continue;
+        }
+
         const { pageId, pageAccessToken } = await this.ensureInstagramMessagingCredentials(integration);
         if (!pageAccessToken || !pageId) continue;
 
@@ -1772,6 +1823,10 @@ export class MetaMessagingService {
     pageName?: string;
     pageAccessToken: string;
   }> {
+    if (integration.config?.pendingPageSelection === true) {
+      throw new BadRequestException('Facebook connect is waiting for page selection');
+    }
+
     const existingPageId = String(integration.config?.pageId || '').trim();
     const existingPageAccessToken = String(integration.credentials?.pageAccessToken || '').replace(/\s+/g, '');
     const existingPageName = String(integration.config?.pageName || '').trim() || undefined;
@@ -1829,6 +1884,24 @@ export class MetaMessagingService {
     igUserId: string;
     igUsername?: string;
   }> {
+    // Instagram Login flow: the IG user token plays the role of the page token
+    // and the IG account id the role of the page id, so the rest of the send
+    // pipeline stays unchanged.
+    if (this.isInstagramLoginIntegration(integration)) {
+      const igAccessToken = String(integration.credentials?.accessToken || '').replace(/\s+/g, '');
+      const igUserId = String(integration.config?.igUserId || '').trim();
+      if (!igAccessToken || !igUserId) {
+        throw new BadRequestException('Instagram integration is missing an access token — please reconnect');
+      }
+      return {
+        pageId: igUserId,
+        pageName: String(integration.config?.igUsername || integration.name || 'Instagram'),
+        pageAccessToken: igAccessToken,
+        igUserId,
+        igUsername: String(integration.config?.igUsername || '').trim() || undefined,
+      };
+    }
+
     const existingPageId = String(integration.config?.pageId || '').trim();
     const existingPageAccessToken = String(integration.credentials?.pageAccessToken || '').replace(/\s+/g, '');
     const existingIgUserId = String(integration.config?.igUserId || '').trim();
@@ -1895,11 +1968,20 @@ export class MetaMessagingService {
     return this.postToGraph('messenger', `${this.facebookApiUrl}/${pageId}/messages`, accessToken, payload);
   }
 
-  // Instagram messaging via the Facebook-Login flow is sent through the linked
-  // Page edge on graph.facebook.com (NOT graph.instagram.com), using the Page
-  // access token. The recipient id is the Instagram-scoped user id.
-  private async sendInstagramPayload(pageId: string, accessToken: string, payload: any): Promise<any> {
-    return this.postToGraph('instagram', `${this.facebookApiUrl}/${pageId}/messages`, accessToken, payload);
+  // Instagram messaging has two flavors: the Instagram Login flow sends via
+  // graph.instagram.com with the IG user token; the legacy Facebook-Login flow
+  // sends through the linked Page edge on graph.facebook.com with the Page
+  // token. The recipient id is the Instagram-scoped user id in both cases.
+  private async sendInstagramPayload(
+    pageId: string,
+    accessToken: string,
+    payload: any,
+    igLogin = false,
+  ): Promise<any> {
+    const url = igLogin
+      ? 'https://graph.instagram.com/v23.0/me/messages'
+      : `${this.facebookApiUrl}/${pageId}/messages`;
+    return this.postToGraph('instagram', url, accessToken, payload);
   }
 
   private async postToGraph(
@@ -1955,7 +2037,12 @@ export class MetaMessagingService {
       const { pageAccessToken } = await this.ensureInstagramMessagingCredentials(integration);
       // The Instagram messaging user-profile endpoint exposes `name` and
       // `profile_pic`. `username` is NOT valid here and fails the whole request.
-      const response = await this.httpService.axiosRef.get(`${this.facebookApiUrl}/${senderId}`, {
+      // Instagram Login accounts read the profile from graph.instagram.com
+      // with the IG user token instead of the Page edge.
+      const profileBaseUrl = this.isInstagramLoginIntegration(integration)
+        ? 'https://graph.instagram.com/v23.0'
+        : this.facebookApiUrl;
+      const response = await this.httpService.axiosRef.get(`${profileBaseUrl}/${senderId}`, {
         params: {
           fields: 'name,profile_pic',
           access_token: pageAccessToken,

@@ -13,6 +13,7 @@ export class ApiIntegrationHandler implements IntegrationHandler {
       const providerKey = String(integration.config?.provider || integration.externalId || '').trim().toLowerCase();
       const webhookFirstProviders = new Set(['esemneaza', 'payfunnels', 'payfunnel']);
       const isWebhookFirstProvider = webhookFirstProviders.has(providerKey);
+      const isSocialOAuthProvider = ['facebook', 'instagram', 'tiktok'].includes(providerKey);
 
       if (!baseUrl) {
         if (isWebhookFirstProvider) {
@@ -20,6 +21,14 @@ export class ApiIntegrationHandler implements IntegrationHandler {
             success: true,
             message: 'Webhook mode active. API URL is optional for this integration.',
             data: { mode: 'webhook_only' },
+          };
+        }
+        if (isSocialOAuthProvider && integration.credentials?.accessToken) {
+          const socialProbe = await this.probeSocialOAuthProvider(providerKey, integration.credentials.accessToken);
+          return {
+            success: true,
+            message: `${providerKey} OAuth connection successful`,
+            data: socialProbe,
           };
         }
         return { success: false, message: 'Base URL not configured' };
@@ -53,5 +62,48 @@ export class ApiIntegrationHandler implements IntegrationHandler {
 
   async handleWebhook(integration: Integration, payload: any): Promise<any> {
     return { event: 'api.webhook', data: payload };
+  }
+
+  private async probeSocialOAuthProvider(providerKey: string, accessToken: string): Promise<any> {
+    if (providerKey === 'instagram') {
+      // Instagram Login tokens live on graph.instagram.com; legacy
+      // Facebook-Login tokens only work on graph.facebook.com. Try the new
+      // flavor first, fall back to the legacy one.
+      try {
+        const res = await this.httpService.axiosRef.get('https://graph.instagram.com/v23.0/me', {
+          params: { fields: 'id,username' },
+          headers: { Authorization: `Bearer ${accessToken}` },
+          timeout: 10000,
+        });
+        return { provider: providerKey, profile: res.data };
+      } catch {
+        const res = await this.httpService.axiosRef.get('https://graph.facebook.com/v23.0/me', {
+          params: { fields: 'id,name' },
+          headers: { Authorization: `Bearer ${accessToken}` },
+          timeout: 10000,
+        });
+        return { provider: providerKey, profile: res.data };
+      }
+    }
+
+    if (providerKey === 'facebook') {
+      const res = await this.httpService.axiosRef.get('https://graph.facebook.com/v23.0/me', {
+        params: { fields: 'id,name' },
+        headers: { Authorization: `Bearer ${accessToken}` },
+        timeout: 10000,
+      });
+      return { provider: providerKey, profile: res.data };
+    }
+
+    if (providerKey === 'tiktok') {
+      const res = await this.httpService.axiosRef.get('https://open.tiktokapis.com/v2/user/info/', {
+        params: { fields: 'open_id,display_name' },
+        headers: { Authorization: `Bearer ${accessToken}` },
+        timeout: 10000,
+      });
+      return { provider: providerKey, profile: res.data?.data || res.data };
+    }
+
+    return { provider: providerKey };
   }
 }

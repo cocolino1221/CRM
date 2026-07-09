@@ -413,7 +413,7 @@ export class IntegrationsService implements OnModuleInit {
     }
 
     if (providerKey === 'instagram') {
-      return this.materializeInstagramPageAccounts(integration);
+      return this.materializeInstagramLoginAccount(integration);
     }
 
     return integration;
@@ -497,10 +497,15 @@ export class IntegrationsService implements OnModuleInit {
     });
 
     for (const row of instagramRows) {
-      const igUserId = String(row.config?.igUserId || '').trim();
-      const userAccessToken = String(row.credentials?.accessToken || '').replace(/\s+/g, '');
+      // The IG-user subscribed_apps edge only exists on the Instagram Login
+      // flow (graph.instagram.com). Legacy Facebook-Login rows get IG DMs via
+      // the linked Page's subscription — nothing to subscribe here.
+      if (row.config?.igLoginFlow !== true) continue;
 
-      if (!igUserId || !userAccessToken) continue;
+      const igUserId = String(row.config?.igUserId || '').trim();
+      const accessToken = String(row.credentials?.accessToken || '').replace(/\s+/g, '');
+
+      if (!igUserId || !accessToken) continue;
 
       try {
         await this.httpService.axiosRef.post(
@@ -508,8 +513,8 @@ export class IntegrationsService implements OnModuleInit {
           null,
           {
             params: {
-              subscribed_fields: 'messages',
-              access_token: userAccessToken,
+              subscribed_fields: 'messages,messaging_postbacks',
+              access_token: accessToken,
             },
             timeout: 15000,
           },
@@ -520,6 +525,7 @@ export class IntegrationsService implements OnModuleInit {
           webhookSubscribedAt: new Date().toISOString(),
         };
         await this.integrationRepository.save(row);
+        this.logger.log(`[${row.id}] Instagram Login webhook subscribed for IG user ${igUserId}`);
       } catch (error: any) {
         this.logger.warn(
           `[${row.id}] Instagram webhook auto-subscribe failed for IG user ${igUserId}: ${error?.response?.data?.error?.message || error?.message || 'unknown error'}`,
@@ -542,11 +548,44 @@ export class IntegrationsService implements OnModuleInit {
       timeout: 15000,
     });
 
-    const pages = (Array.isArray(response.data?.data) ? response.data.data : [])
+    const allPages = (Array.isArray(response.data?.data) ? response.data.data : [])
       .filter((page: any) => String(page?.id || '').trim() && String(page?.access_token || '').trim());
 
-    if (!pages.length) {
+    if (!allPages.length) {
       return integration;
+    }
+
+    // The Meta grant must always cover every page (a re-auth with fewer pages
+    // revokes the missing ones for the whole app), so workspace separation
+    // happens here: with several pages available and no selection made yet,
+    // park the connect in "pending selection" and let the user pick which
+    // pages belong to this workspace before anything is materialized.
+    const selectedPageIds = (Array.isArray(integration.config?.selectedPageIds)
+      ? integration.config.selectedPageIds
+      : []
+    ).map((value: any) => String(value || '').trim()).filter(Boolean);
+
+    let pages = allPages;
+    if (selectedPageIds.length) {
+      pages = allPages.filter((page: any) => selectedPageIds.includes(String(page.id).trim()));
+      if (!pages.length) {
+        pages = allPages;
+      }
+    } else if (allPages.length > 1) {
+      integration.config = {
+        ...(integration.config || {}),
+        provider: 'facebook',
+        pendingPageSelection: true,
+        availablePages: allPages.map((page: any) => ({
+          id: String(page.id).trim(),
+          name: String(page.name || 'Facebook Page').trim(),
+        })),
+      };
+      const saved = await this.integrationRepository.save(integration);
+      this.logger.log(
+        `[${integration.id}] Facebook connect has ${allPages.length} pages — waiting for page selection`,
+      );
+      return saved;
     }
 
     const existingRows = await this.integrationRepository.find({
@@ -603,6 +642,10 @@ export class IntegrationsService implements OnModuleInit {
         pageId,
         pageName,
       };
+      // Picker bookkeeping keys must not leak into materialized page rows.
+      delete (target.config as any).pendingPageSelection;
+      delete (target.config as any).availablePages;
+      delete (target.config as any).selectedPageIds;
       target.credentials = {
         ...(target.credentials || {}),
         ...(integration.credentials || {}),
@@ -616,113 +659,228 @@ export class IntegrationsService implements OnModuleInit {
       }
     }
 
-    await this.removeOrphanSocialIntegrations(siblingRows);
-
-    return primary;
-  }
-
-  private async materializeInstagramPageAccounts(integration: Integration): Promise<Integration> {
-    const userAccessToken = String(integration.credentials?.accessToken || '').replace(/\s+/g, '');
-    if (!userAccessToken) {
-      return integration;
-    }
-
-    const response = await this.httpService.axiosRef.get('https://graph.facebook.com/v23.0/me/accounts', {
-      params: {
-        fields: 'id,name,access_token,instagram_business_account{id,username},connected_instagram_account{id,username}',
-        access_token: userAccessToken,
-      },
-      timeout: 15000,
-    });
-
-    const rows = (Array.isArray(response.data?.data) ? response.data.data : [])
-      .map((page: any) => {
-        const igAccount = page?.instagram_business_account || page?.connected_instagram_account;
-        return {
-          pageId: String(page?.id || '').trim(),
-          pageName: String(page?.name || '').trim(),
-          pageAccessToken: String(page?.access_token || '').trim(),
-          igUserId: String(igAccount?.id || '').trim(),
-          igUsername: String(igAccount?.username || '').trim(),
-        };
-      })
-      .filter((item: any) => item.pageId && item.pageAccessToken && item.igUserId);
-
-    if (!rows.length) {
-      return integration;
-    }
-
-    const existingRows = await this.integrationRepository.find({
-      where: { workspaceId: integration.workspaceId, type: IntegrationType.API },
-      order: { createdAt: 'ASC' },
-    });
-
-    const siblingRows = existingRows.filter((row) => {
-      if (row.id === integration.id) return false;
-      const provider = String(row.config?.provider || row.externalId || '').trim().toLowerCase();
-      return provider === 'instagram';
-    });
-
-    const currentIgUserId = String(integration.config?.igUserId || '').trim();
-    const currentRow =
-      (currentIgUserId && rows.find((item) => item.igUserId === currentIgUserId))
-      || rows[0];
-
-    let primary = integration;
-
-    for (const item of rows) {
-      const accountName = item.igUsername
-        ? `@${item.igUsername.replace(/^@+/, '')}`
-        : (item.pageName || integration.name || 'Instagram');
-      const isCurrentTarget = currentRow.igUserId === item.igUserId;
-      const existing = siblingRows.find((row) => String(row.config?.igUserId || '').trim() === item.igUserId);
-      const target = isCurrentTarget
-        ? integration
-        : existing || this.integrationRepository.create({
-            workspaceId: integration.workspaceId,
-            userId: integration.userId,
-            type: IntegrationType.API,
-            name: accountName,
-            description: integration.description,
-            authType: IntegrationAuthType.OAUTH2,
-            externalId: 'instagram',
-            config: {},
-            credentials: {},
-            metadata: integration.metadata,
-            permissions: integration.permissions,
-            status: IntegrationStatus.ACTIVE,
-            isEnabled: integration.isEnabled,
-            isVerified: integration.isVerified,
-          });
-
-      target.name = accountName;
-      target.status = IntegrationStatus.ACTIVE;
-      target.lastActivityAt = new Date();
-      target.config = {
-        ...(target.config || {}),
-        ...(integration.config || {}),
-        provider: 'instagram',
-        pageId: item.pageId,
-        pageName: item.pageName || 'Facebook Page',
-        igUserId: item.igUserId,
-        igUsername: item.igUsername || accountName,
-      };
-      target.credentials = {
-        ...(target.credentials || {}),
-        ...(integration.credentials || {}),
-        pageAccessToken: item.pageAccessToken,
-      };
-      target.clearErrors();
-
-      const saved = await this.integrationRepository.save(target);
-      if (isCurrentTarget) {
-        primary = saved;
+    // Pages this grant covers but the user did NOT select for this workspace:
+    // drop their leftover rows so conversations stop routing here.
+    if (selectedPageIds.length) {
+      const grantPageIds = new Set(allPages.map((page: any) => String(page.id).trim()));
+      const deselected = siblingRows.filter((row) => {
+        const rowPageId = String(row.config?.pageId || '').trim();
+        return rowPageId && grantPageIds.has(rowPageId) && !selectedPageIds.includes(rowPageId);
+      });
+      if (deselected.length) {
+        try {
+          await this.integrationRepository.remove(deselected);
+          this.logger.log(`Removed ${deselected.length} deselected Facebook page row(s)`);
+        } catch (error: any) {
+          this.logger.warn(`Failed to remove deselected page rows: ${error?.message || error}`);
+        }
       }
     }
 
     await this.removeOrphanSocialIntegrations(siblingRows);
 
     return primary;
+  }
+
+  // Page picker support: list the Facebook pages this connect's grant covers,
+  // flagging where each one is already connected, so the workspace only
+  // attaches the pages that belong to it.
+  async listFacebookPageOptions(id: string, workspaceId: string): Promise<any> {
+    const integration = await this.findOne(id, workspaceId);
+    const userAccessToken = String(integration.credentials?.accessToken || '').replace(/\s+/g, '');
+    if (!userAccessToken) {
+      throw new BadRequestException('Integration has no access token — reconnect Facebook first');
+    }
+
+    const response = await this.httpService.axiosRef.get('https://graph.facebook.com/v23.0/me/accounts', {
+      params: { fields: 'id,name', access_token: userAccessToken },
+      timeout: 15000,
+    });
+    const pages = (Array.isArray(response.data?.data) ? response.data.data : [])
+      .map((page: any) => ({
+        id: String(page?.id || '').trim(),
+        name: String(page?.name || 'Facebook Page').trim(),
+      }))
+      .filter((page: any) => page.id);
+
+    const pageIds = pages.map((page: any) => page.id);
+    const existingRows = pageIds.length
+      ? await this.integrationRepository
+          .createQueryBuilder('integration')
+          .where('integration.type = :type', { type: IntegrationType.API })
+          .andWhere("integration.config->>'provider' = 'facebook'")
+          .andWhere("integration.config->>'pageId' IN (:...pageIds)", { pageIds })
+          .getMany()
+      : [];
+
+    return {
+      integrationId: integration.id,
+      pendingSelection: integration.config?.pendingPageSelection === true,
+      pages: pages.map((page: any) => {
+        const rows = existingRows.filter((row) => String(row.config?.pageId || '').trim() === page.id);
+        return {
+          ...page,
+          connectedHere: rows.some((row) => row.workspaceId === workspaceId && row.id !== integration.id),
+          connectedElsewhere: rows.some((row) => row.workspaceId !== workspaceId),
+        };
+      }),
+    };
+  }
+
+  async selectFacebookPages(id: string, workspaceId: string, pageIds: string[]): Promise<Integration> {
+    const integration = await this.findOne(id, workspaceId);
+    const cleanIds = (Array.isArray(pageIds) ? pageIds : [])
+      .map((value) => String(value || '').trim())
+      .filter(Boolean);
+    if (!cleanIds.length) {
+      throw new BadRequestException('Select at least one page');
+    }
+
+    // A page already attached to a different workspace must not be attached
+    // here too — its webhooks would land in both tenants.
+    const conflicting = await this.integrationRepository
+      .createQueryBuilder('integration')
+      .where('integration.type = :type', { type: IntegrationType.API })
+      .andWhere('integration."workspaceId" != :workspaceId', { workspaceId })
+      .andWhere("integration.config->>'provider' = 'facebook'")
+      .andWhere("integration.config->>'pageId' IN (:...pageIds)", { pageIds: cleanIds })
+      .getMany();
+    if (conflicting.length) {
+      const names = conflicting.map((row) => row.config?.pageName || row.name).join(', ');
+      throw new BadRequestException(
+        `Already connected in another workspace: ${names}. Disconnect there first.`,
+      );
+    }
+
+    integration.config = {
+      ...(integration.config || {}),
+      selectedPageIds: cleanIds,
+      pendingPageSelection: false,
+    };
+    await this.integrationRepository.save(integration);
+
+    const materialized = await this.materializeFacebookPageAccounts(integration);
+    await this.ensureFacebookWebhookSubscriptions(workspaceId);
+    return materialized;
+  }
+
+  // Instagram Login (Business Login): the OAuth token belongs to the Instagram
+  // professional account itself — no Facebook Page involved. Resolve the
+  // account's ids via graph.instagram.com and store them for webhook matching.
+  private async materializeInstagramLoginAccount(integration: Integration): Promise<Integration> {
+    const igAccessToken = String(integration.credentials?.accessToken || '').replace(/\s+/g, '');
+    if (!igAccessToken) {
+      return integration;
+    }
+
+    const response = await this.httpService.axiosRef.get('https://graph.instagram.com/v23.0/me', {
+      params: {
+        fields: 'id,user_id,username,name,profile_picture_url',
+        access_token: igAccessToken,
+      },
+      timeout: 15000,
+    });
+
+    const igUserId = String(response.data?.user_id || response.data?.id || '').trim();
+    const igAppScopedId = String(response.data?.id || '').trim();
+    const igUsername = String(response.data?.username || '').trim();
+
+    if (!igUserId) {
+      this.logger.warn(`[${integration.id}] Instagram Login /me returned no user id`);
+      return integration;
+    }
+
+    const accountName = igUsername
+      ? `@${igUsername.replace(/^@+/, '')}`
+      : (integration.name || 'Instagram');
+
+    // A fresh connect may duplicate an account that already has a row (legacy
+    // Facebook-Login flow or an earlier connect). Merge into the existing row
+    // so conversation history keeps pointing at one integration.
+    const existingRows = await this.integrationRepository.find({
+      where: { workspaceId: integration.workspaceId, type: IntegrationType.API },
+      order: { createdAt: 'ASC' },
+    });
+    const normalizeUsername = (value: any) =>
+      String(value || '').trim().replace(/^@+/, '').toLowerCase();
+    const newUsername = normalizeUsername(igUsername);
+
+    const duplicate = existingRows.find((row) => {
+      if (row.id === integration.id) return false;
+      const provider = String(row.config?.provider || row.externalId || '').trim().toLowerCase();
+      if (provider !== 'instagram') return false;
+      const ids = [
+        row.config?.igUserId,
+        (row.config as any)?.igScopedId,
+        (row.config as any)?.igAppScopedId,
+        (row.config as any)?.igLegacyBusinessId,
+      ].map((value) => String(value || '').trim());
+      if (ids.includes(igUserId) || (!!igAppScopedId && ids.includes(igAppScopedId))) return true;
+      // Same account reconnected across OAuth flavors can surface under new
+      // ids — the username is the stable handle that ties them together.
+      return !!newUsername && normalizeUsername(row.config?.igUsername) === newUsername;
+    });
+
+    const target = duplicate || integration;
+
+    // Detect whether this OAuth grant belongs to the same IG account the row
+    // held before. If the user logged into a *different* Instagram account,
+    // the old ids (and any linked-Page leftovers) must be dropped, otherwise
+    // this row would keep claiming the previous account's webhooks.
+    const previousUsername = normalizeUsername(target.config?.igUsername);
+    const previousIgUserId = String(target.config?.igUserId || '').trim();
+    const sameAccount =
+      !previousUsername || !newUsername
+        ? previousIgUserId === igUserId
+        : previousUsername === newUsername;
+
+    const preservedConfig = { ...(target.config || {}) };
+    if (!sameAccount) {
+      delete (preservedConfig as any).pageId;
+      delete (preservedConfig as any).pageName;
+      delete (preservedConfig as any).igScopedId;
+      delete (preservedConfig as any).igLegacyBusinessId;
+      delete (preservedConfig as any).webhookSubscribedAt;
+    }
+
+    target.name = accountName;
+    target.status = IntegrationStatus.ACTIVE;
+    target.lastActivityAt = new Date();
+    target.config = {
+      ...preservedConfig,
+      provider: 'instagram',
+      igLoginFlow: true,
+      igUserId,
+      igAppScopedId,
+      igUsername: igUsername || accountName,
+      profilePictureUrl: String(response.data?.profile_picture_url || '').trim() || undefined,
+      // Keep the previous id of the same account so webhooks that still
+      // arrive in the old id namespace (via the legacy Page subscription)
+      // keep matching this row.
+      ...(sameAccount && previousIgUserId && previousIgUserId !== igUserId
+        ? { igLegacyBusinessId: previousIgUserId }
+        : {}),
+    };
+    target.credentials = {
+      ...(target.credentials || {}),
+      ...(integration.credentials || {}),
+      // Legacy Facebook-Login page token no longer applies on this flow.
+      pageAccessToken: '',
+    };
+    target.clearErrors();
+
+    const saved = await this.integrationRepository.save(target);
+
+    if (duplicate) {
+      // The freshly-created row was only the vehicle for the OAuth dance.
+      try {
+        await this.integrationRepository.remove(integration);
+      } catch (error: any) {
+        this.logger.warn(`Could not remove duplicate IG connect row: ${error?.message || error}`);
+      }
+    }
+
+    return saved;
   }
 
   // Delete leftover orphan social rows (aborted OAuth that never materialized a

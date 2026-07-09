@@ -377,6 +377,32 @@ export class IntegrationsController {
     return { analytics };
   }
 
+  @Get(':id/social-pages')
+  @ApiOperation({ summary: 'List Facebook pages available for this connect (page picker)' })
+  @ApiResponse({ status: 200, description: 'Pages the grant covers, with connection flags' })
+  async getSocialPages(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+  ): Promise<any> {
+    return this.integrationsService.listFacebookPageOptions(id, req.user.workspaceId);
+  }
+
+  @Post(':id/social-pages/select')
+  @ApiOperation({ summary: 'Attach the selected Facebook pages to this workspace' })
+  @ApiResponse({ status: 200, description: 'Pages materialized' })
+  async selectSocialPages(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() body: { pageIds: string[] },
+  ): Promise<{ integration: Integration }> {
+    const integration = await this.integrationsService.selectFacebookPages(
+      id,
+      req.user.workspaceId,
+      body?.pageIds || [],
+    );
+    return { integration };
+  }
+
   // OAuth Endpoints - Public (no authentication required)
   // IMPORTANT: Specific routes must come BEFORE parameterized routes
   @Public()
@@ -413,9 +439,12 @@ export class IntegrationsController {
         throw new Error('Integration workspace mismatch');
       }
 
-      await this.integrationsService.authenticate(integration.id, integration.workspaceId, { code });
+      const authenticated = await this.integrationsService.authenticate(integration.id, integration.workspaceId, { code });
 
-      res.redirect(`${frontendUrl}/integrations/callback?success=1&integration=${integration.id}&name=${encodeURIComponent(integration.name)}`);
+      const pendingPages = authenticated?.config?.pendingPageSelection === true ? '&pendingPages=1' : '';
+      res.redirect(
+        `${frontendUrl}/integrations/callback?success=1&integration=${authenticated?.id || integration.id}&name=${encodeURIComponent(authenticated?.name || integration.name)}${pendingPages}`,
+      );
     } catch (err) {
       this.logger.error(`OAuth callback failed:`, err);
       res.redirect(`${frontendUrl}/integrations/callback?error=${encodeURIComponent(err.message)}`);

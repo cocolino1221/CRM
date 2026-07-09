@@ -12,6 +12,9 @@ export interface OAuthTokens {
   expiresAt?: Date;
   tokenType: string;
   scope?: string;
+  // Instagram Login returns the app-scoped user id together with the token;
+  // stored so webhook matching can recognize this account.
+  providerUserId?: string;
 }
 
 export interface OAuthConfig {
@@ -23,6 +26,7 @@ export interface OAuthConfig {
   tokenUrl: string;
   revokeUrl?: string;
   providerKey?: string;
+  configId?: string;
   authorizeClientParam?: 'client_id' | 'client_key';
   tokenClientParam?: 'client_id' | 'client_key';
   scopeDelimiter?: 'space' | 'comma';
@@ -161,20 +165,19 @@ export class OAuthService {
           ],
           envPrefixes: ['FACEBOOK'],
         },
+        // Instagram API with Instagram Login (Business Login). The business
+        // logs in with their Instagram account directly — no Facebook Page
+        // needed. Uses the Instagram app id/secret from the app dashboard's
+        // Instagram product, NOT the Meta app id.
         instagram: {
-          authUrl: 'https://www.facebook.com/v23.0/dialog/oauth',
-          tokenUrl: 'https://graph.facebook.com/v23.0/oauth/access_token',
+          authUrl: 'https://www.instagram.com/oauth/authorize',
+          tokenUrl: 'https://api.instagram.com/oauth/access_token',
           defaultScopes: [
-            'public_profile',
-            'email',
-            'pages_show_list',
-            'pages_read_engagement',
-            'pages_manage_metadata',
-            'instagram_basic',
-            'instagram_manage_comments',
-            'instagram_manage_messages',
+            'instagram_business_basic',
+            'instagram_business_manage_messages',
           ],
-          envPrefixes: ['INSTAGRAM', 'FACEBOOK'],
+          envPrefixes: ['INSTAGRAM'],
+          scopeDelimiter: 'comma',
         },
         tiktok: {
           authUrl: 'https://www.tiktok.com/v2/auth/authorize/',
@@ -226,8 +229,10 @@ export class OAuthService {
     let clientSecret = readFirstEnvValue(clientSecretCandidates);
 
     // Reuse existing Meta app credentials (already used by WhatsApp embedded signup)
-    // when dedicated Facebook/Instagram OAuth vars are not configured yet.
-    if ((!clientId || !clientSecret) && (providerKey === 'facebook' || providerKey === 'instagram')) {
+    // when dedicated Facebook OAuth vars are not configured yet. Instagram Login
+    // must use the Instagram app id/secret — the Meta app id is rejected by
+    // instagram.com, so no fallback there.
+    if ((!clientId || !clientSecret) && providerKey === 'facebook') {
       clientId = clientId || this.configService.get<string>('META_APP_ID');
       clientSecret = clientSecret || this.configService.get<string>('META_APP_SECRET');
     }
@@ -257,6 +262,21 @@ export class OAuthService {
       scopes = scopesEnv.split(',').map((s: string) => s.trim());
     }
 
+    // Facebook Login for Business requires a config_id instead of a scope list.
+    // Business-type Meta apps reject the classic scope= dialog with
+    // "this app needs at least one supported permission". When a config id is
+    // configured for facebook/instagram we switch to the config_id flow.
+    // config_id only applies to the Facebook Login for Business dialog.
+    // Instagram Login (instagram.com) uses a plain scope list instead.
+    let configId: string | undefined;
+    if (providerKey === 'facebook') {
+      configId = readFirstEnvValue([
+        'OAUTH_FACEBOOK_CONFIG_ID',
+        'OAUTH_META_LOGIN_CONFIG_ID',
+        'META_LOGIN_CONFIG_ID',
+      ]);
+    }
+
     // If no scopes in env, use empty array (will be handled by generateAuthUrl)
     return {
       clientId,
@@ -264,6 +284,7 @@ export class OAuthService {
       redirectUri,
       scopes,
       providerKey,
+      configId,
       authorizeClientParam,
       tokenClientParam,
       scopeDelimiter,
@@ -291,8 +312,13 @@ export class OAuthService {
   generateAuthUrl(integration: Integration, state?: string): string {
     const config = this.getOAuthConfig(integration);
 
-    // Get scopes from: integration config > OAuth config > registry defaults
-    let scopes = integration.config?.scopes || config.scopes;
+    // Get scopes from: integration config > OAuth config > registry defaults.
+    // Instagram Login always uses the provider defaults — a legacy row may
+    // still carry Facebook-Login scopes that instagram.com would reject.
+    let scopes =
+      config.providerKey === 'instagram'
+        ? config.scopes
+        : integration.config?.scopes || config.scopes;
 
     // If still no scopes, try to get from registry
     if (!scopes || scopes.length === 0) {
@@ -303,12 +329,18 @@ export class OAuthService {
     const params = new URLSearchParams();
     params.append(config.authorizeClientParam || 'client_id', config.clientId);
     params.append('redirect_uri', config.redirectUri);
-    params.append(
-      'scope',
-      Array.isArray(scopes)
-        ? scopes.join(config.scopeDelimiter === 'comma' ? ',' : ' ')
-        : scopes
-    );
+    if (config.configId) {
+      // Facebook Login for Business: send config_id instead of scope. The
+      // permissions/assets live in the Meta dashboard configuration.
+      params.append('config_id', config.configId);
+    } else {
+      params.append(
+        'scope',
+        Array.isArray(scopes)
+          ? scopes.join(config.scopeDelimiter === 'comma' ? ',' : ' ')
+          : scopes
+      );
+    }
     params.append('response_type', 'code');
     params.append('state', state || this.generateState(integration));
 
@@ -414,9 +446,12 @@ export class OAuthService {
     this.logger.log(`Exchanging code for tokens - Integration: ${integration.id}, Type: ${integration.type}`);
 
     try {
+      if (integration.type === IntegrationType.API && config.providerKey === 'instagram') {
+        return await this.exchangeInstagramLoginCode(integration, config, params);
+      }
+
       const isMetaSocialApiProvider =
-        integration.type === IntegrationType.API &&
-        (config.providerKey === 'facebook' || config.providerKey === 'instagram');
+        integration.type === IntegrationType.API && config.providerKey === 'facebook';
       const response = isMetaSocialApiProvider
         ? await firstValueFrom(
             this.httpService.get(config.tokenUrl, {
@@ -474,10 +509,87 @@ export class OAuthService {
     }
   }
 
+  // Instagram Login (Business Login) token flow: exchange the code for a
+  // short-lived token at api.instagram.com (form POST), then immediately trade
+  // it for a ~60-day long-lived token on graph.instagram.com. There is no
+  // refresh token — the long-lived token is renewed via ig_refresh_token.
+  private async exchangeInstagramLoginCode(
+    integration: Integration,
+    config: OAuthConfig,
+    params: URLSearchParams,
+  ): Promise<OAuthTokens> {
+    const shortLivedResponse = await firstValueFrom(
+      this.httpService.post(config.tokenUrl, params.toString(), {
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      }),
+    );
+
+    const raw = shortLivedResponse.data;
+    const shortLived = Array.isArray(raw?.data) ? raw.data[0] : raw?.data && raw.data.access_token ? raw.data : raw;
+    const shortLivedToken = String(shortLived?.access_token || '').trim();
+    const providerUserId = String(shortLived?.user_id || '').trim() || undefined;
+
+    if (!shortLivedToken) {
+      this.logger.error(`Instagram Login: no access token in response: ${JSON.stringify(raw)}`);
+      throw new BadRequestException('Instagram did not return an access token');
+    }
+
+    const longLivedResponse = await firstValueFrom(
+      this.httpService.get('https://graph.instagram.com/access_token', {
+        params: {
+          grant_type: 'ig_exchange_token',
+          client_secret: config.clientSecret,
+          access_token: shortLivedToken,
+        },
+      }),
+    );
+
+    const accessToken = String(longLivedResponse.data?.access_token || '').trim() || shortLivedToken;
+    const expiresIn = Number(longLivedResponse.data?.expires_in || 0);
+
+    const tokens: OAuthTokens = {
+      accessToken,
+      tokenType: longLivedResponse.data?.token_type || 'Bearer',
+      providerUserId,
+    };
+    if (expiresIn > 0) {
+      tokens.expiresAt = new Date(Date.now() + expiresIn * 1000);
+    }
+
+    this.logger.log(
+      `Instagram Login tokens obtained for integration ${integration.id} (long-lived: ${accessToken !== shortLivedToken})`,
+    );
+    return tokens;
+  }
+
   /**
    * Refresh access token using refresh token
    */
   async refreshTokens(integration: Integration): Promise<OAuthTokens> {
+    const providerKey =
+      integration.type === IntegrationType.API ? this.getApiOAuthProviderKey(integration) : null;
+
+    // Instagram Login long-lived tokens renew themselves (no refresh token).
+    if (providerKey === 'instagram' && integration.credentials?.accessToken) {
+      const response = await firstValueFrom(
+        this.httpService.get('https://graph.instagram.com/refresh_access_token', {
+          params: {
+            grant_type: 'ig_refresh_token',
+            access_token: String(integration.credentials.accessToken).trim(),
+          },
+        }),
+      );
+      const tokens: OAuthTokens = {
+        accessToken: String(response.data?.access_token || '').trim(),
+        tokenType: response.data?.token_type || 'Bearer',
+      };
+      if (response.data?.expires_in) {
+        tokens.expiresAt = new Date(Date.now() + Number(response.data.expires_in) * 1000);
+      }
+      this.logger.log(`Instagram Login token refreshed for integration ${integration.id}`);
+      return tokens;
+    }
+
     if (!integration.credentials?.refreshToken) {
       throw new BadRequestException('No refresh token available');
     }
