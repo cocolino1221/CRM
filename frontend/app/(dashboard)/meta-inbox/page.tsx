@@ -1592,37 +1592,37 @@ export default function MessagesPage() {
 
   return (
     <>
-      <div className="flex flex-col overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-sm xl:h-[calc(100dvh-6.5rem)]">
-        <div className="border-b border-slate-200 px-5 py-4">
-          <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+      <div className="flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm xl:h-[calc(100dvh-6.5rem)]">
+        <div className="border-b border-slate-200 px-4 py-2.5">
+          <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
             <div>
-              <h1 className="text-[28px] font-semibold tracking-tight text-slate-950">Messages</h1>
+              <h1 className="text-lg font-semibold tracking-tight text-slate-950">Messages</h1>
             </div>
 
-            <div className="flex flex-1 items-center justify-end gap-3 xl:max-w-3xl">
-              <div className="relative w-full max-w-xl">
-                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <div className="flex flex-1 items-center justify-end gap-2 xl:max-w-3xl">
+              <div className="relative w-full max-w-md">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
                 <input
                   value={searchTerm}
                   onChange={(event) => setSearchTerm(event.target.value)}
-                  placeholder="Search through inbox conversations"
-                  className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-10 pr-4 text-sm outline-none transition focus:border-slate-400"
+                  placeholder="Search conversations"
+                  className="w-full rounded-lg border border-slate-200 bg-slate-50/60 py-1.5 pl-9 pr-3 text-[13px] outline-none transition-colors duration-150 focus:border-slate-400 focus:bg-white"
                 />
               </div>
 
               <button
                 onClick={() => refreshAll(false)}
-                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600 transition hover:bg-slate-50"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-600 transition-colors duration-150 hover:bg-slate-50"
               >
-                <RefreshCw className={cn('h-4 w-4', refreshing && 'animate-spin')} />
+                <RefreshCw className={cn('h-3.5 w-3.5', refreshing && 'animate-spin')} />
                 Refresh
               </button>
 
               <button
                 onClick={() => setShowTools(true)}
-                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600 transition hover:bg-slate-50"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-600 transition-colors duration-150 hover:bg-slate-50"
               >
-                <Settings2 className="h-4 w-4" />
+                <Settings2 className="h-3.5 w-3.5" />
                 Tools
               </button>
             </div>
@@ -1640,8 +1640,8 @@ export default function MessagesPage() {
           </div>
         )}
 
-        <div className="border-b border-slate-200 px-5 py-3">
-          <div className="flex flex-wrap items-center gap-2">
+        <div className="border-b border-slate-200 px-4 py-2">
+          <div className="flex flex-wrap items-center gap-1.5">
             {(
               [
                 { key: 'all', count: inboxStats.all },
@@ -1656,12 +1656,12 @@ export default function MessagesPage() {
                   key={item.key}
                   onClick={() => setActiveFilter(item.key)}
                   className={cn(
-                    'inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium transition',
-                    active ? 'bg-slate-100 text-slate-950' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700',
+                    'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium transition-colors duration-150',
+                    active ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-700',
                   )}
                 >
                   <span>{filterLabels[item.key]}</span>
-                  <span className={cn('rounded-full px-1.5 py-0.5 text-[11px]', active ? 'bg-white text-slate-600' : 'bg-slate-100 text-slate-500')}>
+                  <span className={cn('rounded-full px-1.5 py-0.5 text-[10px]', active ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-500')}>
                     {item.count}
                   </span>
                 </button>
@@ -1671,7 +1671,7 @@ export default function MessagesPage() {
         </div>
 
         {accountFilters.length > 2 && (
-          <div className="border-b border-slate-200 px-5 py-3">
+          <div className="border-b border-slate-200 px-4 py-2">
             <div className="flex flex-wrap items-center gap-2">
               {accountFilters.map((item) => {
                 const active = activeAccountFilter === item.key;
@@ -1700,15 +1700,15 @@ export default function MessagesPage() {
         <div
           className={cn(
             'grid min-h-[600px] xl:min-h-0 xl:flex-1 xl:overflow-hidden',
-            showDetails ? 'xl:grid-cols-[300px_minmax(0,1fr)_280px]' : 'xl:grid-cols-[300px_minmax(0,1fr)]',
+            showDetails ? 'xl:grid-cols-[280px_minmax(0,1fr)_260px]' : 'xl:grid-cols-[280px_minmax(0,1fr)]',
           )}
         >
           <aside className="flex min-h-0 flex-col border-r border-slate-200 bg-white">
-            <div className="border-b border-slate-200 px-4 py-3">
+            <div className="border-b border-slate-200 px-3 py-2">
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <div className="text-sm font-semibold text-slate-950">Open chats</div>
-                  <div className="text-xs text-slate-400">{visibleConversations.length} conversations</div>
+                  <div className="text-[13px] font-semibold text-slate-950">Open chats</div>
+                  <div className="text-[11px] text-slate-400">{visibleConversations.length} conversations</div>
                 </div>
                 <button
                   onClick={() => {
@@ -1737,7 +1737,7 @@ export default function MessagesPage() {
                       key={conversation.id}
                       onClick={() => selectConversation(conversation.id)}
                       className={cn(
-                        'flex w-full items-start gap-3 border-b border-slate-100 px-4 py-3 text-left transition',
+                        'flex w-full items-start gap-2.5 border-b border-slate-100 px-3 py-2.5 text-left transition-colors duration-150',
                         theme.rowAccent,
                         active ? 'bg-slate-50' : 'bg-white hover:bg-slate-50/70',
                       )}
@@ -1745,14 +1745,14 @@ export default function MessagesPage() {
                       <ContactAvatar
                         name={conversation.contactName}
                         avatarUrl={conversation.avatarUrl}
-                        className={cn('mt-0.5 h-10 w-10 text-xs font-semibold', theme.subtleIcon, theme.avatarRing)}
+                        className={cn('mt-0.5 h-9 w-9 text-[11px] font-semibold', theme.subtleIcon, theme.avatarRing)}
                       />
 
                       <div className="min-w-0 flex-1">
                         <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0">
                             <div className="flex items-center gap-2">
-                              <p className="truncate text-sm font-medium text-slate-950">{conversation.contactName}</p>
+                              <p className="truncate text-[13px] font-medium text-slate-950">{conversation.contactName}</p>
                               {conversation.unreadCount > 0 && <span className="h-2 w-2 rounded-full bg-[#0a66ff]" />}
                             </div>
                             <div className="mt-0.5 flex items-center gap-2 text-[11px] text-slate-400">
@@ -1775,7 +1775,7 @@ export default function MessagesPage() {
                           <span className="shrink-0 text-[11px] text-slate-400">{formatRelative(conversation.lastMessageTime)}</span>
                         </div>
 
-                        <p className="mt-1 line-clamp-2 text-[13px] leading-5 text-slate-500">{conversation.lastMessage}</p>
+                        <p className="mt-0.5 line-clamp-1 text-xs leading-5 text-slate-500">{conversation.lastMessage}</p>
                       </div>
                     </button>
                   );
@@ -1792,23 +1792,23 @@ export default function MessagesPage() {
                 : 'border-2 border-transparent',
             )}
           >
-            <div className="border-b border-slate-200 px-5 py-4">
-              <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+            <div className="border-b border-slate-200 px-4 py-2.5">
+              <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
                 <div>
                   {selectedConversation ? (
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2.5">
                       <ContactAvatar
                         name={selectedConversation.contactName}
                         avatarUrl={selectedConversation.avatarUrl}
                         className={cn(
-                          'h-11 w-11 text-xs font-semibold',
+                          'h-9 w-9 text-[11px] font-semibold',
                           channelTheme[selectedConversation.channel].subtleIcon,
                           channelTheme[selectedConversation.channel].avatarRing,
                         )}
                       />
                       <div>
                         <div className="flex flex-wrap items-center gap-2">
-                          <h2 className="text-lg font-semibold text-slate-950">{selectedConversation.contactName}</h2>
+                          <h2 className="text-[15px] font-semibold text-slate-950">{selectedConversation.contactName}</h2>
                           <ChannelBadge channel={selectedConversation.channel} />
                           <StatusBadge liveReady={!!activeIntegration?.liveReady} />
                           {selectedConversation.messageProfileName && (
@@ -1899,17 +1899,17 @@ export default function MessagesPage() {
               )}
             </div>
 
-            <div className="flex-1 overflow-y-auto bg-[#fbfbfc] px-5 py-6">
+            <div className="flex-1 overflow-y-auto bg-[#fafafb] px-4 py-4">
               {selectedMessages.length > 0 ? (
-                <div className="mx-auto flex max-w-4xl flex-col gap-4">
+                <div className="mx-auto flex max-w-3xl flex-col gap-2.5">
                   {selectedMessages.map((message) => {
                     const inbound = message.direction === 'inbound';
                     const theme = channelTheme[selectedConversation?.channel || activeChannel];
 
                     return (
                       <div key={message.id} className={cn('group flex', inbound ? 'justify-start' : 'justify-end')}>
-                        <div className="max-w-[78%]">
-                          <div className={cn('mb-1 flex items-center gap-2 px-1 text-xs text-slate-400', inbound ? 'justify-start' : 'justify-end')}>
+                        <div className="max-w-[72%]">
+                          <div className={cn('mb-0.5 flex items-center gap-2 px-1 text-[11px] text-slate-400', inbound ? 'justify-start' : 'justify-end')}>
                             <span>{formatTime(message.occurredAt)}</span>
                             <button
                               onClick={() => deleteSingleMessage(message.id)}
@@ -1921,7 +1921,7 @@ export default function MessagesPage() {
                           </div>
                           <div
                             className={cn(
-                              'rounded-[22px] border px-4 py-3 text-[15px] shadow-sm',
+                              'rounded-2xl border px-3.5 py-2 text-sm shadow-sm',
                               inbound ? 'border-slate-200 bg-white text-slate-800' : `border-transparent ${theme.outboundBubble}`,
                             )}
                           >
@@ -1933,7 +1933,7 @@ export default function MessagesPage() {
                               return (
                                 <>
                                   {showText && (
-                                    <p className="whitespace-pre-wrap leading-6">{message.description}</p>
+                                    <p className="whitespace-pre-wrap leading-[1.55]">{message.description}</p>
                                   )}
 
                                   {kind === 'image' && url && (
@@ -2024,7 +2024,7 @@ export default function MessagesPage() {
 
             <div
               className={cn(
-                'bg-white px-5 py-4',
+                'bg-white px-4 py-3',
                 channelTheme[selectedConversation?.channel || activeChannel].composerDivider,
               )}
             >
@@ -2082,20 +2082,20 @@ export default function MessagesPage() {
                       }
                     />
                   </div>
-                  <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_140px]">
+                  <div className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_110px]">
                     <textarea
                       value={outboundText}
                       onChange={(event) => setOutboundText(event.target.value)}
                       placeholder="Write a reply..."
-                      rows={3}
-                      className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-slate-400"
+                      rows={2}
+                      className="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-[13px] outline-none transition-colors duration-150 focus:border-slate-400"
                     />
                     <button
                       onClick={sendText}
                       disabled={actionBusy}
-                      className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-950 px-4 py-3 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                      className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-slate-950 px-3 py-2 text-[13px] font-medium text-white transition-colors duration-150 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
                     >
-                      {actionBusy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                      {actionBusy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
                       Send
                     </button>
                   </div>
@@ -2107,7 +2107,7 @@ export default function MessagesPage() {
                     {!isRecording && !recordedBlob && (
                       <button
                         onClick={startRecording}
-                        className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-4 py-3 text-sm font-medium text-white transition hover:bg-slate-800"
+                        className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-3.5 py-2 text-[13px] font-medium text-white transition-colors duration-150 hover:bg-slate-800"
                       >
                         <Mic className="h-4 w-4" />
                         Înregistrează
@@ -2116,7 +2116,7 @@ export default function MessagesPage() {
                     {isRecording && (
                       <button
                         onClick={stopRecording}
-                        className="inline-flex items-center gap-2 rounded-2xl bg-red-600 px-4 py-3 text-sm font-medium text-white transition hover:bg-red-500"
+                        className="inline-flex items-center gap-2 rounded-xl bg-red-600 px-3.5 py-2 text-[13px] font-medium text-white transition-colors duration-150 hover:bg-red-500"
                       >
                         <Square className="h-4 w-4" />
                         Oprește înregistrarea
@@ -2128,7 +2128,7 @@ export default function MessagesPage() {
                         <button
                           onClick={sendRecordingNow}
                           disabled={actionBusy || !activeRecipient}
-                          className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-4 py-3 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                          className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-3.5 py-2 text-[13px] font-medium text-white transition-colors duration-150 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
                         >
                           {actionBusy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
                           Trimite acum
@@ -2136,7 +2136,7 @@ export default function MessagesPage() {
                         <button
                           onClick={discardRecording}
                           disabled={actionBusy}
-                          className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 px-4 py-3 text-sm font-medium text-slate-600 transition hover:bg-slate-50"
+                          className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3.5 py-2 text-[13px] font-medium text-slate-600 transition-colors duration-150 hover:bg-slate-50"
                         >
                           <X className="h-4 w-4" />
                           Renunță
