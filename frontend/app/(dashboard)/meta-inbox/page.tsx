@@ -181,6 +181,8 @@ const channelTheme: Record<
     avatarRing: string;
     rowAccent: string;
     panelBorder: string;
+    composerDivider: string;
+    composerPill: string;
   }
 > = {
   messenger: {
@@ -193,6 +195,8 @@ const channelTheme: Record<
     avatarRing: 'ring-2 ring-[#0078ff]/60',
     rowAccent: 'border-l-[3px] border-l-[#0078ff]',
     panelBorder: 'border-2 border-[#0078ff]/45',
+    composerDivider: 'border-t-2 border-t-[#0078ff]/50',
+    composerPill: 'border-[#0078ff]/40',
   },
   instagram: {
     label: 'Instagram',
@@ -204,6 +208,8 @@ const channelTheme: Record<
     avatarRing: 'ring-2 ring-fuchsia-500/60',
     rowAccent: 'border-l-[3px] border-l-fuchsia-500',
     panelBorder: 'border-2 border-fuchsia-500/45',
+    composerDivider: 'border-t-2 border-t-fuchsia-500/50',
+    composerPill: 'border-fuchsia-500/40',
   },
 };
 
@@ -2016,14 +2022,26 @@ export default function MessagesPage() {
                 )}
             </div>
 
-            <div className="border-t border-slate-200 bg-white px-5 py-4">
+            <div
+              className={cn(
+                'bg-white px-5 py-4',
+                channelTheme[selectedConversation?.channel || activeChannel].composerDivider,
+              )}
+            >
               <div className="flex items-center justify-between gap-3">
-                <div className="inline-flex rounded-full border border-slate-200 bg-slate-50 p-1">
+                <div
+                  className={cn(
+                    'inline-flex rounded-full border bg-slate-50 p-1',
+                    channelTheme[selectedConversation?.channel || activeChannel].composerPill,
+                  )}
+                >
                   <button
                     onClick={() => setComposerMode('text')}
                     className={cn(
-                      'rounded-full px-3 py-1.5 text-xs font-medium transition',
-                      composerMode === 'text' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500',
+                      'rounded-full px-3 py-1.5 text-xs font-semibold transition',
+                      composerMode === 'text'
+                        ? cn('bg-white shadow-sm', channelTheme[selectedConversation?.channel || activeChannel].listAccent)
+                        : 'text-slate-500',
                     )}
                   >
                     Text
@@ -2031,8 +2049,10 @@ export default function MessagesPage() {
                   <button
                     onClick={() => setComposerMode('audio')}
                     className={cn(
-                      'rounded-full px-3 py-1.5 text-xs font-medium transition',
-                      composerMode === 'audio' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500',
+                      'rounded-full px-3 py-1.5 text-xs font-semibold transition',
+                      composerMode === 'audio'
+                        ? cn('bg-white shadow-sm', channelTheme[selectedConversation?.channel || activeChannel].listAccent)
+                        : 'text-slate-500',
                     )}
                   >
                     Audio
