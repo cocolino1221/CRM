@@ -180,6 +180,7 @@ const channelTheme: Record<
     listAccent: string;
     avatarRing: string;
     rowAccent: string;
+    panelBorder: string;
   }
 > = {
   messenger: {
@@ -191,6 +192,7 @@ const channelTheme: Record<
     listAccent: 'text-[#0078ff]',
     avatarRing: 'ring-2 ring-[#0078ff]/60',
     rowAccent: 'border-l-[3px] border-l-[#0078ff]',
+    panelBorder: 'border-2 border-[#0078ff]/45',
   },
   instagram: {
     label: 'Instagram',
@@ -201,6 +203,7 @@ const channelTheme: Record<
     listAccent: 'text-fuchsia-600',
     avatarRing: 'ring-2 ring-fuchsia-500/60',
     rowAccent: 'border-l-[3px] border-l-fuchsia-500',
+    panelBorder: 'border-2 border-fuchsia-500/45',
   },
 };
 
@@ -1775,7 +1778,14 @@ export default function MessagesPage() {
             </div>
           </aside>
 
-          <main className="flex min-h-0 flex-col bg-white">
+          <main
+            className={cn(
+              'flex min-h-0 flex-col bg-white',
+              selectedConversation
+                ? channelTheme[selectedConversation.channel].panelBorder
+                : 'border-2 border-transparent',
+            )}
+          >
             <div className="border-b border-slate-200 px-5 py-4">
               <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
                 <div>
