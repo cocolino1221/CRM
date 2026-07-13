@@ -3,7 +3,9 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Notification, NotificationType } from '../database/entities/notification.entity';
 import { DeviceToken, DevicePlatform } from '../database/entities/device-token.entity';
+import { User } from '../database/entities/user.entity';
 import { PushNotificationService } from './push-notification.service';
+import { UpdateNotificationPreferencesDto } from './dto/notification-preferences.dto';
 
 export interface CreateNotificationDto {
   type: NotificationType;
@@ -25,6 +27,8 @@ export class NotificationsService {
     @InjectRepository(DeviceToken)
     private deviceTokenRepository: Repository<DeviceToken>,
     private pushNotificationService: PushNotificationService,
+    @InjectRepository(User)
+    private userRepository: Repository<User>,
   ) {}
 
   async create(workspaceId: string, dto: CreateNotificationDto): Promise<Notification> {
@@ -205,5 +209,24 @@ export class NotificationsService {
 
   notifyMessage(workspaceId: string, userId: string, channel: 'instagram' | 'facebook' | 'whatsapp', title: string, message: string, metadata?: Record<string, any>) {
     return this.create(workspaceId, { type: NotificationType.WHATSAPP, userId, title, message, metadata, category: `message:${channel}` });
+  }
+
+  async getPreferences(userId: string): Promise<{ push: Record<string, boolean>; quietHours?: any }> {
+    const user = await this.userRepository.findOne({ where: { id: userId }, select: ['id', 'preferences'] });
+    const n = (user?.preferences as any)?.notifications || {};
+    return { push: n.push || {}, quietHours: n.quietHours };
+  }
+
+  async setPreferences(userId: string, dto: UpdateNotificationPreferencesDto) {
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    if (!user) throw new NotFoundException('User not found');
+    const prefs: any = { ...(user.preferences || {}) };
+    const notifications = { ...(prefs.notifications || {}) };
+    if (dto.push) notifications.push = { ...(notifications.push || {}), ...dto.push };
+    if (dto.quietHours !== undefined) notifications.quietHours = dto.quietHours;
+    prefs.notifications = notifications;
+    user.preferences = prefs;
+    await this.userRepository.save(user);
+    return { push: notifications.push || {}, quietHours: notifications.quietHours };
   }
 }

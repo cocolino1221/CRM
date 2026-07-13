@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Put,
   Delete,
   Patch,
   Param,
@@ -15,6 +16,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { WorkspaceGuard } from '../auth/guards/workspace.guard';
 import { CurrentWorkspace } from '../auth/decorators/current-workspace.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { UpdateNotificationPreferencesDto } from './dto/notification-preferences.dto';
 
 @ApiTags('Notifications')
 @Controller('notifications')
@@ -40,6 +42,21 @@ export class NotificationsController {
   ) {
     const count = await this.notificationsService.getUnreadCount(workspaceId, userId);
     return { count };
+  }
+
+  @Get('preferences')
+  @ApiOperation({ summary: 'Get notification preferences for current user' })
+  async getPreferences(@CurrentUser('id') userId: string) {
+    return this.notificationsService.getPreferences(userId);
+  }
+
+  @Put('preferences')
+  @ApiOperation({ summary: 'Update notification preferences for current user' })
+  async updatePreferences(
+    @CurrentUser('id') userId: string,
+    @Body() dto: UpdateNotificationPreferencesDto,
+  ) {
+    return this.notificationsService.setPreferences(userId, dto);
   }
 
   @Patch(':id/read')
