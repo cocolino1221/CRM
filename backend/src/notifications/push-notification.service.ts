@@ -7,6 +7,7 @@ import * as jwt from 'jsonwebtoken';
 import { DeviceToken, DevicePlatform } from '../database/entities/device-token.entity';
 import { User } from '../database/entities/user.entity';
 import { NotificationType } from '../database/entities/notification.entity';
+import { isWithinQuietHours } from './quiet-hours';
 
 @Injectable()
 export class PushNotificationService implements OnModuleInit {
@@ -184,6 +185,7 @@ export class PushNotificationService implements OnModuleInit {
       link?: string;
       notificationId?: string;
       metadata?: Record<string, any>;
+      category?: string;
     },
   ): Promise<void> {
     if (!this.apnsEnabled && !this.firebaseInitialized) return;
@@ -195,12 +197,15 @@ export class PushNotificationService implements OnModuleInit {
     });
     if (!user) return;
 
-    const prefKey = this.getPreferenceKey(notification.type);
-    if (prefKey) {
-      const pushPrefs = (user.preferences as any)?.notifications?.push;
-      if (pushPrefs && pushPrefs[prefKey] === false) {
-        return;
-      }
+    // Fine-grained category gate (falls back to the legacy per-type key).
+    const category = notification.category || this.getPreferenceKey(notification.type);
+    const notifPrefs = (user.preferences as any)?.notifications;
+    if (category && notifPrefs?.push && notifPrefs.push[category] === false) {
+      return;
+    }
+    // Quiet hours: suppress push (the in-app notification row is already saved).
+    if (isWithinQuietHours(notifPrefs?.quietHours)) {
+      return;
     }
 
     // Get active device tokens
