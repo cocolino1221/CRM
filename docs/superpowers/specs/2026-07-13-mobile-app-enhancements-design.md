@@ -91,6 +91,18 @@ A shared composer with **two icon buttons** before the input:
 
 ---
 
+## Feature 5b — Connected accounts sync (web ↔ mobile)
+
+Connecting a social account (Facebook Page / Instagram / WhatsApp) happens on the **web** via OAuth (the Facebook Login SDK isn't practical inside the RN app). Because web and mobile share the **same backend + workspace**, an account connected on web already belongs to the workspace the mobile app reads from.
+
+Requirement: the mobile app must **reflect the current connected accounts** with no manual step:
+- The social inbox / channels screen fetches the same `getAccounts` (meta-messaging) + WhatsApp accounts endpoints the web uses — single source of truth.
+- **Pull-to-refresh** on the inbox/channels screen re-fetches accounts + conversations, so a freshly-connected web account appears immediately.
+- On app focus/foreground, refetch accounts (lightweight) so newly connected channels light up without a restart.
+- Channel/account filters and the composer's channel options derive from this live account list, so a new account is instantly usable.
+
+No mobile-side OAuth/connect UI in scope — connecting stays on web; mobile consumes and displays.
+
 ## Feature 5 — White-label workspace logo (optional)
 
 - **Backend:** add `brandLogoUrl?` to `workspace.settings` (JSONB). Endpoint `PUT /workspaces/current/branding` (admin only) uploads a logo via existing `/upload` → R2 → stores the URL. `GET` current workspace already returns settings.
