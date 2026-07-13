@@ -32,4 +32,11 @@ describe('isWithinQuietHours', () => {
     expect(isWithinQuietHours(q, atTz(tz, 14, 1))).toBe(false);
     expect(isWithinQuietHours(q, atTz(tz, 9, 0))).toBe(false);
   });
+  it('returns false for an invalid timezone instead of throwing', () => {
+    const q = { enabled: true, start: '22:00', end: '08:00', timezone: 'Not/AZone' };
+    expect(isWithinQuietHours(q, new Date('2026-06-15T23:30:00Z'))).toBe(false);
+  });
+  it('returns false when quietHours is null', () => {
+    expect(isWithinQuietHours(null)).toBe(false);
+  });
 });
