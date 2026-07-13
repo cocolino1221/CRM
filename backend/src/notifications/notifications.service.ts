@@ -12,6 +12,7 @@ export interface CreateNotificationDto {
   userId: string;
   link?: string;
   metadata?: Record<string, any>;
+  category?: string;
 }
 
 @Injectable()
@@ -27,8 +28,10 @@ export class NotificationsService {
   ) {}
 
   async create(workspaceId: string, dto: CreateNotificationDto): Promise<Notification> {
+    const metadata = { ...(dto.metadata || {}), ...(dto.category ? { category: dto.category } : {}) };
     const notification = this.notificationRepository.create({
       ...dto,
+      metadata,
       workspaceId,
     });
 
@@ -42,7 +45,8 @@ export class NotificationsService {
         message: dto.message,
         link: dto.link,
         notificationId: saved.id,
-        metadata: dto.metadata,
+        metadata,
+        category: dto.category,
       })
       .catch((err) => this.logger.error(`Push error: ${err.message}`));
 
@@ -189,5 +193,17 @@ export class NotificationsService {
       userId,
       metadata: { phoneNumber },
     });
+  }
+
+  notifyLead(workspaceId: string, userId: string, source: 'typeform' | 'social' | 'manual', title: string, message: string, link?: string) {
+    return this.create(workspaceId, { type: NotificationType.LEAD, userId, title, message, link, category: `lead:${source}` });
+  }
+
+  notifyPayment(workspaceId: string, userId: string, kind: 'received' | 'failed' | 'contract', title: string, message: string, link?: string) {
+    return this.create(workspaceId, { type: NotificationType.SYSTEM, userId, title, message, link, category: `payment:${kind}` });
+  }
+
+  notifyMessage(workspaceId: string, userId: string, channel: 'instagram' | 'facebook' | 'whatsapp', title: string, message: string, metadata?: Record<string, any>) {
+    return this.create(workspaceId, { type: NotificationType.WHATSAPP, userId, title, message, metadata, category: `message:${channel}` });
   }
 }
