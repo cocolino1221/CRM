@@ -47,6 +47,8 @@ jspm_packages/
 
 # Logs
 logs
+!frontend/app/(dashboard)/logs/
+!frontend/app/(dashboard)/logs/page.tsx
 *.log
 
 # Runtime data
@@ -84,3 +86,8 @@ Thumbs.db
 frontend/ios/
 frontend/android/
 frontend/out/
+
+# Mobile service credentials
+**/google-services.json
+**/GoogleService-Info.plist
+.superpowers/
