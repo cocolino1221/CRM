@@ -141,6 +141,14 @@ No mobile-side OAuth/connect UI in scope — connecting stays on web; mobile con
 5. **Filters** — setter/closer chips, mobile + web.
 6. **White-label logo** — upload UI + mobile rendering.
 
+## Deployment pipeline (deferred — separate track, AFTER features)
+
+Build/ship without Expo EAS, run locally on the Mac:
+- `expo prebuild` generates native `ios/` + `android/`.
+- **fastlane** lanes: `testflight` (build `.ipa` with Xcode → upload to App Store Connect via API key) and `apk` (Gradle `assembleRelease` → signed `.apk`).
+- Prereqs (user-provided): Apple Developer account (ready), App Store Connect API key, iOS signing certs/profile, Android keystore.
+- Not in this spec's plan; scheduled as its own effort once the features land. Could later be lifted into GitHub Actions using the same lanes.
+
 ## Out of scope (YAGNI)
 
 - Per-category quiet-hours schedules (one global window only).
