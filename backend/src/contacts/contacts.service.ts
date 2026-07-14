@@ -12,6 +12,7 @@ import { CreateContactDto } from './dto/create-contact.dto';
 import { UpdateContactDto } from './dto/update-contact.dto';
 import { QueryContactsDto, SortField } from './dto/query-contacts.dto';
 import { normalizePhoneDigits, normalizePhoneE164 } from '../common/utils/phone.util';
+import { NotificationsService } from '../notifications/notifications.service';
 
 export interface ContactsListResult {
   contacts: Contact[];
@@ -19,6 +20,14 @@ export interface ContactsListResult {
   page: number;
   limit: number;
   totalPages: number;
+}
+
+/** Maps a raw contact/lead source value to the coarse category used by notifications. */
+export function leadSource(contactSource: string): 'typeform' | 'social' | 'manual' {
+  const s = String(contactSource || '').toLowerCase();
+  if (s.includes('typeform')) return 'typeform';
+  if (['facebook', 'instagram', 'whatsapp', 'meta', 'social'].some((k) => s.includes(k))) return 'social';
+  return 'manual';
 }
 
 @Injectable()
@@ -37,6 +46,7 @@ export class ContactsService {
     @InjectRepository(Deal)
     private dealRepository: Repository<Deal>,
     private eventEmitter: EventEmitter2,
+    private notificationsService: NotificationsService,
   ) {}
 
   async findAll(workspaceId: string, query: QueryContactsDto): Promise<ContactsListResult> {
@@ -414,6 +424,21 @@ export class ContactsService {
       occurredAt: new Date().toISOString(),
     });
     this.logger.log(`Contact created event emitted for contact ${savedContact.id}`);
+
+    // Fire-and-forget lead notification; a notify failure must never break contact creation
+    if (savedContact.ownerId) {
+      const leadName = `${savedContact.firstName ?? ''} ${savedContact.lastName ?? ''}`.trim();
+      this.notificationsService
+        .notifyLead(
+          workspaceId,
+          savedContact.ownerId,
+          leadSource(savedContact.source),
+          'New lead',
+          leadName || savedContact.email || 'New lead',
+          `/leads/${savedContact.id}`,
+        )
+        .catch((err) => this.logger.error(`Lead notification failed for contact ${savedContact.id}: ${err.message}`));
+    }
 
     // Return contact with relations
     return this.findOne(workspaceId, savedContact.id, ['owner', 'company']);

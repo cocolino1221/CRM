@@ -57,6 +57,7 @@ export interface CreateEsemneazaDocumentInput {
   paymentDescription?: string;
   paymentLinkUrl?: string;
   paymentLinkName?: string;
+  paymentLinkId?: string;
   sendPaymentEmail?: boolean;
   sendPaymentWhatsApp?: boolean;
 }
@@ -158,6 +159,7 @@ export interface PayfunnelDashboardPayment {
   customerName?: string;
   customerId?: string;
   customerEmail?: string;
+  customerPhone?: string;
   paymentMethodType?: string;
   cardLast4?: string;
   productNames?: string[];
@@ -183,6 +185,7 @@ export interface PayfunnelDashboardSubscription {
   customerName?: string;
   customerId?: string;
   customerEmail?: string;
+  customerPhone?: string;
   planName?: string;
   interval?: string;
   paymentType?: string;
@@ -223,6 +226,7 @@ export interface PayfunnelDashboardResult {
   errors?: string[];
   payments: PayfunnelDashboardPayment[];
   subscriptions: PayfunnelDashboardSubscription[];
+  riskSubscriptions: PayfunnelDashboardSubscription[];
   links: PayfunnelDashboardLink[];
 }
 
@@ -799,6 +803,7 @@ export class DocumentsService {
         message: 'PayFunnels integration is not connected.',
         payments: [],
         subscriptions: [],
+        riskSubscriptions: [],
         links: [],
       };
     }
@@ -837,6 +842,7 @@ export class DocumentsService {
         message: 'Webhook-only mode: afisez platile si linkurile locale din CRM. Pentru import complet, seteaza API URL sau path-uri absolute (https://...).',
         payments: localSnapshot.payments,
         subscriptions: [],
+        riskSubscriptions: [],
         links: Array.from(mergedLinksMap.values()),
       };
     }
@@ -898,6 +904,11 @@ export class DocumentsService {
     const subscriptions = this.deduplicatePayfunnelSubscriptions(subscriptionRows
       .map((row: any) => this.parsePayfunnelSubscriptionRow(row))
       .filter((row): row is PayfunnelDashboardSubscription => !!row));
+    const suppressedRiskSubscriptionIds = this.getSuppressedPayfunnelRiskSubscriptionIds(integration);
+    const riskSubscriptions = this.buildPayfunnelRiskSubscriptions(subscriptions).filter((row) => {
+      const normalizedId = String(row.id || '').trim().toLowerCase();
+      return !normalizedId || !suppressedRiskSubscriptionIds.has(normalizedId);
+    });
 
     const apiLinks = this.deduplicatePayfunnelLinks(linksRows
       .map((row: any) => this.parsePayfunnelLinkRow(row, 'payfunnel_api'))
@@ -931,6 +942,7 @@ export class DocumentsService {
       ...(errors.length > 0 ? { errors } : {}),
       payments: mergedPayments,
       subscriptions,
+      riskSubscriptions,
       links: Array.from(mergedLinksMap.values()),
     };
   }
@@ -947,8 +959,10 @@ export class DocumentsService {
     for (const payment of candidates) {
       const paymentReference = String(payment.paymentReference || '').trim();
       const externalPaymentId = String(payment.id || '').trim();
+      const paymentLinkId = String(payment.paymentLinkId || '').trim();
+      const paymentLinkUrl = String(payment.paymentUrl || '').trim();
       const customerEmail = this.normalizeEmail(payment.customerEmail);
-      if (!paymentReference && !externalPaymentId && !customerEmail) {
+      if (!paymentReference && !externalPaymentId && !paymentLinkId && !paymentLinkUrl && !customerEmail) {
         continue;
       }
 
@@ -956,7 +970,8 @@ export class DocumentsService {
         workspaceId,
         paymentReference,
         externalPaymentId,
-        payment.paymentLinkId,
+        paymentLinkId,
+        paymentLinkUrl,
       );
       if (!document && customerEmail) {
         document = await this.findLatestPayfunnelDocumentByEmail(workspaceId, customerEmail);
@@ -976,6 +991,12 @@ export class DocumentsService {
       const metadataPatch: Record<string, any> = {
         ...(paymentReference ? { paymentReference } : {}),
         ...(externalPaymentId ? { externalPaymentId } : {}),
+        ...(paymentLinkId ? { paymentLinkId } : {}),
+        ...(paymentLinkId ? { preferredLinkId: paymentLinkId } : {}),
+        ...(payment.paymentLinkName ? { preferredLinkName: String(payment.paymentLinkName).trim() } : {}),
+        ...(paymentLinkUrl ? { paymentLink: paymentLinkUrl } : {}),
+        ...(paymentLinkUrl ? { preferredLinkUrl: paymentLinkUrl } : {}),
+        ...(payment.customerName ? { customerName: String(payment.customerName).trim() } : {}),
         ...(customerEmail ? { customerEmail } : {}),
         ...subscriptionSnapshot,
       };
@@ -1053,11 +1074,15 @@ export class DocumentsService {
       });
       await this.documentRepository.save(document);
       await this.applyPaymentStatusSideEffects(document, 'failed', failureReason);
-      await this.notifyDocumentStakeholders(document, {
-        title: 'Plata esuata',
-        message: `${payment.customerName || 'Clientul'} nu a platit pentru "${document.name}"${failureReason ? `: ${failureReason}` : '.'}`,
-        link: '/payments',
-      });
+      await this.notifyDocumentStakeholders(
+        document,
+        {
+          title: 'Plata esuata',
+          message: `${payment.customerName || 'Clientul'} nu a platit pentru "${document.name}"${failureReason ? `: ${failureReason}` : '.'}`,
+          link: '/payments',
+        },
+        'payment:failed',
+      );
     }
   }
 
@@ -1782,6 +1807,7 @@ export class DocumentsService {
         data.paymentLinkName,
         templatePaymentRule?.paymentLinkName,
       );
+    const preferredPaymentLinkId = this.getFirstNonEmpty(data.paymentLinkId);
     const sendPaymentEmail = data.sendPaymentEmail !== false;
     const sendPaymentWhatsApp = data.sendPaymentWhatsApp !== false;
 
@@ -1831,6 +1857,8 @@ export class DocumentsService {
           },
           ...(preferredPaymentLinkUrl ? { preferredLinkUrl: preferredPaymentLinkUrl } : {}),
           ...(preferredPaymentLinkName ? { preferredLinkName: preferredPaymentLinkName } : {}),
+          ...(preferredPaymentLinkId ? { preferredLinkId: preferredPaymentLinkId } : {}),
+          ...(preferredPaymentLinkId ? { paymentLinkId: preferredPaymentLinkId } : {}),
         },
       },
       sentAt: new Date(),
@@ -1862,6 +1890,7 @@ export class DocumentsService {
       sendWhatsApp?: boolean;
       paymentLinkUrl?: string;
       paymentLinkName?: string;
+      paymentLinkId?: string;
     },
   ): Promise<Document> {
     const document = await this.documentRepository.findOne({
@@ -1885,6 +1914,11 @@ export class DocumentsService {
     const manualPaymentLinkName = this.getFirstNonEmpty(
       options?.paymentLinkName,
       paymentData.preferredLinkName,
+    );
+    const manualPaymentLinkId = this.getFirstNonEmpty(
+      options?.paymentLinkId,
+      paymentData.preferredLinkId,
+      paymentData.paymentLinkId,
     );
 
     const amountCandidate =
@@ -1913,7 +1947,7 @@ export class DocumentsService {
       throw new BadRequestException('Document recipient email is required to send payment link');
     }
 
-    let paymentLink: { url: string; externalPaymentId?: string; raw?: any };
+    let paymentLink: { url: string; externalPaymentId?: string; paymentLinkId?: string; raw?: any };
     if (manualPaymentLinkUrl) {
       const isHttp = /^https?:\/\//i.test(manualPaymentLinkUrl);
       if (!isHttp) {
@@ -1922,6 +1956,7 @@ export class DocumentsService {
       paymentLink = {
         url: manualPaymentLinkUrl,
         externalPaymentId: paymentData.externalPaymentId,
+        paymentLinkId: manualPaymentLinkId,
         raw: { mode: 'manual_link' },
       };
     } else {
@@ -1962,6 +1997,12 @@ export class DocumentsService {
         paymentLink: paymentLink.url,
         ...(manualPaymentLinkName ? { preferredLinkName: manualPaymentLinkName } : {}),
         ...(manualPaymentLinkUrl ? { preferredLinkUrl: manualPaymentLinkUrl } : {}),
+        ...(this.getFirstNonEmpty(paymentLink.paymentLinkId, manualPaymentLinkId)
+          ? { preferredLinkId: this.getFirstNonEmpty(paymentLink.paymentLinkId, manualPaymentLinkId) }
+          : {}),
+        ...(this.getFirstNonEmpty(paymentLink.paymentLinkId, manualPaymentLinkId)
+          ? { paymentLinkId: this.getFirstNonEmpty(paymentLink.paymentLinkId, manualPaymentLinkId) }
+          : {}),
         paymentReference,
         externalPaymentId: paymentLink.externalPaymentId,
         updatedAt: new Date(),
@@ -1972,6 +2013,7 @@ export class DocumentsService {
       currency,
       paymentReference,
       externalPaymentId: paymentLink.externalPaymentId,
+      paymentLinkId: paymentLink.paymentLinkId || manualPaymentLinkId,
       paymentLinkUrl: paymentLink.url,
     });
 
@@ -2265,10 +2307,14 @@ export class DocumentsService {
       document.addAuditEntry('esemneaza.signed', 'webhook', { event });
       const savedDocument = await this.documentRepository.save(document);
 
-      await this.notifyDocumentStakeholders(savedDocument, {
-        title: 'Contract semnat',
-        message: `Documentul "${savedDocument.name}" a fost semnat.`,
-      });
+      await this.notifyDocumentStakeholders(
+        savedDocument,
+        {
+          title: 'Contract semnat',
+          message: `Documentul "${savedDocument.name}" a fost semnat.`,
+        },
+        'payment:contract',
+      );
 
       const currentPaymentMetadata = {
         ...((savedDocument.metadata?.payment as Record<string, any>) || {}),
@@ -2438,11 +2484,15 @@ export class DocumentsService {
         ...metadataScopes.map((scope) => scope?.reference),
         ...metadataScopes.map((scope) => scope?.transactionReference),
         ...metadataScopes.map((scope) => scope?.orderReference),
+        ...metadataScopes.map((scope) => scope?.invoiceId),
+        ...metadataScopes.map((scope) => scope?.receiptId),
         ...scopeValues((scope) => scope?.paymentReference),
         ...scopeValues((scope) => scope?.reference),
         ...scopeValues((scope) => scope?.transactionReference),
         ...scopeValues((scope) => scope?.orderReference),
         ...scopeValues((scope) => scope?.invoiceNumber),
+        ...scopeValues((scope) => scope?.invoiceId),
+        ...scopeValues((scope) => scope?.receiptId),
         ...scopeValues((scope) => scope?.payment?.reference),
         ...scopeValues((scope) => scope?.transaction?.reference),
       ) || '',
@@ -2455,6 +2505,7 @@ export class DocumentsService {
         ...scopeValues((scope) => scope?.paymentId),
         ...scopeValues((scope) => scope?.transactionId),
         ...scopeValues((scope) => scope?.chargeId),
+        ...scopeValues((scope) => scope?.charge?.id),
         ...scopeValues((scope) => scope?.id),
         ...scopeValues((scope) => scope?.payment?.id),
         ...scopeValues((scope) => scope?.transaction?.id),
@@ -2471,6 +2522,22 @@ export class DocumentsService {
         ...scopeValues((scope) => scope?.paymentLink?.linkId),
       ) || '',
     ).trim();
+    const paymentLinkUrl = String(
+      this.getFirstNonEmpty(
+        ...metadataScopes.map((scope) => scope?.paymentLink),
+        ...metadataScopes.map((scope) => scope?.paymentUrl),
+        ...metadataScopes.map((scope) => scope?.checkoutUrl),
+        ...metadataScopes.map((scope) => scope?.url),
+        ...scopeValues((scope) => scope?.paymentLink),
+        ...scopeValues((scope) => scope?.paymentUrl),
+        ...scopeValues((scope) => scope?.checkoutUrl),
+        ...scopeValues((scope) => scope?.url),
+        ...scopeValues((scope) => scope?.link),
+        ...scopeValues((scope) => scope?.paymentLink?.url),
+        ...scopeValues((scope) => scope?.paymentLink?.checkoutUrl),
+      ) || '',
+    ).trim();
+    const webhookPaymentPatch = this.extractPayfunnelWebhookPaymentPatch(payload);
     const customerEmail = this.extractPaymentCustomerEmail(payload);
 
     let document: Document | null = null;
@@ -2487,6 +2554,7 @@ export class DocumentsService {
         paymentReference,
         externalPaymentId,
         paymentLinkId,
+        paymentLinkUrl,
       );
     }
 
@@ -2533,19 +2601,22 @@ export class DocumentsService {
             ? `${payerName} a platit in PayFunnels, dar tranzactia nu este legata de un contract in CRM.`
             : `${payerName} a avut o plata esuata in PayFunnels${inferredFailureReason ? `: ${inferredFailureReason}` : '.'}`,
           userId: inferredUserId ? String(inferredUserId) : undefined,
-          notifyLeadership: isPaidWithoutDocument,
+          notifyLeadership: true,
           metadata: {
             source: 'payfunnel.webhook',
             status: isPaidWithoutDocument ? 'paid' : 'failed',
             paymentReference,
             externalPaymentId,
             paymentLinkId,
+            paymentLinkUrl,
             customerEmail,
+            webhookPaymentPatch,
             payload,
           },
+          category: `payment:${isPaidWithoutDocument ? 'received' : 'failed'}`,
         });
         this.logger.warn(
-          `PayFunnels webhook payment without matching document (workspace=${integration.workspaceId}, status=${statusRaw || eventName || 'unknown'}, reference=${paymentReference || '-'}, paymentId=${externalPaymentId || '-'}, linkId=${paymentLinkId || '-'}, email=${customerEmail || '-'})`,
+          `PayFunnels webhook payment without matching document (workspace=${integration.workspaceId}, status=${statusRaw || eventName || 'unknown'}, reference=${paymentReference || '-'}, paymentId=${externalPaymentId || '-'}, linkId=${paymentLinkId || '-'}, linkUrl=${paymentLinkUrl || '-'}, email=${customerEmail || '-'})`,
         );
       }
       return { success: true, message: 'Document not found for payment webhook' };
@@ -2568,12 +2639,15 @@ export class DocumentsService {
       ...scopeValues((scope) => scope?.totalAmountPaid),
       ...scopeValues((scope) => scope?.chargedAmount),
       ...scopeValues((scope) => scope?.chargeAmount),
+      webhookPaymentPatch.chargeAmount,
+      webhookPaymentPatch.amount,
       paymentMetadata.amount,
     );
     const parsedCurrency = this.getFirstNonEmpty(
       ...scopeValues((scope) => scope?.currency),
       ...scopeValues((scope) => scope?.currencyCode),
       ...scopeValues((scope) => scope?.amount?.currency),
+      webhookPaymentPatch.currency,
       paymentMetadata.currency,
     );
 
@@ -2585,12 +2659,16 @@ export class DocumentsService {
         ...document.metadata,
         payment: {
           ...paymentMetadata,
+          ...webhookPaymentPatch,
           status: 'paid',
           paidAt: new Date(),
           externalPaymentId: externalPaymentId || paymentMetadata.externalPaymentId,
           paymentReference: paymentReference || paymentMetadata.paymentReference,
           customerEmail: customerEmail || paymentMetadata.customerEmail,
           paymentLinkId: paymentLinkId || paymentMetadata.paymentLinkId,
+          preferredLinkId: paymentLinkId || paymentMetadata.preferredLinkId,
+          paymentLink: paymentLinkUrl || paymentMetadata.paymentLink,
+          preferredLinkUrl: paymentLinkUrl || paymentMetadata.preferredLinkUrl,
           ...(parsedAmount !== undefined ? { amount: parsedAmount } : {}),
           ...(parsedCurrency ? { currency: String(parsedCurrency).toUpperCase() } : {}),
           ...subscriptionSnapshot,
@@ -2617,11 +2695,15 @@ export class DocumentsService {
         status: 'paid',
       });
 
-      await this.notifyPaymentCompletedAudience(document, {
-        title: 'Plata confirmata',
-        message: `${payerName} a platit pentru "${document.name}".`,
-        link: '/payments',
-      });
+      await this.notifyPaymentCompletedAudience(
+        document,
+        {
+          title: 'Plata confirmata',
+          message: `${payerName} a platit pentru "${document.name}".`,
+          link: '/payments',
+        },
+        'paid',
+      );
 
       return { success: true, message: 'Payment marked as paid', documentId: document.id };
     }
@@ -2637,6 +2719,7 @@ export class DocumentsService {
         ...document.metadata,
         payment: {
           ...paymentMetadata,
+          ...webhookPaymentPatch,
           status: 'failed',
           failedAt: new Date(),
           failureReason: inferredFailureReason,
@@ -2644,6 +2727,9 @@ export class DocumentsService {
           paymentReference: paymentReference || paymentMetadata.paymentReference,
           customerEmail: customerEmail || paymentMetadata.customerEmail,
           paymentLinkId: paymentLinkId || paymentMetadata.paymentLinkId,
+          preferredLinkId: paymentLinkId || paymentMetadata.preferredLinkId,
+          paymentLink: paymentLinkUrl || paymentMetadata.paymentLink,
+          preferredLinkUrl: paymentLinkUrl || paymentMetadata.preferredLinkUrl,
           ...(parsedAmount !== undefined ? { amount: parsedAmount } : {}),
           ...(parsedCurrency ? { currency: String(parsedCurrency).toUpperCase() } : {}),
           ...subscriptionSnapshot,
@@ -2672,13 +2758,47 @@ export class DocumentsService {
         failureReason: inferredFailureReason,
       });
 
-      await this.notifyDocumentStakeholders(document, {
-        title: 'Plata esuata',
-        message: `${payerName} nu a platit pentru "${document.name}"${inferredFailureReason ? `: ${inferredFailureReason}` : '.'}`,
-        link: '/payments',
-      });
+      await this.notifyPaymentCompletedAudience(
+        document,
+        {
+          title: 'Plata esuata',
+          message: `${payerName} nu a platit pentru "${document.name}"${inferredFailureReason ? `: ${inferredFailureReason}` : '.'}`,
+          link: '/payments',
+        },
+        'failed',
+      );
 
       return { success: true, message: 'Payment marked as failed', documentId: document.id };
+    }
+
+    if (Object.keys(webhookPaymentPatch).length > 0) {
+      document.metadata = {
+        ...document.metadata,
+        payment: {
+          ...paymentMetadata,
+          ...webhookPaymentPatch,
+          externalPaymentId: externalPaymentId || paymentMetadata.externalPaymentId,
+          paymentReference: paymentReference || paymentMetadata.paymentReference,
+          customerEmail: customerEmail || paymentMetadata.customerEmail,
+          paymentLinkId: paymentLinkId || paymentMetadata.paymentLinkId,
+          preferredLinkId: paymentLinkId || paymentMetadata.preferredLinkId,
+          paymentLink: paymentLinkUrl || paymentMetadata.paymentLink,
+          preferredLinkUrl: paymentLinkUrl || paymentMetadata.preferredLinkUrl,
+          ...(parsedAmount !== undefined ? { amount: parsedAmount } : {}),
+          ...(parsedCurrency ? { currency: String(parsedCurrency).toUpperCase() } : {}),
+          ...subscriptionSnapshot,
+          rawPayload: payload,
+          lastWebhookAt: new Date().toISOString(),
+        },
+      };
+      document.addAuditEntry('payfunnels.webhook.metadata', 'webhook', {
+        externalPaymentId,
+        paymentReference,
+        eventName,
+        statusRaw,
+      });
+      await this.documentRepository.save(document);
+      return { success: true, message: 'Payment webhook metadata synced', documentId: document.id };
     }
 
     this.logger.log(
@@ -2897,6 +3017,52 @@ export class DocumentsService {
       deletedDocument: false,
       documentId,
       message: 'Tranzactia a fost scoasa din payments.',
+    };
+  }
+
+  async dismissPayfunnelRiskSubscription(
+    workspaceId: string,
+    userId: string,
+    subscriptionId: string,
+  ): Promise<{ success: boolean; subscriptionId: string; message: string }> {
+    const normalizedSubscriptionId = String(subscriptionId || '').trim();
+    if (!normalizedSubscriptionId) {
+      throw new BadRequestException('subscriptionId is required');
+    }
+
+    const integration = await this.findApiProviderIntegration(
+      workspaceId,
+      ['payfunnels', 'payfunnel'],
+      true,
+    );
+
+    const normalizedKey = normalizedSubscriptionId.toLowerCase();
+    const existing = this.getSuppressedPayfunnelRiskSubscriptionIds(integration);
+    if (!existing.has(normalizedKey)) {
+      existing.add(normalizedKey);
+      integration.config = {
+        ...(integration.config || {}),
+        payfunnelSuppressedRiskSubscriptionIds: Array.from(existing.values()),
+      };
+      await this.integrationRepository.save(integration);
+    }
+
+    await this.notifyWorkspacePaymentTransaction(workspaceId, {
+      title: 'Subscription ascunsa manual',
+      message: `Subscription-ul ${normalizedSubscriptionId} a fost scos din tab-ul Overdue/Failed.`,
+      userId,
+      notifyLeadership: false,
+      metadata: {
+        source: 'mobile.payments',
+        action: 'dismiss_risk_subscription',
+        subscriptionId: normalizedSubscriptionId,
+      },
+    });
+
+    return {
+      success: true,
+      subscriptionId: normalizedSubscriptionId,
+      message: 'Subscription-ul a fost sters din lista de overdue/failed.',
     };
   }
 
@@ -3304,7 +3470,7 @@ export class DocumentsService {
       customerName?: string;
       metadata?: Record<string, any>;
     },
-  ): Promise<{ url: string; externalPaymentId?: string; raw?: any }> {
+  ): Promise<{ url: string; externalPaymentId?: string; paymentLinkId?: string; raw?: any }> {
     const apiUrl = this.getFirstNonEmpty(integration.config?.apiUrl, integration.config?.baseUrl);
     const endpoint = integration.config?.createPaymentPath || '/payments/links';
     const payload = {
@@ -3342,6 +3508,12 @@ export class DocumentsService {
         return {
           url,
           externalPaymentId: response.data?.paymentId || response.data?.id,
+          paymentLinkId: this.getFirstNonEmpty(
+            response.data?.paymentLinkId,
+            response.data?.linkId,
+            response.data?.paymentLink?.id,
+            response.data?.paymentLink?.linkId,
+          ) as string | undefined,
           raw: response.data,
         };
       } catch (error) {
@@ -3366,6 +3538,7 @@ export class DocumentsService {
     return {
       url: `${checkoutBaseUrl.replace(/\/$/, '')}/checkout/${paymentId}?ref=${reference}`,
       externalPaymentId: paymentId,
+      paymentLinkId: paymentId,
       raw: { mode: 'fallback_url' },
     };
   }
@@ -4186,6 +4359,8 @@ export class DocumentsService {
       row?.id,
       row?.paymentId,
       row?.transactionId,
+      row?.chargeId,
+      row?.receiptId,
       row?.transaction?.id,
       row?.orderId,
       row?.uuid,
@@ -4193,6 +4368,8 @@ export class DocumentsService {
       row?.data?.id,
       row?.data?.paymentId,
       row?.data?.transactionId,
+      row?.data?.chargeId,
+      row?.data?.receiptId,
       row?.data?.transaction?.id,
       row?.data?.orderId,
     );
@@ -4266,6 +4443,8 @@ export class DocumentsService {
         row?.reference,
         row?.transactionReference,
         row?.invoiceNumber,
+        row?.invoiceId,
+        row?.receiptId,
         row?.orderNumber,
         row?.orderReference,
         row?.metadata?.paymentReference,
@@ -4275,10 +4454,11 @@ export class DocumentsService {
         row?.data?.reference,
         row?.data?.transactionReference,
         row?.data?.invoiceNumber,
+        row?.data?.invoiceId,
+        row?.data?.receiptId,
         row?.data?.orderNumber,
         row?.data?.metadata?.paymentReference,
         row?.data?.transaction?.reference,
-        row?.data?.invoiceId,
       ),
       title: this.getFirstNonEmpty(
         row?.title,
@@ -4390,6 +4570,26 @@ export class DocumentsService {
         row?.data?.customer?.email,
         row?.data?.customer?.contact?.email,
       )),
+      customerPhone: this.getFirstNonEmpty(
+        row?.customerPhone,
+        row?.phone,
+        row?.phoneNumber,
+        row?.billingPhone,
+        row?.billing?.phone,
+        row?.payerPhone,
+        row?.customer?.phone,
+        row?.customer?.phoneNumber,
+        row?.customer?.contact?.phone,
+        row?.data?.customerPhone,
+        row?.data?.phone,
+        row?.data?.phoneNumber,
+        row?.data?.billingPhone,
+        row?.data?.billing?.phone,
+        row?.data?.payerPhone,
+        row?.data?.customer?.phone,
+        row?.data?.customer?.phoneNumber,
+        row?.data?.customer?.contact?.phone,
+      ),
       paymentMethodType: this.getFirstNonEmpty(
         row?.paymentMethodType,
         row?.paymentMethod?.type,
@@ -4732,6 +4932,24 @@ export class DocumentsService {
         row?.data?.payerEmail,
         row?.data?.customer?.email,
       )),
+      customerPhone: this.getFirstNonEmpty(
+        row?.customerPhone,
+        row?.phone,
+        row?.phoneNumber,
+        row?.billingPhone,
+        row?.payerPhone,
+        row?.customer?.phone,
+        row?.customer?.phoneNumber,
+        row?.subscriberPhone,
+        row?.data?.customerPhone,
+        row?.data?.phone,
+        row?.data?.phoneNumber,
+        row?.data?.billingPhone,
+        row?.data?.payerPhone,
+        row?.data?.customer?.phone,
+        row?.data?.customer?.phoneNumber,
+        row?.data?.subscriberPhone,
+      ),
       customerId: this.getFirstNonEmpty(
         row?.customerId,
         row?.customer?.id,
@@ -4981,19 +5199,48 @@ export class DocumentsService {
     }
 
     const merged = new Map<string, PayfunnelDashboardPayment>();
-    for (const row of rows) {
-      const key = this.getFirstNonEmpty(
-        row.id,
-        row.paymentReference,
-        `${this.normalizeEmail(row.customerEmail) || 'unknown'}:${row.createdAt || ''}:${row.status}:${row.amount ?? ''}`,
-      ) as string;
+    const keyToCanonical = new Map<string, string>();
 
-      const existing = merged.get(key);
-      if (!existing) {
-        merged.set(key, row);
-        continue;
+    for (const row of rows) {
+      const candidateKeys = this.buildPayfunnelPaymentCandidateKeys(row);
+      const matchedCanonicalKeys = Array.from(
+        new Set(
+          candidateKeys
+            .map((key) => keyToCanonical.get(key))
+            .filter((value): value is string => !!value),
+        ),
+      );
+
+      let canonicalKey = matchedCanonicalKeys[0] || candidateKeys[0] || `fallback:${merged.size}`;
+      let nextValue = row;
+
+      const canonicalExisting = merged.get(canonicalKey);
+      if (canonicalExisting) {
+        nextValue = this.pickPreferredPayfunnelPayment(canonicalExisting, nextValue);
       }
-      merged.set(key, this.pickPreferredPayfunnelPayment(existing, row));
+
+      if (matchedCanonicalKeys.length > 1) {
+        for (const duplicateCanonicalKey of matchedCanonicalKeys.slice(1)) {
+          if (duplicateCanonicalKey === canonicalKey) {
+            continue;
+          }
+          const duplicateValue = merged.get(duplicateCanonicalKey);
+          if (duplicateValue) {
+            nextValue = this.pickPreferredPayfunnelPayment(duplicateValue, nextValue);
+          }
+          merged.delete(duplicateCanonicalKey);
+          for (const [mappedKey, mappedCanonical] of keyToCanonical.entries()) {
+            if (mappedCanonical === duplicateCanonicalKey) {
+              keyToCanonical.set(mappedKey, canonicalKey);
+            }
+          }
+        }
+      }
+
+      merged.set(canonicalKey, nextValue);
+      for (const key of candidateKeys) {
+        keyToCanonical.set(key, canonicalKey);
+      }
     }
 
     return Array.from(merged.values()).sort((a, b) => {
@@ -5005,6 +5252,58 @@ export class DocumentsService {
       );
       return tsB - tsA;
     });
+  }
+
+  private buildPayfunnelPaymentCandidateKeys(row: PayfunnelDashboardPayment): string[] {
+    const keys = new Set<string>();
+
+    const normalizedId = String(row.id || '').trim().toLowerCase();
+    if (normalizedId) {
+      keys.add(`id:${normalizedId}`);
+    }
+
+    const normalizedReference = String(row.paymentReference || '').trim().toLowerCase();
+    if (normalizedReference) {
+      keys.add(`reference:${normalizedReference}`);
+    }
+
+    const normalizedLinkId = String(row.paymentLinkId || '').trim().toLowerCase();
+    if (normalizedLinkId) {
+      keys.add(`link-id:${normalizedLinkId}`);
+    }
+
+    const { normalizedUrl, normalizedBaseUrl } = this.normalizePaymentUrlVariants(row.paymentUrl);
+    if (normalizedUrl) {
+      keys.add(`link-url:${normalizedUrl}`);
+    }
+    if (normalizedBaseUrl) {
+      keys.add(`link-url-base:${normalizedBaseUrl}`);
+    }
+
+    const normalizedEmail = this.normalizeEmail(row.customerEmail);
+    const normalizedAmount = this.parseNumberValue(row.amount);
+    const normalizedCurrency = String(row.currency || '').trim().toUpperCase();
+    const dayBucketSource = this.normalizeDateString(this.getFirstNonEmpty(row.createdAt, row.paidAt));
+    const dayBucket = dayBucketSource ? dayBucketSource.slice(0, 10) : '';
+
+    if (
+      normalizedEmail &&
+      normalizedAmount !== undefined &&
+      normalizedCurrency &&
+      dayBucket
+    ) {
+      keys.add(
+        `email-amount-day:${normalizedEmail}:${normalizedCurrency}:${normalizedAmount.toFixed(2)}:${dayBucket}`,
+      );
+    }
+
+    if (keys.size === 0) {
+      keys.add(
+        `fallback:${normalizedEmail || 'unknown'}:${dayBucket || ''}:${normalizedCurrency}:${normalizedAmount ?? ''}`,
+      );
+    }
+
+    return Array.from(keys);
   }
 
   private deduplicatePayfunnelSubscriptions(rows: PayfunnelDashboardSubscription[]): PayfunnelDashboardSubscription[] {
@@ -5196,6 +5495,55 @@ export class DocumentsService {
     return Number.isFinite(ts) ? ts : 0;
   }
 
+  private getSuppressedPayfunnelRiskSubscriptionIds(integration: Integration): Set<string> {
+    const rows = this.normalizeListInput(
+      integration.config?.payfunnelSuppressedRiskSubscriptionIds ||
+      integration.config?.suppressedRiskSubscriptionIds,
+    );
+    const ids = rows
+      .map((row: any) => {
+        if (typeof row === 'string' || typeof row === 'number') {
+          return String(row).trim().toLowerCase();
+        }
+        const candidate = this.getFirstNonEmpty(row?.subscriptionId, row?.id, row?.value);
+        return String(candidate || '').trim().toLowerCase();
+      })
+      .filter((row: string) => !!row);
+    return new Set(ids);
+  }
+
+  private isPayfunnelRiskStatus(rawStatus?: string): boolean {
+    const status = String(rawStatus || '').trim().toLowerCase();
+    if (!status) return false;
+    return ['failed', 'declined', 'insufficient', 'overdue', 'past_due', 'unpaid', 'late', 'chargeback', 'canceled', 'cancelled', 'error', 'rejected', 'refused'].some(
+      (token) => status.includes(token),
+    );
+  }
+
+  private buildPayfunnelRiskSubscriptions(
+    subscriptions: PayfunnelDashboardSubscription[],
+  ): PayfunnelDashboardSubscription[] {
+    if (!Array.isArray(subscriptions) || subscriptions.length === 0) {
+      return [];
+    }
+
+    return [...subscriptions]
+      .filter((row) => {
+        const dueAmount = this.parseNumberValue(row.totalDueAmount);
+        const failedPayments = this.parseIntegerValue(row.failedPayments) || 0;
+        return this.isPayfunnelRiskStatus(row.status) || failedPayments > 0 || (dueAmount !== undefined && dueAmount > 0);
+      })
+      .sort((a, b) => {
+        const bTs = this.parseDateToTimestamp(
+          this.getFirstNonEmpty(b.nextBillingAt, b.currentPeriodEndAt, b.expiresAt, b.lastPaymentAt, b.startedAt),
+        );
+        const aTs = this.parseDateToTimestamp(
+          this.getFirstNonEmpty(a.nextBillingAt, a.currentPeriodEndAt, a.expiresAt, a.lastPaymentAt, a.startedAt),
+        );
+        return bTs - aTs;
+      });
+  }
+
   private parsePayfunnelLinkRow(
     row: any,
     source: 'integration_config' | 'payfunnel_api' | 'crm_documents',
@@ -5260,27 +5608,35 @@ export class DocumentsService {
         document.id,
       ) as string;
       const paymentLink = this.getFirstNonEmpty(payment.paymentLink, payment.preferredLinkUrl);
+      const primaryRecipient = this.getPrimaryRecipient(document);
       const contactName = document.contact
         ? `${document.contact.firstName || ''} ${document.contact.lastName || ''}`.trim()
         : undefined;
       const customerName = this.getFirstNonEmpty(
         contactName,
-        this.getPrimaryRecipient(document).name,
+        primaryRecipient.name,
       );
       const customerEmail = this.getFirstNonEmpty(
         document.contact?.email,
-        this.getPrimaryRecipient(document).email,
+        primaryRecipient.email,
+      );
+      const customerPhone = this.getFirstNonEmpty(
+        payment.customerPhone,
+        document.contact?.phone,
+        primaryRecipient.phone,
       );
 
       payments.push({
         id: paymentId,
         status,
+        paymentReference: this.getFirstNonEmpty(payment.paymentReference),
         rawStatus: this.getFirstNonEmpty(payment.status),
         failureReason: this.getFirstNonEmpty(payment.failureReason),
         amount: this.parseNumberValue(payment.amount, document.deal?.value),
         currency: this.getFirstNonEmpty(payment.currency, document.deal?.currency, 'EUR'),
         customerName,
         customerEmail,
+        customerPhone,
         subscriptionId: this.getFirstNonEmpty(payment.subscriptionId),
         subscriptionStatus: this.getFirstNonEmpty(payment.subscriptionStatus),
         subscriptionPlanName: this.getFirstNonEmpty(payment.subscriptionPlanName),
@@ -5289,7 +5645,7 @@ export class DocumentsService {
         subscriptionPaidPayments: this.parseIntegerValue(payment.subscriptionPaidPayments),
         subscriptionRemainingPayments: this.parseIntegerValue(payment.subscriptionRemainingPayments),
         subscriptionTotalPayments: this.parseIntegerValue(payment.subscriptionTotalPayments),
-        paymentLinkId: this.getFirstNonEmpty(payment.paymentLinkId),
+        paymentLinkId: this.getFirstNonEmpty(payment.paymentLinkId, payment.preferredLinkId),
         paymentLinkName: this.getFirstNonEmpty(payment.preferredLinkName),
         paymentUrl: paymentLink,
         createdAt: this.normalizeDateString(payment.createdAt, document.createdAt),
@@ -5298,7 +5654,12 @@ export class DocumentsService {
 
       if (paymentLink) {
         const linkEntry: PayfunnelDashboardLink = {
-          id: this.getFirstNonEmpty(payment.paymentLinkId, payment.paymentReference, document.id) as string,
+          id: this.getFirstNonEmpty(
+            payment.paymentLinkId,
+            payment.preferredLinkId,
+            payment.paymentReference,
+            document.id,
+          ) as string,
           name: this.getFirstNonEmpty(payment.preferredLinkName, document.name, paymentLink) as string,
           url: paymentLink,
           status: this.getFirstNonEmpty(payment.status),
@@ -5359,7 +5720,7 @@ export class DocumentsService {
     if (/(paid|succeeded|success|completed|approved|captured|settled|confirmed)/.test(normalized)) {
       return 'paid';
     }
-    if (/(failed|declined|insufficient|canceled|cancelled|error|rejected|refused|voided|chargeback)/.test(normalized)) {
+    if (/(failed|declined|insufficient|canceled|cancelled|error|rejected|refused|overdue|past_due|unpaid|late|void|voided|chargeback)/.test(normalized)) {
       return 'failed';
     }
     return 'pending';
@@ -5894,6 +6255,207 @@ export class DocumentsService {
     );
   }
 
+  private extractPayfunnelWebhookPaymentPatch(payload: any): Record<string, any> {
+    const scopes = this.collectPayfunnelWebhookScopes(payload);
+    const metadataScopes = this.extractPayfunnelWebhookMetadataScopes(scopes);
+    const scopeValues = (picker: (scope: Record<string, any>) => any): any[] => scopes.map(picker);
+
+    const snapshot: Record<string, any> = {};
+
+    const invoiceId = this.getFirstNonEmpty(
+      ...scopeValues((scope) => scope?.invoiceId),
+      ...scopeValues((scope) => scope?.invoice?.id),
+      ...metadataScopes.map((scope) => scope?.invoiceId),
+    );
+    if (invoiceId) {
+      snapshot.invoiceId = String(invoiceId).trim();
+    }
+
+    const receiptId = this.getFirstNonEmpty(
+      ...scopeValues((scope) => scope?.receiptId),
+      ...scopeValues((scope) => scope?.receipt?.id),
+      ...metadataScopes.map((scope) => scope?.receiptId),
+    );
+    if (receiptId) {
+      snapshot.receiptId = String(receiptId).trim();
+    }
+
+    const chargeId = this.getFirstNonEmpty(
+      ...scopeValues((scope) => scope?.chargeId),
+      ...scopeValues((scope) => scope?.charge?.id),
+      ...metadataScopes.map((scope) => scope?.chargeId),
+    );
+    if (chargeId) {
+      snapshot.chargeId = String(chargeId).trim();
+    }
+
+    const invoiceTitle = this.getFirstNonEmpty(
+      ...scopeValues((scope) => scope?.invoiceTitle),
+      ...scopeValues((scope) => scope?.title),
+      ...scopeValues((scope) => scope?.invoice?.title),
+      ...metadataScopes.map((scope) => scope?.invoiceTitle),
+    );
+    if (invoiceTitle) {
+      snapshot.invoiceTitle = String(invoiceTitle).trim();
+    }
+
+    const chargeAmount = this.parseNumberValue(
+      ...scopeValues((scope) => scope?.chargeAmount),
+      ...scopeValues((scope) => scope?.amount),
+      ...scopeValues((scope) => scope?.totalAmountPaid),
+      ...scopeValues((scope) => scope?.chargedAmount),
+      ...metadataScopes.map((scope) => scope?.chargeAmount),
+    );
+    if (chargeAmount !== undefined) {
+      snapshot.chargeAmount = chargeAmount;
+    }
+
+    const currency = this.getFirstNonEmpty(
+      ...scopeValues((scope) => scope?.currency),
+      ...scopeValues((scope) => scope?.currencyCode),
+      ...scopeValues((scope) => scope?.amount?.currency),
+      ...metadataScopes.map((scope) => scope?.currency),
+    );
+    if (currency) {
+      snapshot.currency = String(currency).trim().toUpperCase();
+    }
+
+    const customerName = this.getFirstNonEmpty(
+      ...scopeValues((scope) => scope?.customerName),
+      ...scopeValues((scope) => scope?.customer?.name),
+      ...scopeValues((scope) => scope?.customer?.fullName),
+      ...scopeValues((scope) => scope?.payerName),
+      ...metadataScopes.map((scope) => scope?.customerName),
+    );
+    if (customerName) {
+      snapshot.customerName = String(customerName).trim();
+    }
+
+    const customerEmail = this.extractPaymentCustomerEmail(payload);
+    if (customerEmail) {
+      snapshot.customerEmail = customerEmail;
+    }
+
+    const customerPhone = this.getFirstNonEmpty(
+      ...scopeValues((scope) => scope?.customerPhone),
+      ...scopeValues((scope) => scope?.customer?.phone),
+      ...scopeValues((scope) => scope?.phone),
+      ...metadataScopes.map((scope) => scope?.customerPhone),
+    );
+    if (customerPhone) {
+      snapshot.customerPhone = String(customerPhone).trim();
+    }
+
+    const paymentLinkId = this.getFirstNonEmpty(
+      ...scopeValues((scope) => scope?.paymentLinkId),
+      ...scopeValues((scope) => scope?.linkId),
+      ...scopeValues((scope) => scope?.paymentLink?.id),
+      ...scopeValues((scope) => scope?.paymentLink?.linkId),
+      ...metadataScopes.map((scope) => scope?.paymentLinkId),
+      ...metadataScopes.map((scope) => scope?.linkId),
+    );
+    if (paymentLinkId) {
+      snapshot.paymentLinkId = String(paymentLinkId).trim();
+      snapshot.preferredLinkId = String(paymentLinkId).trim();
+    }
+
+    const paymentLinkName = this.getFirstNonEmpty(
+      ...scopeValues((scope) => scope?.paymentLinkName),
+      ...scopeValues((scope) => scope?.linkName),
+      ...scopeValues((scope) => scope?.paymentLink?.name),
+      ...scopeValues((scope) => scope?.paymentLink?.title),
+      ...metadataScopes.map((scope) => scope?.paymentLinkName),
+      ...metadataScopes.map((scope) => scope?.linkName),
+    );
+    if (paymentLinkName) {
+      snapshot.preferredLinkName = String(paymentLinkName).trim();
+    }
+
+    const paymentLinkUrl = this.getFirstNonEmpty(
+      ...scopeValues((scope) => scope?.paymentLink),
+      ...scopeValues((scope) => scope?.paymentUrl),
+      ...scopeValues((scope) => scope?.checkoutUrl),
+      ...scopeValues((scope) => scope?.url),
+      ...scopeValues((scope) => scope?.link),
+      ...scopeValues((scope) => scope?.paymentLink?.url),
+      ...scopeValues((scope) => scope?.paymentLink?.checkoutUrl),
+      ...metadataScopes.map((scope) => scope?.paymentLink),
+      ...metadataScopes.map((scope) => scope?.paymentUrl),
+      ...metadataScopes.map((scope) => scope?.checkoutUrl),
+      ...metadataScopes.map((scope) => scope?.url),
+    );
+    if (paymentLinkUrl) {
+      snapshot.paymentLink = String(paymentLinkUrl).trim();
+      snapshot.preferredLinkUrl = String(paymentLinkUrl).trim();
+    }
+
+    const totalCollectedAmount = this.parseNumberValue(
+      ...scopeValues((scope) => scope?.totalCollectedAmount),
+      ...scopeValues((scope) => scope?.collectedAmount),
+      ...metadataScopes.map((scope) => scope?.totalCollectedAmount),
+    );
+    if (totalCollectedAmount !== undefined) {
+      snapshot.totalCollectedAmount = totalCollectedAmount;
+    }
+
+    const totalSubscriptionAmount = this.parseNumberValue(
+      ...scopeValues((scope) => scope?.totalSubscriptionAmount),
+      ...scopeValues((scope) => scope?.subscriptionAmount),
+      ...metadataScopes.map((scope) => scope?.totalSubscriptionAmount),
+    );
+    if (totalSubscriptionAmount !== undefined) {
+      snapshot.totalSubscriptionAmount = totalSubscriptionAmount;
+    }
+
+    const totalDueAmount = this.parseNumberValue(
+      ...scopeValues((scope) => scope?.totalDueAmount),
+      ...scopeValues((scope) => scope?.dueAmount),
+      ...metadataScopes.map((scope) => scope?.totalDueAmount),
+    );
+    if (totalDueAmount !== undefined) {
+      snapshot.totalDueAmount = totalDueAmount;
+    }
+
+    const totalMaxPayment = this.parseIntegerValue(
+      ...scopeValues((scope) => scope?.totalMaxPayment),
+      ...scopeValues((scope) => scope?.maxPayments),
+      ...scopeValues((scope) => scope?.numberOfPayments),
+      ...metadataScopes.map((scope) => scope?.totalMaxPayment),
+    );
+    if (totalMaxPayment !== undefined) {
+      snapshot.totalMaxPayment = totalMaxPayment;
+    }
+
+    const paymentType = this.getFirstNonEmpty(
+      ...scopeValues((scope) => scope?.paymentType),
+      ...scopeValues((scope) => scope?.type),
+      ...metadataScopes.map((scope) => scope?.paymentType),
+    );
+    if (paymentType) {
+      snapshot.paymentType = String(paymentType).trim();
+    }
+
+    const receiptUrl = this.getFirstNonEmpty(
+      ...scopeValues((scope) => scope?.receiptUrl),
+      ...scopeValues((scope) => scope?.receipt?.url),
+      ...metadataScopes.map((scope) => scope?.receiptUrl),
+    );
+    if (receiptUrl) {
+      snapshot.receiptUrl = String(receiptUrl).trim();
+    }
+
+    const customFieldsCandidate = [
+      ...scopeValues((scope) => scope?.customFields),
+      ...scopeValues((scope) => scope?.metadata?.customFields),
+      ...metadataScopes.map((scope) => scope?.customFields),
+    ].find((entry) => entry && typeof entry === 'object' && !Array.isArray(entry));
+    if (customFieldsCandidate && typeof customFieldsCandidate === 'object' && !Array.isArray(customFieldsCandidate)) {
+      snapshot.customFields = { ...(customFieldsCandidate as Record<string, any>) };
+    }
+
+    return snapshot;
+  }
+
   private extractWebhookSubscriptionMetadata(payload: any): Record<string, any> {
     const scopes = this.collectPayfunnelWebhookScopes(payload);
     const metadataScopes = this.extractPayfunnelWebhookMetadataScopes(scopes);
@@ -5981,11 +6543,20 @@ export class DocumentsService {
     paymentReference?: string,
     externalPaymentId?: string,
     paymentLinkId?: string,
+    paymentLinkUrl?: string,
   ): Promise<Document | null> {
     const normalizedReference = String(paymentReference || '').trim().toLowerCase();
     const normalizedExternalPaymentId = String(externalPaymentId || '').trim().toLowerCase();
     const normalizedPaymentLinkId = String(paymentLinkId || '').trim().toLowerCase();
-    if (!normalizedReference && !normalizedExternalPaymentId && !normalizedPaymentLinkId) {
+    const { normalizedUrl: normalizedPaymentLinkUrl, normalizedBaseUrl: normalizedPaymentLinkBaseUrl } =
+      this.normalizePaymentUrlVariants(paymentLinkUrl);
+    if (
+      !normalizedReference &&
+      !normalizedExternalPaymentId &&
+      !normalizedPaymentLinkId &&
+      !normalizedPaymentLinkUrl &&
+      !normalizedPaymentLinkBaseUrl
+    ) {
       return null;
     }
 
@@ -5999,16 +6570,37 @@ export class DocumentsService {
     const clauses: string[] = [];
     const params: Record<string, string> = {};
     if (normalizedReference) {
-      clauses.push(`LOWER(COALESCE(document.metadata->'payment'->>'paymentReference', '')) = :paymentReference`);
+      clauses.push(`(
+        LOWER(COALESCE(document.metadata->'payment'->>'paymentReference', '')) = :paymentReference
+        OR LOWER(COALESCE(document.metadata->'payment'->>'invoiceId', '')) = :paymentReference
+        OR LOWER(COALESCE(document.metadata->'payment'->>'receiptId', '')) = :paymentReference
+      )`);
       params.paymentReference = normalizedReference;
     }
     if (normalizedExternalPaymentId) {
-      clauses.push(`LOWER(COALESCE(document.metadata->'payment'->>'externalPaymentId', '')) = :externalPaymentId`);
+      clauses.push(`(
+        LOWER(COALESCE(document.metadata->'payment'->>'externalPaymentId', '')) = :externalPaymentId
+        OR LOWER(COALESCE(document.metadata->'payment'->>'chargeId', '')) = :externalPaymentId
+        OR LOWER(COALESCE(document.metadata->'payment'->>'receiptId', '')) = :externalPaymentId
+      )`);
       params.externalPaymentId = normalizedExternalPaymentId;
     }
     if (normalizedPaymentLinkId) {
-      clauses.push(`LOWER(COALESCE(document.metadata->'payment'->>'paymentLinkId', '')) = :paymentLinkId`);
+      clauses.push(`(
+        LOWER(COALESCE(document.metadata->'payment'->>'paymentLinkId', '')) = :paymentLinkId
+        OR LOWER(COALESCE(document.metadata->'payment'->>'preferredLinkId', '')) = :paymentLinkId
+      )`);
       params.paymentLinkId = normalizedPaymentLinkId;
+    }
+    if (normalizedPaymentLinkUrl || normalizedPaymentLinkBaseUrl) {
+      clauses.push(`(
+        LOWER(COALESCE(document.metadata->'payment'->>'paymentLink', '')) = :paymentLinkUrl
+        OR LOWER(COALESCE(document.metadata->'payment'->>'preferredLinkUrl', '')) = :paymentLinkUrl
+        OR LOWER(REGEXP_REPLACE(SPLIT_PART(COALESCE(document.metadata->'payment'->>'paymentLink', ''), '?', 1), '/+$', '')) = :paymentLinkUrlBase
+        OR LOWER(REGEXP_REPLACE(SPLIT_PART(COALESCE(document.metadata->'payment'->>'preferredLinkUrl', ''), '?', 1), '/+$', '')) = :paymentLinkUrlBase
+      )`);
+      params.paymentLinkUrl = (normalizedPaymentLinkUrl || normalizedPaymentLinkBaseUrl) as string;
+      params.paymentLinkUrlBase = (normalizedPaymentLinkBaseUrl || normalizedPaymentLinkUrl) as string;
     }
     if (clauses.length === 0) {
       return null;
@@ -6019,6 +6611,53 @@ export class DocumentsService {
       .addOrderBy('document.createdAt', 'DESC');
 
     return query.getOne();
+  }
+
+  private normalizePaymentUrlVariants(value?: string): {
+    normalizedUrl?: string;
+    normalizedBaseUrl?: string;
+  } {
+    const raw = String(value || '').trim();
+    if (!raw) {
+      return {};
+    }
+
+    const trimTrailingSlash = (input: string): string => {
+      if (!input) return input;
+      const trimmed = input.replace(/\/+$/, '');
+      return trimmed || input;
+    };
+
+    try {
+      const parsed = new URL(raw);
+      const protocol = parsed.protocol.toLowerCase();
+      const host = parsed.host.toLowerCase();
+      const path = trimTrailingSlash(parsed.pathname || '/').toLowerCase();
+      const params = Array.from(parsed.searchParams.entries()).sort(([a], [b]) => a.localeCompare(b));
+      const normalizedQuery = params
+        .map(([key, val]) => `${encodeURIComponent(key)}=${encodeURIComponent(val)}`)
+        .join('&');
+      const normalizedBaseUrl = `${protocol}//${host}${path}`;
+      const normalizedUrl = normalizedQuery
+        ? `${normalizedBaseUrl}?${normalizedQuery}`
+        : normalizedBaseUrl;
+      return {
+        normalizedUrl,
+        normalizedBaseUrl,
+      };
+    } catch {
+      const lower = raw.toLowerCase();
+      const noHash = lower.split('#')[0];
+      const [pathPart, queryPart = ''] = noHash.split('?', 2);
+      const normalizedBaseUrl = trimTrailingSlash(pathPart);
+      const normalizedUrl = queryPart
+        ? `${normalizedBaseUrl}?${queryPart}`
+        : normalizedBaseUrl;
+      return {
+        normalizedUrl,
+        normalizedBaseUrl,
+      };
+    }
   }
 
   private async findLatestPayfunnelDocumentByEmail(
@@ -6169,6 +6808,7 @@ export class DocumentsService {
   private async notifyDocumentStakeholders(
     document: Document,
     payload: { title: string; message: string; link?: string },
+    category?: string,
   ): Promise<void> {
     const userIds = await this.getStakeholderUserIds(document);
     if (userIds.length === 0) return;
@@ -6186,6 +6826,7 @@ export class DocumentsService {
             dealId: document.dealId,
             contactId: document.contactId,
           },
+          ...(category ? { category } : {}),
         }),
       ),
     );
@@ -6194,6 +6835,7 @@ export class DocumentsService {
   private async notifyPaymentCompletedAudience(
     document: Document,
     payload: { title: string; message: string; link?: string },
+    paymentStatus: 'paid' | 'failed' = 'paid',
   ): Promise<void> {
     const audienceIds = await this.getPaymentCompletionAudienceUserIds(
       document.workspaceId,
@@ -6215,8 +6857,9 @@ export class DocumentsService {
             documentId: document.id,
             dealId: document.dealId,
             contactId: document.contactId,
-            paymentStatus: 'paid',
+            paymentStatus,
           },
+          category: `payment:${paymentStatus === 'paid' ? 'received' : 'failed'}`,
         }),
       ),
     );
@@ -6251,6 +6894,7 @@ export class DocumentsService {
       userId?: string;
       notifyLeadership?: boolean;
       metadata?: Record<string, any>;
+      category?: string;
     },
   ): Promise<void> {
     const normalizedUserId = String(payload.userId || '').trim();
@@ -6288,6 +6932,7 @@ export class DocumentsService {
           userId,
           link: '/payments',
           metadata: payload.metadata,
+          ...(payload.category ? { category: payload.category } : {}),
         }),
       ),
     );
@@ -6383,7 +7028,7 @@ export class DocumentsService {
   }
 
   private isPaymentFailure(status: string, eventName: string): boolean {
-    return ['failed', 'declined', 'insufficient', 'canceled', 'cancelled', 'error', 'rejected', 'refused', 'voided', 'chargeback'].some(
+    return ['failed', 'declined', 'insufficient', 'canceled', 'cancelled', 'error', 'rejected', 'refused', 'overdue', 'past_due', 'unpaid', 'late', 'void', 'voided', 'chargeback'].some(
       (token) => status.includes(token) || eventName.includes(token),
     );
   }

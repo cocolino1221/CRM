@@ -7,10 +7,12 @@ import { User } from '../database/entities/user.entity';
 import { Company } from '../database/entities/company.entity';
 import { Activity } from '../database/entities/activity.entity';
 import { Deal } from '../database/entities/deal.entity';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Contact, User, Company, Activity, Deal]),
+    NotificationsModule,
   ],
   controllers: [ContactsController],
   providers: [ContactsService],
