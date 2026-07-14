@@ -1045,11 +1045,15 @@ export class DocumentsService {
         });
         await this.documentRepository.save(document);
         await this.applyPaymentStatusSideEffects(document, 'paid');
-        await this.notifyPaymentCompletedAudience(document, {
-          title: 'Plata confirmata',
-          message: `${payment.customerName || 'Clientul'} a platit pentru "${document.name}".`,
-          link: '/payments',
-        });
+        await this.notifyPaymentCompletedAudience(
+          document,
+          {
+            title: 'Plata confirmata',
+            message: `${payment.customerName || 'Clientul'} a platit pentru "${document.name}".`,
+            link: '/payments',
+          },
+          'paid',
+        );
         continue;
       }
 
