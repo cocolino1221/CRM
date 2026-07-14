@@ -43,6 +43,14 @@ export type MetaChannel = 'messenger' | 'instagram';
 
 type MetaProvider = 'facebook' | 'instagram';
 
+function getUserName(
+  u?: { firstName?: string; lastName?: string; email?: string } | null,
+): string | null {
+  if (!u) return null;
+  const name = [u.firstName, u.lastName].filter(Boolean).join(' ').trim();
+  return name || u.email || null;
+}
+
 interface MetaSendContext {
   channel: MetaChannel;
   to: string;
@@ -328,6 +336,8 @@ export class MetaMessagingService {
     const qb = this.activityRepository
       .createQueryBuilder('activity')
       .leftJoinAndSelect('activity.contact', 'contact')
+      .leftJoinAndSelect('contact.setter', 'setter')
+      .leftJoinAndSelect('contact.closer', 'closer')
       .where('activity.workspaceId = :workspaceId', { workspaceId })
       .andWhere('activity.type = :type', { type: ActivityType.OTHER })
       .andWhere("activity.metadata->>'channel' IN ('messenger','instagram')")
@@ -369,6 +379,10 @@ export class MetaMessagingService {
           contactId: activity.contact?.id || null,
           contactName: this.getContactDisplayName(activity.contact, activityChannel, externalUserId),
           contactSource: activity.contact?.source || null,
+          setterId: activity.contact?.setterId || null,
+          setterName: getUserName(activity.contact?.setter) || null,
+          closerId: activity.contact?.closerId || null,
+          closerName: getUserName(activity.contact?.closer) || null,
           avatarUrl: metadata.senderAvatarUrl || null,
           lastMessage: '',
           lastMessageTime: activity.occurredAt.toISOString(),
