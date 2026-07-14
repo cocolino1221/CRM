@@ -1677,6 +1677,19 @@ export class WhatsAppService {
                 messageType: message.type,
               },
             });
+
+            // Category-tagged push (Task 3 emitter) so the message owner gets
+            // notified subject to their `message:whatsapp` push preference.
+            this.notificationsService
+              .notifyMessage(
+                integration.workspaceId,
+                ownerId,
+                'whatsapp',
+                'New WhatsApp message',
+                `${senderName}: ${msgPreview.substring(0, 80)}`,
+                { waId: message.from, contactId: contact.id },
+              )
+              .catch(() => undefined);
           }
         }
       }

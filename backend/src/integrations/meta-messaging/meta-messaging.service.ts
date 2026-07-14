@@ -1177,6 +1177,17 @@ export class MetaMessagingService {
       },
       description,
     );
+
+    this.notificationsService
+      .notifyMessage(
+        workspaceId,
+        ownerId,
+        provider === 'facebook' ? 'facebook' : 'instagram',
+        `New ${provider === 'facebook' ? 'Messenger' : 'Instagram'} message`,
+        description,
+        { channel, externalUserId: senderId, contactId: contact.id },
+      )
+      .catch(() => undefined);
   }
 
   // Meta refuses Send API calls from an app that doesn't own the conversation
