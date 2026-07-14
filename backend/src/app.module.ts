@@ -9,6 +9,7 @@ import { CorrelationIdMiddleware } from './common/middleware/correlation-id.midd
 import AppDataSource from './database/data-source';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
+import { WorkspacesModule } from './workspaces/workspaces.module';
 import { ContactsModule } from './contacts/contacts.module';
 import { DealsModule } from './deals/deals.module';
 import { TasksModule } from './tasks/tasks.module';
@@ -153,6 +154,7 @@ import { validationSchema } from './config/env.validation';
     EmailModule,
     AuthModule,
     UsersModule,
+    WorkspacesModule,
     ContactsModule,
     CompaniesModule,
     DealsModule,

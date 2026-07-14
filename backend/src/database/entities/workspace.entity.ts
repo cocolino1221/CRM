@@ -49,6 +49,9 @@ export interface WorkspaceSettings {
   // (channel:account:sender) → ISO timestamp last marked read. Inbound messages
   // newer than this count as unread; absence of a key means fully unread.
   metaInboxReads?: Record<string, string>;
+  // Custom logo URL shown in the mobile app instead of the default EasyTeam logo.
+  // Set via PUT /workspaces/current/branding; upload itself goes through /upload.
+  brandLogoUrl?: string;
 }
 
 export interface WorkspaceAudioTemplate {
