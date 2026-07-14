@@ -654,6 +654,64 @@ export default function IntegrationsPage() {
         { name: 'webhookSecret', label: 'Webhook Secret', type: 'password', required: false, placeholder: 'Secret pentru verificare webhook' },
       ],
     },
+    {
+      id: 'gopayflow',
+      name: 'GoPayFlow',
+      description: 'Payment and funnel management platform for online businesses and sales funnels.',
+      category: 'payments',
+      icon: '💸',
+      logoUrl: integrationIcons.gopayflow,
+      color: 'from-emerald-500 to-teal-600',
+      connected: false,
+      features: ['Funnel tracking', 'Payment processing', 'Conversion optimization', 'A/B testing'],
+      configFields: [
+        {
+          name: 'apiUrl',
+          label: 'API URL (optional)',
+          type: 'url',
+          required: false,
+          placeholder: 'https://api.gopayflow.io',
+          helpText: 'Optional doar daca folosesti exclusiv webhook-uri. Pentru import si creare linkuri din CRM, completeaza API URL.',
+        },
+        {
+          name: 'checkoutBaseUrl',
+          label: 'Checkout Base URL',
+          type: 'url',
+          required: false,
+          placeholder: 'https://app.gopayflow.io',
+          helpText: 'Necesar daca nu folosesti API URL, ca fallback pentru generarea linkurilor de plata din CRM.',
+        },
+        {
+          name: 'apiKey',
+          label: 'API Key (x-pf-api-key)',
+          type: 'password',
+          required: false,
+          placeholder: 'Your GoPayFlow API key',
+          helpText: 'Optional if you use Bearer access token authentication.',
+        },
+        {
+          name: 'accessToken',
+          label: 'Access Token (Bearer)',
+          type: 'password',
+          required: false,
+          placeholder: 'Bearer token',
+          helpText: 'Optional if you authenticate only with API key header.',
+        },
+        {
+          name: 'accountId',
+          label: 'Account ID (optional)',
+          type: 'text',
+          required: false,
+          placeholder: 'Your account ID',
+          helpText: 'Optional. Leave empty if your API key/token is already scoped to one account.',
+        },
+        { name: 'createPaymentPath', label: 'Create Payment Path', type: 'text', required: false, placeholder: '/payments/links' },
+        { name: 'listPaymentsPath', label: 'List Payments Path', type: 'text', required: false, placeholder: '/payments' },
+        { name: 'listSubscriptionsPath', label: 'List Subscriptions Path', type: 'text', required: false, placeholder: '/subscriptions' },
+        { name: 'listPaymentLinksPath', label: 'List Payment Links Path', type: 'text', required: false, placeholder: '/payments/links' },
+        { name: 'webhookSecret', label: 'Webhook Secret', type: 'password', required: false, placeholder: 'Secret pentru verificare webhook' },
+      ],
+    },
 
     // Social Media
     {
@@ -1180,11 +1238,11 @@ export default function IntegrationsPage() {
     e.preventDefault();
 
     if (!selectedIntegration) return;
-    if (selectedIntegration.id === 'payfunnels') {
+    if (selectedIntegration.id === 'payfunnels' || selectedIntegration.id === 'gopayflow') {
       const apiKey = String(configData.apiKey || '').trim();
       const accessToken = String(configData.accessToken || '').trim();
       if (!apiKey && !accessToken) {
-        setModalError('Pentru PayFunnels trebuie sa completezi API Key sau Access Token.');
+        setModalError(`Pentru ${selectedIntegration.name} trebuie sa completezi API Key sau Access Token.`);
         return;
       }
     }
@@ -1261,9 +1319,9 @@ export default function IntegrationsPage() {
       } else if (selectedIntegration.id === 'esemneaza' && createdIntegrationId) {
         const webhookUrl = `${apiUrl}/api/v1/documents/webhooks/esemneaza/${createdIntegrationId}`;
         alert(`eSemneaza connected!\n\nWebhook URL:\n${webhookUrl}\n\nConfigure this URL in eSemneaza for signature status callbacks.`);
-      } else if (selectedIntegration.id === 'payfunnels' && createdIntegrationId) {
+      } else if ((selectedIntegration.id === 'payfunnels' || selectedIntegration.id === 'gopayflow') && createdIntegrationId) {
         const webhookUrl = `${apiUrl}/api/v1/documents/webhooks/payfunnel/${createdIntegrationId}`;
-        alert(`PayFunnels connected!\n\nWebhook URL:\n${webhookUrl}\n\nConfigure this URL in PayFunnels for payment status callbacks.`);
+        alert(`${selectedIntegration.name} connected!\n\nWebhook URL:\n${webhookUrl}\n\nConfigure this URL in ${selectedIntegration.name} for payment status callbacks.`);
       } else if (createdIntegrationId && needsWebhook) {
         const webhookUrl = `${apiUrl}/api/v1/integrations/webhooks/${createdIntegrationId}`;
         alert(`Integration connected!\n\nYour unique webhook URL:\n${webhookUrl}\n\nPaste this URL in ${selectedIntegration.name}'s webhook settings.`);
@@ -1285,7 +1343,7 @@ export default function IntegrationsPage() {
     if (integrationKey === 'esemneaza') {
       return `${baseUrl}/api/v1/documents/webhooks/esemneaza/${record.id}`;
     }
-    if (integrationKey === 'payfunnels') {
+    if (integrationKey === 'payfunnels' || integrationKey === 'gopayflow') {
       return `${baseUrl}/api/v1/documents/webhooks/payfunnel/${record.id}`;
     }
     if (['typeform', 'calendly', 'manychat'].includes(integrationKey)) {

@@ -1899,30 +1899,22 @@ export default function MessagesPage() {
               )}
             </div>
 
-            <div className="flex-1 overflow-y-auto bg-[#fafafb] px-4 py-4">
+            <div className="flex-1 overflow-y-auto bg-gray-50 px-4 py-5">
               {selectedMessages.length > 0 ? (
-                <div className="mx-auto flex max-w-3xl flex-col gap-2.5">
+                <div className="mx-auto flex max-w-3xl flex-col gap-3">
                   {selectedMessages.map((message) => {
                     const inbound = message.direction === 'inbound';
                     const theme = channelTheme[selectedConversation?.channel || activeChannel];
 
                     return (
                       <div key={message.id} className={cn('group flex', inbound ? 'justify-start' : 'justify-end')}>
-                        <div className="max-w-[72%]">
-                          <div className={cn('mb-0.5 flex items-center gap-2 px-1 text-[11px] text-slate-400', inbound ? 'justify-start' : 'justify-end')}>
-                            <span>{formatTime(message.occurredAt)}</span>
-                            <button
-                              onClick={() => deleteSingleMessage(message.id)}
-                              title="Șterge mesajul"
-                              className="opacity-0 transition hover:text-rose-600 group-hover:opacity-100"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
-                          </div>
+                        <div className="max-w-[78%]">
                           <div
                             className={cn(
-                              'rounded-2xl border px-3.5 py-2 text-sm shadow-sm',
-                              inbound ? 'border-slate-200 bg-white text-slate-800' : `border-transparent ${theme.outboundBubble}`,
+                              'rounded-2xl px-4 py-2.5 text-[15px] leading-relaxed shadow-sm',
+                              inbound
+                                ? 'rounded-bl-md border border-slate-100 bg-white text-slate-900'
+                                : cn('rounded-br-md', theme.outboundBubble),
                             )}
                           >
                             {(() => {
@@ -2000,6 +1992,24 @@ export default function MessagesPage() {
                                 </>
                               );
                             })()}
+                            <div
+                              className={cn(
+                                'mt-1.5 flex items-center justify-end gap-1.5 text-[11px]',
+                                inbound ? 'text-slate-400' : 'text-white/70',
+                              )}
+                            >
+                              <span>{formatTime(message.occurredAt)}</span>
+                              <button
+                                onClick={() => deleteSingleMessage(message.id)}
+                                title="Șterge mesajul"
+                                className={cn(
+                                  'opacity-0 transition group-hover:opacity-100',
+                                  inbound ? 'hover:text-rose-500' : 'hover:text-white',
+                                )}
+                              >
+                                <Trash2 className="h-3 w-3" />
+                              </button>
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -2088,12 +2098,15 @@ export default function MessagesPage() {
                       onChange={(event) => setOutboundText(event.target.value)}
                       placeholder="Write a reply..."
                       rows={2}
-                      className="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-[13px] outline-none transition-colors duration-150 focus:border-slate-400"
+                      className="w-full resize-none rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition-colors duration-150 focus:border-slate-400 focus:bg-white"
                     />
                     <button
                       onClick={sendText}
                       disabled={actionBusy}
-                      className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-slate-950 px-3 py-2 text-[13px] font-medium text-white transition-colors duration-150 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                      className={cn(
+                        'inline-flex items-center justify-center gap-1.5 rounded-2xl px-3 py-2 text-[13px] font-semibold shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60',
+                        channelTheme[selectedConversation?.channel || activeChannel].outboundBubble,
+                      )}
                     >
                       {actionBusy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
                       Send

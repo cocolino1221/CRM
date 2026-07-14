@@ -738,7 +738,7 @@ export class DocumentsService {
   }
 
   async getPayfunnelLinkOptions(workspaceId: string): Promise<{ links: PayfunnelLinkOption[] }> {
-    const integration = await this.findApiProviderIntegration(workspaceId, ['payfunnels', 'payfunnel']);
+    const integration = await this.findApiProviderIntegration(workspaceId, ['payfunnels', 'payfunnel', 'gopayflow']);
     if (!integration) {
       return { links: [] };
     }
@@ -795,7 +795,7 @@ export class DocumentsService {
   }
 
   async getPayfunnelDashboardData(workspaceId: string): Promise<PayfunnelDashboardResult> {
-    const integration = await this.findApiProviderIntegration(workspaceId, ['payfunnels', 'payfunnel']);
+    const integration = await this.findApiProviderIntegration(workspaceId, ['payfunnels', 'payfunnel', 'gopayflow']);
     if (!integration) {
       return {
         connected: false,
@@ -1966,7 +1966,7 @@ export class DocumentsService {
     } else {
       const payfunnelIntegration = await this.findApiProviderIntegration(
         workspaceId,
-        ['payfunnels', 'payfunnel'],
+        ['payfunnels', 'payfunnel', 'gopayflow'],
         true,
       );
       paymentLink = await this.createPayfunnelPaymentLink(
@@ -2431,7 +2431,7 @@ export class DocumentsService {
     payload: any,
     headers: Record<string, string | string[] | undefined>,
   ): Promise<{ success: boolean; message: string; documentId?: string }> {
-    const integration = await this.assertProviderIntegration(integrationId, ['payfunnels', 'payfunnel']);
+    const integration = await this.assertProviderIntegration(integrationId, ['payfunnels', 'payfunnel', 'gopayflow']);
     this.verifyWebhookSecret(integration, headers, [
       'x-payfunnel-token',
       'x-payfunnels-token',
@@ -3036,7 +3036,7 @@ export class DocumentsService {
 
     const integration = await this.findApiProviderIntegration(
       workspaceId,
-      ['payfunnels', 'payfunnel'],
+      ['payfunnels', 'payfunnel', 'gopayflow'],
       true,
     );
 
@@ -3104,7 +3104,7 @@ export class DocumentsService {
       const score = (integration: Integration): number => {
         const provider = String(integration.config?.provider || integration.externalId || '').toLowerCase();
         const hasApiBase =
-          provider === 'payfunnels' || provider === 'payfunnel'
+          provider === 'payfunnels' || provider === 'payfunnel' || provider === 'gopayflow'
             ? !!this.getPayfunnelApiBase(integration)
             : !!this.resolveProviderBaseUrl(integration);
         let value = 0;
@@ -6132,7 +6132,7 @@ export class DocumentsService {
 
     if (apiKey) {
       // PayFunnels classic API keys must be sent using the vendor-specific header.
-      if (providerKey === 'payfunnels' || providerKey === 'payfunnel') {
+      if (providerKey === 'payfunnels' || providerKey === 'payfunnel' || providerKey === 'gopayflow') {
         headers['x-pf-api-key'] = apiKey;
       } else {
         const authScheme = String(integration.config?.authScheme || 'Bearer').trim();
@@ -6150,7 +6150,7 @@ export class DocumentsService {
       }
     }
 
-    if ((providerKey === 'payfunnels' || providerKey === 'payfunnel') && accessToken) {
+    if ((providerKey === 'payfunnels' || providerKey === 'payfunnel' || providerKey === 'gopayflow') && accessToken) {
       headers['Authorization'] = `Bearer ${accessToken}`;
     }
 

@@ -11,7 +11,7 @@ export class ApiIntegrationHandler implements IntegrationHandler {
     try {
       const baseUrl = integration.config?.baseUrl;
       const providerKey = String(integration.config?.provider || integration.externalId || '').trim().toLowerCase();
-      const webhookFirstProviders = new Set(['esemneaza', 'payfunnels', 'payfunnel']);
+      const webhookFirstProviders = new Set(['esemneaza', 'payfunnels', 'payfunnel', 'gopayflow']);
       const isWebhookFirstProvider = webhookFirstProviders.has(providerKey);
       const isSocialOAuthProvider = ['facebook', 'instagram', 'tiktok'].includes(providerKey);
 
@@ -45,7 +45,7 @@ export class ApiIntegrationHandler implements IntegrationHandler {
     } catch (error) {
       const providerKey = String(integration.config?.provider || integration.externalId || '').trim().toLowerCase();
       const statusCode = (error as any)?.response?.status;
-      if (['esemneaza', 'payfunnels', 'payfunnel'].includes(providerKey) && statusCode === 404) {
+      if (['esemneaza', 'payfunnels', 'payfunnel', 'gopayflow'].includes(providerKey) && statusCode === 404) {
         return {
           success: true,
           message: 'Webhook mode active. Endpoint returned 404, but webhook integration can still be used.',

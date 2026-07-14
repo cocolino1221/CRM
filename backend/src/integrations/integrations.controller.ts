@@ -179,7 +179,7 @@ export class IntegrationsController {
     // Webhook-only integrations (ManyChat, Calendly, etc.) should always be activated
     // because the webhook receiver works independently of an API key connection test.
     const webhookOnlyTypes: string[] = [IntegrationType.MANYCHAT, IntegrationType.CALENDLY];
-    const webhookFirstApiProviders = new Set(['esemneaza', 'payfunnels', 'payfunnel']);
+    const webhookFirstApiProviders = new Set(['esemneaza', 'payfunnels', 'payfunnel', 'gopayflow']);
     const providerKey = String(integration.config?.provider || integration.externalId || '').trim().toLowerCase();
     const isWebhookFirstApiProvider =
       integration.type === IntegrationType.API && webhookFirstApiProviders.has(providerKey);
@@ -612,7 +612,7 @@ export class IntegrationsController {
 
       // Route webhook-first API providers to DocumentsService domain logic
       // so contract/payment state and notifications are updated correctly.
-      if (integration?.type === IntegrationType.API && (providerKey === 'payfunnels' || providerKey === 'payfunnel')) {
+      if (integration?.type === IntegrationType.API && (providerKey === 'payfunnels' || providerKey === 'payfunnel' || providerKey === 'gopayflow')) {
         const result = await this.documentsService.processPayfunnelWebhook(
           integrationId,
           payload,
