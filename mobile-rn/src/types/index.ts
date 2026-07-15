@@ -27,6 +27,9 @@ export interface WhatsAppActivity {
     waId?: string;
     messageType?: string;
     messageStatus?: 'sent' | 'delivered' | 'read' | 'failed';
+    senderIntegrationId?: string;
+    senderPhoneNumberId?: string;
+    senderPhoneDisplay?: string;
     mediaId?: string;
     mediaUrl?: string;
     mediaType?: 'image' | 'video' | 'audio' | 'document' | 'template';
@@ -35,6 +38,8 @@ export interface WhatsAppActivity {
     fileName?: string;
     reactionEmoji?: string;
     reactionMessageId?: string;
+    replyToMessageId?: string;
+    replyPreviewText?: string;
   };
   contact: {
     id: string;
@@ -58,6 +63,8 @@ export interface Conversation {
   contactName: string;
   contactId: string | null;
   contactSource?: string | null;
+  preferredSenderIntegrationId?: string | null;
+  preferredSenderPhoneDisplay?: string | null;
   phone: string;
   lastMessage: string;
   lastMessageTime: string;
@@ -67,6 +74,8 @@ export interface Conversation {
   lastInboundTime: string | null;
   assignment?: ConversationAssignment | null;
   archived?: boolean;
+  pinned?: boolean;
+  mutedUntil?: string | null;
 }
 
 export interface Contact {
@@ -115,6 +124,69 @@ export interface Notification {
   link?: string;
   metadata?: any;
   createdAt: string;
+}
+
+export type MetaChannel = 'messenger' | 'instagram';
+export type MetaInboxFilter = 'all' | 'messenger' | 'instagram';
+
+export interface MetaMessage {
+  id: string;
+  direction: 'inbound' | 'outbound' | 'internal';
+  description: string;
+  occurredAt: string;
+  metadata: {
+    externalMessageId?: string;
+    externalThreadId?: string;
+    externalUserId?: string;
+    messageType?: string;
+    attachmentUrl?: string;
+    attachmentMimeType?: string;
+    attachmentName?: string;
+    senderPageName?: string;
+    senderAccountName?: string;
+    isSimulated?: boolean;
+    messageStatus?: string;
+  };
+}
+
+export interface MetaConversation {
+  id: string;
+  channel: MetaChannel;
+  externalUserId: string;
+  externalThreadId: string;
+  integrationId?: string | null;
+  accountId?: string | null;
+  accountName?: string | null;
+  messageProfileId?: string | null;
+  messageProfileName?: string | null;
+  contactId?: string | null;
+  contactName: string;
+  contactSource?: string | null;
+  setterId?: string | null;
+  setterName?: string | null;
+  closerId?: string | null;
+  closerName?: string | null;
+  lastMessage: string;
+  lastMessageTime: string;
+  unreadCount: number;
+  messages: MetaMessage[];
+}
+
+export interface MetaAccount {
+  integrationId: string;
+  provider: 'facebook' | 'instagram';
+  name: string;
+  status: string;
+  liveReady: boolean;
+  warning?: string | null;
+  messageProfileId?: string | null;
+  messageProfileName?: string | null;
+  account?: {
+    pageId?: string | null;
+    pageName?: string | null;
+    igUserId?: string | null;
+    igUsername?: string | null;
+  } | null;
 }
 
 export interface DocumentPaymentMetadata {

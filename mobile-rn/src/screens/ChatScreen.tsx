@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import {
   ArrowLeft, Send, Paperclip, X, Image as ImageIcon, FileText, Mic, Video,
-  Check, CheckCheck, AlertTriangle, Clock, Users, Smile, Search, Zap, CornerUpLeft, Square,
+  Check, CheckCheck, AlertTriangle, Clock, Users, Smile, Search, Zap, CornerUpLeft, Square, AudioLines,
 } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
@@ -17,6 +17,7 @@ import { useWhatsAppStore, type WhatsAppAttachmentPayload } from '../stores/what
 import { useToastStore } from '../stores/toast-store';
 import { API_BASE_URL } from '../lib/api';
 import Avatar from '../components/Avatar';
+import AudioLibrarySheet from '../components/AudioLibrarySheet';
 import type { WhatsAppStackParams } from '../navigation/WhatsAppStack';
 import type { WhatsAppActivity } from '../types';
 
@@ -30,6 +31,10 @@ type TemplateItem = {
   category?: string;
   requiresMediaHeader?: boolean;
   requiresDynamicParams?: boolean;
+  headerMediaType?: 'image' | 'video' | 'document';
+  headerMediaId?: string;
+  headerMediaUrl?: string;
+  hasReusableHeaderMedia?: boolean;
   components?: any[];
 };
 
@@ -254,6 +259,7 @@ export default function ChatScreen() {
   const [isLoadingTemplates, setIsLoadingTemplates] = useState(false);
   const [isSendingTemplate, setIsSendingTemplate] = useState(false);
   const [showTemplatePicker, setShowTemplatePicker] = useState(false);
+  const [showAudioLibrary, setShowAudioLibrary] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState<TemplateItem | null>(null);
   const [showMessageSearch, setShowMessageSearch] = useState(false);
   const [messageSearch, setMessageSearch] = useState('');
@@ -282,6 +288,10 @@ export default function ChatScreen() {
       .then((token) => setAccessToken(token || ''))
       .catch(() => setAccessToken(''));
   }, []);
+
+  const templateIntegrationId = selectedConv?.waId === route.params.waId
+    ? (selectedConv?.preferredSenderIntegrationId || undefined)
+    : undefined;
 
   useEffect(() => {
     openConversation({
@@ -338,18 +348,26 @@ export default function ChatScreen() {
     if (!showTemplatePicker) return;
     let active = true;
     setIsLoadingTemplates(true);
-    api.get('/integrations/whatsapp/templates')
+    api.get('/integrations/whatsapp/templates', {
+      ...(templateIntegrationId ? { params: { integrationId: templateIntegrationId } } : {}),
+    })
       .then((res) => {
         if (!active) return;
         const rows = Array.isArray(res.data?.data) ? res.data.data : [];
         const mapped: TemplateItem[] = rows
           .map((tpl: any) => {
             const components = Array.isArray(tpl?.components) ? tpl.components : [];
-            const requiresMediaHeader = components.some((component: any) => {
+            const headerComponent = components.find((component: any) => {
               const componentType = String(component?.type || '').toUpperCase();
               const headerFormat = String(component?.format || '').toUpperCase();
               return componentType === 'HEADER' && ['IMAGE', 'VIDEO', 'DOCUMENT'].includes(headerFormat);
             });
+            const headerMediaType = headerComponent
+              ? String(headerComponent?.format || '').trim().toLowerCase() as TemplateItem['headerMediaType']
+              : undefined;
+            const headerMediaId = String(tpl?.headerMediaId || '').trim() || undefined;
+            const headerMediaUrl = String(tpl?.headerMediaUrl || '').trim() || undefined;
+            const requiresMediaHeader = Boolean(headerMediaType);
             const requiresDynamicParams = components.some((component: any) => {
               const componentText = String(component?.text || '');
               return /\{\{\d+\}\}/.test(componentText);
@@ -361,6 +379,10 @@ export default function ChatScreen() {
               category: String(tpl?.category || '').trim(),
               requiresMediaHeader,
               requiresDynamicParams,
+              headerMediaType,
+              headerMediaId,
+              headerMediaUrl,
+              hasReusableHeaderMedia: requiresMediaHeader && Boolean(headerMediaId || headerMediaUrl),
               components,
             };
           })
@@ -384,7 +406,7 @@ export default function ChatScreen() {
     return () => {
       active = false;
     };
-  }, [showTemplatePicker, showToast]);
+  }, [showTemplatePicker, showToast, templateIntegrationId]);
 
   // Draft load/save — must be before any conditional return to satisfy Rules of Hooks
   useEffect(() => {
@@ -475,6 +497,7 @@ export default function ChatScreen() {
       name: `voice-note-${Date.now()}.${extension}`,
       mimeType,
       type: 'audio',
+      isVoiceNote: true,
     });
     setText('');
     setVoiceInputError('');
@@ -673,8 +696,8 @@ export default function ChatScreen() {
 
   const handleSendSelectedTemplate = async () => {
     if (!selectedTemplate || isSendingTemplate) return;
-    if (selectedTemplate.requiresMediaHeader) {
-      showToast('Selected template needs header media and cannot be sent with quick template send.', 'error');
+    if (selectedTemplate.requiresMediaHeader && !selectedTemplate.hasReusableHeaderMedia) {
+      showToast('This template needs saved header media. Send it once from web first, then mobile can reuse it.', 'error');
       return;
     }
     setIsSendingTemplate(true);
@@ -686,6 +709,9 @@ export default function ChatScreen() {
         language: selectedTemplate.language || 'en',
         ...(conv.preferredSenderIntegrationId ? { integrationId: conv.preferredSenderIntegrationId } : {}),
         ...(parameters.length ? { parameters } : {}),
+        ...(selectedTemplate.headerMediaType ? { headerMediaType: selectedTemplate.headerMediaType } : {}),
+        ...(selectedTemplate.headerMediaId ? { headerMediaId: selectedTemplate.headerMediaId } : {}),
+        ...(selectedTemplate.headerMediaUrl ? { headerMediaUrl: selectedTemplate.headerMediaUrl } : {}),
       });
       setShowTemplatePicker(false);
       showToast(`Template sent: ${selectedTemplate.name}`, 'success');
@@ -840,10 +866,10 @@ export default function ChatScreen() {
           return (
             <View className={`flex-row mb-1.5 ${isOut ? 'justify-end' : 'justify-start'}`}>
               <View
-                className={`max-w-[82%] px-3 py-2 rounded-2xl border ${
+                className={`max-w-[82%] px-3.5 py-2.5 rounded-2xl shadow-sm ${
                   isOut
-                    ? 'bg-teal-50 border-teal-100 rounded-br-sm'
-                    : 'bg-white border-slate-200 rounded-bl-sm'
+                    ? 'bg-emerald-500 rounded-br-md'
+                    : 'bg-white border border-slate-100 rounded-bl-md'
                 }`}
                 onTouchEnd={() => undefined}
               >
@@ -860,15 +886,15 @@ export default function ChatScreen() {
                   }}
                 >
                   {!!msg.metadata?.replyPreviewText && (
-                    <View className={`mb-1.5 px-2 py-1 rounded-lg border ${isOut ? 'bg-teal-100 border-teal-200' : 'bg-slate-50 border-slate-200'}`}>
-                      <Text className="text-[10px] font-semibold text-slate-500 mb-0.5">Reply</Text>
-                      <Text className="text-xs text-slate-700" numberOfLines={2}>{msg.metadata.replyPreviewText}</Text>
+                    <View className={`mb-1.5 px-2 py-1 rounded-lg ${isOut ? 'bg-emerald-600' : 'bg-slate-50 border border-slate-200'}`}>
+                      <Text className={`text-[10px] font-semibold mb-0.5 ${isOut ? 'text-emerald-100' : 'text-slate-500'}`}>Reply</Text>
+                      <Text className={`text-xs ${isOut ? 'text-white' : 'text-slate-700'}`} numberOfLines={2}>{msg.metadata.replyPreviewText}</Text>
                     </View>
                   )}
                 {!['text', 'reaction'].includes(parsed.type) && (
                   <View className="flex-row items-center gap-1.5 mb-1">
                     <MediaIcon type={parsed.type} />
-                    <Text className="text-xs font-medium text-slate-500 capitalize">{parsed.type}</Text>
+                    <Text className={`text-xs font-medium capitalize ${isOut ? 'text-emerald-100' : 'text-slate-500'}`}>{parsed.type}</Text>
                   </View>
                 )}
                 {parsed.type === 'image' && mediaSource && (
@@ -881,40 +907,42 @@ export default function ChatScreen() {
                 {parsed.type === 'video' && mediaSource && (
                   <TouchableOpacity
                     onPress={() => setMediaPreview({ source: mediaSource, type: 'video', title: parsed.text || 'Video' })}
-                    className="mb-1.5 px-3 py-2 rounded-lg bg-slate-100 border border-slate-200 flex-row items-center gap-2"
+                    className={`mb-1.5 px-3 py-2 rounded-xl flex-row items-center gap-2 ${isOut ? 'bg-white/20' : 'bg-slate-100 border border-slate-200'}`}
                   >
-                    <Video size={14} color="#334155" />
-                    <Text className="text-xs font-medium text-slate-700">Open video</Text>
+                    <Video size={14} color={isOut ? '#fff' : '#334155'} />
+                    <Text className={`text-xs font-medium ${isOut ? 'text-white' : 'text-slate-700'}`}>Open video</Text>
                   </TouchableOpacity>
                 )}
                 {parsed.type === 'audio' && mediaSource && (
                   <TouchableOpacity
                     onPress={() => setMediaPreview({ source: mediaSource, type: 'audio', title: parsed.text || 'Audio' })}
-                    className="mb-1.5 px-3 py-2 rounded-lg bg-slate-100 border border-slate-200 flex-row items-center gap-2"
+                    className={`mb-1.5 px-3 py-2 rounded-xl flex-row items-center gap-2 ${isOut ? 'bg-white/20' : 'bg-slate-100 border border-slate-200'}`}
                   >
-                    <Mic size={14} color="#334155" />
-                    <Text className="text-xs font-medium text-slate-700">Play audio</Text>
+                    <Mic size={14} color={isOut ? '#fff' : '#334155'} />
+                    <Text className={`text-xs font-medium ${isOut ? 'text-white' : 'text-slate-700'}`}>Play audio</Text>
                   </TouchableOpacity>
                 )}
                 {parsed.type === 'document' && parsed.mediaUrl && (
                   <TouchableOpacity onPress={() => Linking.openURL(parsed.mediaUrl || '')} className="mb-1">
-                    <Text className="text-xs text-blue-600 underline">{parsed.fileName || 'Open document'}</Text>
+                    <Text className={`text-xs underline ${isOut ? 'text-emerald-100' : 'text-blue-600'}`}>{parsed.fileName || 'Open document'}</Text>
                   </TouchableOpacity>
                 )}
                 {parsed.type === 'reaction' && (
                   <View className="flex-row items-center gap-1 mb-1">
                     <Text className="text-lg">{parsed.emoji || '👍'}</Text>
-                    <Text className="text-xs text-slate-500">reaction</Text>
+                    <Text className={`text-xs ${isOut ? 'text-emerald-100' : 'text-slate-500'}`}>reaction</Text>
                   </View>
                 )}
-                {parsed.type !== 'reaction' && !!parsed.text && <Text className="text-sm leading-5 text-slate-900">{parsed.text}</Text>}
+                {parsed.type !== 'reaction' && !!parsed.text && (
+                  <Text className={`text-[15px] leading-5.5 ${isOut ? 'text-white' : 'text-slate-900'}`}>{parsed.text}</Text>
+                )}
                 <View className="flex-row items-center justify-end gap-1 mt-1">
-                  <Text className="text-[10px] text-slate-400">{time}</Text>
+                  <Text className={`text-[10px] ${isOut ? 'text-emerald-100' : 'text-slate-400'}`}>{time}</Text>
                   {isOut && (
-                    status === 'failed' ? <AlertTriangle size={12} color="#ef4444" /> :
-                    status === 'read' ? <CheckCheck size={12} color="#3b82f6" /> :
-                    status === 'delivered' ? <CheckCheck size={12} color="#94a3b8" /> :
-                    <Check size={12} color="#94a3b8" />
+                    status === 'failed' ? <AlertTriangle size={12} color="#fecaca" /> :
+                    status === 'read' ? <CheckCheck size={12} color="#7dd3fc" /> :
+                    status === 'delivered' ? <CheckCheck size={12} color="#d1fae5" /> :
+                    <Check size={12} color="#d1fae5" />
                   )}
                 </View>
                 </TouchableOpacity>
@@ -1026,6 +1054,14 @@ export default function ChatScreen() {
           >
             <Zap size={16} color="#334155" />
           </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => setShowAudioLibrary(true)}
+            disabled={isVoiceRecording}
+            className="h-10 w-10 rounded-full bg-teal-50 items-center justify-center border border-teal-100"
+            style={{ opacity: isVoiceRecording ? 0.5 : 1 }}
+          >
+            <AudioLines size={16} color="#0f766e" />
+          </TouchableOpacity>
           <TextInput
             value={text}
             onChangeText={setText}
@@ -1066,6 +1102,15 @@ export default function ChatScreen() {
           )}
         </View>
       </View>
+
+      <AudioLibrarySheet
+        visible={showAudioLibrary}
+        onClose={() => setShowAudioLibrary(false)}
+        channel="whatsapp"
+        to={route.params.waId}
+        integrationId={templateIntegrationId}
+        onSent={() => void openConversation({ waId: route.params.waId })}
+      />
 
       <Modal visible={showQuickReplies} animationType="slide" transparent onRequestClose={() => setShowQuickReplies(false)}>
         <View className="flex-1 bg-black/40 justify-end">
@@ -1166,14 +1211,16 @@ export default function ChatScreen() {
             />
             {selectedTemplate?.requiresMediaHeader ? (
               <Text className="text-[11px] text-amber-600 px-4">
-                Selected template needs header media and cannot be sent by quick template send.
+                {selectedTemplate.hasReusableHeaderMedia
+                  ? `Saved ${selectedTemplate.headerMediaType || 'header'} media will be reused from your web setup.`
+                  : 'This template needs header media. Send it once from web first so mobile can reuse it.'}
               </Text>
             ) : null}
             <View className="px-4 pt-2">
               <TouchableOpacity
                 onPress={handleSendSelectedTemplate}
-                disabled={!selectedTemplate || isSendingTemplate}
-                className={`px-4 py-2.5 rounded-xl ${selectedTemplate && !isSendingTemplate ? 'bg-sky-700' : 'bg-slate-300'}`}
+                disabled={!selectedTemplate || isSendingTemplate || Boolean(selectedTemplate?.requiresMediaHeader && !selectedTemplate?.hasReusableHeaderMedia)}
+                className={`px-4 py-2.5 rounded-xl ${selectedTemplate && !isSendingTemplate && !(selectedTemplate.requiresMediaHeader && !selectedTemplate.hasReusableHeaderMedia) ? 'bg-sky-700' : 'bg-slate-300'}`}
               >
                 <Text className="text-xs font-semibold text-white text-center">
                   {isSendingTemplate ? 'Sending...' : 'Send template'}
