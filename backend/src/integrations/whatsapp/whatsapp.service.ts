@@ -23,6 +23,14 @@ import { normalizePhoneDigits, normalizePhoneE164 } from '../../common/utils/pho
 
 const execFileAsync = promisify(execFile);
 
+const INVALID_WHATSAPP_PROFILE_NAMES = new Set([
+  'online',
+  'online contact',
+  'offline',
+  'unknown',
+  'customer',
+]);
+
 export interface WhatsAppMessage {
   to: string;
   type: 'text' | 'template' | 'image' | 'document' | 'video' | 'audio' | 'interactive';
@@ -790,9 +798,32 @@ export class WhatsAppService {
   // When we also hold a header URL, treat #200 as a stale-media signal so the
   // caller can retry with the URL instead of failing the whole send.
   private isLikelyStaleHeaderMediaError(error: any): boolean {
+    if (this.isLikelyStaleWhatsAppMediaError(error)) return true;
     if (this.isInvalidWhatsAppMediaAttachmentIdError(error)) return true;
     const msg = String(error?.message || '').toLowerCase();
     return msg.includes('(#200)') || msg.includes('permissions error');
+  }
+
+  private isLikelyStaleWhatsAppMediaError(error: any): boolean {
+    const metaError = error?.response?.data?.error;
+    const metaCode = Number(metaError?.code || 0);
+    const combined = [
+      metaError?.message,
+      metaError?.error_data?.details,
+      error?.message,
+    ].map((part) => String(part || '').toLowerCase()).join(' ');
+
+    return metaCode === 131009
+      || combined.includes('does not exist or has expired')
+      || (combined.includes('media id') && combined.includes('expired'))
+      || combined.includes('media attachment id')
+      || combined.includes('not a valid whatsapp business account media');
+  }
+
+  private hasMediaUrlFallback(message: WhatsAppMessage): boolean {
+    return ['image', 'document', 'video', 'audio'].includes(message.type)
+      && !!String(message.media?.id || '').trim()
+      && !!String(message.media?.url || '').trim();
   }
 
   private normalizeCampaignRecipients(value: any): CampaignRecipient[] {
@@ -1117,11 +1148,19 @@ export class WhatsAppService {
     ownerId: string,
   ): Promise<Contact> {
     const phone = normalizePhoneE164(waId) || `+${waId}`;
+    const safeProfileName = this.normalizeWhatsAppProfileName(profileName);
     let contact = await this.findContactByPhone(workspaceId, phone);
     if (!contact) contact = await this.findContactByPhone(workspaceId, waId);
 
+    if (contact && safeProfileName && this.isPlaceholderWhatsAppContactName(contact)) {
+      const nameParts = safeProfileName.split(/\s+/).filter(Boolean);
+      contact.firstName = nameParts[0] || contact.firstName;
+      contact.lastName = nameParts.slice(1).join(' ');
+      return this.contactRepository.save(contact);
+    }
+
     if (!contact) {
-      const nameParts = (profileName || '').trim().split(' ');
+      const nameParts = (safeProfileName || '').trim().split(/\s+/).filter(Boolean);
       const newContact = this.contactRepository.create();
       Object.assign(newContact, {
         workspaceId,
@@ -1139,6 +1178,21 @@ export class WhatsAppService {
     }
 
     return contact;
+  }
+
+  private normalizeWhatsAppProfileName(profileName?: string): string | undefined {
+    const name = String(profileName || '').replace(/\s+/g, ' ').trim();
+    if (!name) return undefined;
+    if (INVALID_WHATSAPP_PROFILE_NAMES.has(name.toLowerCase())) return undefined;
+    return name;
+  }
+
+  private isPlaceholderWhatsAppContactName(contact: Contact): boolean {
+    const fullName = `${contact.firstName || ''} ${contact.lastName || ''}`.replace(/\s+/g, ' ').trim().toLowerCase();
+    if (!fullName) return true;
+    return INVALID_WHATSAPP_PROFILE_NAMES.has(fullName)
+      || fullName === 'whatsapp contact'
+      || fullName === 'whatsapp';
   }
 
   private async saveMessageActivity(
@@ -1266,12 +1320,13 @@ export class WhatsAppService {
     const { accessToken, phoneNumberId } = this.getCredentials(credentials);
     if (!accessToken || !phoneNumberId) throw new BadRequestException('WhatsApp credentials not configured');
 
-    const payload = this.buildMessagePayload(message);
+    let payload = this.buildMessagePayload(message);
     const maxAttempts = 3;
     let lastError: any = null;
 
     // Track whether we already fell back to env-var token to avoid infinite loops.
     let usingEnvFallback = false;
+    let usingMediaUrlFallback = false;
     let activeToken = accessToken;
     let activePhoneNumberId = phoneNumberId;
 
@@ -1301,6 +1356,19 @@ export class WhatsAppService {
             );
             continue;
           }
+        }
+
+        if (
+          !usingMediaUrlFallback
+          && this.hasMediaUrlFallback(message)
+          && this.isLikelyStaleWhatsAppMediaError(error)
+        ) {
+          usingMediaUrlFallback = true;
+          payload = this.buildMessagePayload(message, { preferMediaUrl: true });
+          this.logger.warn(
+            `WhatsApp media_id expired/invalid (${metaCode || 'unknown'}); retrying media send with URL fallback`,
+          );
+          continue;
         }
 
         const isRetryableMetaInternal = metaCode === 131000;
@@ -1666,8 +1734,12 @@ export class WhatsAppService {
             // Notify all workspace users about the new inbound message
             const senderName = profileName || contact.firstName || `+${message.from}`;
             const msgPreview = message.text?.body || message.type || 'media';
+            // Category-tagged so each user's `message:whatsapp` push preference
+            // gates their copy. Single emit — no separate owner push (that
+            // duplicated notifications and bypassed the mute toggle).
             await this.notifyWorkspace(integration.workspaceId, {
               type: NotificationType.WHATSAPP,
+              category: 'message:whatsapp',
               title: 'New WhatsApp message',
               message: `${senderName}: ${msgPreview.substring(0, 80)}`,
               link: '/whatsapp',
@@ -1677,19 +1749,6 @@ export class WhatsAppService {
                 messageType: message.type,
               },
             });
-
-            // Category-tagged push (Task 3 emitter) so the message owner gets
-            // notified subject to their `message:whatsapp` push preference.
-            this.notificationsService
-              .notifyMessage(
-                integration.workspaceId,
-                ownerId,
-                'whatsapp',
-                'New WhatsApp message',
-                `${senderName}: ${msgPreview.substring(0, 80)}`,
-                { waId: message.from, contactId: contact.id },
-              )
-              .catch(() => undefined);
           }
         }
       }
@@ -1967,7 +2026,7 @@ export class WhatsAppService {
     }
   }
 
-  private buildMessagePayload(message: WhatsAppMessage): any {
+  private buildMessagePayload(message: WhatsAppMessage, options: { preferMediaUrl?: boolean } = {}): any {
     const normalizedTo = normalizePhoneDigits(message.to);
     if (!normalizedTo) {
       throw new BadRequestException('Recipient phone is invalid');
@@ -1976,6 +2035,19 @@ export class WhatsAppService {
     const contextPayload = message.context?.messageId
       ? { context: { message_id: message.context.messageId } }
       : {};
+    const applyMediaReference = (target: any) => {
+      const mediaId = String(message.media?.id || '').trim();
+      const mediaUrl = String(message.media?.url || '').trim();
+      if (options.preferMediaUrl && mediaUrl) {
+        target.link = mediaUrl;
+      } else if (mediaId) {
+        target.id = mediaId;
+      } else if (mediaUrl) {
+        target.link = mediaUrl;
+      } else {
+        throw new BadRequestException('WhatsApp media URL or ID is required');
+      }
+    };
     switch (message.type) {
       case 'text': return { ...base, ...contextPayload, type: 'text', text: { preview_url: true, body: message.content } };
       case 'template': return {
@@ -1984,22 +2056,22 @@ export class WhatsAppService {
       };
       case 'image': {
         const img: any = { caption: message.media!.caption };
-        if (message.media!.id) img.id = message.media!.id; else img.link = message.media!.url;
+        applyMediaReference(img);
         return { ...base, ...contextPayload, type: 'image', image: img };
       }
       case 'document': {
         const doc: any = { caption: message.media!.caption, filename: message.media!.filename };
-        if (message.media!.id) doc.id = message.media!.id; else doc.link = message.media!.url;
+        applyMediaReference(doc);
         return { ...base, ...contextPayload, type: 'document', document: doc };
       }
       case 'video': {
         const vid: any = { caption: message.media!.caption };
-        if (message.media!.id) vid.id = message.media!.id; else vid.link = message.media!.url;
+        applyMediaReference(vid);
         return { ...base, ...contextPayload, type: 'video', video: vid };
       }
       case 'audio': {
         const aud: any = {};
-        if (message.media!.id) aud.id = message.media!.id; else aud.link = message.media!.url;
+        applyMediaReference(aud);
         if (message.media?.voice) aud.voice = true;
         return { ...base, ...contextPayload, type: 'audio', audio: aud };
       }
