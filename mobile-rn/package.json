@@ -9,6 +9,7 @@
     "web": "expo start --web",
     "assets:generate": "SWIFT_MODULECACHE_PATH=../.swift-module-cache CLANG_MODULE_CACHE_PATH=../.clang-module-cache swift scripts/generate-brand-assets.swift",
     "testflight": "bash scripts/testflight.sh",
+    "apk": "bash scripts/apk.sh",
     "build:ios:testflight": "bash scripts/testflight.sh",
     "submit:ios:testflight": "echo 'Local pipeline builds + uploads in one step — run: npm run testflight'"
   },
