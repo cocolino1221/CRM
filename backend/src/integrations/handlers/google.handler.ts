@@ -507,6 +507,63 @@ export class GoogleIntegrationHandler implements IntegrationHandler {
     );
   }
 
+  /**
+   * Upload a file into Drive (multipart) — used by the CRM-documents backup.
+   * Returns the created Drive file ({ id, name, webViewLink }).
+   */
+  async uploadFileToDrive(
+    integration: Integration,
+    file: { name: string; mimeType: string; data: Buffer; parentId?: string },
+  ): Promise<any> {
+    const boundary = `crmdrive${Date.now()}`;
+    const metadata = {
+      name: file.name,
+      ...(file.parentId ? { parents: [file.parentId] } : {}),
+    };
+    const body = Buffer.concat([
+      Buffer.from(
+        `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n` +
+        `--${boundary}\r\nContent-Type: ${file.mimeType || 'application/octet-stream'}\r\n\r\n`,
+      ),
+      file.data,
+      Buffer.from(`\r\n--${boundary}--`),
+    ]);
+
+    const send = async (token: string) => {
+      const response = await this.httpService.axiosRef.post(
+        'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink',
+        body,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': `multipart/related; boundary=${boundary}`,
+          },
+          maxBodyLength: 64 * 1024 * 1024,
+        },
+      );
+      return response.data;
+    };
+
+    try {
+      return await send(integration.credentials?.accessToken);
+    } catch (error) {
+      if (error.response?.status === 401) {
+        const refreshed = await this.refreshAccessToken(integration);
+        return send(refreshed);
+      }
+      throw error;
+    }
+  }
+
+  /** Create a Drive folder; returns { id, name }. */
+  async createDriveFolder(integration: Integration, name: string, parentId?: string): Promise<any> {
+    return this.sheetsRequest(integration, 'post', 'https://www.googleapis.com/drive/v3/files', { fields: 'id,name' }, {
+      name,
+      mimeType: 'application/vnd.google-apps.folder',
+      ...(parentId ? { parents: [parentId] } : {}),
+    });
+  }
+
   /** Batch-update multiple disjoint ranges in one call. */
   async batchUpdateSheetValues(
     integration: Integration,
