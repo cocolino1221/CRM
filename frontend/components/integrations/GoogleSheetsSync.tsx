@@ -20,11 +20,12 @@ const CRM_FIELDS: Array<{ key: string; label: string; required?: boolean }> = [
 type SpreadsheetItem = { id: string; name: string };
 type Pipeline = { id: string; name: string; stages?: Array<{ id: string; name: string }> };
 
-export default function GoogleSheetsSync() {
+export default function GoogleSheetsSync({ autoOpen = false }: { autoOpen?: boolean }) {
   const [loading, setLoading] = useState(true);
   const [googleMissing, setGoogleMissing] = useState(false);
   const [config, setConfig] = useState<any>(null);
   const [editing, setEditing] = useState(false);
+  const [autoOpened, setAutoOpened] = useState(false);
 
   const [spreadsheets, setSpreadsheets] = useState<SpreadsheetItem[]>([]);
   const [spreadsheetId, setSpreadsheetId] = useState('');
@@ -53,6 +54,15 @@ export default function GoogleSheetsSync() {
   }, []);
 
   useEffect(() => { void loadConfig(); }, [loadConfig]);
+
+  // When opened from the integrations card, jump straight into the setup form.
+  useEffect(() => {
+    if (autoOpen && !loading && !googleMissing && !editing && !autoOpened) {
+      setAutoOpened(true);
+      void startSetup();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoOpen, loading, googleMissing]);
 
   const startSetup = async () => {
     setEditing(true);

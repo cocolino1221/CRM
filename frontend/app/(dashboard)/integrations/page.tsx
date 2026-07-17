@@ -63,6 +63,7 @@ export default function IntegrationsPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [filter, setFilter] = useState('all');
   const [selectedIntegration, setSelectedIntegration] = useState<Integration | null>(null);
+  const [showSheetsModal, setShowSheetsModal] = useState(false);
   const [managingIntegration, setManagingIntegration] = useState<Integration | null>(null);
   const [configData, setConfigData] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -323,6 +324,18 @@ export default function IntegrationsPage() {
     },
 
     // Automation & Workflows
+    {
+      id: 'google-sheets',
+      name: 'Google Sheets',
+      description: '2-way sync of leads/contacts between a Google Sheet and your pipeline, with custom column mapping.',
+      category: 'automation',
+      icon: '📊',
+      logoUrl: integrationIcons['google-sheets'],
+      color: 'from-green-500 to-emerald-600',
+      connected: false,
+      features: ['Sheet → CRM leads', 'CRM → Sheet rows', 'Custom column mapping', 'Auto-sync every 10 min'],
+      configFields: [],
+    },
     {
       id: 'zapier',
       name: 'Zapier',
@@ -1046,6 +1059,13 @@ export default function IntegrationsPage() {
   };
 
   const handleConnect = async (integration: Integration) => {
+    // Google Sheets is a configuration of the Google integration, not a
+    // separate connectable app — its card opens the sync setup directly.
+    if (integration.id === 'google-sheets') {
+      setShowSheetsModal(true);
+      return;
+    }
+
     const existing = connectedIntegrations[integration.id];
 
     if (integration.connected && existing) {
@@ -1458,10 +1478,20 @@ export default function IntegrationsPage() {
         </p>
       </div>
 
-      {/* Google Sheets 2-way contact sync (needs the Google integration) */}
-      <div className="animate-slide-up" style={{ animationDelay: '50ms' }}>
-        <GoogleSheetsSync />
-      </div>
+      {/* Google Sheets sync setup — opened from its card in the grid */}
+      {showSheetsModal && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 p-4 pt-16" onClick={() => setShowSheetsModal(false)}>
+          <div className="w-full max-w-3xl" onClick={(e) => e.stopPropagation()}>
+            <div className="rounded-2xl bg-white p-1 shadow-2xl">
+              <div className="flex items-center justify-between px-4 pt-3">
+                <span className="text-sm font-semibold text-gray-500">Google Sheets sync</span>
+                <button onClick={() => setShowSheetsModal(false)} className="rounded-full px-2 py-1 text-sm text-gray-400 hover:bg-gray-100 hover:text-gray-700">✕ Close</button>
+              </div>
+              <GoogleSheetsSync autoOpen />
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 animate-slide-up" style={{ animationDelay: '100ms' }}>

@@ -37,6 +37,7 @@ export const integrationIcons: Record<string, string> = {
   fgo: 'https://img.icons8.com/color/96/receipt.png',
   payfunnels: 'https://img.icons8.com/color/96/payment-method.png',
   gopayflow: 'https://img.icons8.com/color/96/money-transfer.png',
+  'google-sheets': 'https://img.icons8.com/color/96/google-sheets.png',
   esemneaza: 'https://img.icons8.com/color/96/sign-document.png',
 
   // Social Media
