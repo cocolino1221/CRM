@@ -151,12 +151,41 @@ export default function GoogleSheetsSync({ autoOpen = false }: { autoOpen?: bool
     }
   };
 
+  // Launch the same Google OAuth flow the Google card uses; the callback
+  // returns to /integrations, and reopening the card lands in the setup.
+  const connectGoogle = async () => {
+    setBusy('google');
+    try {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api/v1';
+      const accessToken = localStorage.getItem('accessToken');
+      const me = await fetch(`${apiUrl}/auth/me`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      }).then((r) => r.json());
+      if (!me?.id || !me?.workspaceId) throw new Error('no session');
+      window.location.href = `${apiUrl}/integrations/oauth/google?workspace_id=${me.workspaceId}&user_id=${me.id}`;
+    } catch {
+      setMessage({ kind: 'err', text: 'Could not start Google connect — please log in again.' });
+      setBusy('');
+    }
+  };
+
   if (loading) return null;
   if (googleMissing) {
     return (
       <div className="rounded-2xl border border-slate-200 bg-white p-5">
         <div className="flex items-center gap-2 font-semibold text-slate-900"><FileSpreadsheet className="h-4 w-4 text-emerald-600" /> Google Sheets sync</div>
-        <p className="mt-1.5 text-sm text-slate-500">Connect the Google integration first, then configure a 2-way contact sync with any spreadsheet.</p>
+        <p className="mt-1.5 text-sm text-slate-500">
+          Step 1: connect your Google account. Step 2: pick the spreadsheet and map your columns.
+        </p>
+        <button
+          onClick={connectGoogle}
+          disabled={!!busy}
+          className="mt-4 inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-[13px] font-semibold text-white transition hover:bg-slate-700 disabled:opacity-60"
+        >
+          {busy === 'google' ? <LoaderCircle className="h-4 w-4 animate-spin" /> : null}
+          Connect Google account
+        </button>
+        {message && <p className="mt-2 text-sm text-rose-600">{message.text}</p>}
       </div>
     );
   }
@@ -197,9 +226,14 @@ export default function GoogleSheetsSync({ autoOpen = false }: { autoOpen?: bool
       </div>
 
       {message && (
-        <div className={`mt-3 flex items-center gap-2 rounded-xl px-3 py-2 text-sm ${message.kind === 'ok' ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}>
+        <div className={`mt-3 flex flex-wrap items-center gap-2 rounded-xl px-3 py-2 text-sm ${message.kind === 'ok' ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}>
           {message.kind === 'ok' ? <CheckCircle2 className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}
           {message.text}
+          {message.kind === 'err' && (
+            <button onClick={connectGoogle} className="font-semibold underline underline-offset-2">
+              Reconnect Google
+            </button>
+          )}
         </div>
       )}
 
