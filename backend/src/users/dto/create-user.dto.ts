@@ -8,6 +8,7 @@ import {
   MaxLength,
   IsObject,
 } from 'class-validator';
+import { Transform } from 'class-transformer';
 import { UserRole } from '../../database/entities/user.entity';
 import { IsStrongPassword } from '../../auth/validators/password.validator';
 
@@ -17,6 +18,9 @@ export class CreateUserDto {
     example: 'john.doe@company.com',
   })
   @IsEmail()
+  // Login lowercases emails before lookup (LoginDto) — store lowercase too,
+  // otherwise admin-created users with capitals can never sign in.
+  @Transform(({ value }) => value?.toLowerCase().trim())
   email: string;
 
   @ApiProperty({

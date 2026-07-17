@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsEmail, IsEnum, IsOptional, IsString } from 'class-validator';
+import { Transform } from 'class-transformer';
 import { UserRole } from '../../database/entities/user.entity';
 
 export class InviteUserDto {
@@ -8,6 +9,7 @@ export class InviteUserDto {
     example: 'newuser@company.com',
   })
   @IsEmail()
+  @Transform(({ value }) => value?.toLowerCase().trim())
   email: string;
 
   @ApiProperty({
