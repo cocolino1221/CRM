@@ -443,4 +443,80 @@ export class GoogleIntegrationHandler implements IntegrationHandler {
       throw error;
     }
   }
+
+  // ── Sheets write API (used by the Google Sheets 2-way contact sync) ──
+
+  /**
+   * Authenticated request with separate query params + JSON body and
+   * 401-refresh retry — the Sheets write endpoints need all three.
+   */
+  private async sheetsRequest<T = any>(
+    integration: Integration,
+    method: 'put' | 'post',
+    url: string,
+    query: Record<string, string>,
+    body: any,
+  ): Promise<T> {
+    const send = async (token: string) => {
+      const response = await this.httpService.axiosRef.request({
+        method,
+        url,
+        params: query,
+        data: body,
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      return response.data as T;
+    };
+
+    try {
+      return await send(integration.credentials?.accessToken);
+    } catch (error) {
+      if (error.response?.status === 401) {
+        const refreshed = await this.refreshAccessToken(integration);
+        return send(refreshed);
+      }
+      throw error;
+    }
+  }
+
+  /** Overwrite a cell range with values (2D array). */
+  async updateSheetValues(
+    integration: Integration,
+    spreadsheetId: string,
+    range: string,
+    values: any[][],
+  ): Promise<any> {
+    const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}`;
+    return this.sheetsRequest(integration, 'put', url, { valueInputOption: 'USER_ENTERED' }, { values });
+  }
+
+  /** Append rows after the last row of the given range/table. */
+  async appendSheetValues(
+    integration: Integration,
+    spreadsheetId: string,
+    range: string,
+    values: any[][],
+  ): Promise<any> {
+    const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}:append`;
+    return this.sheetsRequest(
+      integration,
+      'post',
+      url,
+      { valueInputOption: 'USER_ENTERED', insertDataOption: 'INSERT_ROWS' },
+      { values },
+    );
+  }
+
+  /** Batch-update multiple disjoint ranges in one call. */
+  async batchUpdateSheetValues(
+    integration: Integration,
+    spreadsheetId: string,
+    data: Array<{ range: string; values: any[][] }>,
+  ): Promise<any> {
+    const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchUpdate`;
+    return this.sheetsRequest(integration, 'post', url, {}, {
+      valueInputOption: 'USER_ENTERED',
+      data,
+    });
+  }
 }

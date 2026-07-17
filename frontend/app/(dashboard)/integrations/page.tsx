@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Search, Check, ExternalLink, Zap, Settings, Webhook, X, Copy, Key, Lock, Link as LinkIcon, AlertCircle, Loader2, Plus, Trash2, FileText, Edit, ChevronDown, Wrench, RefreshCw } from 'lucide-react';
 import api from '@/lib/api';
 import { integrationIcons } from '@/lib/integration-icons';
+import GoogleSheetsSync from '@/components/integrations/GoogleSheetsSync';
 
 interface Integration {
   id: string;
@@ -1455,6 +1456,11 @@ export default function IntegrationsPage() {
         <p className="mt-2 text-gray-600">
           Connect your favorite tools and apps to automate your workflow
         </p>
+      </div>
+
+      {/* Google Sheets 2-way contact sync (needs the Google integration) */}
+      <div className="animate-slide-up" style={{ animationDelay: '50ms' }}>
+        <GoogleSheetsSync />
       </div>
 
       {/* Stats Cards */}
