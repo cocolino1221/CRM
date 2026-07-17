@@ -75,6 +75,12 @@ export default function GoogleSheetsSync({ autoOpen = false }: { autoOpen?: bool
       ]);
       const list = Array.isArray(sheetsRes.data) ? sheetsRes.data : sheetsRes.data?.files || [];
       setSpreadsheets(list.map((f: any) => ({ id: f.id, name: f.name })));
+      if (!list.length) {
+        setMessage({
+          kind: 'err',
+          text: 'No spreadsheets found in the connected Google account. Create one in Google Sheets, or reconnect with the account that owns your sheet.',
+        });
+      }
       setPipelines(Array.isArray(pipesRes.data) ? pipesRes.data : pipesRes.data?.data || []);
       // prefill from existing config
       if (config) {

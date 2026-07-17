@@ -379,22 +379,6 @@ export default function IntegrationsPage() {
         { name: 'webhookUrl', label: 'Webhook URL', type: 'url', required: true, placeholder: 'https://hook.make.com/...' },
       ],
     },
-    {
-      id: 'manychat',
-      name: 'Manychat',
-      description: 'Sync contacts from Manychat campaigns, track user interactions, and automate follow-ups.',
-      category: 'automation',
-      icon: '💬',
-      logoUrl: integrationIcons.manychat,
-      color: 'from-green-500 to-emerald-500',
-      connected: false,
-      features: ['Contact sync', 'Campaign tracking', 'Message automation', 'Tag management'],
-      configFields: [
-        { name: 'apiKey', label: 'API Key', type: 'password', required: true, placeholder: 'Your Manychat API Key' },
-        { name: 'pageId', label: 'Facebook Page ID', type: 'text', required: true, placeholder: '123456789' },
-      ],
-    },
-
     // Forms & Surveys
     {
       id: 'typeform',

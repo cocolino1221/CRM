@@ -400,8 +400,16 @@ export class GoogleIntegrationHandler implements IntegrationHandler {
 
       return data.files || [];
     } catch (error) {
+      // Don't mask permission problems as an empty library — the UI needs
+      // to distinguish "no sheets" from "no access" (missing Drive scope).
       this.logger.error(`List sheets failed: ${error.message}`);
-      return [];
+      const status = error.response?.status;
+      if (status === 403 || status === 401) {
+        throw new Error(
+          'Google denied access to your Drive files. Reconnect Google to grant the Sheets/Drive permission.',
+        );
+      }
+      throw error;
     }
   }
 
