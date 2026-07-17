@@ -420,20 +420,25 @@ export class AuthController {
     @Res() res: Response,
   ): Promise<void> {
     const frontendUrl = this.configService.get('FRONTEND_URL') || 'https://etcrm.primafisoft.com';
+    const stateSource = this.authService.getOAuthStateSource(state);
+    const mobileFrontendUrl =
+      this.configService.get('MOBILE_FRONTEND_URL') ||
+      this.configService.get('MOBILE_URL') ||
+      frontendUrl;
+    const targetUrl = stateSource === 'mobile' ? mobileFrontendUrl : frontendUrl;
+    const errorRedirectUrl = stateSource === 'mobile'
+      ? `${targetUrl}/auth/callback?error=`
+      : `${targetUrl}/login?error=`;
 
     if (error) {
-      res.redirect(`${frontendUrl}/login?error=${encodeURIComponent(error)}`);
+      res.redirect(`${errorRedirectUrl}${encodeURIComponent(error)}`);
       return;
     }
 
-    const stateSource = this.authService.getOAuthStateSource(state);
     if (!stateSource) {
       res.redirect(`${frontendUrl}/login?error=${encodeURIComponent('Invalid OAuth state')}`);
       return;
     }
-
-    const mobileFrontendUrl = this.configService.get('MOBILE_FRONTEND_URL') || frontendUrl;
-    const targetUrl = stateSource === 'mobile' ? mobileFrontendUrl : frontendUrl;
 
     try {
       const authResponse = await this.authService.googleLogin(code);
@@ -448,8 +453,28 @@ export class AuthController {
         `&provider=google`
       );
     } catch (err) {
-      res.redirect(`${targetUrl}/login?error=${encodeURIComponent('Authentication failed')}`);
+      res.redirect(`${errorRedirectUrl}${encodeURIComponent('Authentication failed')}`);
     }
+  }
+
+  @Public()
+  @Post('select-workspace')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Finish OAuth sign-in by choosing a workspace (multi-team emails)' })
+  async selectWorkspace(
+    @Body() body: { selectionToken: string; workspaceId: string },
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<Omit<AuthResponse, 'refreshToken'>> {
+    const result = await this.authService.selectWorkspace(
+      String(body?.selectionToken || ''),
+      String(body?.workspaceId || ''),
+    );
+
+    res.cookie('accessToken', result.accessToken, this.getCookieOptions(false));
+    res.cookie('refreshToken', result.refreshToken, this.getCookieOptions(true));
+
+    const { refreshToken, ...userResponse } = result;
+    return userResponse;
   }
 
   @Public()

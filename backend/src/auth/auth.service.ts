@@ -250,6 +250,7 @@ export class AuthService implements OnModuleInit {
           role: user.role,
           status: user.status as UserStatus,
           workspaceId: user.workspaceId,
+          preferences: user.preferences || {},
         },
         ...tokens,
         pendingApproval: user.status === UserStatus.PENDING,
@@ -351,6 +352,7 @@ export class AuthService implements OnModuleInit {
           role: savedUser.role,
           status: savedUser.status as UserStatus,
           workspaceId: savedUser.workspaceId,
+          preferences: savedUser.preferences || {},
         },
         ...tokens,
         pendingApproval,
@@ -874,15 +876,46 @@ export class AuthService implements OnModuleInit {
         })
       );
 
-      const { email, given_name, family_name, id: googleId } = userInfoResponse.data;
+      const { email: rawEmail, given_name, family_name, id: googleId } = userInfoResponse.data;
+      const email = String(rawEmail || '').toLowerCase().trim();
       // Some Google accounts may not have a family_name; ensure we never insert NULL into NOT NULL columns
       const firstName = given_name || email?.split('@')[0] || 'User';
       const lastName = family_name || 'OAuth';
       this.logger.log('User info received from OAuth provider');
 
-      // Find or create user
+      // Match ALL existing accounts for this email (across workspaces) —
+      // Google sign-in must NEVER create a fresh workspace when the email
+      // already belongs to a team. One match → log in there; several →
+      // return a workspace chooser instead of tokens.
       this.logger.log('Looking for existing user...');
-      let user = await this.userRepository.findOne({ where: { email } });
+      const accounts = await this.userRepository
+        .createQueryBuilder('user')
+        .leftJoinAndSelect('user.workspace', 'workspace')
+        .where('LOWER(user.email) = :email', { email })
+        .andWhere('user.status NOT IN (:...blocked)', {
+          blocked: [UserStatus.SUSPENDED, UserStatus.INACTIVE],
+        })
+        .orderBy('user.lastLoginAt', 'DESC', 'NULLS LAST')
+        .getMany();
+
+      if (accounts.length > 1) {
+        const selectionToken = this.jwtService.sign(
+          { email, type: 'workspace-select' },
+          { expiresIn: '10m' },
+        );
+        this.logger.log(`Google login: ${accounts.length} workspaces for this email — asking user to choose`);
+        return {
+          requiresWorkspaceSelection: true,
+          selectionToken,
+          accounts: accounts.map((account) => ({
+            workspaceId: account.workspaceId,
+            workspaceName: account.workspace?.name || 'Workspace',
+            role: account.role,
+          })),
+        } as any;
+      }
+
+      let user = accounts[0] || null;
 
       if (!user) {
         // Create default workspace for new user
@@ -931,6 +964,7 @@ export class AuthService implements OnModuleInit {
           role: user.role,
           status: user.status as UserStatus,
           workspaceId: user.workspaceId,
+          preferences: user.preferences || {},
         },
         accessToken: tokens.accessToken,
         refreshToken: tokens.refreshToken,
@@ -944,6 +978,52 @@ export class AuthService implements OnModuleInit {
       this.logger.error('Full error:', error.stack);
       throw new UnauthorizedException('Google authentication failed');
     }
+  }
+
+  /**
+   * Complete a multi-workspace sign-in: the user picked a workspace after
+   * OAuth found their email in several teams (see googleLogin).
+   */
+  async selectWorkspace(selectionToken: string, workspaceId: string): Promise<AuthResponse> {
+    let payload: any;
+    try {
+      payload = this.jwtService.verify(selectionToken);
+    } catch {
+      throw new UnauthorizedException('Workspace selection expired — please sign in again');
+    }
+    if (payload?.type !== 'workspace-select' || !payload?.email) {
+      throw new UnauthorizedException('Invalid workspace selection token');
+    }
+
+    const user = await this.userRepository
+      .createQueryBuilder('user')
+      .where('LOWER(user.email) = :email', { email: String(payload.email).toLowerCase() })
+      .andWhere('user.workspaceId = :workspaceId', { workspaceId })
+      .getOne();
+
+    if (!user || user.status === UserStatus.SUSPENDED || user.status === UserStatus.INACTIVE) {
+      throw new UnauthorizedException('No active account in that workspace');
+    }
+
+    user.updateLastLogin();
+    await this.userRepository.save(user);
+    const tokens = await this.generateTokens(user);
+
+    return {
+      user: {
+        id: user.id,
+        email: user.email,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        role: user.role,
+        status: user.status as UserStatus,
+        workspaceId: user.workspaceId,
+        preferences: user.preferences || {},
+      },
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+      pendingApproval: user.status === UserStatus.PENDING,
+    };
   }
 
   /**
@@ -1021,6 +1101,7 @@ export class AuthService implements OnModuleInit {
           role: user.role,
           status: user.status as UserStatus,
           workspaceId: user.workspaceId,
+          preferences: user.preferences || {},
         },
         accessToken: tokens.accessToken,
         refreshToken: tokens.refreshToken,

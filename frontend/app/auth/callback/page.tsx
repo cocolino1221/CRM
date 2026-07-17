@@ -5,10 +5,37 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { Loader2 } from 'lucide-react';
 import api from '@/lib/api';
 
+type WorkspaceOption = { workspaceId: string; workspaceName: string; role: string };
+
 function AuthCallbackContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [error, setError] = useState('');
+  const [selection, setSelection] = useState<{ token: string; accounts: WorkspaceOption[] } | null>(null);
+  const [choosing, setChoosing] = useState('');
+
+  const finishLogin = (user: any) => {
+    localStorage.setItem('user', JSON.stringify(user));
+    if (user?.id) localStorage.setItem('userId', user.id);
+    if (user?.workspaceId) localStorage.setItem('workspaceId', user.workspaceId);
+    router.push('/dashboard');
+  };
+
+  const chooseWorkspace = async (workspaceId: string) => {
+    if (!selection || choosing) return;
+    setChoosing(workspaceId);
+    try {
+      const response = await api.post('/auth/select-workspace', {
+        selectionToken: selection.token,
+        workspaceId,
+      });
+      finishLogin(response.data.user);
+    } catch (err) {
+      console.error('Workspace selection failed:', err);
+      setError('Could not sign in to that workspace. Please try again.');
+      setTimeout(() => router.push('/login'), 3000);
+    }
+  };
 
   useEffect(() => {
     // Prefer exchanging short-lived auth code to avoid tokens in URL
@@ -30,20 +57,18 @@ function AuthCallbackContent() {
       const completeWithCode = async () => {
         try {
           const response = await api.post('/auth/oauth/exchange', { code });
+
+          // Email exists in multiple teams → let the user pick which one.
+          if (response.data?.requiresWorkspaceSelection) {
+            setSelection({
+              token: response.data.selectionToken,
+              accounts: response.data.accounts || [],
+            });
+            return;
+          }
+
           // Tokens are now set as httpOnly cookies by the backend
-          const { user } = response.data;
-
-          // Only store user metadata (tokens are in httpOnly cookies)
-          localStorage.setItem('user', JSON.stringify(user));
-
-          if (user?.id) {
-            localStorage.setItem('userId', user.id);
-          }
-          if (user?.workspaceId) {
-            localStorage.setItem('workspaceId', user.workspaceId);
-          }
-
-          router.push('/dashboard');
+          finishLogin(response.data.user);
         } catch (err) {
           console.error('Error exchanging auth code:', err);
           setError('Failed to complete authentication');
@@ -87,6 +112,37 @@ function AuthCallbackContent() {
       }, 3000);
     }
   }, [searchParams, router]);
+
+  if (selection) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="max-w-md w-full bg-white shadow-lg rounded-xl p-8">
+          <h2 className="text-xl font-bold text-gray-900 mb-1 text-center">Choose your team</h2>
+          <p className="text-sm text-gray-500 mb-6 text-center">
+            Your email belongs to more than one workspace. Pick the one you want to sign in to.
+          </p>
+          <div className="space-y-3">
+            {selection.accounts.map((account) => (
+              <button
+                key={account.workspaceId}
+                onClick={() => chooseWorkspace(account.workspaceId)}
+                disabled={!!choosing}
+                className="w-full flex items-center justify-between rounded-xl border border-gray-200 px-4 py-3.5 text-left transition hover:border-indigo-400 hover:bg-indigo-50/40 disabled:opacity-60"
+              >
+                <div>
+                  <div className="font-semibold text-gray-900">{account.workspaceName}</div>
+                  <div className="text-xs text-gray-500 capitalize">{String(account.role || '').toLowerCase().replace(/_/g, ' ')}</div>
+                </div>
+                {choosing === account.workspaceId
+                  ? <Loader2 className="h-4 w-4 animate-spin text-indigo-600" />
+                  : <span className="text-indigo-600 text-sm font-medium">Sign in →</span>}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (error) {
     return (
