@@ -163,10 +163,26 @@ export class GoogleSheetsService {
       const rows: any[][] = sheet.values || [];
       let headers: string[] = (rows[0] || []).map((h: any) => String(h ?? '').trim());
 
-      // ensure the managed CRM ID column exists (appended after the last header)
-      let crmIdCol = headers.findIndex((h) => h.toLowerCase() === CRM_ID_HEADER.toLowerCase());
+      // Managed CRM ID column. Sheets can have data rows WIDER than the
+      // header row, so "after the last header" may land on real data — only
+      // trust a CRM ID column whose data cells are UUIDs/empty; otherwise
+      // create it beyond the widest row.
+      const isUuid = (v: string) =>
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
+      const maxRowLen = rows.reduce((m, r) => Math.max(m, (r || []).length), headers.length);
+
+      let crmIdCol = -1;
+      for (let i = 0; i < headers.length; i++) {
+        if (headers[i].toLowerCase() !== CRM_ID_HEADER.toLowerCase()) continue;
+        const pure = rows.slice(1).every((r) => {
+          const v = String((r || [])[i] ?? '').trim();
+          return !v || isUuid(v);
+        });
+        if (pure) { crmIdCol = i; break; }
+      }
       if (crmIdCol === -1) {
-        crmIdCol = headers.length;
+        crmIdCol = maxRowLen;
+        while (headers.length < crmIdCol) headers.push('');
         headers = [...headers, CRM_ID_HEADER];
         await this.googleHandler.updateSheetValues(
           integration,
@@ -200,10 +216,12 @@ export class GoogleSheetsService {
       // ── phase 1: sheet → CRM ──
       if (config.direction !== 'crm-to-sheet') {
         for (let r = 1; r < rows.length; r++) {
+          try {
           const row = rows[r] || [];
           const cell = (i?: number) => (i === undefined ? '' : String(row[i] ?? '').trim());
           const email = cell(colOf.email).toLowerCase();
-          const existingId = String(row[crmIdCol] ?? '').trim();
+          const rawId = String(row[crmIdCol] ?? '').trim();
+          const existingId = isUuid(rawId) ? rawId : '';
           if (!email && !existingId) { if (row.some((v) => String(v ?? '').trim())) result.skipped++; continue; }
 
           let contact: Contact | null = null;
@@ -256,6 +274,12 @@ export class GoogleSheetsService {
               range: `'${config.sheetName}'!${columnLetter(crmIdCol)}${r + 1}`,
               values: [[contact.id]],
             });
+          }
+          } catch (rowError) {
+            // One bad row (weird cell data, constraint hit) must not sink the
+            // whole sync — count it and move on.
+            this.logger.warn(`Sheets sync: row ${r + 1} skipped: ${rowError.message}`);
+            result.skipped++;
           }
         }
       }
