@@ -329,11 +329,21 @@ export class GoogleSheetsService {
       );
       return result;
     } catch (error) {
+      // Google 403 on write = token missing the spreadsheets scope.
+      const status = error?.response?.status;
+      const friendly =
+        status === 403 || status === 401
+          ? 'Google refused access to the spreadsheet. Reconnect Google and accept the Sheets permission, then try again.'
+          : error.message;
+
       const config2 = this.getConfig(integration);
       if (config2) {
-        config2.lastResult = { fromSheet: 0, toSheet: 0, skipped: 0, error: error.message };
+        config2.lastResult = { fromSheet: 0, toSheet: 0, skipped: 0, error: friendly };
         integration.config = { ...(integration.config as any), sheetsSync: config2 };
         await this.integrationRepository.save(integration).catch(() => undefined);
+      }
+      if (status === 403 || status === 401) {
+        throw new BadRequestException(friendly);
       }
       throw error;
     } finally {
