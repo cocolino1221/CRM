@@ -161,11 +161,14 @@ import { validationSchema } from './config/env.validation';
     DealsModule,
     TasksModule,
     ActivitiesModule,
+    // GoogleSheetsModule must register BEFORE IntegrationsModule so its static
+    // /integrations/google-sheets/* routes are matched ahead of the generic
+    // /integrations/:id patterns ("google-sheets" is not a UUID).
+    GoogleSheetsModule,
     IntegrationsModule,
     WhatsAppModule,
     MetaMessagingModule,
     AudioLibraryModule,
-    GoogleSheetsModule,
     SmartBillModule,
     PipelineModule,
     NotificationsModule,

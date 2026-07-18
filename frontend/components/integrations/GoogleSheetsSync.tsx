@@ -146,7 +146,7 @@ export default function GoogleSheetsSync({ autoOpen = false }: { autoOpen?: bool
     setBusy('sync');
     setMessage(null);
     try {
-      const res = await api.post('/integrations/google-sheets/sync');
+      const res = await api.post('/integrations/google-sheets/sync-now');
       const r = res.data || {};
       setMessage({ kind: 'ok', text: `Synced — ${r.fromSheet ?? 0} from sheet, ${r.toSheet ?? 0} to sheet${r.skipped ? `, ${r.skipped} skipped` : ''}.` });
       await loadConfig();

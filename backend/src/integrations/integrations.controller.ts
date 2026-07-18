@@ -34,6 +34,7 @@ import { DocumentsService } from '../documents/documents.service';
 import { CreateIntegrationDto, UpdateIntegrationDto, InstallIntegrationDto } from './dto/integration.dto';
 import { Integration, IntegrationType, IntegrationStatus, IntegrationAuthType } from '../database/entities/integration.entity';
 import { TypeformIntegrationHandler } from './handlers/typeform.handler';
+import { GoogleSheetsService } from './google-sheets/google-sheets.service';
 
 @ApiTags('Integrations')
 @Controller('integrations')
@@ -51,6 +52,7 @@ export class IntegrationsController {
     private readonly contactsService: ContactsService,
     private readonly queueService: QueueService,
     private readonly documentsService: DocumentsService,
+    private readonly googleSheetsService: GoogleSheetsService,
     @InjectRepository(Integration)
     private readonly integrationRepository: Repository<Integration>,
     private readonly typeformHandler: TypeformIntegrationHandler,
@@ -307,6 +309,14 @@ export class IntegrationsController {
     @Param('id') id: string,
   ): Promise<{ success: boolean; message?: string; data?: any }> {
     return this.integrationsService.testConnection(id, req.user.workspaceId);
+  }
+
+  // Compatibility route for clients deployed before the dedicated sync-now path.
+  // It must remain declared before :id/sync so "google-sheets" is not parsed as a UUID.
+  @Post('google-sheets/sync')
+  @ApiOperation({ summary: 'Run Google Sheets contact sync' })
+  async syncGoogleSheets(@Req() req: AuthenticatedRequest) {
+    return this.googleSheetsService.syncNow(req.user.workspaceId);
   }
 
   @Post(':id/sync')

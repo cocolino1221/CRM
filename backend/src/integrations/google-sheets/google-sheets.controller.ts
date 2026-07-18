@@ -38,7 +38,8 @@ export class GoogleSheetsController {
     return this.sheetsService.saveSyncConfig(req.user.workspaceId, dto);
   }
 
-  @Post('sync')
+  // Keep this path distinct from IntegrationsController's generic :id/sync route.
+  @Post('sync-now')
   @ApiOperation({ summary: 'Run the 2-way sync now' })
   async syncNow(@Req() req: any) {
     return this.sheetsService.syncNow(req.user.workspaceId);

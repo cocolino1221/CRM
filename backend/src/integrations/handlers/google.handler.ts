@@ -419,7 +419,7 @@ export class GoogleIntegrationHandler implements IntegrationHandler {
   async getSheetData(integration: any, spreadsheetId: string, range?: string): Promise<any> {
     try {
       const sheetRange = range || 'A1:Z1000'; // Default range
-      const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${sheetRange}`;
+      const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(sheetRange)}`;
 
       const data = await this.makeAuthenticatedRequest(integration, url);
 
