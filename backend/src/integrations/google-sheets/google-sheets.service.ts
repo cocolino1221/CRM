@@ -6,6 +6,7 @@ import { Integration, IntegrationType, IntegrationStatus } from '../../database/
 import { Contact, ContactSource } from '../../database/entities/contact.entity';
 import { PipelineStage } from '../../database/entities/pipeline-stage.entity';
 import { GoogleIntegrationHandler } from '../handlers/google.handler';
+import { normalizePhoneE164 } from '../../common/utils/phone.util';
 
 // CRM fields a sheet column can map to. "stage" moves the contact between
 // pipeline stages by stage NAME. Keys are stored in integration.config.
@@ -101,8 +102,8 @@ export class GoogleSheetsService {
     if (!dto.spreadsheetId || !dto.sheetName) {
       throw new BadRequestException('spreadsheetId and sheetName are required');
     }
-    if (!dto.mapping || !dto.mapping.email) {
-      throw new BadRequestException('Column mapping must at least include "email" — it is the matching key');
+    if (!dto.mapping || (!dto.mapping.email && !dto.mapping.phone)) {
+      throw new BadRequestException('Column mapping must include "email" or "phone" — one of them is the matching key');
     }
     const config: SheetsSyncConfig = {
       enabled: dto.enabled !== false,
@@ -199,8 +200,8 @@ export class GoogleSheetsService {
         const idx = headers.findIndex((h) => h.toLowerCase() === header.toLowerCase());
         if (idx !== -1) colOf[field] = idx;
       }
-      if (colOf.email === undefined) {
-        throw new BadRequestException(`Mapped email column "${config.mapping.email}" not found in header row`);
+      if (colOf.email === undefined && colOf.phone === undefined) {
+        throw new BadRequestException('Neither the mapped email nor phone column was found in the header row');
       }
 
       // stage name -> id cache for this pipeline
@@ -219,10 +220,18 @@ export class GoogleSheetsService {
           try {
           const row = rows[r] || [];
           const cell = (i?: number) => (i === undefined ? '' : String(row[i] ?? '').trim());
-          const email = cell(colOf.email).toLowerCase();
+          // A mapped "email" column may hold junk (lead source, notes) —
+          // only trust real email addresses, otherwise match/create by phone.
+          const rawEmail = cell(colOf.email).toLowerCase();
+          const email = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rawEmail) ? rawEmail : '';
+          const phone = cell(colOf.phone);
+          const phoneNormalized = phone ? normalizePhoneE164(phone) : null;
           const rawId = String(row[crmIdCol] ?? '').trim();
           const existingId = isUuid(rawId) ? rawId : '';
-          if (!email && !existingId) { if (row.some((v) => String(v ?? '').trim())) result.skipped++; continue; }
+          if (!email && !phoneNormalized && !existingId) {
+            if (row.some((v) => String(v ?? '').trim())) result.skipped++;
+            continue;
+          }
 
           let contact: Contact | null = null;
           if (existingId) {
@@ -230,6 +239,11 @@ export class GoogleSheetsService {
           }
           if (!contact && email) {
             contact = await this.contactRepository.findOne({ where: { email, workspaceId: integration.workspaceId } });
+          }
+          if (!contact && phoneNormalized) {
+            contact = await this.contactRepository.findOne({
+              where: { phoneNormalized, workspaceId: integration.workspaceId },
+            });
           }
 
           const stageName = cell(colOf.stage).toLowerCase();
@@ -249,12 +263,16 @@ export class GoogleSheetsService {
           };
 
           if (!contact) {
-            if (!email) { result.skipped++; continue; }
+            if (!email && !phoneNormalized) { result.skipped++; continue; }
+            // Contacts require an email — phone-only rows get a placeholder
+            // (same pattern the WhatsApp ingest uses).
+            const effectiveEmail = email || `${phoneNormalized!.replace(/[^0-9]/g, '')}@sheet.placeholder.invalid`;
             contact = this.contactRepository.create({
               workspaceId: integration.workspaceId,
               ownerId: integration.userId,
-              email,
-              firstName: cell(colOf.firstName) || email.split('@')[0],
+              email: effectiveEmail,
+              phone: phone || undefined,
+              firstName: cell(colOf.firstName) || (email ? email.split('@')[0] : phone) || '-',
               lastName: cell(colOf.lastName) || '-',
               source: ContactSource.OTHER,
               pipelineStageId: config.pipelineStageId,

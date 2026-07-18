@@ -8,10 +8,10 @@ import api from '@/lib/api';
 // Rendered on the Integrations page once Google is connected.
 
 const CRM_FIELDS: Array<{ key: string; label: string; required?: boolean }> = [
-  { key: 'email', label: 'Email', required: true },
+  { key: 'email', label: 'Email (matching key)' },
+  { key: 'phone', label: 'Phone (matching key)' },
   { key: 'firstName', label: 'First name' },
   { key: 'lastName', label: 'Last name' },
-  { key: 'phone', label: 'Phone' },
   { key: 'company', label: 'Company' },
   { key: 'stage', label: 'Pipeline stage (by name)' },
   { key: 'notes', label: 'Notes' },
@@ -118,7 +118,7 @@ export default function GoogleSheetsSync({ autoOpen = false }: { autoOpen?: bool
 
   const save = async () => {
     if (!spreadsheetId || !sheetName) { setMessage({ kind: 'err', text: 'Pick a spreadsheet and a tab first.' }); return; }
-    if (!mapping.email) { setMessage({ kind: 'err', text: 'Map the Email column — it is the matching key.' }); return; }
+    if (!mapping.email && !mapping.phone) { setMessage({ kind: 'err', text: 'Map the Email or Phone column — one of them is the matching key.' }); return; }
     setBusy('save');
     setMessage(null);
     try {
