@@ -315,10 +315,15 @@ export class OAuthService {
     // Get scopes from: integration config > OAuth config > registry defaults.
     // Instagram Login always uses the provider defaults — a legacy row may
     // still carry Facebook-Login scopes that instagram.com would reject.
+    // Google: MERGE stored + configured scopes — old rows freeze the scope
+    // list at install time, silently dropping newly added permissions
+    // (e.g. spreadsheets) on every reconnect.
     let scopes =
       config.providerKey === 'instagram'
         ? config.scopes
-        : integration.config?.scopes || config.scopes;
+        : config.providerKey === 'google'
+          ? Array.from(new Set([...(integration.config?.scopes || []), ...(config.scopes || [])]))
+          : integration.config?.scopes || config.scopes;
 
     // If still no scopes, try to get from registry
     if (!scopes || scopes.length === 0) {
