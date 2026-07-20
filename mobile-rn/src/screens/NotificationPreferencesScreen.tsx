@@ -27,6 +27,7 @@ const GROUPS: { title: string; icon: any; color: string; items: { key: string; l
     items: [
       { key: 'lead:typeform', label: 'From Typeform' },
       { key: 'lead:social', label: 'From social networks' },
+      { key: 'lead:sheets', label: 'From Google Sheets' },
       { key: 'lead:manual', label: 'Added manually' },
     ],
   },

@@ -199,7 +199,7 @@ export class NotificationsService {
     });
   }
 
-  notifyLead(workspaceId: string, userId: string, source: 'typeform' | 'social' | 'manual', title: string, message: string, link?: string) {
+  notifyLead(workspaceId: string, userId: string, source: 'typeform' | 'social' | 'manual' | 'sheets', title: string, message: string, link?: string) {
     return this.create(workspaceId, { type: NotificationType.LEAD, userId, title, message, link, category: `lead:${source}` });
   }
 

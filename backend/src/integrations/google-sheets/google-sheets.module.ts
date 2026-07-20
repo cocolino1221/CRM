@@ -9,9 +9,10 @@ import { GoogleIntegrationHandler } from '../handlers/google.handler';
 import { GoogleSheetsService } from './google-sheets.service';
 import { GoogleDriveBackupService } from './google-drive-backup.service';
 import { GoogleSheetsController } from './google-sheets.controller';
+import { NotificationsModule } from '../../notifications/notifications.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Integration, Contact, PipelineStage, Document]), HttpModule],
+  imports: [TypeOrmModule.forFeature([Integration, Contact, PipelineStage, Document]), HttpModule, NotificationsModule],
   controllers: [GoogleSheetsController],
   providers: [GoogleSheetsService, GoogleDriveBackupService, GoogleIntegrationHandler],
   exports: [GoogleSheetsService, GoogleDriveBackupService],

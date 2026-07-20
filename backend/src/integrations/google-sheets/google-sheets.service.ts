@@ -7,6 +7,7 @@ import { Contact, ContactSource } from '../../database/entities/contact.entity';
 import { PipelineStage } from '../../database/entities/pipeline-stage.entity';
 import { GoogleIntegrationHandler } from '../handlers/google.handler';
 import { normalizePhoneE164 } from '../../common/utils/phone.util';
+import { NotificationsService } from '../../notifications/notifications.service';
 
 // CRM fields a sheet column can map to. "stage" moves the contact between
 // pipeline stages by stage NAME. Keys are stored in integration.config.
@@ -50,6 +51,7 @@ export class GoogleSheetsService {
     @InjectRepository(Contact) private readonly contactRepository: Repository<Contact>,
     @InjectRepository(PipelineStage) private readonly stageRepository: Repository<PipelineStage>,
     private readonly googleHandler: GoogleIntegrationHandler,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   private async getGoogleIntegration(workspaceId: string): Promise<Integration> {
@@ -296,6 +298,23 @@ export class GoogleSheetsService {
             apply(contact);
             contact = await this.contactRepository.save(contact);
             result.fromSheet++;
+
+            // New lead from the sheet — notify (gated by the user's
+            // `lead:sheets` push preference). Fire-and-forget.
+            if (integration.userId) {
+              const displayName = `${contact.firstName || ''} ${contact.lastName === '-' ? '' : contact.lastName || ''}`.trim()
+                || contact.phone || contact.email;
+              this.notificationsService
+                .notifyLead(
+                  integration.workspaceId,
+                  integration.userId,
+                  'sheets',
+                  'New lead from Google Sheets',
+                  `${displayName} — imported from "${config.spreadsheetName || 'sheet'}"`,
+                  '/leads',
+                )
+                .catch(() => undefined);
+            }
           } else {
             apply(contact);
             await this.contactRepository.save(contact);
