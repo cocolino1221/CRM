@@ -18,6 +18,7 @@ export interface SheetsSyncConfig {
   spreadsheetId: string;
   spreadsheetName?: string;
   sheetName: string; // tab title
+  headerRow?: number; // 1-based row that holds the column headers (default 1)
   // CRM field -> exact header text in the sheet's first row
   mapping: Partial<Record<MappableField, string>>;
   pipelineId?: string;
@@ -79,17 +80,28 @@ export class GoogleSheetsService {
     const meta = await this.googleHandler.getSpreadsheetMetadata(integration, spreadsheetId);
     const tabs: string[] = (meta?.sheets || []).map((s: any) => s?.properties?.title).filter(Boolean);
 
-    // headers of the first (or requested) tab so the UI can offer mapping choices
+    // Headers per tab for the mapping UI. Real-world sheets often have title
+    // rows above the header row, so scan the first 5 rows and pick the first
+    // one that looks like a header (>= 2 non-empty cells).
     const headersByTab: Record<string, string[]> = {};
+    const headerRowByTab: Record<string, number> = {};
     for (const tab of tabs.slice(0, 10)) {
       try {
-        const data = await this.googleHandler.getSheetData(integration, spreadsheetId, `'${tab}'!A1:AZ1`);
-        headersByTab[tab] = (data.values?.[0] || []).map((h: any) => String(h ?? '').trim());
+        const data = await this.googleHandler.getSheetData(integration, spreadsheetId, `'${tab}'!A1:AZ5`);
+        const firstRows: any[][] = data.values || [];
+        let headerIdx = 0;
+        for (let i = 0; i < firstRows.length; i++) {
+          const nonEmpty = (firstRows[i] || []).filter((v) => String(v ?? '').trim()).length;
+          if (nonEmpty >= 2) { headerIdx = i; break; }
+        }
+        headersByTab[tab] = (firstRows[headerIdx] || []).map((h: any) => String(h ?? '').trim());
+        headerRowByTab[tab] = headerIdx + 1; // 1-based
       } catch {
         headersByTab[tab] = [];
+        headerRowByTab[tab] = 1;
       }
     }
-    return { spreadsheetId, title: meta?.properties?.title, tabs, headersByTab, mappableFields: MAPPABLE_FIELDS };
+    return { spreadsheetId, title: meta?.properties?.title, tabs, headersByTab, headerRowByTab, mappableFields: MAPPABLE_FIELDS };
   }
 
   async getSyncConfig(workspaceId: string) {
@@ -110,6 +122,7 @@ export class GoogleSheetsService {
       spreadsheetId: dto.spreadsheetId,
       spreadsheetName: dto.spreadsheetName,
       sheetName: dto.sheetName,
+      headerRow: Math.max(1, Number(dto.headerRow) || 1),
       mapping: dto.mapping,
       pipelineId: dto.pipelineId,
       pipelineStageId: dto.pipelineStageId,
@@ -162,7 +175,10 @@ export class GoogleSheetsService {
       const range = `'${config.sheetName}'!A1:AZ10000`;
       const sheet = await this.googleHandler.getSheetData(integration, config.spreadsheetId, range);
       const rows: any[][] = sheet.values || [];
-      let headers: string[] = (rows[0] || []).map((h: any) => String(h ?? '').trim());
+      // Headers can live below title rows — config.headerRow is 1-based.
+      const headerIdx = Math.max(0, (config.headerRow || 1) - 1);
+      const firstDataRow = headerIdx + 1;
+      let headers: string[] = (rows[headerIdx] || []).map((h: any) => String(h ?? '').trim());
 
       // Managed CRM ID column. Sheets can have data rows WIDER than the
       // header row, so "after the last header" may land on real data — only
@@ -175,7 +191,7 @@ export class GoogleSheetsService {
       let crmIdCol = -1;
       for (let i = 0; i < headers.length; i++) {
         if (headers[i].toLowerCase() !== CRM_ID_HEADER.toLowerCase()) continue;
-        const pure = rows.slice(1).every((r) => {
+        const pure = rows.slice(firstDataRow).every((r) => {
           const v = String((r || [])[i] ?? '').trim();
           return !v || isUuid(v);
         });
@@ -188,7 +204,7 @@ export class GoogleSheetsService {
         await this.googleHandler.updateSheetValues(
           integration,
           config.spreadsheetId,
-          `'${config.sheetName}'!${columnLetter(crmIdCol)}1`,
+          `'${config.sheetName}'!${columnLetter(crmIdCol)}${headerIdx + 1}`,
           [[CRM_ID_HEADER]],
         );
       }
@@ -216,7 +232,7 @@ export class GoogleSheetsService {
 
       // ── phase 1: sheet → CRM ──
       if (config.direction !== 'crm-to-sheet') {
-        for (let r = 1; r < rows.length; r++) {
+        for (let r = firstDataRow; r < rows.length; r++) {
           try {
           const row = rows[r] || [];
           const cell = (i?: number) => (i === undefined ? '' : String(row[i] ?? '').trim());
@@ -312,7 +328,7 @@ export class GoogleSheetsService {
         for (const [name, id] of stagesByName.entries()) stageNameById.set(id, name);
 
         const rowByContactId = new Map<string, number>();
-        for (let r = 1; r < rows.length; r++) {
+        for (let r = firstDataRow; r < rows.length; r++) {
           const id = String((rows[r] || [])[crmIdCol] ?? '').trim();
           if (id) rowByContactId.set(id, r);
         }

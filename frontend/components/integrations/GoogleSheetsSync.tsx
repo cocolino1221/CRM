@@ -31,6 +31,7 @@ export default function GoogleSheetsSync({ autoOpen = false }: { autoOpen?: bool
   const [spreadsheetId, setSpreadsheetId] = useState('');
   const [tabs, setTabs] = useState<string[]>([]);
   const [headersByTab, setHeadersByTab] = useState<Record<string, string[]>>({});
+  const [headerRowByTab, setHeaderRowByTab] = useState<Record<string, number>>({});
   const [sheetName, setSheetName] = useState('');
   const [mapping, setMapping] = useState<Record<string, string>>({});
   const [pipelines, setPipelines] = useState<Pipeline[]>([]);
@@ -105,6 +106,7 @@ export default function GoogleSheetsSync({ autoOpen = false }: { autoOpen?: bool
       const res = await api.get(`/integrations/google-sheets/spreadsheets/${id}`);
       setTabs(res.data?.tabs || []);
       setHeadersByTab(res.data?.headersByTab || {});
+      setHeaderRowByTab(res.data?.headerRowByTab || {});
       if ((res.data?.tabs || []).length === 1) setSheetName(res.data.tabs[0]);
     } catch (err: any) {
       setMessage({ kind: 'err', text: 'Could not read that spreadsheet.' });
@@ -127,6 +129,7 @@ export default function GoogleSheetsSync({ autoOpen = false }: { autoOpen?: bool
         spreadsheetId,
         spreadsheetName: spreadsheets.find((s) => s.id === spreadsheetId)?.name,
         sheetName,
+        headerRow: headerRowByTab[sheetName] || 1,
         mapping,
         pipelineId: pipelineId || undefined,
         pipelineStageId: pipelineStageId || undefined,
