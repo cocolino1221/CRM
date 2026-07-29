@@ -38,14 +38,38 @@ export class EventsService {
    * credentials, API error, etc.); it just leaves meetingLink as whatever was
    * manually provided (usually blank).
    */
-  /** Schedule (or skip) the "before_meeting" WhatsApp reminder for an event. */
+  /**
+   * Schedule (or skip) the "before_meeting" WhatsApp reminder for an event.
+   * `event.customFields.whatsappReminder` carries a per-event override written
+   * by the Calendar UI: `{ enabled?, flowId?, hoursBefore? }`. Any field left
+   * unset falls back to the previous workspace-wide auto-pick behavior, so
+   * events created without touching the new UI are unaffected.
+   */
   private async scheduleMeetingReminder(workspaceId: string, event: Event): Promise<void> {
     try {
+      const override = (event.customFields as any)?.whatsappReminder as
+        | { enabled?: boolean; flowId?: string; hoursBefore?: number }
+        | undefined;
+
+      if (override?.enabled === false) {
+        await this.meetingReminderDispatch.cancel(event.id).catch(() => undefined);
+        return;
+      }
+
       const flows = await this.whatsAppService.getFlows(workspaceId);
-      const flow = flows.find((f: any) => f.enabled && f.trigger === 'before_meeting' && f.steps?.length > 0);
+      const beforeMeetingFlows = flows.filter((f: any) => f.trigger === 'before_meeting' && f.steps?.length > 0);
+
+      let flow = override?.flowId
+        ? beforeMeetingFlows.find((f: any) => f.id === override.flowId)
+        : undefined;
+      if (!flow) {
+        flow = beforeMeetingFlows.find((f: any) => f.enabled);
+      }
       if (!flow) return; // feature not configured for this workspace — fine, optional
 
-      const hoursBefore = Number(flow.reminderHoursBefore) > 0 ? Number(flow.reminderHoursBefore) : 3;
+      const hoursBefore = Number(override?.hoursBefore) > 0
+        ? Number(override!.hoursBefore)
+        : (Number(flow.reminderHoursBefore) > 0 ? Number(flow.reminderHoursBefore) : 3);
       const sendAt = new Date(new Date(event.startDate).getTime() - hoursBefore * 60 * 60 * 1000);
       await this.meetingReminderDispatch.schedule(event.id, workspaceId, sendAt);
     } catch (err: any) {

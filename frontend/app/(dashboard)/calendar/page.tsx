@@ -33,6 +33,7 @@ interface Event {
     lastName: string;
   };
   contactId?: string;
+  customFields?: Record<string, any>;
 }
 
 interface EventFormData {
@@ -46,6 +47,9 @@ interface EventFormData {
   meetingPlatform?: 'zoom' | 'google_meet' | 'microsoft_teams' | 'phone' | 'in_person';
   contactId?: string;
   autoGenerateMeetingLink?: boolean;
+  whatsappReminderEnabled: boolean;
+  whatsappReminderFlowId?: string;
+  whatsappReminderHoursBefore?: number;
 }
 
 interface ContactOption {
@@ -53,6 +57,14 @@ interface ContactOption {
   firstName: string;
   lastName: string;
   phone?: string;
+}
+
+interface WhatsAppFlowOption {
+  id: string;
+  name?: string;
+  trigger: string;
+  enabled: boolean;
+  reminderHoursBefore?: number;
 }
 
 export default function CalendarPage() {
@@ -67,6 +79,7 @@ export default function CalendarPage() {
   const [modalError, setModalError] = useState('');
   const [editingEvent, setEditingEvent] = useState<Event | null>(null);
   const [contacts, setContacts] = useState<ContactOption[]>([]);
+  const [whatsappFlows, setWhatsappFlows] = useState<WhatsAppFlowOption[]>([]);
 
   const [formData, setFormData] = useState<EventFormData>({
     title: '',
@@ -78,6 +91,7 @@ export default function CalendarPage() {
     location: '',
     contactId: '',
     autoGenerateMeetingLink: false,
+    whatsappReminderEnabled: true,
   });
 
   const monthNames = [
@@ -93,7 +107,15 @@ export default function CalendarPage() {
     api.get('/contacts', { params: { limit: 200 } })
       .then((res: any) => setContacts(Array.isArray(res.data) ? res.data : res.data?.contacts || []))
       .catch(() => setContacts([]));
+    api.get('/integrations/whatsapp/flows')
+      .then((res: any) => {
+        const flows: WhatsAppFlowOption[] = Array.isArray(res.data) ? res.data : [];
+        setWhatsappFlows(flows.filter(f => f.trigger === 'before_meeting'));
+      })
+      .catch(() => setWhatsappFlows([]));
   }, []);
+
+  const enabledReminderFlows = whatsappFlows.filter(f => f.enabled);
 
   const fetchEvents = async () => {
     try {
@@ -116,6 +138,22 @@ export default function CalendarPage() {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  // customFields.whatsappReminder is read by the backend's per-event override
+  // (see EventsService.scheduleMeetingReminder) — undefined only when there's
+  // no linked contact, since a reminder has nowhere to send without one.
+  const buildWhatsappReminderCustomFields = (): Record<string, any> | undefined => {
+    if (!formData.contactId) return undefined;
+    return {
+      whatsappReminder: {
+        enabled: formData.whatsappReminderEnabled,
+        flowId: formData.whatsappReminderEnabled ? (formData.whatsappReminderFlowId || undefined) : undefined,
+        hoursBefore: formData.whatsappReminderEnabled && formData.whatsappReminderHoursBefore
+          ? formData.whatsappReminderHoursBefore
+          : undefined,
+      },
+    };
   };
 
   const handleCreateEvent = async (e: React.FormEvent) => {
@@ -151,6 +189,7 @@ export default function CalendarPage() {
         contactId: formData.contactId || undefined,
         autoGenerateMeetingLink: formData.autoGenerateMeetingLink || undefined,
         color: getColorForType(formData.type),
+        customFields: buildWhatsappReminderCustomFields(),
       };
 
       const response = await api.post<Event>('/events', eventData);
@@ -184,6 +223,10 @@ export default function CalendarPage() {
     const startDate = new Date(event.startDate);
     const endDate = new Date(event.endDate);
 
+    const reminder = event.customFields?.whatsappReminder as
+      | { enabled?: boolean; flowId?: string; hoursBefore?: number }
+      | undefined;
+
     setFormData({
       title: event.title,
       description: event.description || '',
@@ -194,6 +237,9 @@ export default function CalendarPage() {
       location: event.location || '',
       meetingPlatform: event.meetingPlatform,
       contactId: event.contact?.id || event.contactId,
+      whatsappReminderEnabled: reminder?.enabled !== false,
+      whatsappReminderFlowId: reminder?.flowId,
+      whatsappReminderHoursBefore: reminder?.hoursBefore,
     });
 
     setShowEventModal(true);
@@ -233,6 +279,7 @@ export default function CalendarPage() {
         meetingPlatform: formData.meetingPlatform || undefined,
         contactId: formData.contactId || undefined,
         color: getColorForType(formData.type),
+        customFields: buildWhatsappReminderCustomFields(),
       };
 
       const response = await api.patch<Event>(`/events/${editingEvent.id}`, eventData);
@@ -295,6 +342,9 @@ export default function CalendarPage() {
       location: '',
       contactId: '',
       autoGenerateMeetingLink: false,
+      whatsappReminderEnabled: true,
+      whatsappReminderFlowId: undefined,
+      whatsappReminderHoursBefore: undefined,
     });
     setModalError('');
     setSelectedDate(null);
@@ -795,6 +845,53 @@ export default function CalendarPage() {
                   ))}
                 </select>
               </div>
+
+              {formData.contactId && enabledReminderFlows.length > 0 && (
+                <div className="space-y-3 bg-green-50 border border-green-200 rounded-lg px-3 py-3">
+                  <label className="flex items-center gap-2 text-sm font-semibold text-gray-700">
+                    <input
+                      type="checkbox"
+                      checked={formData.whatsappReminderEnabled}
+                      onChange={(e) => setFormData({ ...formData, whatsappReminderEnabled: e.target.checked })}
+                      className="h-4 w-4 rounded border-gray-300 accent-green-600"
+                    />
+                    Send WhatsApp reminder before this meeting
+                  </label>
+
+                  {formData.whatsappReminderEnabled && (
+                    <div className="grid grid-cols-2 gap-3">
+                      {enabledReminderFlows.length > 1 && (
+                        <div>
+                          <label className="block text-xs font-semibold text-gray-600 mb-1">Flow</label>
+                          <select
+                            value={formData.whatsappReminderFlowId || ''}
+                            onChange={(e) => setFormData({ ...formData, whatsappReminderFlowId: e.target.value || undefined })}
+                            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
+                          >
+                            <option value="">Default (first enabled)</option>
+                            {enabledReminderFlows.map((f) => (
+                              <option key={f.id} value={f.id}>{f.name || f.id}</option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-600 mb-1">Hours before</label>
+                        <input
+                          type="number"
+                          min={1}
+                          placeholder={String(
+                            enabledReminderFlows.find(f => f.id === formData.whatsappReminderFlowId)?.reminderHoursBefore || 3
+                          )}
+                          value={formData.whatsappReminderHoursBefore ?? ''}
+                          onChange={(e) => setFormData({ ...formData, whatsappReminderHoursBefore: e.target.value ? Math.max(1, Number(e.target.value)) : undefined })}
+                          className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-2">Location</label>

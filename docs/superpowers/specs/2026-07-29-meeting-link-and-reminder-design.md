@@ -73,3 +73,27 @@ Flow state (`flowStates[waId]`) is one-per-contact. If the same contact has two 
 - Per-meeting-type override of `reminderHoursBefore` (flow-level setting only, in v1).
 - Multi-concurrent-booking flow-state handling (see Known Limitation).
 - Automatic reschedule flow (the "No" branch message is authored by the user; no reschedule-booking UI is built here).
+
+## Addendum (2026-07-29): implemented against `Event`, not `Booking`
+
+Everything above referencing `Booking`/`MeetingType`/`bookings.service.ts` describes the plan as originally drafted. During implementation it turned out `SchedulingModule` (which owns `Booking`/`MeetingType`) is **not registered in `app.module.ts`** and has zero frontend callers — dead code. The Calendar UI actually books through `EventsModule`/`Event` entity (`backend/src/events/`), so the feature was built there instead. Read every `booking` reference above as `event` conceptually; the mechanism (durable Bull scheduling, `before_meeting` flow trigger, `{{meetingLink}}` template substitution) is unchanged, only the host entity differs:
+
+- `Event.customFields.autoGenerateMeetingLink` / `EventsService.generateMeetingLink()` replace the `MeetingType.autoGenerateLink` path (real Zoom Server-to-Server + Google Calendar `conferenceData` calls, not a placeholder).
+- `MeetingReminderDispatchService.schedule(eventId, ...)` / job id `event:${eventId}` replace the `booking:${id}` scheme.
+- `EventsService.scheduleMeetingReminder()` replaces the `bookings.service.create()`/`cancel()` hooks — called from `EventsController`'s `create`/`update`/`remove`.
+
+### Per-event reminder override (this session's extension)
+
+Originally the reminder was workspace-wide: the first enabled `before_meeting` flow, its own `reminderHoursBefore`, fired for every event automatically. The user asked to control this per booked call instead — on/off, which flow, and hours-before, chosen from the Calendar event modal itself (multiple `before_meeting` flows can now coexist, e.g. one for warm leads, one for follow-ups).
+
+No migration: `Event.customFields` (existing JSONB, already exposed on `CreateEventDto`/`UpdateEventDto`) carries the override:
+
+```ts
+customFields.whatsappReminder = {
+  enabled?: boolean;   // false = force off for this event; default true
+  flowId?: string;     // specific before_meeting flow id; default = first enabled one
+  hoursBefore?: number;// override; default = the resolved flow's own reminderHoursBefore, else 3
+}
+```
+
+`EventsService.scheduleMeetingReminder()` reads this override before falling back to the original auto-pick logic, so events created without touching the new UI (API callers, older events) are unaffected. The Calendar modal (`frontend/app/(dashboard)/calendar/page.tsx`) fetches `GET /integrations/whatsapp/flows` (existing endpoint, no new API), filters for `trigger === 'before_meeting'`, and — only when a contact is linked — shows a toggle, a flow picker (when more than one enabled flow exists), and an hours-before input, defaulting to the picked flow's own value.
