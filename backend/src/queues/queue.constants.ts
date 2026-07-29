@@ -8,6 +8,8 @@ export const QUEUE_NAMES = {
   AI: 'ai',
   WEBHOOK: 'webhook',
   WORKFLOW: 'workflow',
+  CAMPAIGN_DISPATCH: 'campaign-dispatch',
+  WHATSAPP_FOLLOWUP: 'whatsapp-followup',
 } as const;
 
 export const JOB_TYPES = {
@@ -55,6 +57,13 @@ export const JOB_TYPES = {
   // Workflow jobs
   WORKFLOW_EXECUTE: 'workflow-execute',
   WORKFLOW_SCHEDULED: 'workflow-scheduled',
+
+  // Campaign dispatch jobs (delayed, fire at scheduledAt)
+  DISPATCH_WA_CAMPAIGN: 'dispatch-wa-campaign',
+  DISPATCH_EMAIL_CAMPAIGN: 'dispatch-email-campaign',
+
+  // WhatsApp flow follow-up (delayed, fires if the contact hasn't replied)
+  CHECK_FOLLOWUP_REPLY: 'check-followup-reply',
 } as const;
 
 export const JOB_PRIORITIES = {

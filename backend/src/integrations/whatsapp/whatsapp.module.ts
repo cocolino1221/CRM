@@ -15,6 +15,7 @@ import { WhatsAppCampaign } from '../../database/entities/whatsapp-campaign.enti
 import { NotificationsModule } from '../../notifications/notifications.module';
 import { CampaignDispatchModule } from '../../scheduler/campaign-dispatch.module';
 import { UploadModule } from '../../upload/upload.module';
+import { WhatsAppFollowupDispatchModule } from './whatsapp-followup-dispatch.module';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { UploadModule } from '../../upload/upload.module';
     NotificationsModule,
     CampaignDispatchModule,
     UploadModule,
+    WhatsAppFollowupDispatchModule,
   ],
   controllers: [WhatsAppController],
   providers: [WhatsAppService, WhatsAppAIService, WhatsAppCampaignsService],

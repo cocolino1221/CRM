@@ -20,6 +20,7 @@ import { NotificationType } from '../../database/entities/notification.entity';
 import { WhatsAppAIService } from './whatsapp-ai.service';
 import { UploadService } from '../../upload/upload.service';
 import { normalizePhoneDigits, normalizePhoneE164 } from '../../common/utils/phone.util';
+import { WhatsAppFollowupDispatchService } from './whatsapp-followup-dispatch.service';
 
 const execFileAsync = promisify(execFile);
 
@@ -182,6 +183,7 @@ export class WhatsAppService {
     private readonly whatsAppAIService: WhatsAppAIService,
     private readonly eventEmitter: EventEmitter2,
     private readonly uploadService: UploadService,
+    private readonly followupDispatch: WhatsAppFollowupDispatchService,
   ) {}
 
   /**
@@ -3668,9 +3670,36 @@ export class WhatsAppService {
   /**
    * Save conversation flows for a workspace
    */
+  /** Defensive validation for step.timeoutBranch — the editor validates interactively too. */
+  private validateFlowTimeoutBranches(flows: any[]): void {
+    const UNITS = new Set(['minutes', 'hours', 'days']);
+    for (const flow of flows) {
+      const stepIds = new Set((flow.steps || []).map((s: any) => s.id));
+      for (const step of flow.steps || []) {
+        const branch = step.timeoutBranch;
+        if (!branch) continue;
+        if (!UNITS.has(branch.delayUnit)) {
+          throw new BadRequestException(`Step "${step.id}": timeoutBranch.delayUnit must be minutes, hours, or days`);
+        }
+        const value = Number(branch.delayValue);
+        if (!Number.isFinite(value) || value <= 0) {
+          throw new BadRequestException(`Step "${step.id}": timeoutBranch.delayValue must be a positive number`);
+        }
+        const unitMs = branch.delayUnit === 'days' ? 86400000 : branch.delayUnit === 'hours' ? 3600000 : 60000;
+        if (value * unitMs > WhatsAppService.MAX_FOLLOWUP_DELAY_MS) {
+          throw new BadRequestException(`Step "${step.id}": follow-up delay cannot exceed 7 days`);
+        }
+        if (!branch.nextStepId || !stepIds.has(branch.nextStepId)) {
+          throw new BadRequestException(`Step "${step.id}": timeoutBranch.nextStepId "${branch.nextStepId}" is not a step in this flow`);
+        }
+      }
+    }
+  }
+
   async saveFlows(workspaceId: string, flows: any[]): Promise<void> {
     const integration = await this.findIntegrationForWorkspace(workspaceId);
     if (!integration) throw new BadRequestException('No WhatsApp integration found for this workspace');
+    this.validateFlowTimeoutBranches(flows);
     integration.config = {
       ...(integration.config || {}),
       conversationFlows: flows,
@@ -3849,6 +3878,11 @@ export class WhatsAppService {
       await this.integrationRepository.save(integration);
 
       this.logger.log(`Flow "${flow.name}" started for ${waId} at step ${firstStep.id}`);
+
+      const timeoutMs = this.getTimeoutBranchDelayMs(firstStep);
+      if (timeoutMs > 0) {
+        await this.armFollowupTimeout(workspaceId, waId, flow.id, firstStep.id, timeoutMs);
+      }
       return true;
     } catch (err) {
       this.logger.warn(`Failed to start flow "${flow.name}" for ${waId}: ${err.message}`);
@@ -3916,6 +3950,84 @@ export class WhatsAppService {
     return Math.min(Math.floor(raw), 6 * 60 * 60 * 1000);
   }
 
+  // ── No-reply follow-up (durable, up to 7 days — Bull, not setTimeout) ──
+
+  static readonly MAX_FOLLOWUP_DELAY_MS = 7 * 24 * 60 * 60 * 1000;
+
+  private getTimeoutBranchDelayMs(step: any): number {
+    const branch = step?.timeoutBranch;
+    if (!branch || !branch.nextStepId) return 0;
+    const value = Number(branch.delayValue);
+    if (!Number.isFinite(value) || value <= 0) return 0;
+    const unitMs = branch.delayUnit === 'days' ? 86400000 : branch.delayUnit === 'hours' ? 3600000 : 60000;
+    return Math.min(Math.floor(value * unitMs), WhatsAppService.MAX_FOLLOWUP_DELAY_MS);
+  }
+
+  /** A step "stays active" (awaiting either a button/keyword reply or a timeout) if it has buttons or a timeoutBranch. */
+  private stepStaysActive(step: any): boolean {
+    return Boolean(step?.buttons?.length) || Boolean(step?.timeoutBranch);
+  }
+
+  private async armFollowupTimeout(workspaceId: string, waId: string, flowId: string, stepId: string, delayMs: number): Promise<void> {
+    try {
+      await this.followupDispatch.schedule(flowId, waId, workspaceId, stepId, delayMs);
+    } catch (err: any) {
+      this.logger.warn(`Could not arm follow-up timeout for ${waId}: ${err?.message}`);
+    }
+  }
+
+  /**
+   * Fired by WhatsAppFollowupProcessor when a step's timeoutBranch delay elapses.
+   * Re-checks the contact is still sitting at the step that armed this job —
+   * if they replied/moved on since, this is a stale job and no-ops.
+   */
+  async handleFollowupTimeout(workspaceId: string, waId: string, flowId: string, armedStepId: string): Promise<void> {
+    const integration = await this.findIntegrationForWorkspace(workspaceId);
+    if (!integration) return;
+
+    const flowStates = integration.config?.flowStates || {};
+    const resolved = this.resolveFlowState(flowStates, waId);
+    if (!resolved) return; // flow already ended
+    const { stateKey, state } = resolved;
+    if (state.flowId !== flowId || state.currentStepId !== armedStepId) return; // stale — contact moved on
+
+    const flows: any[] = integration.config?.conversationFlows || [];
+    const flow = flows.find((f: any) => f.id === flowId && f.enabled);
+    const armedStep = flow?.steps?.find((s: any) => s.id === armedStepId);
+    const nextStep = flow?.steps?.find((s: any) => s.id === armedStep?.timeoutBranch?.nextStepId);
+    if (!flow || !nextStep) {
+      delete flowStates[stateKey];
+      integration.config = { ...(integration.config || {}), flowStates };
+      await this.integrationRepository.save(integration);
+      return;
+    }
+
+    try {
+      await this.sendFlowStep(nextStep, waId, integration.credentials || {}, workspaceId);
+
+      const nowIso = new Date().toISOString();
+      if (this.stepStaysActive(nextStep)) {
+        const nextState = { ...state, currentStepId: nextStep.id, lastInteractionAt: nowIso, armedAfterAutoSend: false };
+        delete nextState.pendingDelay;
+        flowStates[waId] = nextState;
+        if (stateKey !== waId) delete flowStates[stateKey];
+      } else {
+        delete flowStates[stateKey];
+        if (stateKey !== waId) delete flowStates[waId];
+      }
+      integration.config = { ...(integration.config || {}), flowStates };
+      await this.integrationRepository.save(integration);
+
+      const chainDelay = this.getTimeoutBranchDelayMs(nextStep);
+      if (chainDelay > 0) {
+        await this.armFollowupTimeout(workspaceId, waId, flowId, nextStep.id, chainDelay);
+      }
+      this.logger.log(`Flow "${flow.name}": no-reply follow-up sent to ${waId} → step "${nextStep.id}"`);
+    } catch (err: any) {
+      this.logger.warn(`Follow-up step send failed for ${waId}: ${this.getErrorMessage(err)}`);
+    }
+  }
+
   private async armAfterAutoSendFlow(workspaceId: string, waId: string, integration: Integration): Promise<void> {
     const flows: any[] = integration.config?.conversationFlows || [];
     const flow = flows.find((f: any) => f.enabled && f.trigger === 'after_auto_send' && f.steps?.length > 0);
@@ -3936,6 +4048,11 @@ export class WhatsAppService {
     integration.config = { ...(integration.config || {}), flowStates };
     await this.integrationRepository.save(integration);
     this.logger.log(`Flow "${flow.name}" armed after auto-send for ${waId}`);
+
+    const timeoutMs = this.getTimeoutBranchDelayMs(firstStep);
+    if (timeoutMs > 0) {
+      await this.armFollowupTimeout(workspaceId, waId, flow.id, firstStep.id, timeoutMs);
+    }
   }
 
   private scheduleDelayedFlowStep(
@@ -3975,7 +4092,7 @@ export class WhatsAppService {
 
         await this.sendFlowStep(nextStep, waId, integration.credentials || {}, workspaceId);
 
-        if (nextStep.buttons?.length) {
+        if (this.stepStaysActive(nextStep)) {
           const nowIso = new Date().toISOString();
           const nextState = {
             ...state,
@@ -3994,6 +4111,11 @@ export class WhatsAppService {
         integration.config = { ...(integration.config || {}), flowStates };
         await this.integrationRepository.save(integration);
         this.logger.log(`Flow "${flow.name}": delayed step "${stepId}" sent to ${waId}`);
+
+        const chainDelay = this.getTimeoutBranchDelayMs(nextStep);
+        if (chainDelay > 0) {
+          await this.armFollowupTimeout(workspaceId, waId, flowId, nextStep.id, chainDelay);
+        }
       } catch (err) {
         this.logger.warn(`Flow delayed step failed for ${waId}: ${this.getErrorMessage(err)}`);
       }
@@ -4095,8 +4217,8 @@ export class WhatsAppService {
       await this.sendFlowStep(nextStep, waId, credentials, workspaceId);
 
       // Update flow state
-      if (nextStep.buttons?.length) {
-        // More steps to go
+      if (this.stepStaysActive(nextStep)) {
+        // More steps to go (or awaiting a no-reply timeout)
         const nextState = {
           ...state,
           currentStepId: nextStep.id,
@@ -4119,6 +4241,14 @@ export class WhatsAppService {
       await this.integrationRepository.save(integration);
 
       this.logger.log(`Flow "${flow.name}": ${waId} → button "${button.title}" → step "${nextStep.id}"`);
+
+      const chainDelay = this.getTimeoutBranchDelayMs(nextStep);
+      if (chainDelay > 0) {
+        await this.armFollowupTimeout(workspaceId, waId, flow.id, nextStep.id, chainDelay);
+      } else {
+        // Contact engaged with this step — any earlier pending follow-up for this flow is moot.
+        await this.followupDispatch.cancel(flow.id, waId).catch(() => undefined);
+      }
       return true;
     } catch (err) {
       this.logger.warn(`Flow step send failed for ${waId}: ${this.getErrorMessage(err)}`);
@@ -4206,7 +4336,7 @@ export class WhatsAppService {
       }
 
       await this.sendFlowStep(nextStep, waId, credentials, workspaceId);
-      if (nextStep.buttons?.length) {
+      if (this.stepStaysActive(nextStep)) {
         const nextState = {
           ...state,
           currentStepId: nextStep.id,
@@ -4229,6 +4359,13 @@ export class WhatsAppService {
       this.logger.log(
         `Flow "${flow.name}": ${waId} → template button payload="${buttonPayload}" text="${buttonText || ''}" → step "${nextStep.id}"`,
       );
+
+      const chainDelay = this.getTimeoutBranchDelayMs(nextStep);
+      if (chainDelay > 0) {
+        await this.armFollowupTimeout(workspaceId, waId, flow.id, nextStep.id, chainDelay);
+      } else {
+        await this.followupDispatch.cancel(flow.id, waId).catch(() => undefined);
+      }
       return true;
     } catch (err) {
       this.logger.warn(`Flow template button failed for ${waId}: ${this.getErrorMessage(err)}`);
@@ -4360,6 +4497,20 @@ export class WhatsAppService {
 
         // Still in flow but message does not map to a button.
         this.logger.warn(`Flow: active state for ${waId} at step "${state.currentStepId}" but message did not match any button`);
+
+        // A step with a no-reply timeout expects a classifiable reply (button
+        // or matched keyword) or a timeout — an unmatched reply is neither.
+        // Default: stop the automated sequence and let a human take over.
+        const flows2: any[] = integration.config?.conversationFlows || [];
+        const flow2 = flows2.find((f: any) => f.id === state.flowId);
+        const currentStep2 = flow2?.steps?.find((s: any) => s.id === state.currentStepId);
+        if (currentStep2?.timeoutBranch) {
+          delete flowStates[stateKey];
+          integration.config = { ...(integration.config || {}), flowStates };
+          await this.integrationRepository.save(integration);
+          await this.followupDispatch.cancel(state.flowId, waId).catch(() => undefined);
+          this.logger.log(`Flow: unmatched reply for ${waId} at step "${state.currentStepId}" — stopping the follow-up sequence`);
+        }
         return false;
       }
     }

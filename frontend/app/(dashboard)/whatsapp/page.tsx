@@ -3065,6 +3065,26 @@ export default function WhatsAppPage() {
           }
         }
       }
+      if (step.timeoutBranch) {
+        const tb = step.timeoutBranch;
+        if (!['minutes', 'hours', 'days'].includes(tb.delayUnit)) {
+          alert(`Step "${step.id}": pick a valid follow-up time unit.`);
+          return;
+        }
+        if (!Number.isFinite(Number(tb.delayValue)) || Number(tb.delayValue) <= 0) {
+          alert(`Step "${step.id}": follow-up delay must be a positive number.`);
+          return;
+        }
+        const unitMs = tb.delayUnit === 'days' ? 86400000 : tb.delayUnit === 'hours' ? 3600000 : 60000;
+        if (Number(tb.delayValue) * unitMs > 7 * 24 * 60 * 60 * 1000) {
+          alert(`Step "${step.id}": follow-up delay cannot exceed 7 days.`);
+          return;
+        }
+        if (!tb.nextStepId || !stepIds.has(tb.nextStepId)) {
+          alert(`Step "${step.id}": follow-up "send step" must point to an existing step.`);
+          return;
+        }
+      }
     }
 
     const existing = flows.findIndex(f => f.id === editingFlow.id);
@@ -3133,6 +3153,7 @@ export default function WhatsAppPage() {
           buttons: (step.buttons || []).map((b: any) =>
             b.nextStepId === removedId ? { ...b, nextStepId: '' } : b
           ),
+          timeoutBranch: step.timeoutBranch?.nextStepId === removedId ? undefined : step.timeoutBranch,
         }));
       return { ...prev, steps };
     });
@@ -6228,6 +6249,70 @@ export default function WhatsAppPage() {
                                 </button>
                               )}
                             </>
+                          )}
+                        </div>
+
+                        {/* No-reply follow-up: if nothing (no button/keyword match) arrives in time, auto-advance */}
+                        <div className="border-t border-gray-200 pt-2 mt-1">
+                          <label className="flex items-center gap-2 text-xs font-medium text-gray-600">
+                            <input
+                              type="checkbox"
+                              checked={!!step.timeoutBranch}
+                              onChange={e => updateFlowStep(si, 'timeoutBranch', e.target.checked
+                                ? { delayValue: 1, delayUnit: 'hours', nextStepId: '' }
+                                : undefined)}
+                              className="h-3.5 w-3.5 rounded border-gray-300 accent-green-600"
+                            />
+                            No-reply follow-up
+                          </label>
+                          {step.timeoutBranch && (
+                            <div className="mt-1.5 space-y-1.5">
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-[11px] text-gray-500 whitespace-nowrap">If no reply within</span>
+                                <input
+                                  type="number"
+                                  min={1}
+                                  value={step.timeoutBranch.delayValue}
+                                  onChange={e => updateFlowStep(si, 'timeoutBranch', {
+                                    ...step.timeoutBranch,
+                                    delayValue: Math.max(1, Number(e.target.value) || 1),
+                                  })}
+                                  className="w-16 px-2 py-1 text-xs border border-gray-200 rounded-lg focus:outline-none focus:border-green-400"
+                                />
+                                <select
+                                  value={step.timeoutBranch.delayUnit}
+                                  onChange={e => updateFlowStep(si, 'timeoutBranch', { ...step.timeoutBranch, delayUnit: e.target.value })}
+                                  className="px-2 py-1 text-xs border border-gray-200 rounded-lg focus:outline-none focus:border-green-400 bg-white"
+                                >
+                                  <option value="minutes">minutes</option>
+                                  <option value="hours">hours</option>
+                                  <option value="days">days</option>
+                                </select>
+                                <span className="text-[10px] text-gray-400 whitespace-nowrap">(max 7 days)</span>
+                              </div>
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-[11px] text-gray-500 whitespace-nowrap">send step</span>
+                                <select
+                                  value={step.timeoutBranch.nextStepId}
+                                  onChange={e => updateFlowStep(si, 'timeoutBranch', { ...step.timeoutBranch, nextStepId: e.target.value })}
+                                  className="flex-1 px-2 py-1 text-xs border border-gray-200 rounded-lg focus:outline-none focus:border-green-400 bg-white"
+                                >
+                                  <option value="">-- Select step --</option>
+                                  {editingFlow.steps.filter((s: any) => s.id !== step.id).map((s: any) => (
+                                    <option key={s.id} value={s.id}>{s.id}</option>
+                                  ))}
+                                </select>
+                              </div>
+                              {(() => {
+                                const unitMs = step.timeoutBranch.delayUnit === 'days' ? 86400000 : step.timeoutBranch.delayUnit === 'hours' ? 3600000 : 60000;
+                                const ms = Number(step.timeoutBranch.delayValue || 0) * unitMs;
+                                return ms > 20 * 3600000 ? (
+                                  <p className="text-[10px] text-amber-600 bg-amber-50 border border-amber-200 rounded-lg p-2">
+                                    This may fire after WhatsApp's 24h window closes — the target step should use an approved template, or delivery may fail.
+                                  </p>
+                                ) : null;
+                              })()}
+                            </div>
                           )}
                         </div>
                       </div>

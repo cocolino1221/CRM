@@ -17,6 +17,7 @@ import { CompaniesModule } from './companies/companies.module';
 import { ActivitiesModule } from './activities/activities.module';
 import { IntegrationsModule } from './integrations/integrations.module';
 import { WhatsAppModule } from './integrations/whatsapp/whatsapp.module';
+import { WhatsAppFollowupModule } from './integrations/whatsapp/whatsapp-followup.module';
 import { MetaMessagingModule } from './integrations/meta-messaging/meta-messaging.module';
 import { AudioLibraryModule } from './integrations/audio-library/audio-library.module';
 import { GoogleSheetsModule } from './integrations/google-sheets/google-sheets.module';
@@ -167,6 +168,7 @@ import { validationSchema } from './config/env.validation';
     GoogleSheetsModule,
     IntegrationsModule,
     WhatsAppModule,
+    WhatsAppFollowupModule,
     MetaMessagingModule,
     AudioLibraryModule,
     SmartBillModule,
