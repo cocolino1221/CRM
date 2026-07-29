@@ -6000,6 +6000,7 @@ export default function WhatsAppPage() {
                         <option value="first_message">First Message (new contacts)</option>
                         <option value="keyword">Keyword</option>
                         <option value="after_auto_send">After Auto-Send Reply</option>
+                        <option value="before_meeting">Before Meeting (Calendar reminder)</option>
                       </select>
                     </div>
                   </div>
@@ -6008,6 +6009,20 @@ export default function WhatsAppPage() {
                       <label className="text-xs font-medium text-gray-500 mb-1 block">Keywords (comma-separated)</label>
                       <input type="text" value={editingFlow.triggerKeyword || ''} onChange={e => setEditingFlow({ ...editingFlow, triggerKeyword: e.target.value })}
                         placeholder="menu, start, info" className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-green-400" />
+                    </div>
+                  )}
+                  {editingFlow.trigger === 'before_meeting' && (
+                    <div>
+                      <label className="text-xs font-medium text-gray-500 mb-1 block">Send reminder this many hours before the meeting</label>
+                      <div className="flex items-center gap-2">
+                        <input type="number" min={1} value={editingFlow.reminderHoursBefore ?? 3}
+                          onChange={e => setEditingFlow({ ...editingFlow, reminderHoursBefore: Math.max(1, Number(e.target.value) || 1) })}
+                          className="w-24 px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-green-400" />
+                        <span className="text-xs text-gray-500">hours before</span>
+                      </div>
+                      <p className="mt-1 text-[11px] text-gray-400">
+                        Requires the calendar event to have a linked contact with a phone number. In any later step's message (e.g. the "Yes" branch), write {'{{meetingLink}}'} anywhere in the text — it's replaced with the real meeting link when sent.
+                      </p>
                     </div>
                   )}
 

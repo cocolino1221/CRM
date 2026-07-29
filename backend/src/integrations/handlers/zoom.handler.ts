@@ -64,6 +64,28 @@ export class ZoomIntegrationHandler implements IntegrationHandler {
   }
 
   /**
+   * Create a Zoom meeting for a workspace's connected Zoom integration,
+   * resolving a fresh Server-to-Server token internally (S2S tokens are
+   * short-lived — fetching one right before use is the normal pattern,
+   * not a cached/refreshed credential). Returns the raw Zoom meeting
+   * object; caller reads `join_url`.
+   */
+  async createMeetingForIntegration(
+    integration: Integration,
+    meetingData: Parameters<ZoomIntegrationHandler['createMeeting']>[1],
+  ): Promise<any> {
+    const { accountId, clientId, clientSecret, accessToken: storedToken } = integration.credentials || {};
+    let accessToken = storedToken;
+    if (accountId && clientId && clientSecret) {
+      accessToken = await this.getServerToServerToken(accountId, clientId, clientSecret);
+    }
+    if (!accessToken) {
+      throw new Error('Zoom integration has no usable credentials (Server-to-Server accountId/clientId/clientSecret or accessToken)');
+    }
+    return this.createMeeting(accessToken, meetingData);
+  }
+
+  /**
    * Get Server-to-Server OAuth token
    */
   private async getServerToServerToken(accountId: string, clientId: string, clientSecret: string): Promise<string> {

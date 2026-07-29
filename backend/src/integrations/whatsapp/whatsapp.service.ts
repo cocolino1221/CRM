@@ -3731,8 +3731,14 @@ export class WhatsAppService {
     waId: string,
     credentials: Record<string, any>,
     workspaceId: string,
+    variables?: Record<string, string>,
   ): Promise<void> {
     const stepMessage = (step.message || '').trim();
+    // Substitute {{tokenName}} placeholders (e.g. {{meetingLink}}) with values
+    // carried on the flow instance — set once when a booking reminder arms
+    // the flow, read here on every step so it's available on later steps too.
+    const resolveVars = (value: string): string =>
+      variables ? value.replace(/\{\{\s*(\w+)\s*\}\}/g, (match, key) => variables[key] ?? match) : value;
     if (step.type === 'template' && step.templateName) {
       // Send approved template (can initiate conversations outside 24h window)
       const components: any[] = [];
@@ -3741,7 +3747,7 @@ export class WhatsAppService {
         components.push({ type: 'header', parameters: [{ type: mt, [mt]: { link: step.headerMediaUrl } }] });
       }
       if (step.templateParams?.length) {
-        components.push({ type: 'body', parameters: step.templateParams.map(p => ({ type: 'text', text: p })) });
+        components.push({ type: 'body', parameters: step.templateParams.map(p => ({ type: 'text', text: resolveVars(p) })) });
       }
       await this.sendMessageWithCredentials(credentials, {
         to: waId,
@@ -3767,17 +3773,18 @@ export class WhatsAppService {
     } else if (step.buttons?.length) {
       // Send media first if attached, then interactive buttons
       const hasMedia = (step.mediaUrl || step.mediaId) && step.mediaType;
+      const captionText = resolveVars(stepMessage);
       if (hasMedia) {
         const mediaResult = await this.sendMessageWithCredentials(credentials, {
           to: waId,
           type: step.mediaType!,
           content: '',
-          media: { url: step.mediaUrl, id: step.mediaId, caption: stepMessage || undefined },
+          media: { url: step.mediaUrl, id: step.mediaId, caption: captionText || undefined },
         });
         const mediaMsgId = mediaResult?.messages?.[0]?.id;
         await this.saveOutboundActivity(
           waId,
-          `[${step.mediaType}] ${stepMessage || step.mediaUrl || 'uploaded media'}`,
+          `[${step.mediaType}] ${captionText || step.mediaUrl || 'uploaded media'}`,
           step.mediaType!,
           workspaceId,
           '',
@@ -3785,12 +3792,12 @@ export class WhatsAppService {
           {
             mediaId: step.mediaId || undefined,
             mediaUrl: step.mediaUrl || undefined,
-            mediaCaption: stepMessage || undefined,
+            mediaCaption: captionText || undefined,
           },
         );
       }
       const buttons = step.buttons.slice(0, 3).map(b => ({ id: b.id, title: b.title.slice(0, 20) }));
-      const prompt = stepMessage || 'Please choose an option:';
+      const prompt = captionText || 'Please choose an option:';
       await this.sendMessageWithCredentials(credentials, {
         to: waId,
         type: 'interactive',
@@ -3805,15 +3812,16 @@ export class WhatsAppService {
       await this.saveOutboundActivity(waId, `[Flow buttons: ${btnLabels}] ${prompt}`, 'interactive', workspaceId, '', undefined);
     } else if ((step.mediaUrl || step.mediaId) && step.mediaType) {
       // Send media message (end of flow or media-only step)
+      const captionText = resolveVars(stepMessage);
       await this.sendMessageWithCredentials(credentials, {
         to: waId,
         type: step.mediaType,
         content: '',
-        media: { url: step.mediaUrl, id: step.mediaId, caption: stepMessage || undefined },
+        media: { url: step.mediaUrl, id: step.mediaId, caption: captionText || undefined },
       });
       await this.saveOutboundActivity(
         waId,
-        `[${step.mediaType}] ${stepMessage || step.mediaUrl || 'uploaded media'}`,
+        `[${step.mediaType}] ${captionText || step.mediaUrl || 'uploaded media'}`,
         step.mediaType,
         workspaceId,
         '',
@@ -3821,12 +3829,12 @@ export class WhatsAppService {
         {
           mediaId: step.mediaId || undefined,
           mediaUrl: step.mediaUrl || undefined,
-          mediaCaption: stepMessage || undefined,
+          mediaCaption: captionText || undefined,
         },
       );
     } else {
       // Send plain text (end of flow)
-      const text = stepMessage || 'Thank you!';
+      const text = resolveVars(stepMessage) || 'Thank you!';
       await this.sendTextMessage(waId, text, credentials);
       await this.saveOutboundActivity(waId, text, 'text', workspaceId, '', undefined);
     }
@@ -3836,7 +3844,7 @@ export class WhatsAppService {
   /**
    * Start a conversation flow for a contact
    */
-  async startFlow(workspaceId: string, waId: string, flowId: string, integration: Integration): Promise<boolean> {
+  async startFlow(workspaceId: string, waId: string, flowId: string, integration: Integration, variables?: Record<string, string>): Promise<boolean> {
     const flows: any[] = integration.config?.conversationFlows || [];
     const flow = flows.find((f: any) => f.id === flowId && f.enabled);
     if (!flow || !flow.steps?.length) return false;
@@ -3854,6 +3862,7 @@ export class WhatsAppService {
         currentStepId: firstStep.id,
         startedAt: nowIso,
         lastInteractionAt: nowIso,
+        ...(variables ? { variables } : {}),
       };
 
       if (delayMs > 0) {
@@ -3872,7 +3881,7 @@ export class WhatsAppService {
         return true;
       }
 
-      await this.sendFlowStep(firstStep, waId, credentials, workspaceId);
+      await this.sendFlowStep(firstStep, waId, credentials, workspaceId, variables);
 
       integration.config = { ...(integration.config || {}), flowStates };
       await this.integrationRepository.save(integration);
@@ -4003,7 +4012,7 @@ export class WhatsAppService {
     }
 
     try {
-      await this.sendFlowStep(nextStep, waId, integration.credentials || {}, workspaceId);
+      await this.sendFlowStep(nextStep, waId, integration.credentials || {}, workspaceId, state.variables);
 
       const nowIso = new Date().toISOString();
       if (this.stepStaysActive(nextStep)) {
@@ -4055,6 +4064,22 @@ export class WhatsAppService {
     }
   }
 
+  /**
+   * Start the workspace's "before_meeting" flow for a booking reminder.
+   * `variables` (e.g. { meetingLink }) resolve {{tokenName}} placeholders in
+   * every step of this flow instance, including ones reached later via a
+   * button reply or a timeoutBranch follow-up.
+   * Returns false (no-op) if no such flow is enabled — the feature is optional.
+   */
+  async startMeetingReminderFlow(workspaceId: string, waId: string, variables: Record<string, string>): Promise<boolean> {
+    const integration = await this.findIntegrationForWorkspace(workspaceId);
+    if (!integration) return false;
+    const flows: any[] = integration.config?.conversationFlows || [];
+    const flow = flows.find((f: any) => f.enabled && f.trigger === 'before_meeting' && f.steps?.length > 0);
+    if (!flow) return false;
+    return this.startFlow(workspaceId, waId, flow.id, integration, variables);
+  }
+
   private scheduleDelayedFlowStep(
     workspaceId: string,
     waId: string,
@@ -4090,7 +4115,7 @@ export class WhatsAppService {
           return;
         }
 
-        await this.sendFlowStep(nextStep, waId, integration.credentials || {}, workspaceId);
+        await this.sendFlowStep(nextStep, waId, integration.credentials || {}, workspaceId, state.variables);
 
         if (this.stepStaysActive(nextStep)) {
           const nowIso = new Date().toISOString();
@@ -4214,7 +4239,7 @@ export class WhatsAppService {
         return true;
       }
 
-      await this.sendFlowStep(nextStep, waId, credentials, workspaceId);
+      await this.sendFlowStep(nextStep, waId, credentials, workspaceId, state.variables);
 
       // Update flow state
       if (this.stepStaysActive(nextStep)) {
@@ -4335,7 +4360,7 @@ export class WhatsAppService {
         return true;
       }
 
-      await this.sendFlowStep(nextStep, waId, credentials, workspaceId);
+      await this.sendFlowStep(nextStep, waId, credentials, workspaceId, state.variables);
       if (this.stepStaysActive(nextStep)) {
         const nextState = {
           ...state,

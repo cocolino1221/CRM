@@ -1,11 +1,16 @@
 import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Between, In } from 'typeorm';
-import { Event, EventStatus } from '../database/entities/event.entity';
+import { Event, EventStatus, MeetingPlatform } from '../database/entities/event.entity';
 import { User } from '../database/entities/user.entity';
 import { Contact } from '../database/entities/contact.entity';
+import { Integration, IntegrationType, IntegrationStatus } from '../database/entities/integration.entity';
 import { CreateEventDto } from './dto/create-event.dto';
 import { UpdateEventDto } from './dto/update-event.dto';
+import { ZoomIntegrationHandler } from '../integrations/handlers/zoom.handler';
+import { GoogleIntegrationHandler } from '../integrations/handlers/google.handler';
+import { MeetingReminderDispatchService } from './meeting-reminder-dispatch.service';
+import { WhatsAppService } from '../integrations/whatsapp/whatsapp.service';
 
 @Injectable()
 export class EventsService {
@@ -18,7 +23,35 @@ export class EventsService {
     private userRepository: Repository<User>,
     @InjectRepository(Contact)
     private contactRepository: Repository<Contact>,
+    @InjectRepository(Integration)
+    private readonly integrationRepository: Repository<Integration>,
+    private readonly zoomHandler: ZoomIntegrationHandler,
+    private readonly googleHandler: GoogleIntegrationHandler,
+    private readonly meetingReminderDispatch: MeetingReminderDispatchService,
+    private readonly whatsAppService: WhatsAppService,
   ) {}
+
+  /**
+   * Best-effort auto-generation of a real Zoom/Meet link (dto.autoGenerateMeetingLink
+   * already existed as an accepted-but-ignored field). Never throws — event
+   * creation must succeed even if the provider call fails (missing/expired
+   * credentials, API error, etc.); it just leaves meetingLink as whatever was
+   * manually provided (usually blank).
+   */
+  /** Schedule (or skip) the "before_meeting" WhatsApp reminder for an event. */
+  private async scheduleMeetingReminder(workspaceId: string, event: Event): Promise<void> {
+    try {
+      const flows = await this.whatsAppService.getFlows(workspaceId);
+      const flow = flows.find((f: any) => f.enabled && f.trigger === 'before_meeting' && f.steps?.length > 0);
+      if (!flow) return; // feature not configured for this workspace — fine, optional
+
+      const hoursBefore = Number(flow.reminderHoursBefore) > 0 ? Number(flow.reminderHoursBefore) : 3;
+      const sendAt = new Date(new Date(event.startDate).getTime() - hoursBefore * 60 * 60 * 1000);
+      await this.meetingReminderDispatch.schedule(event.id, workspaceId, sendAt);
+    } catch (err: any) {
+      this.logger.warn(`scheduleMeetingReminder failed for event ${event.id}: ${err?.message}`);
+    }
+  }
 
   async create(workspaceId: string, organizerId: string, dto: CreateEventDto): Promise<Event> {
     // Validate organizer
@@ -53,6 +86,19 @@ export class EventsService {
     const savedEvent = await this.eventRepository.save(event);
 
     this.logger.log(`Event created: ${savedEvent.id} by user ${organizerId}`);
+
+    // Best-effort — a Zoom/Google failure (missing integration, API error)
+    // must never block event creation; the event just keeps whatever
+    // meetingLink was manually provided (usually blank).
+    if (dto.autoGenerateMeetingLink && (savedEvent.meetingPlatform === MeetingPlatform.ZOOM || savedEvent.meetingPlatform === MeetingPlatform.GOOGLE_MEET)) {
+      try {
+        await this.generateMeetingLink(workspaceId, savedEvent.id, savedEvent.meetingPlatform === MeetingPlatform.ZOOM ? 'zoom' : 'google_meet');
+      } catch (err: any) {
+        this.logger.warn(`autoGenerateMeetingLink failed for event ${savedEvent.id}: ${err?.message}`);
+      }
+    }
+
+    await this.scheduleMeetingReminder(workspaceId, savedEvent);
 
     return this.findOne(workspaceId, savedEvent.id);
   }
@@ -138,9 +184,16 @@ export class EventsService {
 
     Object.assign(event, dto);
 
-    await this.eventRepository.save(event);
+    const saved = await this.eventRepository.save(event);
 
     this.logger.log(`Event updated: ${id}`);
+
+    if (saved.status === EventStatus.CANCELLED) {
+      await this.meetingReminderDispatch.cancel(saved.id).catch(() => undefined);
+    } else {
+      // Reschedule covers a startDate change; harmless no-op cancel+re-add otherwise.
+      await this.scheduleMeetingReminder(workspaceId, saved);
+    }
 
     return this.findOne(workspaceId, id);
   }
@@ -148,6 +201,7 @@ export class EventsService {
   async remove(workspaceId: string, id: string): Promise<void> {
     const event = await this.findOne(workspaceId, id);
     await this.eventRepository.softRemove(event);
+    await this.meetingReminderDispatch.cancel(id).catch(() => undefined);
     this.logger.log(`Event deleted: ${id}`);
   }
 
@@ -174,6 +228,13 @@ export class EventsService {
     return event;
   }
 
+  /**
+   * Generate a real Zoom/Google Meet link for an event and save it (was a
+   * placeholder that returned a fake-looking URL with no actual API call —
+   * `event.meetingLink` never worked for real). Throws if the provider
+   * integration is missing/inactive or the API call fails; `create()` below
+   * catches this so link generation never blocks event creation.
+   */
   async generateMeetingLink(
     workspaceId: string,
     eventId: string,
@@ -181,26 +242,52 @@ export class EventsService {
   ): Promise<{ link: string; meetingId?: string; password?: string }> {
     const event = await this.findOne(workspaceId, eventId);
 
-    // Placeholder for actual Zoom/Google Meet API integration
-    // In production, this would call the respective APIs
     if (platform === 'zoom') {
-      const meetingId = `${Math.floor(Math.random() * 1000000000)}`;
-      const password = Math.random().toString(36).substring(7);
-      const link = `https://zoom.us/j/${meetingId}?pwd=${password}`;
+      const integration = await this.integrationRepository.findOne({
+        where: { workspaceId, type: IntegrationType.ZOOM, status: IntegrationStatus.ACTIVE },
+      });
+      if (!integration) {
+        throw new BadRequestException('No active Zoom integration for this workspace');
+      }
+      const duration = Math.max(1, Math.round((new Date(event.endDate).getTime() - new Date(event.startDate).getTime()) / 60000));
+      const meeting = await this.zoomHandler.createMeetingForIntegration(integration, {
+        topic: event.title,
+        type: 2,
+        startTime: new Date(event.startDate).toISOString(),
+        duration,
+      });
+      const link = meeting?.join_url;
+      const meetingId = meeting?.id ? String(meeting.id) : undefined;
+      const password = meeting?.password;
+      if (!link) throw new BadRequestException('Zoom did not return a meeting link');
 
       event.meetingLink = link;
       event.meetingId = meetingId;
       event.meetingPassword = password;
-      event.meetingPlatform = 'zoom' as any;
-
+      event.meetingPlatform = MeetingPlatform.ZOOM;
       await this.eventRepository.save(event);
 
       return { link, meetingId, password };
     } else {
-      // Google Meet placeholder
-      const link = `https://meet.google.com/${Math.random().toString(36).substring(7)}`;
+      const integration = await this.integrationRepository.findOne({
+        where: { workspaceId, type: IntegrationType.GOOGLE, status: IntegrationStatus.ACTIVE },
+      });
+      if (!integration) {
+        throw new BadRequestException('No active Google integration for this workspace');
+      }
+      const calEvent = await this.googleHandler.createMeetEvent(integration, {
+        summary: event.title,
+        startTime: new Date(event.startDate).toISOString(),
+        endTime: new Date(event.endDate).toISOString(),
+        attendeeEmails: event.contact?.email ? [event.contact.email] : undefined,
+      });
+      const link = calEvent?.hangoutLink
+        || calEvent?.conferenceData?.entryPoints?.find((e: any) => e.entryPointType === 'video')?.uri;
+      if (!link) throw new BadRequestException('Google Calendar did not return a Meet link');
+
       event.meetingLink = link;
-      event.meetingPlatform = 'google_meet' as any;
+      event.meetingPlatform = MeetingPlatform.GOOGLE_MEET;
+      event.externalEventId = calEvent?.id;
       await this.eventRepository.save(event);
 
       return { link };

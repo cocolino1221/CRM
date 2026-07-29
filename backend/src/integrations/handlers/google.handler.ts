@@ -584,4 +584,29 @@ export class GoogleIntegrationHandler implements IntegrationHandler {
       data,
     });
   }
+
+  /**
+   * Create a Google Calendar event with an auto-generated Meet link
+   * (conferenceDataVersion=1 requests Google to attach a hangoutLink).
+   * Returns the raw Calendar API event; caller extracts `hangoutLink` and `id`.
+   */
+  async createMeetEvent(
+    integration: Integration,
+    event: { summary: string; description?: string; startTime: string; endTime: string; timezone?: string; attendeeEmails?: string[] },
+  ): Promise<any> {
+    const url = 'https://www.googleapis.com/calendar/v3/calendars/primary/events';
+    return this.sheetsRequest(integration, 'post', url, { conferenceDataVersion: '1' }, {
+      summary: event.summary,
+      description: event.description,
+      start: { dateTime: event.startTime, timeZone: event.timezone || 'UTC' },
+      end: { dateTime: event.endTime, timeZone: event.timezone || 'UTC' },
+      attendees: (event.attendeeEmails || []).map((email) => ({ email })),
+      conferenceData: {
+        createRequest: {
+          requestId: `crm-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          conferenceSolutionKey: { type: 'hangoutsMeet' },
+        },
+      },
+    });
+  }
 }

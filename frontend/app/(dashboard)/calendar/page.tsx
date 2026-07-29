@@ -32,6 +32,7 @@ interface Event {
     firstName: string;
     lastName: string;
   };
+  contactId?: string;
 }
 
 interface EventFormData {
@@ -43,6 +44,15 @@ interface EventFormData {
   endTime: string;
   location: string;
   meetingPlatform?: 'zoom' | 'google_meet' | 'microsoft_teams' | 'phone' | 'in_person';
+  contactId?: string;
+  autoGenerateMeetingLink?: boolean;
+}
+
+interface ContactOption {
+  id: string;
+  firstName: string;
+  lastName: string;
+  phone?: string;
 }
 
 export default function CalendarPage() {
@@ -56,6 +66,7 @@ export default function CalendarPage() {
   const [error, setError] = useState<string | null>(null);
   const [modalError, setModalError] = useState('');
   const [editingEvent, setEditingEvent] = useState<Event | null>(null);
+  const [contacts, setContacts] = useState<ContactOption[]>([]);
 
   const [formData, setFormData] = useState<EventFormData>({
     title: '',
@@ -65,6 +76,8 @@ export default function CalendarPage() {
     startTime: '09:00',
     endTime: '10:00',
     location: '',
+    contactId: '',
+    autoGenerateMeetingLink: false,
   });
 
   const monthNames = [
@@ -75,6 +88,12 @@ export default function CalendarPage() {
   useEffect(() => {
     fetchEvents();
   }, [currentDate]);
+
+  useEffect(() => {
+    api.get('/contacts', { params: { limit: 200 } })
+      .then((res: any) => setContacts(Array.isArray(res.data) ? res.data : res.data?.contacts || []))
+      .catch(() => setContacts([]));
+  }, []);
 
   const fetchEvents = async () => {
     try {
@@ -129,6 +148,8 @@ export default function CalendarPage() {
         endDate: endDateTime.toISOString(),
         location: formData.location || undefined,
         meetingPlatform: formData.meetingPlatform || undefined,
+        contactId: formData.contactId || undefined,
+        autoGenerateMeetingLink: formData.autoGenerateMeetingLink || undefined,
         color: getColorForType(formData.type),
       };
 
@@ -172,6 +193,7 @@ export default function CalendarPage() {
       endTime: `${String(endDate.getHours()).padStart(2, '0')}:${String(endDate.getMinutes()).padStart(2, '0')}`,
       location: event.location || '',
       meetingPlatform: event.meetingPlatform,
+      contactId: event.contact?.id || event.contactId,
     });
 
     setShowEventModal(true);
@@ -209,6 +231,7 @@ export default function CalendarPage() {
         endDate: endDateTime.toISOString(),
         location: formData.location || undefined,
         meetingPlatform: formData.meetingPlatform || undefined,
+        contactId: formData.contactId || undefined,
         color: getColorForType(formData.type),
       };
 
@@ -270,6 +293,8 @@ export default function CalendarPage() {
       startTime: '09:00',
       endTime: '10:00',
       location: '',
+      contactId: '',
+      autoGenerateMeetingLink: false,
     });
     setModalError('');
     setSelectedDate(null);
@@ -742,6 +767,32 @@ export default function CalendarPage() {
                   <option value="microsoft_teams">Microsoft Teams</option>
                   <option value="phone">Phone</option>
                   <option value="in_person">In Person</option>
+                </select>
+              </div>
+
+              {(formData.meetingPlatform === 'zoom' || formData.meetingPlatform === 'google_meet') && (
+                <label className="flex items-center gap-2 text-sm text-gray-700 bg-cyan-50 border border-cyan-200 rounded-lg px-3 py-2.5">
+                  <input
+                    type="checkbox"
+                    checked={!!formData.autoGenerateMeetingLink}
+                    onChange={(e) => setFormData({ ...formData, autoGenerateMeetingLink: e.target.checked })}
+                    className="h-4 w-4 rounded border-gray-300 accent-cyan-600"
+                  />
+                  Auto-generate a real {formData.meetingPlatform === 'zoom' ? 'Zoom' : 'Google Meet'} link for this meeting
+                </label>
+              )}
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">Contact (for WhatsApp meeting reminders)</label>
+                <select
+                  value={formData.contactId || ''}
+                  onChange={(e) => setFormData({ ...formData, contactId: e.target.value || undefined })}
+                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                >
+                  <option value="">No linked contact</option>
+                  {contacts.map((c) => (
+                    <option key={c.id} value={c.id}>{c.firstName} {c.lastName}{c.phone ? ` — ${c.phone}` : ''}</option>
+                  ))}
                 </select>
               </div>
 

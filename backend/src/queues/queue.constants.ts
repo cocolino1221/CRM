@@ -10,6 +10,7 @@ export const QUEUE_NAMES = {
   WORKFLOW: 'workflow',
   CAMPAIGN_DISPATCH: 'campaign-dispatch',
   WHATSAPP_FOLLOWUP: 'whatsapp-followup',
+  MEETING_REMINDER: 'meeting-reminder',
 } as const;
 
 export const JOB_TYPES = {
@@ -64,6 +65,9 @@ export const JOB_TYPES = {
 
   // WhatsApp flow follow-up (delayed, fires if the contact hasn't replied)
   CHECK_FOLLOWUP_REPLY: 'check-followup-reply',
+
+  // Meeting reminder (delayed, fires N hours before a booking's start time)
+  SEND_MEETING_REMINDER: 'send-meeting-reminder',
 } as const;
 
 export const JOB_PRIORITIES = {

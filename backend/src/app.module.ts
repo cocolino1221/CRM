@@ -29,6 +29,7 @@ import { EmailModule } from './email/email.module';
 import { PipelineModule } from './pipelines/pipeline.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { EventsModule } from './events/events.module';
+import { MeetingReminderModule } from './events/meeting-reminder.module';
 import { AvailabilityModule } from './availability/availability.module';
 import { BookingsModule } from './bookings/bookings.module';
 import { DocumentsModule } from './documents/documents.module';
@@ -175,6 +176,7 @@ import { validationSchema } from './config/env.validation';
     PipelineModule,
     NotificationsModule,
     EventsModule,
+    MeetingReminderModule,
     AvailabilityModule,
     BookingsModule,
     DocumentsModule,
