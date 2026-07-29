@@ -7,7 +7,7 @@ import {
   Image, FileText, Mic, Video, Info, X, Zap, LayoutTemplate,
   Building2, Tag, Star, AlertTriangle, Timer, Edit, Trash2,
   Copy, ExternalLink, Mail, Briefcase, ArrowRight, ChevronLeft, Brain,
-  GitBranch, Upload, Pin, BellOff, Bell, Archive, ArchiveRestore, CornerUpLeft, AudioLines,
+  GitBranch, Upload, Pin, BellOff, Bell, Archive, ArchiveRestore, CornerUpLeft, AudioLines, Filter,
 } from 'lucide-react';
 import Link from 'next/link';
 import api from '@/lib/api';
@@ -102,6 +102,21 @@ interface ContactDetail {
   company?: { id: string; name: string };
   deals?: Array<{ id: string; title: string; stage?: string; value?: number }>;
   createdAt: string;
+  pipelineStageId?: string;
+}
+
+interface PipelineStageOption {
+  id: string;
+  name: string;
+  color?: string;
+  displayOrder: number;
+}
+
+interface PipelineOption {
+  id: string;
+  name: string;
+  isDefault?: boolean;
+  stages: PipelineStageOption[];
 }
 
 interface WhatsAppTemplate {
@@ -610,7 +625,7 @@ function EmojiPicker({ onSelect, onClose }: { onSelect: (emoji: string) => void;
   );
 }
 
-function ContactInfoSidebar({ contact, isLoading, onClose }: { contact: ContactDetail | null; isLoading: boolean; onClose: () => void }) {
+function ContactInfoSidebar({ contact, isLoading, onClose, pipelineStages, onStageChange }: { contact: ContactDetail | null; isLoading: boolean; onClose: () => void; pipelineStages: PipelineStageOption[]; onStageChange: (contactId: string, stageId: string) => void }) {
   if (isLoading) {
     return (
       <div className="w-80 flex-shrink-0 border-l border-gray-100 bg-white flex items-center justify-center">
@@ -645,6 +660,23 @@ function ContactInfoSidebar({ contact, isLoading, onClose }: { contact: ContactD
             {contact.status}
           </span>
         </div>
+
+        {/* Pipeline Stage */}
+        {pipelineStages.length > 0 && (
+          <div className="p-4 border-b border-gray-100">
+            <p className="text-xs font-medium text-gray-500 mb-2 flex items-center gap-1.5"><Filter className="h-3.5 w-3.5" /> Pipeline Stage</p>
+            <select
+              value={contact.pipelineStageId || ''}
+              onChange={(e) => e.target.value && onStageChange(contact.id, e.target.value)}
+              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
+            >
+              <option value="" disabled>No stage assigned</option>
+              {pipelineStages.map((stage) => (
+                <option key={stage.id} value={stage.id}>{stage.name}</option>
+              ))}
+            </select>
+          </div>
+        )}
 
         {/* Contact Details */}
         <div className="p-4 space-y-3 border-b border-gray-100">
@@ -855,7 +887,7 @@ export default function WhatsAppPage() {
   const [sendError, setSendError] = useState('');
   const [senderAccounts, setSenderAccounts] = useState<WhatsAppSenderAccount[]>([]);
   const [selectedSenderId, setSelectedSenderId] = useState('');
-  const [convFilter, setConvFilter] = useState<'all' | 'unread' | 'assigned' | 'campaign' | 'manychat' | 'typeform' | 'pinned' | 'archived'>('all');
+  const [convFilter, setConvFilter] = useState<'all' | 'unread' | 'assigned' | 'campaign' | 'manychat' | 'typeform' | 'pinned' | 'archived' | 'no_reply'>('all');
   const [campaignConversationFilter, setCampaignConversationFilter] = useState('all');
   const [convNumberFilter, setConvNumberFilter] = useState<string>('all');
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -872,6 +904,7 @@ export default function WhatsAppPage() {
   const [showContactInfo, setShowContactInfo] = useState(false);
   const [contactDetail, setContactDetail] = useState<ContactDetail | null>(null);
   const [isLoadingContact, setIsLoadingContact] = useState(false);
+  const [pipelineStages, setPipelineStages] = useState<PipelineStageOption[]>([]);
 
   // Template panel
   const [showTemplatePanel, setShowTemplatePanel] = useState(false);
@@ -1831,6 +1864,29 @@ export default function WhatsAppPage() {
     }
   };
 
+  useEffect(() => {
+    api.get('/pipelines')
+      .then((res: any) => {
+        const pipelines: PipelineOption[] = Array.isArray(res.data) ? res.data : [];
+        const defaultPipeline = pipelines.find(p => p.isDefault) || pipelines[0];
+        const stages = (defaultPipeline?.stages || []).slice().sort((a, b) => a.displayOrder - b.displayOrder);
+        setPipelineStages(stages);
+      })
+      .catch(() => setPipelineStages([]));
+  }, []);
+
+  const handleContactStageChange = async (contactId: string, stageId: string) => {
+    const previousStageId = contactDetail?.pipelineStageId;
+    setContactDetail(prev => (prev && prev.id === contactId ? { ...prev, pipelineStageId: stageId } : prev));
+    try {
+      await api.put(`/pipelines/contacts/${contactId}`, { pipelineStageId: stageId });
+    } catch (err) {
+      console.error('Failed to update pipeline stage:', err);
+      setContactDetail(prev => (prev && prev.id === contactId ? { ...prev, pipelineStageId: previousStageId } : prev));
+      alert('Failed to update pipeline stage');
+    }
+  };
+
   const searchContacts = async (query: string) => {
     if (!query.trim()) { setContactSearchResults([]); return; }
     setIsSearchingContacts(true);
@@ -2761,6 +2817,7 @@ export default function WhatsAppPage() {
       if (convFilter === 'assigned') return !!assignments[c.waId];
       if (convFilter === 'manychat') return c.contactSource === 'manychat';
       if (convFilter === 'typeform') return c.contactSource === 'typeform';
+      if (convFilter === 'no_reply') return !c.lastInboundTime && c.messageCount > 0;
       if (convFilter === 'campaign') {
         if (!c.hasCampaignMessages) return false;
         if (campaignConversationFilter !== 'all') {
@@ -3744,6 +3801,7 @@ export default function WhatsAppPage() {
               [
                 { key: 'all', label: 'All' },
                 { key: 'unread', label: 'Unread' },
+                { key: 'no_reply', label: 'No Reply' },
                 { key: 'pinned', label: 'Pinned' },
                 { key: 'assigned', label: 'Assigned' },
                 { key: 'archived', label: 'Archived' },
@@ -4552,7 +4610,7 @@ export default function WhatsAppPage() {
 
       {/* ═══ RIGHT: Contact Info Sidebar ═══ */}
       {showContactInfo && selectedConv?.contactId && (
-        <ContactInfoSidebar contact={contactDetail} isLoading={isLoadingContact} onClose={() => setShowContactInfo(false)} />
+        <ContactInfoSidebar contact={contactDetail} isLoading={isLoadingContact} onClose={() => setShowContactInfo(false)} pipelineStages={pipelineStages} onStageChange={handleContactStageChange} />
       )}
 
       </div>
@@ -6010,6 +6068,11 @@ export default function WhatsAppPage() {
                       <input type="text" value={editingFlow.triggerKeyword || ''} onChange={e => setEditingFlow({ ...editingFlow, triggerKeyword: e.target.value })}
                         placeholder="menu, start, info" className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-green-400" />
                     </div>
+                  )}
+                  {editingFlow.trigger === 'after_auto_send' && (
+                    <p className="text-[11px] text-gray-400 -mt-2">
+                      This flow arms itself automatically the moment any auto-send rule fires — nothing else to wire up. Step 1's own message is never sent (the auto-send template already covered that); it only exists to hold the delay. On Step 1, turn on "If no reply, wait then move to next step", set your delay (e.g. 3 hours), and point it at Step 2 — Step 2's message is the actual follow-up that goes out if the contact stays silent.
+                    </p>
                   )}
                   {editingFlow.trigger === 'before_meeting' && (
                     <div>

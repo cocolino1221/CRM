@@ -31,6 +31,7 @@ interface Event {
     id: string;
     firstName: string;
     lastName: string;
+    phone?: string;
   };
   contactId?: string;
   customFields?: Record<string, any>;
@@ -78,7 +79,10 @@ export default function CalendarPage() {
   const [error, setError] = useState<string | null>(null);
   const [modalError, setModalError] = useState('');
   const [editingEvent, setEditingEvent] = useState<Event | null>(null);
-  const [contacts, setContacts] = useState<ContactOption[]>([]);
+  const [contactSearchQuery, setContactSearchQuery] = useState('');
+  const [contactSearchResults, setContactSearchResults] = useState<ContactOption[]>([]);
+  const [contactSearchLoading, setContactSearchLoading] = useState(false);
+  const [showContactDropdown, setShowContactDropdown] = useState(false);
   const [whatsappFlows, setWhatsappFlows] = useState<WhatsAppFlowOption[]>([]);
 
   const [formData, setFormData] = useState<EventFormData>({
@@ -104,9 +108,6 @@ export default function CalendarPage() {
   }, [currentDate]);
 
   useEffect(() => {
-    api.get('/contacts', { params: { limit: 200 } })
-      .then((res: any) => setContacts(Array.isArray(res.data) ? res.data : res.data?.contacts || []))
-      .catch(() => setContacts([]));
     api.get('/integrations/whatsapp/flows')
       .then((res: any) => {
         const flows: WhatsAppFlowOption[] = Array.isArray(res.data) ? res.data : [];
@@ -116,6 +117,25 @@ export default function CalendarPage() {
   }, []);
 
   const enabledReminderFlows = whatsappFlows.filter(f => f.enabled);
+
+  // Debounced server-side search — the contact list can run into the
+  // thousands, so it's never preloaded, only queried as the user types.
+  useEffect(() => {
+    const query = contactSearchQuery.trim();
+    if (!query) {
+      setContactSearchResults([]);
+      setContactSearchLoading(false);
+      return;
+    }
+    setContactSearchLoading(true);
+    const handle = setTimeout(() => {
+      api.get('/contacts', { params: { search: query, limit: 20 } })
+        .then((res: any) => setContactSearchResults(res.data?.contacts || []))
+        .catch(() => setContactSearchResults([]))
+        .finally(() => setContactSearchLoading(false));
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [contactSearchQuery]);
 
   const fetchEvents = async () => {
     try {
@@ -226,6 +246,10 @@ export default function CalendarPage() {
     const reminder = event.customFields?.whatsappReminder as
       | { enabled?: boolean; flowId?: string; hoursBefore?: number }
       | undefined;
+
+    setContactSearchQuery(event.contact ? `${event.contact.firstName} ${event.contact.lastName}` : '');
+    setContactSearchResults([]);
+    setShowContactDropdown(false);
 
     setFormData({
       title: event.title,
@@ -346,6 +370,9 @@ export default function CalendarPage() {
       whatsappReminderFlowId: undefined,
       whatsappReminderHoursBefore: undefined,
     });
+    setContactSearchQuery('');
+    setContactSearchResults([]);
+    setShowContactDropdown(false);
     setModalError('');
     setSelectedDate(null);
     setEditingEvent(null);
@@ -834,16 +861,62 @@ export default function CalendarPage() {
 
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-2">Contact (for WhatsApp meeting reminders)</label>
-                <select
-                  value={formData.contactId || ''}
-                  onChange={(e) => setFormData({ ...formData, contactId: e.target.value || undefined })}
-                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500"
-                >
-                  <option value="">No linked contact</option>
-                  {contacts.map((c) => (
-                    <option key={c.id} value={c.id}>{c.firstName} {c.lastName}{c.phone ? ` — ${c.phone}` : ''}</option>
-                  ))}
-                </select>
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={contactSearchQuery}
+                    onChange={(e) => {
+                      setContactSearchQuery(e.target.value);
+                      setShowContactDropdown(true);
+                      if (formData.contactId) setFormData({ ...formData, contactId: undefined });
+                    }}
+                    onFocus={() => setShowContactDropdown(true)}
+                    onBlur={() => setTimeout(() => setShowContactDropdown(false), 150)}
+                    placeholder="Search contacts by name, email or phone..."
+                    className="w-full pl-9 pr-9 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                  />
+                  {formData.contactId && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setFormData({ ...formData, contactId: undefined });
+                        setContactSearchQuery('');
+                      }}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-full hover:bg-gray-100"
+                    >
+                      <X className="h-4 w-4 text-gray-400" />
+                    </button>
+                  )}
+
+                  {showContactDropdown && !formData.contactId && contactSearchQuery.trim() && (
+                    <div className="absolute z-10 mt-1 w-full max-h-56 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-lg">
+                      {contactSearchLoading ? (
+                        <div className="flex items-center justify-center gap-2 px-4 py-3 text-sm text-gray-500">
+                          <Loader2 className="h-4 w-4 animate-spin" /> Searching...
+                        </div>
+                      ) : contactSearchResults.length === 0 ? (
+                        <div className="px-4 py-3 text-sm text-gray-500">No contacts found</div>
+                      ) : (
+                        contactSearchResults.map((c) => (
+                          <button
+                            key={c.id}
+                            type="button"
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() => {
+                              setFormData({ ...formData, contactId: c.id });
+                              setContactSearchQuery(`${c.firstName} ${c.lastName}`);
+                              setShowContactDropdown(false);
+                            }}
+                            className="w-full text-left px-4 py-2 text-sm hover:bg-cyan-50 border-b border-gray-100 last:border-0"
+                          >
+                            {c.firstName} {c.lastName}{c.phone ? ` — ${c.phone}` : ''}
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
 
               {formData.contactId && enabledReminderFlows.length > 0 && (
