@@ -51,6 +51,7 @@ interface EventFormData {
   whatsappReminderEnabled: boolean;
   whatsappReminderFlowId?: string;
   whatsappReminderHoursBefore?: number;
+  organizerId?: string;
 }
 
 interface ContactOption {
@@ -58,6 +59,12 @@ interface ContactOption {
   firstName: string;
   lastName: string;
   phone?: string;
+}
+
+interface CloserOption {
+  id: string;
+  firstName: string;
+  lastName: string;
 }
 
 interface WhatsAppFlowOption {
@@ -84,6 +91,7 @@ export default function CalendarPage() {
   const [contactSearchLoading, setContactSearchLoading] = useState(false);
   const [showContactDropdown, setShowContactDropdown] = useState(false);
   const [whatsappFlows, setWhatsappFlows] = useState<WhatsAppFlowOption[]>([]);
+  const [closers, setClosers] = useState<CloserOption[]>([]);
 
   const [formData, setFormData] = useState<EventFormData>({
     title: '',
@@ -96,6 +104,7 @@ export default function CalendarPage() {
     contactId: '',
     autoGenerateMeetingLink: false,
     whatsappReminderEnabled: true,
+    organizerId: '',
   });
 
   const monthNames = [
@@ -114,6 +123,9 @@ export default function CalendarPage() {
         setWhatsappFlows(flows.filter(f => f.trigger === 'before_meeting'));
       })
       .catch(() => setWhatsappFlows([]));
+    api.get('/users', { params: { role: 'closer' } })
+      .then((res: any) => setClosers(Array.isArray(res.data) ? res.data : []))
+      .catch(() => setClosers([]));
   }, []);
 
   const enabledReminderFlows = whatsappFlows.filter(f => f.enabled);
@@ -182,6 +194,14 @@ export default function CalendarPage() {
     setIsSubmitting(true);
 
     try {
+      // New events can't be scheduled in the past; editing an existing
+      // (possibly already-past) event is unaffected — see handleUpdateEvent.
+      if (formData.date < formatDateForInput(new Date())) {
+        setModalError('Cannot schedule a meeting in the past.');
+        setIsSubmitting(false);
+        return;
+      }
+
       // Check for time conflicts
       if (checkTimeConflict(formData.date, formData.startTime, formData.endTime)) {
         setModalError('There is already an event scheduled at this time. Please choose a different time.');
@@ -212,7 +232,9 @@ export default function CalendarPage() {
         customFields: buildWhatsappReminderCustomFields(),
       };
 
-      const response = await api.post<Event>('/events', eventData);
+      const response = formData.organizerId
+        ? await api.post<Event>(`/events/schedule-for/${formData.organizerId}`, eventData)
+        : await api.post<Event>('/events', eventData);
 
       setEvents([...events, response.data]);
       setShowEventModal(false);
@@ -225,14 +247,16 @@ export default function CalendarPage() {
     }
   };
 
-  const handleDeleteEvent = async (eventId: string) => {
-    if (!confirm('Are you sure you want to delete this event?')) return;
+  const handleDeleteEvent = async (eventId: string): Promise<boolean> => {
+    if (!confirm('Are you sure you want to delete this event?')) return false;
 
     try {
       await api.delete(`/events/${eventId}`);
       setEvents(events.filter(e => e.id !== eventId));
+      return true;
     } catch (err: any) {
       alert(err.response?.data?.message || 'Failed to delete event');
+      return false;
     }
   };
 
@@ -369,6 +393,7 @@ export default function CalendarPage() {
       whatsappReminderEnabled: true,
       whatsappReminderFlowId: undefined,
       whatsappReminderHoursBefore: undefined,
+      organizerId: '',
     });
     setContactSearchQuery('');
     setContactSearchResults([]);
@@ -493,8 +518,8 @@ export default function CalendarPage() {
             {dayEvents.slice(0, 3).map((event) => (
               <div
                 key={event.id}
-                className={`text-xs px-2 py-1 rounded ${getColorClasses(event.type)} text-white truncate`}
-                onClick={(e) => e.stopPropagation()}
+                className={`text-xs px-2 py-1 rounded ${getColorClasses(event.type)} text-white truncate hover:opacity-80`}
+                onClick={(e) => { e.stopPropagation(); handleEditEvent(event); }}
               >
                 {formatTime(event.startDate)} - {event.title}
               </div>
@@ -801,12 +826,29 @@ export default function CalendarPage() {
                   <input
                     type="date"
                     required
+                    min={editingEvent ? undefined : formatDateForInput(new Date())}
                     value={formData.date}
                     onChange={(e) => setFormData({ ...formData, date: e.target.value })}
                     className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500"
                   />
                 </div>
               </div>
+
+              {!editingEvent && closers.length > 0 && (
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">Book for</label>
+                  <select
+                    value={formData.organizerId || ''}
+                    onChange={(e) => setFormData({ ...formData, organizerId: e.target.value || undefined })}
+                    className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                  >
+                    <option value="">Myself</option>
+                    {closers.map((c) => (
+                      <option key={c.id} value={c.id}>{c.firstName} {c.lastName} (Closer)</option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -988,25 +1030,44 @@ export default function CalendarPage() {
                 />
               </div>
 
-              <div className="flex justify-end gap-3 pt-4 border-t border-gray-200">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowEventModal(false);
-                    resetForm();
-                  }}
-                  className="px-6 py-3 text-sm font-semibold text-gray-700 bg-white border border-gray-300 rounded-xl hover:bg-gray-50 transition-all"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={isSubmitting}
-                  className="px-6 py-3 text-sm font-semibold text-white bg-gradient-to-r from-cyan-600 to-teal-600 rounded-xl shadow-lg hover:shadow-xl transition-all disabled:opacity-50 flex items-center gap-2"
-                >
-                  {isSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
-                  {isSubmitting ? (editingEvent ? 'Updating...' : 'Creating...') : (editingEvent ? 'Update Event' : 'Create Event')}
-                </button>
+              <div className="flex justify-between gap-3 pt-4 border-t border-gray-200">
+                {editingEvent ? (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (!editingEvent) return;
+                      const deleted = await handleDeleteEvent(editingEvent.id);
+                      if (deleted) {
+                        setShowEventModal(false);
+                        resetForm();
+                      }
+                    }}
+                    className="px-6 py-3 text-sm font-semibold text-red-600 bg-white border border-red-200 rounded-xl hover:bg-red-50 transition-all flex items-center gap-2"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    Delete
+                  </button>
+                ) : <span />}
+                <div className="flex gap-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowEventModal(false);
+                      resetForm();
+                    }}
+                    className="px-6 py-3 text-sm font-semibold text-gray-700 bg-white border border-gray-300 rounded-xl hover:bg-gray-50 transition-all"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isSubmitting}
+                    className="px-6 py-3 text-sm font-semibold text-white bg-gradient-to-r from-cyan-600 to-teal-600 rounded-xl shadow-lg hover:shadow-xl transition-all disabled:opacity-50 flex items-center gap-2"
+                  >
+                    {isSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
+                    {isSubmitting ? (editingEvent ? 'Updating...' : 'Creating...') : (editingEvent ? 'Update Event' : 'Create Event')}
+                  </button>
+                </div>
               </div>
             </form>
           </div>

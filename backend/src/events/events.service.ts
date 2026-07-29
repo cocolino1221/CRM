@@ -87,6 +87,15 @@ export class EventsService {
       throw new NotFoundException('Organizer not found');
     }
 
+    // Reject past dates (calendar-day granularity — today is allowed even if
+    // the chosen time has already passed). Editing an existing event never
+    // goes through here, so historical events stay editable.
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    if (new Date(dto.startDate) < startOfToday) {
+      throw new BadRequestException('Cannot schedule an event in the past.');
+    }
+
     // Validate dates
     if (new Date(dto.startDate) >= new Date(dto.endDate)) {
       throw new BadRequestException('End date must be after start date');
