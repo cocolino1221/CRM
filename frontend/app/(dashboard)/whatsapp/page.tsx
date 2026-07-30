@@ -6105,9 +6105,24 @@ export default function WhatsAppPage() {
                     </div>
                   )}
                   {editingFlow.trigger === 'after_auto_send' && (
-                    <p className="text-[11px] text-gray-400 -mt-2">
-                      Arms automatically the moment any Auto-Send rule (see the Auto-Send tab) sends a message — nothing else to wire up. See Step 1 below.
-                    </p>
+                    <div className="space-y-2">
+                      <p className="text-[11px] text-gray-400">
+                        Arms the moment an Auto-Send rule (see the Auto-Send tab) sends a message — nothing else to wire up. See Step 1 below.
+                      </p>
+                      <div>
+                        <label className="text-xs font-medium text-gray-500 mb-1 block">Only for this Auto-Send rule</label>
+                        <select value={editingFlow.autoSendRuleId || ''} onChange={e => setEditingFlow({ ...editingFlow, autoSendRuleId: e.target.value || undefined })}
+                          className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-green-400 bg-white">
+                          <option value="">Any Auto-Send rule</option>
+                          {autoSendRules.map((rule) => (
+                            <option key={rule.id} value={rule.id}>{rule.name || rule.id}</option>
+                          ))}
+                        </select>
+                        <p className="mt-1 text-[10px] text-gray-400">
+                          Leave as "Any" and every auto-sent message arms this flow. Pick a specific rule so contacts hit by other rules don't enter it.
+                        </p>
+                      </div>
+                    </div>
                   )}
                   {editingFlow.trigger === 'before_meeting' && (
                     <div>

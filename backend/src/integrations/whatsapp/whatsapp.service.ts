@@ -3083,7 +3083,7 @@ export class WhatsAppService {
           ...this.getIntegrationSenderInfo(senderIntegration),
         },
       );
-      await this.armAfterAutoSendFlow(workspaceId, phone, senderIntegration);
+      await this.armAfterAutoSendFlow(workspaceId, phone, senderIntegration, matchedRule.id);
       await this.notifyAutoSendSuccess(workspaceId, contact, templateName, ownerId || fallbackUserId);
       this.logger.log(`Auto-send SUCCESS: template "${templateName}" sent to ${phone} for contact ${contact.id} msgId=${msgId}`);
     } catch (err) {
@@ -4037,9 +4037,19 @@ export class WhatsAppService {
     }
   }
 
-  private async armAfterAutoSendFlow(workspaceId: string, waId: string, integration: Integration): Promise<void> {
+  /**
+   * `autoSendRuleId` scopes which flow arms: a flow with `autoSendRuleId` set
+   * only arms when that specific Auto-Send rule fired (not any auto-send in
+   * the workspace); a flow with it unset arms for every auto-send, same as
+   * before. This is how a workspace with multiple Auto-Send rules (e.g. one
+   * per contact source) keeps a follow-up flow from catching contacts it
+   * wasn't meant for.
+   */
+  private async armAfterAutoSendFlow(workspaceId: string, waId: string, integration: Integration, autoSendRuleId?: string): Promise<void> {
     const flows: any[] = integration.config?.conversationFlows || [];
-    const flow = flows.find((f: any) => f.enabled && f.trigger === 'after_auto_send' && f.steps?.length > 0);
+    const flow = flows.find((f: any) =>
+      f.enabled && f.trigger === 'after_auto_send' && f.steps?.length > 0 &&
+      (!f.autoSendRuleId || f.autoSendRuleId === autoSendRuleId));
     if (!flow) return;
 
     const firstStep = flow.steps[0];
