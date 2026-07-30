@@ -50,7 +50,9 @@ interface EventFormData {
   autoGenerateMeetingLink?: boolean;
   whatsappReminderEnabled: boolean;
   whatsappReminderFlowId?: string;
+  whatsappReminderMode: 'hours_before' | 'fixed_time';
   whatsappReminderHoursBefore?: number;
+  whatsappReminderFixedTime?: string;
   organizerId?: string;
 }
 
@@ -104,6 +106,7 @@ export default function CalendarPage() {
     contactId: '',
     autoGenerateMeetingLink: false,
     whatsappReminderEnabled: true,
+    whatsappReminderMode: 'hours_before',
     organizerId: '',
   });
 
@@ -172,18 +175,35 @@ export default function CalendarPage() {
     }
   };
 
+  // "Fixed time" mode is resolved client-side into an equivalent hoursBefore
+  // value (same calendar day as the meeting, same local timezone the user is
+  // already entering the meeting's own time in) — the backend only ever
+  // knows about hoursBefore, so no server-side timezone handling is needed.
+  const computeFixedTimeHoursBefore = (): number | null => {
+    if (!formData.whatsappReminderFixedTime) return null;
+    const [year, month, day] = formData.date.split('-').map(Number);
+    const [startHour, startMinute] = formData.startTime.split(':').map(Number);
+    const [fixedHour, fixedMinute] = formData.whatsappReminderFixedTime.split(':').map(Number);
+    const meetingStart = new Date(year, month - 1, day, startHour, startMinute);
+    const fixedMoment = new Date(year, month - 1, day, fixedHour, fixedMinute);
+    return (meetingStart.getTime() - fixedMoment.getTime()) / (60 * 60 * 1000);
+  };
+
   // customFields.whatsappReminder is read by the backend's per-event override
   // (see EventsService.scheduleMeetingReminder) — undefined only when there's
   // no linked contact, since a reminder has nowhere to send without one.
   const buildWhatsappReminderCustomFields = (): Record<string, any> | undefined => {
     if (!formData.contactId) return undefined;
+    const hoursBefore = formData.whatsappReminderMode === 'fixed_time'
+      ? computeFixedTimeHoursBefore()
+      : formData.whatsappReminderHoursBefore;
     return {
       whatsappReminder: {
         enabled: formData.whatsappReminderEnabled,
         flowId: formData.whatsappReminderEnabled ? (formData.whatsappReminderFlowId || undefined) : undefined,
-        hoursBefore: formData.whatsappReminderEnabled && formData.whatsappReminderHoursBefore
-          ? formData.whatsappReminderHoursBefore
-          : undefined,
+        hoursBefore: formData.whatsappReminderEnabled && hoursBefore ? hoursBefore : undefined,
+        mode: formData.whatsappReminderMode,
+        fixedTime: formData.whatsappReminderMode === 'fixed_time' ? (formData.whatsappReminderFixedTime || undefined) : undefined,
       },
     };
   };
@@ -207,6 +227,15 @@ export default function CalendarPage() {
         setModalError('There is already an event scheduled at this time. Please choose a different time.');
         setIsSubmitting(false);
         return;
+      }
+
+      if (formData.whatsappReminderEnabled && formData.whatsappReminderMode === 'fixed_time' && formData.whatsappReminderFixedTime) {
+        const hoursBefore = computeFixedTimeHoursBefore();
+        if (hoursBefore !== null && hoursBefore <= 0) {
+          setModalError('The reminder time must be earlier than the meeting start time.');
+          setIsSubmitting(false);
+          return;
+        }
       }
 
       // Parse date components to avoid timezone issues
@@ -268,7 +297,7 @@ export default function CalendarPage() {
     const endDate = new Date(event.endDate);
 
     const reminder = event.customFields?.whatsappReminder as
-      | { enabled?: boolean; flowId?: string; hoursBefore?: number }
+      | { enabled?: boolean; flowId?: string; hoursBefore?: number; mode?: 'hours_before' | 'fixed_time'; fixedTime?: string }
       | undefined;
 
     setContactSearchQuery(event.contact ? `${event.contact.firstName} ${event.contact.lastName}` : '');
@@ -287,7 +316,9 @@ export default function CalendarPage() {
       contactId: event.contact?.id || event.contactId,
       whatsappReminderEnabled: reminder?.enabled !== false,
       whatsappReminderFlowId: reminder?.flowId,
+      whatsappReminderMode: reminder?.mode === 'fixed_time' ? 'fixed_time' : 'hours_before',
       whatsappReminderHoursBefore: reminder?.hoursBefore,
+      whatsappReminderFixedTime: reminder?.fixedTime,
     });
 
     setShowEventModal(true);
@@ -306,6 +337,15 @@ export default function CalendarPage() {
         setModalError('There is already an event scheduled at this time. Please choose a different time.');
         setIsSubmitting(false);
         return;
+      }
+
+      if (formData.whatsappReminderEnabled && formData.whatsappReminderMode === 'fixed_time' && formData.whatsappReminderFixedTime) {
+        const hoursBefore = computeFixedTimeHoursBefore();
+        if (hoursBefore !== null && hoursBefore <= 0) {
+          setModalError('The reminder time must be earlier than the meeting start time.');
+          setIsSubmitting(false);
+          return;
+        }
       }
 
       // Parse date components to avoid timezone issues
@@ -392,7 +432,9 @@ export default function CalendarPage() {
       autoGenerateMeetingLink: false,
       whatsappReminderEnabled: true,
       whatsappReminderFlowId: undefined,
+      whatsappReminderMode: 'hours_before',
       whatsappReminderHoursBefore: undefined,
+      whatsappReminderFixedTime: undefined,
       organizerId: '',
     });
     setContactSearchQuery('');
@@ -974,7 +1016,7 @@ export default function CalendarPage() {
                   </label>
 
                   {formData.whatsappReminderEnabled && (
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-3">
                       {enabledReminderFlows.length > 1 && (
                         <div>
                           <label className="block text-xs font-semibold text-gray-600 mb-1">Flow</label>
@@ -990,19 +1032,44 @@ export default function CalendarPage() {
                           </select>
                         </div>
                       )}
-                      <div>
-                        <label className="block text-xs font-semibold text-gray-600 mb-1">Hours before</label>
-                        <input
-                          type="number"
-                          min={1}
-                          placeholder={String(
-                            enabledReminderFlows.find(f => f.id === formData.whatsappReminderFlowId)?.reminderHoursBefore || 3
-                          )}
-                          value={formData.whatsappReminderHoursBefore ?? ''}
-                          onChange={(e) => setFormData({ ...formData, whatsappReminderHoursBefore: e.target.value ? Math.max(1, Number(e.target.value)) : undefined })}
-                          className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
-                        />
+
+                      <div className="flex gap-1">
+                        <button type="button" onClick={() => setFormData({ ...formData, whatsappReminderMode: 'hours_before' })}
+                          className={`px-2 py-1 text-xs rounded-lg font-medium ${formData.whatsappReminderMode === 'hours_before' ? 'bg-green-100 text-green-700' : 'text-gray-500 hover:bg-gray-100'}`}>
+                          Hours before
+                        </button>
+                        <button type="button" onClick={() => setFormData({ ...formData, whatsappReminderMode: 'fixed_time' })}
+                          className={`px-2 py-1 text-xs rounded-lg font-medium ${formData.whatsappReminderMode === 'fixed_time' ? 'bg-green-100 text-green-700' : 'text-gray-500 hover:bg-gray-100'}`}>
+                          Fixed time
+                        </button>
                       </div>
+
+                      {formData.whatsappReminderMode === 'fixed_time' ? (
+                        <div>
+                          <label className="block text-xs font-semibold text-gray-600 mb-1">Send at this time, on the day of the meeting</label>
+                          <input
+                            type="time"
+                            value={formData.whatsappReminderFixedTime || ''}
+                            onChange={(e) => setFormData({ ...formData, whatsappReminderFixedTime: e.target.value || undefined })}
+                            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
+                          />
+                          <p className="mt-1 text-[11px] text-gray-400">e.g. 07:00 sends the reminder at 7am on the meeting's date, regardless of what time the meeting itself starts.</p>
+                        </div>
+                      ) : (
+                        <div>
+                          <label className="block text-xs font-semibold text-gray-600 mb-1">Hours before</label>
+                          <input
+                            type="number"
+                            min={1}
+                            placeholder={String(
+                              enabledReminderFlows.find(f => f.id === formData.whatsappReminderFlowId)?.reminderHoursBefore || 3
+                            )}
+                            value={formData.whatsappReminderHoursBefore ?? ''}
+                            onChange={(e) => setFormData({ ...formData, whatsappReminderHoursBefore: e.target.value ? Math.max(1, Number(e.target.value)) : undefined })}
+                            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
+                          />
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
