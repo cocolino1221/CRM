@@ -3193,6 +3193,36 @@ export default function WhatsAppPage() {
     });
   };
 
+  // Shared by Step 1's (always-template) picker and the Template toggle on
+  // later steps — loads the approved template's body + Quick Reply buttons
+  // onto the given step.
+  const applyTemplateToStep = (stepIndex: number, templateName: string) => {
+    setEditingFlow((prev: any) => {
+      if (!prev) return prev;
+      const t = metaTemplates.find((t: any) => t.name === templateName);
+      const tplButtons = t?.components?.find((c: any) => c.type === 'BUTTONS')?.buttons || [];
+      const quickReplyBtns = tplButtons
+        .filter((b: any) => b.type === 'QUICK_REPLY')
+        .map((b: any, i: number) => ({
+          id: b.payload || b.text || `btn_${Date.now()}_${i}`,
+          title: b.text,
+          nextStepId: '',
+        }));
+      const steps = [...prev.steps];
+      if (!steps[stepIndex]) return prev;
+      steps[stepIndex] = {
+        ...steps[stepIndex],
+        templateName,
+        type: 'template',
+        templateLanguage: t?.language || 'en_US',
+        message: t?.components?.find((c: any) => c.type === 'BODY')?.text || '',
+        buttons: quickReplyBtns,
+        fallbackOnTextReply: steps[stepIndex].fallbackOnTextReply ?? true,
+      };
+      return { ...prev, steps };
+    });
+  };
+
   const addFlowStep = () => {
     setEditingFlow((prev: any) => {
       if (!prev) return prev;
@@ -6151,30 +6181,8 @@ export default function WhatsAppPage() {
                               First step must use an approved template. Buttons from the template will auto-load below.
                             </div>
                             <div className="flex gap-1.5">
-                            <select value={step.templateName || ''} onChange={e => {
-                              if (!editingFlow) return;
-                              const t = metaTemplates.find((t: any) => t.name === e.target.value);
-                              const steps = [...editingFlow.steps];
-                              // Extract QUICK_REPLY buttons from template
-                              const tplButtons = t?.components?.find((c: any) => c.type === 'BUTTONS')?.buttons || [];
-                              const quickReplyBtns = tplButtons
-                                .filter((b: any) => b.type === 'QUICK_REPLY')
-                                .map((b: any, i: number) => ({
-                                  id: b.payload || b.text || `btn_${Date.now()}_${i}`,
-                                  title: b.text,
-                                  nextStepId: '',
-                                }));
-                              steps[si] = {
-                                ...steps[si],
-                                templateName: e.target.value,
-                                type: 'template',
-                                templateLanguage: t?.language || 'en_US',
-                                message: t?.components?.find((c: any) => c.type === 'BODY')?.text || '',
-                                buttons: quickReplyBtns,
-                                fallbackOnTextReply: steps[si].fallbackOnTextReply ?? true,
-                              };
-                              setEditingFlow({ ...editingFlow, steps });
-                            }} className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:border-green-400 bg-white">
+                            <select value={step.templateName || ''} onChange={e => applyTemplateToStep(si, e.target.value)}
+                              className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:border-green-400 bg-white">
                               <option value="">Select an approved template...</option>
                               {metaTemplates.filter((t: any) => t.status === 'APPROVED').map((t: any) => (
                                 <option key={t.name} value={t.name}>{t.name} ({t.language})</option>
@@ -6202,9 +6210,65 @@ export default function WhatsAppPage() {
                               </div>
                             )}
                           </div>
-                        ) : (
-                          /* Steps 2+: Interactive message (within 24h session window) */
+                        ) : step.type === 'template' ? (
+                          /* Steps 2+ in Template mode: same approved-template picker as Step 1 */
                           <div className="space-y-2">
+                            <div className="flex gap-1">
+                              <button type="button" onClick={() => updateFlowStep(si, 'type', undefined)}
+                                className="px-2 py-1 text-[11px] rounded-lg font-medium text-gray-500 hover:bg-gray-100">
+                                Message
+                              </button>
+                              <button type="button" onClick={() => {}}
+                                className="px-2 py-1 text-[11px] rounded-lg font-medium bg-green-100 text-green-700">
+                                Template
+                              </button>
+                            </div>
+                            <div className="flex gap-1.5">
+                              <select value={step.templateName || ''} onChange={e => applyTemplateToStep(si, e.target.value)}
+                                className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:border-green-400 bg-white">
+                                <option value="">Select an approved template...</option>
+                                {metaTemplates.filter((t: any) => t.status === 'APPROVED').map((t: any) => (
+                                  <option key={t.name} value={t.name}>{t.name} ({t.language})</option>
+                                ))}
+                              </select>
+                              <button type="button" onClick={fetchMetaTemplates} disabled={isLoadingTemplates}
+                                className="px-2 py-2 text-xs text-gray-500 hover:text-green-600 border border-gray-200 rounded-lg hover:border-green-300 transition-colors flex-shrink-0"
+                                title="Reload templates">
+                                {isLoadingTemplates ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                              </button>
+                            </div>
+                            {step.templateName && (
+                              <div className="text-xs text-gray-500 bg-white border border-gray-200 rounded-lg p-2 space-y-1">
+                                <strong>{step.templateName}</strong> ({step.templateLanguage || 'en_US'})
+                                {step.message && <p className="mt-1 text-gray-400">{step.message}</p>}
+                                {(step.buttons || []).length > 0 && (
+                                  <div className="mt-1 flex flex-wrap gap-1">
+                                    {step.buttons.map((b: any) => (
+                                      <span key={b.id} className="inline-block px-2 py-0.5 text-[10px] font-medium bg-green-50 text-green-700 border border-green-200 rounded-full">
+                                        {b.title}
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                            <p className="text-[10px] text-gray-400">
+                              Templates can send outside the 24h session window and re-open a conversation — useful for a longer follow-up delay.
+                            </p>
+                          </div>
+                        ) : (
+                          /* Steps 2+ in Message mode: plain interactive message (within 24h session window) */
+                          <div className="space-y-2">
+                            <div className="flex gap-1">
+                              <button type="button" onClick={() => {}}
+                                className="px-2 py-1 text-[11px] rounded-lg font-medium bg-green-100 text-green-700">
+                                Message
+                              </button>
+                              <button type="button" onClick={() => updateFlowStep(si, 'type', 'template')}
+                                className="px-2 py-1 text-[11px] rounded-lg font-medium text-gray-500 hover:bg-gray-100">
+                                Template
+                              </button>
+                            </div>
                             <textarea value={step.message} onChange={e => updateFlowStep(si, 'message', e.target.value)}
                               placeholder="Message text..." rows={2}
                               className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:border-green-400 resize-none" />
@@ -6286,8 +6350,8 @@ export default function WhatsAppPage() {
                         {/* Buttons */}
                         {!(si === 0 && editingFlow.trigger === 'after_auto_send') && (
                         <div className="space-y-1.5">
-                          {si === 0 && step.type === 'template' ? (
-                            /* Step 1 (template): buttons are auto-loaded, title is read-only */
+                          {step.type === 'template' ? (
+                            /* Template steps: buttons are auto-loaded from the approved template, title is read-only */
                             <>
                               {(step.buttons || []).length > 0 && (
                                 <p className="text-[10px] text-gray-400 uppercase tracking-wide font-medium">Template buttons → map to next steps:</p>
@@ -6314,7 +6378,7 @@ export default function WhatsAppPage() {
                               )}
                             </>
                           ) : (
-                            /* Steps 2+: editable interactive buttons */
+                            /* Message-mode steps: editable interactive buttons */
                             <>
                               {(step.buttons || []).map((btn: any, bi: number) => (
                                 <div key={bi} className="flex items-center gap-2">
