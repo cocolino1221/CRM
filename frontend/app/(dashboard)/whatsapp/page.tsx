@@ -3105,7 +3105,12 @@ export default function WhatsAppPage() {
       alert('Keyword trigger requires at least one keyword.');
       return;
     }
-    if (!editingFlow.steps[0]?.templateName) {
+    if (editingFlow.trigger === 'after_auto_send') {
+      if (!editingFlow.steps[0]?.timeoutBranch?.nextStepId) {
+        alert('Step 1 needs "No-reply follow-up" configured — otherwise this flow never does anything after arming.');
+        return;
+      }
+    } else if (!editingFlow.steps[0]?.templateName) {
       alert('Step 1 must have an approved template selected.');
       return;
     }
@@ -6057,7 +6062,7 @@ export default function WhatsAppPage() {
                         className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-green-400 bg-white">
                         <option value="first_message">First Message (new contacts)</option>
                         <option value="keyword">Keyword</option>
-                        <option value="after_auto_send">After Auto-Send Reply</option>
+                        <option value="after_auto_send">No Reply After Auto-Send</option>
                         <option value="before_meeting">Before Meeting (Calendar reminder)</option>
                       </select>
                     </div>
@@ -6071,7 +6076,7 @@ export default function WhatsAppPage() {
                   )}
                   {editingFlow.trigger === 'after_auto_send' && (
                     <p className="text-[11px] text-gray-400 -mt-2">
-                      This flow arms itself automatically the moment any auto-send rule fires — nothing else to wire up. Step 1's own message is never sent (the auto-send template already covered that); it only exists to hold the delay. On Step 1, turn on "If no reply, wait then move to next step", set your delay (e.g. 3 hours), and point it at Step 2 — Step 2's message is the actual follow-up that goes out if the contact stays silent.
+                      Arms automatically the moment any Auto-Send rule (see the Auto-Send tab) sends a message — nothing else to wire up. See Step 1 below.
                     </p>
                   )}
                   {editingFlow.trigger === 'before_meeting' && (
@@ -6132,7 +6137,14 @@ export default function WhatsAppPage() {
                           </div>
                         </div>
 
-                        {si === 0 ? (
+                        {si === 0 && editingFlow.trigger === 'after_auto_send' ? (
+                          /* Step 1 for this trigger is a placeholder — the Auto-Send rule
+                             already sent the real message. This step only exists to carry
+                             the "No-reply follow-up" delay configured below. */
+                          <div className="text-xs text-blue-700 bg-blue-50 border border-blue-200 rounded-lg p-2">
+                            No message is sent for this step — your Auto-Send rule already covered that. Just set "No-reply follow-up" below: how long to wait, and which step to send if the contact stays silent.
+                          </div>
+                        ) : si === 0 ? (
                           /* Step 1: Template-based (required to initiate conversations) */
                           <div className="space-y-2">
                             <div className="text-xs text-green-700 bg-green-50 border border-green-200 rounded-lg p-2">
@@ -6272,6 +6284,7 @@ export default function WhatsAppPage() {
                         )}
 
                         {/* Buttons */}
+                        {!(si === 0 && editingFlow.trigger === 'after_auto_send') && (
                         <div className="space-y-1.5">
                           {si === 0 && step.type === 'template' ? (
                             /* Step 1 (template): buttons are auto-loaded, title is read-only */
@@ -6329,6 +6342,7 @@ export default function WhatsAppPage() {
                             </>
                           )}
                         </div>
+                        )}
 
                         {/* No-reply follow-up: if nothing (no button/keyword match) arrives in time, auto-advance */}
                         <div className="border-t border-gray-200 pt-2 mt-1">
