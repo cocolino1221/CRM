@@ -330,7 +330,7 @@ export default function CalendarPage() {
         customFields: buildWhatsappReminderCustomFields(),
       };
 
-      const response = await api.patch<Event>(`/events/${editingEvent.id}`, eventData);
+      const response = await api.put<Event>(`/events/${editingEvent.id}`, eventData);
 
       setEvents(events.map(e => e.id === editingEvent.id ? response.data : e));
       setShowEventModal(false);
