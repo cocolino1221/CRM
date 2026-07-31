@@ -31,3 +31,7 @@ primary_region = "iad"
   memory = '1024mb'
   cpu_kind = 'shared'
   cpus = 1
+
+[[mounts]]
+  source = "redis_data"
+  destination = "/data/redis"

@@ -24,7 +24,10 @@ FROM node:20-alpine
 WORKDIR /app
 
 # ffmpeg needed for audio format conversion (webm → ogg for WhatsApp uploads)
-RUN apk add --no-cache ffmpeg
+# redis co-located on this machine (see docker-entrypoint.sh) instead of a
+# separate metered Redis provider — su-exec drops root back to the app user
+# after the entrypoint's one-time permission fix on the mounted volume.
+RUN apk add --no-cache ffmpeg redis su-exec
 
 # Copy package files
 COPY package*.json ./
@@ -39,7 +42,12 @@ COPY --from=builder /app/node_modules ./node_modules
 # Create non-root user
 RUN addgroup -g 1001 -S nodejs && adduser -S nestjs -u 1001
 RUN chown -R nestjs:nodejs /app
-USER nestjs
+
+COPY docker-entrypoint.sh /docker-entrypoint.sh
+RUN chmod +x /docker-entrypoint.sh
+
+# Stays root here — the entrypoint chowns the mounted volume, then uses
+# su-exec to run both redis-server and the Node app as the nestjs user.
 
 # Expose port
 EXPOSE 8080
@@ -48,5 +56,5 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=3s --start-period=40s --retries=3 \
   CMD node -e "require('http').get('http://localhost:8080/api/v1/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
 
-# Start application
-CMD ["node", "dist/main.js"]
+# Start application (and co-located Redis)
+CMD ["/docker-entrypoint.sh"]
