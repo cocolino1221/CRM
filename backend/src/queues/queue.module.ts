@@ -16,14 +16,7 @@ import { ContactsModule } from '../contacts/contacts.module';
 
 @Module({
   imports: [
-    BullModule.registerQueue(
-      { name: QUEUE_NAMES.EMAIL },
-      { name: QUEUE_NAMES.DATA_SYNC },
-      { name: QUEUE_NAMES.ANALYTICS },
-      { name: QUEUE_NAMES.AI },
-      { name: QUEUE_NAMES.WEBHOOK },
-      { name: QUEUE_NAMES.WORKFLOW },
-    ),
+    BullModule.registerQueue({ name: QUEUE_NAMES.BACKGROUND_JOBS }),
     HttpModule,
     AIModule,
     WorkflowsModule,

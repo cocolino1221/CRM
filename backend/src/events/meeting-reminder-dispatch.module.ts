@@ -10,7 +10,7 @@ import { MeetingReminderDispatchService } from './meeting-reminder-dispatch.serv
  * to avoid a cycle — same split as CampaignDispatchModule/WhatsAppFollowupDispatchModule.
  */
 @Module({
-  imports: [BullModule.registerQueue({ name: QUEUE_NAMES.MEETING_REMINDER })],
+  imports: [BullModule.registerQueue({ name: QUEUE_NAMES.SCHEDULED_TASKS })],
   providers: [MeetingReminderDispatchService],
   exports: [MeetingReminderDispatchService],
 })

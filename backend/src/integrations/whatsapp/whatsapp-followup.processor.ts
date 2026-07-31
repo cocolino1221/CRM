@@ -5,7 +5,7 @@ import { QUEUE_NAMES, JOB_TYPES } from '../../queues/queue.constants';
 import { WhatsAppService } from './whatsapp.service';
 import { FollowupCheckJobData } from './whatsapp-followup-dispatch.service';
 
-@Processor(QUEUE_NAMES.WHATSAPP_FOLLOWUP)
+@Processor(QUEUE_NAMES.SCHEDULED_TASKS)
 export class WhatsAppFollowupProcessor {
   private readonly logger = new Logger(WhatsAppFollowupProcessor.name);
 

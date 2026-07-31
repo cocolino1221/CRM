@@ -1049,7 +1049,7 @@ export class IntegrationsController {
     createdAt: Date;
     finishedAt?: Date;
   } | null> {
-    const status = await this.queueService.getJobStatus(QUEUE_NAMES.DATA_SYNC, jobId);
+    const status = await this.queueService.getJobStatus(QUEUE_NAMES.BACKGROUND_JOBS, jobId);
     if (!status) {
       return null;
     }

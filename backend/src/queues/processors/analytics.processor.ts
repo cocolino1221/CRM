@@ -17,7 +17,7 @@ interface LeadScoreJobData {
   contactIds?: string[];
 }
 
-@Processor(QUEUE_NAMES.ANALYTICS)
+@Processor(QUEUE_NAMES.BACKGROUND_JOBS)
 export class AnalyticsProcessor {
   private readonly logger = new Logger(AnalyticsProcessor.name);
 

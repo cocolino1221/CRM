@@ -14,7 +14,7 @@ import { WhatsAppFollowupProcessor } from './whatsapp-followup.processor';
  */
 @Module({
   imports: [
-    BullModule.registerQueue({ name: QUEUE_NAMES.WHATSAPP_FOLLOWUP }),
+    BullModule.registerQueue({ name: QUEUE_NAMES.SCHEDULED_TASKS }),
     WhatsAppModule,
   ],
   providers: [WhatsAppFollowupProcessor],

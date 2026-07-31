@@ -5,7 +5,7 @@ import { QUEUE_NAMES, JOB_TYPES } from '../queue.constants';
 import { AIAgentService } from '../../ai/ai-agent.service';
 import { LeadScoringService } from '../../ai/lead-scoring.service';
 
-@Processor(QUEUE_NAMES.AI)
+@Processor(QUEUE_NAMES.BACKGROUND_JOBS)
 export class AIProcessor {
   private readonly logger = new Logger(AIProcessor.name);
 

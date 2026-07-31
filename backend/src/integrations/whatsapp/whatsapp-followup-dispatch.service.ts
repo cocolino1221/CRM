@@ -25,7 +25,7 @@ export class WhatsAppFollowupDispatchService {
   private readonly logger = new Logger(WhatsAppFollowupDispatchService.name);
 
   constructor(
-    @InjectQueue(QUEUE_NAMES.WHATSAPP_FOLLOWUP) private readonly queue: Queue,
+    @InjectQueue(QUEUE_NAMES.SCHEDULED_TASKS) private readonly queue: Queue,
   ) {}
 
   private jobId(flowId: string, waId: string): string {

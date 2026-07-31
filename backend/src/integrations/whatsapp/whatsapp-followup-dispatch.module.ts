@@ -11,7 +11,7 @@ import { WhatsAppFollowupDispatchService } from './whatsapp-followup-dispatch.se
  * top-level module (WhatsAppFollowupModule), same split as campaign-dispatch.
  */
 @Module({
-  imports: [BullModule.registerQueue({ name: QUEUE_NAMES.WHATSAPP_FOLLOWUP })],
+  imports: [BullModule.registerQueue({ name: QUEUE_NAMES.SCHEDULED_TASKS })],
   providers: [WhatsAppFollowupDispatchService],
   exports: [WhatsAppFollowupDispatchService],
 })

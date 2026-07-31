@@ -7,13 +7,11 @@ import { QUEUE_NAMES, JOB_TYPES, JOB_PRIORITIES } from './queue.constants';
 export class QueueService {
   private readonly logger = new Logger(QueueService.name);
 
+  // All job types below (email, data sync, analytics, ai, webhook, workflow)
+  // share this one queue — job routing is by JOB_TYPES name (@Process), not
+  // by which queue it's on. See QUEUE_NAMES.BACKGROUND_JOBS.
   constructor(
-    @InjectQueue(QUEUE_NAMES.EMAIL) private emailQueue: Queue,
-    @InjectQueue(QUEUE_NAMES.DATA_SYNC) private dataSyncQueue: Queue,
-    @InjectQueue(QUEUE_NAMES.ANALYTICS) private analyticsQueue: Queue,
-    @InjectQueue(QUEUE_NAMES.AI) private aiQueue: Queue,
-    @InjectQueue(QUEUE_NAMES.WEBHOOK) private webhookQueue: Queue,
-    @InjectQueue(QUEUE_NAMES.WORKFLOW) private workflowQueue: Queue,
+    @InjectQueue(QUEUE_NAMES.BACKGROUND_JOBS) private backgroundQueue: Queue,
   ) {}
 
   // Email queue methods
@@ -23,7 +21,7 @@ export class QueueService {
     html?: string;
     text?: string;
   }, options?: JobOptions) {
-    const job = await this.emailQueue.add(JOB_TYPES.SEND_EMAIL, data, {
+    const job = await this.backgroundQueue.add(JOB_TYPES.SEND_EMAIL, data, {
       priority: JOB_PRIORITIES.HIGH,
       attempts: 3,
       backoff: {
@@ -38,7 +36,7 @@ export class QueueService {
   }
 
   async sendBulkEmail(emails: any[], options?: JobOptions) {
-    const job = await this.emailQueue.add(JOB_TYPES.SEND_BULK_EMAIL, { emails }, {
+    const job = await this.backgroundQueue.add(JOB_TYPES.SEND_BULK_EMAIL, { emails }, {
       priority: JOB_PRIORITIES.NORMAL,
       attempts: 2,
       ...options,
@@ -49,7 +47,7 @@ export class QueueService {
   }
 
   async sendWelcomeEmail(email: string, name: string, options?: JobOptions) {
-    const job = await this.emailQueue.add(JOB_TYPES.SEND_WELCOME_EMAIL, { email, name }, {
+    const job = await this.backgroundQueue.add(JOB_TYPES.SEND_WELCOME_EMAIL, { email, name }, {
       priority: JOB_PRIORITIES.HIGH,
       attempts: 3,
       ...options,
@@ -60,7 +58,7 @@ export class QueueService {
   }
 
   async sendPasswordResetEmail(email: string, resetToken: string, options?: JobOptions) {
-    const job = await this.emailQueue.add(JOB_TYPES.SEND_PASSWORD_RESET, { email, resetToken }, {
+    const job = await this.backgroundQueue.add(JOB_TYPES.SEND_PASSWORD_RESET, { email, resetToken }, {
       priority: JOB_PRIORITIES.CRITICAL,
       attempts: 5,
       ...options,
@@ -72,7 +70,7 @@ export class QueueService {
 
   // Data sync queue methods
   async syncContacts(workspaceId: string, syncType: 'full' | 'incremental' = 'incremental', options?: JobOptions) {
-    const job = await this.dataSyncQueue.add(JOB_TYPES.SYNC_CONTACTS, {
+    const job = await this.backgroundQueue.add(JOB_TYPES.SYNC_CONTACTS, {
       workspaceId,
       syncType,
       lastSyncedAt: new Date(),
@@ -87,7 +85,7 @@ export class QueueService {
   }
 
   async syncDeals(workspaceId: string, syncType: 'full' | 'incremental' = 'incremental', options?: JobOptions) {
-    const job = await this.dataSyncQueue.add(JOB_TYPES.SYNC_DEALS, {
+    const job = await this.backgroundQueue.add(JOB_TYPES.SYNC_DEALS, {
       workspaceId,
       syncType,
       lastSyncedAt: new Date(),
@@ -102,7 +100,7 @@ export class QueueService {
   }
 
   async syncIntegration(workspaceId: string, integrationId: string, syncType: 'full' | 'incremental' = 'incremental', options?: JobOptions) {
-    const job = await this.dataSyncQueue.add(JOB_TYPES.SYNC_INTEGRATION, {
+    const job = await this.backgroundQueue.add(JOB_TYPES.SYNC_INTEGRATION, {
       workspaceId,
       integrationId,
       syncType,
@@ -117,7 +115,7 @@ export class QueueService {
   }
 
   async exportData(workspaceId: string, entityType: string, format: 'csv' | 'json' | 'xlsx', filters?: any, options?: JobOptions) {
-    const job = await this.dataSyncQueue.add(JOB_TYPES.EXPORT_DATA, {
+    const job = await this.backgroundQueue.add(JOB_TYPES.EXPORT_DATA, {
       workspaceId,
       entityType,
       format,
@@ -134,7 +132,7 @@ export class QueueService {
   }
 
   async importData(workspaceId: string, entityType: string, data: any[], options?: JobOptions) {
-    const job = await this.dataSyncQueue.add(JOB_TYPES.IMPORT_DATA, {
+    const job = await this.backgroundQueue.add(JOB_TYPES.IMPORT_DATA, {
       workspaceId,
       entityType,
       data,
@@ -156,7 +154,7 @@ export class QueueService {
     duplicateActions: Record<string, 'skip' | 'update' | 'create'>,
     options?: JobOptions,
   ) {
-    const job = await this.dataSyncQueue.add(JOB_TYPES.IMPORT_GOOGLE_SHEETS, {
+    const job = await this.backgroundQueue.add(JOB_TYPES.IMPORT_GOOGLE_SHEETS, {
       workspaceId,
       userId,
       contacts,
@@ -199,7 +197,7 @@ export class QueueService {
 
   // Analytics queue methods
   async calculateMetrics(workspaceId: string, metricType: string, dateRange?: any, options?: JobOptions) {
-    const job = await this.analyticsQueue.add(JOB_TYPES.CALCULATE_METRICS, {
+    const job = await this.backgroundQueue.add(JOB_TYPES.CALCULATE_METRICS, {
       workspaceId,
       metricType,
       dateRange,
@@ -214,7 +212,7 @@ export class QueueService {
   }
 
   async updateLeadScores(workspaceId: string, contactIds?: string[], options?: JobOptions) {
-    const job = await this.analyticsQueue.add(JOB_TYPES.UPDATE_LEAD_SCORES, {
+    const job = await this.backgroundQueue.add(JOB_TYPES.UPDATE_LEAD_SCORES, {
       workspaceId,
       contactIds,
     }, {
@@ -229,7 +227,7 @@ export class QueueService {
 
   // AI queue methods
   async scoreContact(contactId: string, workspaceId: string, options?: JobOptions) {
-    const job = await this.aiQueue.add(JOB_TYPES.AI_LEAD_SCORE, {
+    const job = await this.backgroundQueue.add(JOB_TYPES.AI_LEAD_SCORE, {
       contactId,
       workspaceId,
     }, {
@@ -243,7 +241,7 @@ export class QueueService {
   }
 
   async enrichContact(contactId: string, workspaceId: string, options?: JobOptions) {
-    const job = await this.aiQueue.add(JOB_TYPES.AI_ENRICH_CONTACT, {
+    const job = await this.backgroundQueue.add(JOB_TYPES.AI_ENRICH_CONTACT, {
       contactId,
       workspaceId,
     }, {
@@ -257,7 +255,7 @@ export class QueueService {
   }
 
   async generateEmail(context: string, tone?: string, purpose?: string, options?: JobOptions) {
-    const job = await this.aiQueue.add(JOB_TYPES.AI_GENERATE_EMAIL, {
+    const job = await this.backgroundQueue.add(JOB_TYPES.AI_GENERATE_EMAIL, {
       context,
       tone,
       purpose,
@@ -272,7 +270,7 @@ export class QueueService {
   }
 
   async analyzeSentiment(text: string, entityId: string, entityType: 'contact' | 'deal' | 'activity', options?: JobOptions) {
-    const job = await this.aiQueue.add(JOB_TYPES.AI_SENTIMENT_ANALYSIS, {
+    const job = await this.backgroundQueue.add(JOB_TYPES.AI_SENTIMENT_ANALYSIS, {
       text,
       entityId,
       entityType,
@@ -287,7 +285,7 @@ export class QueueService {
   }
 
   async processLead(contactId: string, workspaceId: string, userId: string, options?: JobOptions) {
-    const job = await this.aiQueue.add(JOB_TYPES.AI_PROCESS_LEAD, {
+    const job = await this.backgroundQueue.add(JOB_TYPES.AI_PROCESS_LEAD, {
       contactId,
       workspaceId,
       userId,
@@ -312,7 +310,7 @@ export class QueueService {
     },
     options?: JobOptions
   ) {
-    const job = await this.webhookQueue.add(JOB_TYPES.WEBHOOK_SEND, {
+    const job = await this.backgroundQueue.add(JOB_TYPES.WEBHOOK_SEND, {
       url,
       ...data,
     }, {
@@ -331,7 +329,7 @@ export class QueueService {
 
   // Workflow queue methods
   async executeWorkflow(workflowId: string, triggerData: any, options?: JobOptions) {
-    const job = await this.workflowQueue.add(JOB_TYPES.WORKFLOW_EXECUTE, {
+    const job = await this.backgroundQueue.add(JOB_TYPES.WORKFLOW_EXECUTE, {
       workflowId,
       triggerData,
     }, {
@@ -345,7 +343,7 @@ export class QueueService {
   }
 
   async scheduleWorkflow(workflowId: string, schedule: string, options?: JobOptions) {
-    const job = await this.workflowQueue.add(JOB_TYPES.WORKFLOW_SCHEDULED, {
+    const job = await this.backgroundQueue.add(JOB_TYPES.WORKFLOW_SCHEDULED, {
       workflowId,
       schedule,
     }, {
@@ -398,21 +396,9 @@ export class QueueService {
   }
 
   private getQueue(queueName: string): Queue {
-    switch (queueName) {
-      case QUEUE_NAMES.EMAIL:
-        return this.emailQueue;
-      case QUEUE_NAMES.DATA_SYNC:
-        return this.dataSyncQueue;
-      case QUEUE_NAMES.ANALYTICS:
-        return this.analyticsQueue;
-      case QUEUE_NAMES.AI:
-        return this.aiQueue;
-      case QUEUE_NAMES.WEBHOOK:
-        return this.webhookQueue;
-      case QUEUE_NAMES.WORKFLOW:
-        return this.workflowQueue;
-      default:
-        throw new Error(`Unknown queue: ${queueName}`);
+    if (queueName === QUEUE_NAMES.BACKGROUND_JOBS) {
+      return this.backgroundQueue;
     }
+    throw new Error(`Unknown queue: ${queueName}`);
   }
 }

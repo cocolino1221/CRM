@@ -14,7 +14,7 @@ export interface WebhookPayload {
   timeout?: number;
 }
 
-@Processor(QUEUE_NAMES.WEBHOOK)
+@Processor(QUEUE_NAMES.BACKGROUND_JOBS)
 export class WebhookProcessor {
   private readonly logger = new Logger(WebhookProcessor.name);
 

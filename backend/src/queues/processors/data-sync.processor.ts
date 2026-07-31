@@ -49,7 +49,7 @@ interface GoogleSheetsImportJobData {
   duplicateActions: Record<string, 'skip' | 'update' | 'create'>;
 }
 
-@Processor(QUEUE_NAMES.DATA_SYNC)
+@Processor(QUEUE_NAMES.BACKGROUND_JOBS)
 export class DataSyncProcessor {
   private readonly logger = new Logger(DataSyncProcessor.name);
 

@@ -20,7 +20,7 @@ export class MeetingReminderDispatchService {
   private readonly logger = new Logger(MeetingReminderDispatchService.name);
 
   constructor(
-    @InjectQueue(QUEUE_NAMES.MEETING_REMINDER) private readonly queue: Queue,
+    @InjectQueue(QUEUE_NAMES.SCHEDULED_TASKS) private readonly queue: Queue,
   ) {}
 
   private jobId(eventId: string): string {

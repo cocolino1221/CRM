@@ -14,7 +14,7 @@ import { MeetingReminderProcessor } from './meeting-reminder.processor';
  */
 @Module({
   imports: [
-    BullModule.registerQueue({ name: QUEUE_NAMES.MEETING_REMINDER }),
+    BullModule.registerQueue({ name: QUEUE_NAMES.SCHEDULED_TASKS }),
     TypeOrmModule.forFeature([Event]),
     WhatsAppModule,
   ],

@@ -12,7 +12,7 @@ interface EmailJobData {
   text?: string;
 }
 
-@Processor(QUEUE_NAMES.EMAIL)
+@Processor(QUEUE_NAMES.BACKGROUND_JOBS)
 export class EmailProcessor {
   private readonly logger = new Logger(EmailProcessor.name);
 

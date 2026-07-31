@@ -4,7 +4,7 @@ import { Job } from 'bull';
 import { QUEUE_NAMES, JOB_TYPES } from '../queue.constants';
 import { WorkflowsService } from '../../workflows/workflows.service';
 
-@Processor(QUEUE_NAMES.WORKFLOW)
+@Processor(QUEUE_NAMES.BACKGROUND_JOBS)
 export class WorkflowProcessor {
   private readonly logger = new Logger(WorkflowProcessor.name);
 

@@ -8,7 +8,7 @@ import { Event, EventStatus } from '../database/entities/event.entity';
 import { WhatsAppService } from '../integrations/whatsapp/whatsapp.service';
 import { MeetingReminderJobData } from './meeting-reminder-dispatch.service';
 
-@Processor(QUEUE_NAMES.MEETING_REMINDER)
+@Processor(QUEUE_NAMES.SCHEDULED_TASKS)
 export class MeetingReminderProcessor {
   private readonly logger = new Logger(MeetingReminderProcessor.name);
 

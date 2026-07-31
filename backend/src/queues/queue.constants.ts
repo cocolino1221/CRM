@@ -1,16 +1,14 @@
 export const QUEUE_NAMES = {
-  EMAIL: 'email',
+  // Two shared Bull queues instead of nine — each named queue holds its own
+  // idle Redis connections + polling regardless of job volume, so fewer
+  // queues means less baseline Redis command overhead. Job routing within
+  // each queue is by JOB_TYPES name (@Process), not by queue name, so
+  // consolidating never changes which handler a job reaches.
+  BACKGROUND_JOBS: 'background-jobs', // email, data sync, analytics, ai, webhook, workflow
+  SCHEDULED_TASKS: 'scheduled-tasks', // campaign dispatch, whatsapp follow-up, meeting reminder — all delay-based
   NOTIFICATIONS: 'notifications',
-  DATA_SYNC: 'data-sync',
   REPORTS: 'reports',
   INTEGRATIONS: 'integrations',
-  ANALYTICS: 'analytics',
-  AI: 'ai',
-  WEBHOOK: 'webhook',
-  WORKFLOW: 'workflow',
-  CAMPAIGN_DISPATCH: 'campaign-dispatch',
-  WHATSAPP_FOLLOWUP: 'whatsapp-followup',
-  MEETING_REMINDER: 'meeting-reminder',
 } as const;
 
 export const JOB_TYPES = {
