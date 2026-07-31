@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, FlatList,
-  KeyboardAvoidingView, Platform, ActivityIndicator, Image, Linking, Modal,
+  KeyboardAvoidingView, Platform, ActivityIndicator, Image, Linking, Modal, Alert,
 } from 'react-native';
 import {
   ArrowLeft, Send, Paperclip, X, Image as ImageIcon, FileText, Mic, Video,
   Check, CheckCheck, AlertTriangle, Clock, Users, Smile, Search, Zap, CornerUpLeft, Square, AudioLines,
+  PhoneCall, Ban,
 } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
@@ -243,6 +244,7 @@ export default function ChatScreen() {
     assignConversation,
     markRead,
     openConversation,
+    blockConversation,
   } = useWhatsAppStore();
   const showToast = useToastStore(s => s.show);
   const [text, setText] = useState('');
@@ -766,13 +768,46 @@ export default function ChatScreen() {
           {!!sourceLabel && (
             <Text className="text-[11px] text-sky-200" numberOfLines={1}>{sourceLabel}</Text>
           )}
-          <Text className="text-[11px] text-sky-100" numberOfLines={1}>{route.params.phone}</Text>
+          <View className="flex-row items-center gap-1.5">
+            <Text className="text-[11px] text-sky-100" numberOfLines={1}>{route.params.phone}</Text>
+            {!!conv.blocked && (
+              <View className="px-1.5 py-0.5 rounded-full bg-red-500/30 border border-red-300/40">
+                <Text className="text-[9px] font-bold text-red-50">BLOCKED</Text>
+              </View>
+            )}
+          </View>
           {!!conv.preferredSenderPhoneDisplay && (
             <Text className="text-[10px] text-sky-200" numberOfLines={1}>
               Sending from {conv.preferredSenderPhoneDisplay}
             </Text>
           )}
         </View>
+        <TouchableOpacity
+          onPress={() => Linking.openURL(`tel:${route.params.phone}`)}
+          className="h-8 w-8 rounded-full items-center justify-center border bg-white/15 border-white/30"
+        >
+          <PhoneCall size={14} color="#fff" />
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={() => {
+            const nextBlocked = !conv.blocked;
+            if (nextBlocked) {
+              Alert.alert(
+                'Block this contact?',
+                'They will no longer be able to message this WhatsApp number, and auto-send will stop targeting them.',
+                [
+                  { text: 'Cancel', style: 'cancel' },
+                  { text: 'Block', style: 'destructive', onPress: () => void blockConversation(route.params.waId, true) },
+                ],
+              );
+            } else {
+              void blockConversation(route.params.waId, false);
+            }
+          }}
+          className={`h-8 w-8 rounded-full items-center justify-center border ${conv.blocked ? 'bg-red-500/40 border-red-300/50' : 'bg-white/15 border-white/30'}`}
+        >
+          <Ban size={14} color="#fff" />
+        </TouchableOpacity>
         <TouchableOpacity
           onPress={() => {
             setShowMessageSearch((prev) => {

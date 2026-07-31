@@ -8,6 +8,7 @@ import {
   Building2, Tag, Star, AlertTriangle, Timer, Edit, Trash2,
   Copy, ExternalLink, Mail, Briefcase, ArrowRight, ChevronLeft, Brain,
   GitBranch, Upload, Pin, BellOff, Bell, Archive, ArchiveRestore, CornerUpLeft, AudioLines, Filter,
+  PhoneCall, Ban,
 } from 'lucide-react';
 import Link from 'next/link';
 import api from '@/lib/api';
@@ -85,6 +86,7 @@ interface Conversation {
   archived?: boolean;
   pinned?: boolean;
   mutedUntil?: string | null;
+  blocked?: boolean;
 }
 
 interface ContactDetail {
@@ -1521,6 +1523,7 @@ export default function WhatsAppPage() {
       const archivedMap = { ...localArchivedMap, ...(serverState.archivedMap || {}) };
       const pinnedMap = { ...localPinnedMap, ...(serverState.pinnedMap || {}) };
       const mutedUntilMap = { ...localMutedMap, ...(serverState.mutedUntilMap || {}) };
+      const blockedMap: Record<string, boolean> = serverState.blockedMap || {};
       localStorage.setItem('wa_read_timestamps', JSON.stringify(readTimestamps));
       localStorage.setItem('wa_web_archived_map', JSON.stringify(archivedMap));
       localStorage.setItem('wa_web_pinned_map', JSON.stringify(pinnedMap));
@@ -1544,6 +1547,7 @@ export default function WhatsAppPage() {
             archived: !!archivedMap[waId],
             pinned: !!pinnedMap[waId],
             mutedUntil: mutedUntilMap[waId] || null,
+            blocked: !!blockedMap[waId],
           });
         }
         const conv = convMap.get(waId)!;
@@ -2137,6 +2141,26 @@ export default function WhatsAppPage() {
       await api.post(`/integrations/whatsapp/conversations/${waId}/archive`, { archived: nextArchived });
     } catch {
       await fetchInbox();
+    }
+  };
+
+  const handleToggleBlock = async (waId: string, blocked: boolean) => {
+    const nextBlocked = !blocked;
+    if (nextBlocked && !confirm('Block this contact? They will no longer be able to message this WhatsApp number, and auto-send will stop targeting them.')) {
+      return;
+    }
+    setConversations((prev) => prev.map((conversation) => (
+      conversation.waId === waId ? { ...conversation, blocked: nextBlocked } : conversation
+    )));
+    if (selectedConv?.waId === waId) {
+      setSelectedConv((prev) => (prev ? { ...prev, blocked: nextBlocked } : prev));
+    }
+    if (demoMode) return;
+    try {
+      await api.post(`/integrations/whatsapp/conversations/${waId}/block`, { blocked: nextBlocked });
+    } catch {
+      await fetchInbox();
+      alert('Failed to update block status');
     }
   };
 
@@ -4050,6 +4074,11 @@ export default function WhatsAppPage() {
               <h2 className="font-semibold text-gray-900 truncate">{selectedConv.contactName}</h2>
               <div className="flex items-center gap-2">
                 <p className="text-xs text-gray-500 flex items-center gap-1"><Phone className="h-3 w-3" />{selectedConv.phone}</p>
+                {selectedConv.blocked && (
+                  <span className="text-[11px] px-1.5 py-0.5 rounded-full bg-red-50 text-red-700 border border-red-100">
+                    Blocked
+                  </span>
+                )}
                 {selectedSender && (
                   <span className="text-[11px] px-1.5 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-100">
                     Send from: {selectedSender.phoneDisplay || selectedSender.phoneNumberId || selectedSender.name}
@@ -4082,6 +4111,22 @@ export default function WhatsAppPage() {
               </div>
             </div>
             <div className="ml-auto flex items-center gap-1">
+              <a
+                href={`tel:${selectedConv.phone}`}
+                className="p-2 rounded-lg transition-all hover:bg-gray-100 text-gray-500"
+                title={`Call ${selectedConv.phone}`}
+              >
+                <PhoneCall className="h-4 w-4" />
+              </a>
+              <button
+                onClick={() => handleToggleBlock(selectedConv.waId, !!selectedConv.blocked)}
+                className={`p-2 rounded-lg transition-all ${
+                  selectedConv.blocked ? 'bg-red-100 text-red-700' : 'hover:bg-gray-100 text-gray-500'
+                }`}
+                title={selectedConv.blocked ? 'Unblock contact' : 'Block contact'}
+              >
+                <Ban className="h-4 w-4" />
+              </button>
               <button
                 onClick={() => handleTogglePin(selectedConv.waId, !!selectedConv.pinned)}
                 className={`p-2 rounded-lg transition-all ${

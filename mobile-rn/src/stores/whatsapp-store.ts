@@ -37,6 +37,7 @@ interface WhatsAppState {
   archivedMap: Record<string, boolean>;
   pinnedMap: Record<string, boolean>;
   mutedUntilMap: Record<string, string>;
+  blockedMap: Record<string, boolean>;
   teamUsers: User[];
   pendingOutboxCount: number;
   isLoading: boolean;
@@ -56,6 +57,7 @@ interface WhatsAppState {
   archiveConversation: (waId: string, archived?: boolean) => Promise<void>;
   pinConversation: (waId: string, pinned?: boolean) => Promise<void>;
   muteConversation: (waId: string, mutedUntil?: string | null) => Promise<void>;
+  blockConversation: (waId: string, blocked?: boolean) => Promise<void>;
   deleteConversation: (waId: string) => Promise<string | null>;
   syncOutbox: () => Promise<void>;
 }
@@ -162,6 +164,7 @@ async function getConversationStateFromServer(): Promise<{
   readAtMap: Record<string, string>;
   pinnedMap: Record<string, boolean>;
   mutedUntilMap: Record<string, string>;
+  blockedMap: Record<string, boolean>;
 }> {
   try {
     const res = await api.get('/integrations/whatsapp/conversations/state');
@@ -170,10 +173,12 @@ async function getConversationStateFromServer(): Promise<{
     const readRaw = raw.readAtMap && typeof raw.readAtMap === 'object' ? raw.readAtMap : {};
     const pinnedRaw = raw.pinnedMap && typeof raw.pinnedMap === 'object' ? raw.pinnedMap : {};
     const mutedRaw = raw.mutedUntilMap && typeof raw.mutedUntilMap === 'object' ? raw.mutedUntilMap : {};
+    const blockedRaw = raw.blockedMap && typeof raw.blockedMap === 'object' ? raw.blockedMap : {};
     const archivedMap: Record<string, boolean> = {};
     const readAtMap: Record<string, string> = {};
     const pinnedMap: Record<string, boolean> = {};
     const mutedUntilMap: Record<string, string> = {};
+    const blockedMap: Record<string, boolean> = {};
 
     for (const [waId, archived] of Object.entries(archivedRaw)) {
       const normalizedWaId = normalizeWaId(String(waId || ''));
@@ -203,9 +208,14 @@ async function getConversationStateFromServer(): Promise<{
       if (Number.isNaN(parsed.getTime())) continue;
       mutedUntilMap[normalizedWaId] = parsed.toISOString();
     }
-    return { archivedMap, readAtMap, pinnedMap, mutedUntilMap };
+    for (const [waId, blocked] of Object.entries(blockedRaw)) {
+      const normalizedWaId = normalizeWaId(String(waId || ''));
+      if (!normalizedWaId) continue;
+      if (blocked) blockedMap[normalizedWaId] = true;
+    }
+    return { archivedMap, readAtMap, pinnedMap, mutedUntilMap, blockedMap };
   } catch {
-    return { archivedMap: {}, readAtMap: {}, pinnedMap: {}, mutedUntilMap: {} };
+    return { archivedMap: {}, readAtMap: {}, pinnedMap: {}, mutedUntilMap: {}, blockedMap: {} };
   }
 }
 
@@ -356,6 +366,7 @@ export const useWhatsAppStore = create<WhatsAppState>((set, get) => ({
   archivedMap: {},
   pinnedMap: {},
   mutedUntilMap: {},
+  blockedMap: {},
   teamUsers: [],
   pendingOutboxCount: 0,
   isLoading: true,
@@ -454,6 +465,7 @@ export const useWhatsAppStore = create<WhatsAppState>((set, get) => ({
             archived: !!archivedMap[waId],
             pinned: !!pinnedMap[waId],
             mutedUntil: mutedUntilMap[waId] || null,
+            blocked: !!serverState.blockedMap[waId],
           });
         }
         const conv = convMap.get(waId)!;
@@ -872,6 +884,28 @@ export const useWhatsAppStore = create<WhatsAppState>((set, get) => ({
     set({ mutedUntilMap: map, conversations, selectedConv });
   },
 
+  blockConversation: async (waId, blocked = true) => {
+    const normalizedWaId = normalizeWaId(waId);
+    if (!normalizedWaId) return;
+    await api.post(`/integrations/whatsapp/conversations/${normalizedWaId}/block`, { blocked }).catch(() => undefined);
+    const map = { ...get().blockedMap };
+    if (blocked) {
+      map[normalizedWaId] = true;
+    } else {
+      delete map[normalizedWaId];
+    }
+    const conversations = get().conversations.map((conversation) => (
+      conversation.waId === normalizedWaId
+        ? { ...conversation, blocked }
+        : conversation
+    ));
+    const selected = get().selectedConv;
+    const selectedConv = selected && selected.waId === normalizedWaId
+      ? { ...selected, blocked }
+      : selected;
+    set({ blockedMap: map, conversations, selectedConv });
+  },
+
   deleteConversation: async (waId) => {
     const normalizedWaId = normalizeWaId(waId);
     if (!normalizedWaId) return 'Conversation is invalid';
@@ -883,13 +917,15 @@ export const useWhatsAppStore = create<WhatsAppState>((set, get) => ({
       const archivedMap = { ...get().archivedMap };
       const pinnedMap = { ...get().pinnedMap };
       const mutedUntilMap = { ...get().mutedUntilMap };
+      const blockedMap = { ...get().blockedMap };
       delete archivedMap[normalizedWaId];
       delete pinnedMap[normalizedWaId];
       delete mutedUntilMap[normalizedWaId];
+      delete blockedMap[normalizedWaId];
       await setArchivedMap(archivedMap);
       await setPinnedMap(pinnedMap);
       await setMutedUntilMap(mutedUntilMap);
-      set({ conversations, selectedConv, archivedMap, pinnedMap, mutedUntilMap });
+      set({ conversations, selectedConv, archivedMap, pinnedMap, mutedUntilMap, blockedMap });
       return null;
     } catch (err: any) {
       return err?.response?.data?.message || 'Failed to delete conversation';

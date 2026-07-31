@@ -1157,18 +1157,16 @@ export class MetaMessagingService {
     }
 
     const senderProfile = await this.fetchSenderProfile(provider, integration, senderId);
-    const contact = await this.findOrCreateSocialContact(
-      workspaceId,
-      ownerId,
-      channel,
-      senderId,
-      senderProfile.name,
-    );
+    // Don't auto-create a contact/lead just because someone messaged in — the
+    // setter decides who's worth adding via the "Add to Lead" button
+    // (ensureConversationContact), which also retroactively links every
+    // activity already stored here under this sender.
+    const contact = await this.findExistingSocialContact(workspaceId, channel, senderId);
 
     await this.saveInboundActivity(
       workspaceId,
       ownerId,
-      contact,
+      contact || undefined,
       {
         channel,
         provider,
@@ -1190,6 +1188,7 @@ export class MetaMessagingService {
         rawEvent: event,
       },
       description,
+      senderProfile.name,
     );
 
     this.notificationsService
@@ -1199,7 +1198,7 @@ export class MetaMessagingService {
         provider === 'facebook' ? 'facebook' : 'instagram',
         `New ${provider === 'facebook' ? 'Messenger' : 'Instagram'} message`,
         description,
-        { channel, externalUserId: senderId, contactId: contact.id },
+        { channel, externalUserId: senderId, contactId: contact?.id },
       )
       .catch(() => undefined);
   }
@@ -1424,17 +1423,21 @@ export class MetaMessagingService {
   private async saveInboundActivity(
     workspaceId: string,
     ownerId: string,
-    contact: Contact,
+    contact: Contact | undefined,
     metadata: MetaActivityMetadata,
     description: string,
+    senderDisplayName?: string,
   ): Promise<void> {
     const titlePrefix = metadata.channel === 'messenger' ? 'Messenger' : 'Instagram';
+    const displayName = contact
+      ? `${contact.firstName} ${contact.lastName}`.trim()
+      : (String(senderDisplayName || '').trim() || 'a contact');
     const activity = this.activityRepository.create({
       workspaceId,
       userId: ownerId,
-      contactId: contact.id,
+      contactId: contact?.id,
       type: ActivityType.OTHER,
-      title: `${titlePrefix} from ${contact.firstName} ${contact.lastName}`.trim(),
+      title: `${titlePrefix} from ${displayName}`,
       description,
       direction: ActivityDirection.INBOUND,
       outcome: ActivityOutcome.SUCCESSFUL,
@@ -1444,7 +1447,7 @@ export class MetaMessagingService {
 
     const saved = await this.activityRepository.save(activity);
     this.logger.log(
-      `[inbox] stored INBOUND ${metadata.channel} activity=${saved.id.slice(0, 8)} ws=${workspaceId} contact=${contact.id.slice(0, 8)} sender=${String(metadata.externalUserId || '').slice(0, 8)}…`,
+      `[inbox] stored INBOUND ${metadata.channel} activity=${saved.id.slice(0, 8)} ws=${workspaceId} contact=${contact?.id?.slice(0, 8) || 'none (not added as lead yet)'} sender=${String(metadata.externalUserId || '').slice(0, 8)}…`,
     );
     this.emitInboxEvent(workspaceId, metadata, activity, contact, description);
   }
@@ -1788,14 +1791,6 @@ export class MetaMessagingService {
       if (integrationIds(integration).some((id) => candidates.has(id))) {
         return integration;
       }
-    }
-
-    // Fallback: if exactly one account for this provider actually has usable
-    // credentials, the message is unambiguous even when its stored id doesn't
-    // match the webhook's id namespace. Never fall back to a tokenless orphan.
-    const usable = integrations.filter((integration) => this.integrationHasUsableToken(integration));
-    if (usable.length === 1) {
-      return usable[0];
     }
 
     this.logger.warn(

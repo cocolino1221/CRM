@@ -886,6 +886,24 @@ export class WhatsAppController {
     return { success: true };
   }
 
+  @Post('conversations/:waId/block')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Block or unblock a contact (Meta platform-level + stops auto-send)' })
+  @ApiResponse({ status: 200, description: 'Conversation block state updated' })
+  async setConversationBlocked(
+    @Req() req: any,
+    @Param('waId') waId: string,
+    @Body() body: { blocked?: boolean } | null,
+  ) {
+    const workspaceId = req.user?.workspaceId;
+    if (!workspaceId) throw new BadRequestException('Workspace ID required');
+    const normalizedWaId = normalizePhoneDigits(waId);
+    if (!normalizedWaId) throw new BadRequestException('Invalid conversation id');
+    await this.whatsappService.setContactBlocked(workspaceId, normalizedWaId, body?.blocked !== false);
+    return { success: true };
+  }
+
   @Post('conversations/:waId/read')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()

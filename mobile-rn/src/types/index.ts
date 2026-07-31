@@ -76,6 +76,7 @@ export interface Conversation {
   archived?: boolean;
   pinned?: boolean;
   mutedUntil?: string | null;
+  blocked?: boolean;
 }
 
 export interface Contact {

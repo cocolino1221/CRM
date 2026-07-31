@@ -2951,6 +2951,12 @@ export class WhatsAppService {
         return;
       }
 
+      const blockedMap = this.normalizeArchivedMap(configIntegration.config?.conversationBlockedMap);
+      if (blockedMap[phone]) {
+        this.logger.log(`Auto-send skipped for contact ${contact.id}: ${phone} is blocked`);
+        return;
+      }
+
       // Send template — use integration's stored credentials (not global env vars)
       const templateName = matchedRule.templateName || 'hello_world';
       // Normalize: 'en' → 'en_US' (Meta rejects the short code for hello_world and most templates)
@@ -3196,6 +3202,7 @@ export class WhatsAppService {
     readAtMap: Record<string, string>;
     pinnedMap: Record<string, boolean>;
     mutedUntilMap: Record<string, string>;
+    blockedMap: Record<string, boolean>;
   }> {
     const integration = await this.integrationRepository.findOne({
       where: { type: IntegrationType.WHATSAPP, workspaceId },
@@ -3205,7 +3212,55 @@ export class WhatsAppService {
       readAtMap: this.normalizeReadAtMap(integration?.config?.conversationReadAtMap),
       pinnedMap: this.normalizePinnedMap(integration?.config?.conversationPinnedMap),
       mutedUntilMap: this.normalizeMutedUntilMap(integration?.config?.conversationMutedUntilMap),
+      blockedMap: this.normalizeArchivedMap(integration?.config?.conversationBlockedMap),
     };
+  }
+
+  /**
+   * Blocks/unblocks at the real Meta platform level (they can no longer message
+   * this WhatsApp number at all) via the Cloud API's block_users endpoint, and
+   * records it locally so the CRM's own auto-send also stops targeting them —
+   * belt and suspenders in case the Meta call fails (older API version, missing
+   * permission, etc.) or the account isn't eligible for that endpoint yet.
+   */
+  async setContactBlocked(workspaceId: string, waId: string, blocked: boolean): Promise<void> {
+    const normalizedWaId = normalizePhoneDigits(waId);
+    if (!normalizedWaId) throw new BadRequestException('Invalid conversation id');
+
+    const integration = await this.integrationRepository.findOne({
+      where: { type: IntegrationType.WHATSAPP, workspaceId },
+    });
+    if (!integration) throw new BadRequestException('No WhatsApp integration found for this workspace');
+
+    const { accessToken, phoneNumberId } = this.getCredentials(this.getIntegrationCredentials(integration), false);
+    if (accessToken && phoneNumberId) {
+      try {
+        const body = { messaging_product: 'whatsapp', block_users: [{ user: normalizedWaId }] };
+        if (blocked) {
+          await firstValueFrom(this.httpService.post(
+            `https://graph.facebook.com/v21.0/${phoneNumberId}/block_users`,
+            body,
+            { headers: { Authorization: `Bearer ${accessToken}` } },
+          ));
+        } else {
+          await firstValueFrom(this.httpService.delete(
+            `https://graph.facebook.com/v21.0/${phoneNumberId}/block_users`,
+            { headers: { Authorization: `Bearer ${accessToken}` }, data: body },
+          ));
+        }
+      } catch (err: any) {
+        this.logger.warn(`Meta block_users call failed for ${normalizedWaId}: ${this.getErrorMessage(err)}`);
+      }
+    }
+
+    const map = this.normalizeArchivedMap(integration.config?.conversationBlockedMap);
+    if (blocked) {
+      map[normalizedWaId] = true;
+    } else {
+      delete map[normalizedWaId];
+    }
+    integration.config = { ...(integration.config || {}), conversationBlockedMap: map };
+    await this.integrationRepository.save(integration);
   }
 
   /**
