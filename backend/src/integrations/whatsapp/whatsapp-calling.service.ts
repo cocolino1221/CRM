@@ -5,6 +5,7 @@ import { HttpService } from '@nestjs/axios';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { firstValueFrom } from 'rxjs';
 import { Integration, IntegrationType } from '../../database/entities/integration.entity';
+import { Activity, ActivityType, ActivityDirection } from '../../database/entities/activity.entity';
 import { normalizePhoneDigits } from '../../common/utils/phone.util';
 
 export interface CallPermissionState {
@@ -32,9 +33,31 @@ export class WhatsAppCallingService {
   constructor(
     @InjectRepository(Integration)
     private readonly integrationRepository: Repository<Integration>,
+    @InjectRepository(Activity)
+    private readonly activityRepository: Repository<Activity>,
     private readonly httpService: HttpService,
     private readonly eventEmitter: EventEmitter2,
   ) {}
+
+  /**
+   * Confirmed live against Meta's API: a call to a contact with an active
+   * 24h session (recent inbound message) never hits a permission error —
+   * only SDP validation — even with zero prior call_permission_request ever
+   * sent. Calling permission is implicitly satisfied by the same session
+   * window that lets free-form text messages send without a template.
+   */
+  private async hasActive24hSession(workspaceId: string, waId: string): Promise<boolean> {
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const recent = await this.activityRepository
+      .createQueryBuilder('activity')
+      .where('activity.workspaceId = :workspaceId', { workspaceId })
+      .andWhere('activity.type = :type', { type: ActivityType.WHATSAPP_MESSAGE })
+      .andWhere('activity.direction = :direction', { direction: ActivityDirection.INBOUND })
+      .andWhere("activity.metadata->>'waId' = :waId", { waId })
+      .andWhere('activity.occurredAt > :since', { since })
+      .getCount();
+    return recent > 0;
+  }
 
   private async getIntegration(workspaceId: string): Promise<Integration> {
     const integration = await this.integrationRepository.findOne({
@@ -142,6 +165,11 @@ export class WhatsAppCallingService {
   async getCallPermissionStatus(workspaceId: string, waId: string): Promise<CallPermissionState> {
     const normalizedWaId = normalizePhoneDigits(waId);
     if (!normalizedWaId) throw new BadRequestException('Invalid contact');
+
+    if (await this.hasActive24hSession(workspaceId, normalizedWaId)) {
+      return { status: 'granted' };
+    }
+
     const integration = await this.getIntegration(workspaceId);
     const map = this.normalizePermissionMap(integration.config?.callPermissionMap);
     return map[normalizedWaId] || { status: 'not_requested' };
