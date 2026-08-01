@@ -21,6 +21,7 @@ import { WhatsAppAIService } from './whatsapp-ai.service';
 import { UploadService } from '../../upload/upload.service';
 import { normalizePhoneDigits, normalizePhoneE164 } from '../../common/utils/phone.util';
 import { WhatsAppFollowupDispatchService } from './whatsapp-followup-dispatch.service';
+import { WhatsAppCallingService } from './whatsapp-calling.service';
 
 const execFileAsync = promisify(execFile);
 
@@ -98,6 +99,7 @@ export interface WhatsAppWebhook {
           timestamp: string;
           recipient_id: string;
         }>;
+        calls?: any[];
       };
       field: string;
     }>;
@@ -184,6 +186,7 @@ export class WhatsAppService {
     private readonly eventEmitter: EventEmitter2,
     private readonly uploadService: UploadService,
     private readonly followupDispatch: WhatsAppFollowupDispatchService,
+    private readonly callingService: WhatsAppCallingService,
   ) {}
 
   /**
@@ -1647,6 +1650,20 @@ export class WhatsAppService {
           if (value.statuses?.length) {
             for (const status of value.statuses) {
               await this.updateMessageStatus(status);
+            }
+          }
+
+          // Call lifecycle events (SDP answer once a contact accepts an
+          // outbound call, ringing/rejected/terminated status). Relayed to
+          // the client via WhatsAppCallingService.CALL_EVENT — see
+          // whatsapp-calling.service.ts.
+          if (value.calls?.length) {
+            const callsPhoneNumberId = value.metadata?.phone_number_id;
+            const callsIntegration = await this.callingService.findIntegrationByPhoneNumberId(callsPhoneNumberId);
+            if (callsIntegration) {
+              await this.callingService.handleCallWebhook(callsIntegration.workspaceId, value);
+            } else {
+              this.logger.warn(`Calls webhook: no integration found for phoneNumberId ${callsPhoneNumberId}`);
             }
           }
 

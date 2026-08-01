@@ -19,6 +19,7 @@ import { useToastStore } from '../stores/toast-store';
 import { API_BASE_URL } from '../lib/api';
 import Avatar from '../components/Avatar';
 import AudioLibrarySheet from '../components/AudioLibrarySheet';
+import CallModal from '../components/CallModal';
 import type { WhatsAppStackParams } from '../navigation/WhatsAppStack';
 import type { WhatsAppActivity } from '../types';
 
@@ -256,6 +257,7 @@ export default function ChatScreen() {
     title: string;
   } | null>(null);
   const [showAssignModal, setShowAssignModal] = useState(false);
+  const [showCallModal, setShowCallModal] = useState(false);
   const [isAssigning, setIsAssigning] = useState(false);
   const [templates, setTemplates] = useState<TemplateItem[]>([]);
   const [isLoadingTemplates, setIsLoadingTemplates] = useState(false);
@@ -783,7 +785,7 @@ export default function ChatScreen() {
           )}
         </View>
         <TouchableOpacity
-          onPress={() => Linking.openURL(`tel:${route.params.phone}`)}
+          onPress={() => setShowCallModal(true)}
           className="h-8 w-8 rounded-full items-center justify-center border bg-white/15 border-white/30"
         >
           <PhoneCall size={14} color="#fff" />
@@ -1137,6 +1139,13 @@ export default function ChatScreen() {
           )}
         </View>
       </View>
+
+      <CallModal
+        visible={showCallModal}
+        waId={route.params.waId}
+        contactName={conv.contactName || route.params.contactName}
+        onClose={() => setShowCallModal(false)}
+      />
 
       <AudioLibrarySheet
         visible={showAudioLibrary}

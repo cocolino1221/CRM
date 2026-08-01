@@ -13,6 +13,7 @@ import {
 import Link from 'next/link';
 import api from '@/lib/api';
 import AudioLibraryPicker from '@/components/audio/AudioLibraryPicker';
+import CallModal from '@/components/whatsapp/CallModal';
 import { authService, User as CurrentUser } from '@/lib/auth';
 import { hasChannelAccess } from '@/lib/channel-access';
 
@@ -904,6 +905,7 @@ export default function WhatsAppPage() {
 
   // Contact info sidebar
   const [showContactInfo, setShowContactInfo] = useState(false);
+  const [showCallModal, setShowCallModal] = useState(false);
   const [contactDetail, setContactDetail] = useState<ContactDetail | null>(null);
   const [isLoadingContact, setIsLoadingContact] = useState(false);
   const [pipelineStages, setPipelineStages] = useState<PipelineStageOption[]>([]);
@@ -4111,13 +4113,13 @@ export default function WhatsAppPage() {
               </div>
             </div>
             <div className="ml-auto flex items-center gap-1">
-              <a
-                href={`tel:${selectedConv.phone}`}
+              <button
+                onClick={() => setShowCallModal(true)}
                 className="p-2 rounded-lg transition-all hover:bg-gray-100 text-gray-500"
-                title={`Call ${selectedConv.phone}`}
+                title={`Call ${selectedConv.contactName} via WhatsApp`}
               >
                 <PhoneCall className="h-4 w-4" />
-              </a>
+              </button>
               <button
                 onClick={() => handleToggleBlock(selectedConv.waId, !!selectedConv.blocked)}
                 className={`p-2 rounded-lg transition-all ${
@@ -4694,6 +4696,14 @@ export default function WhatsAppPage() {
       )}
 
       </div>
+      )}
+
+      {showCallModal && selectedConv && (
+        <CallModal
+          waId={selectedConv.waId}
+          contactName={selectedConv.contactName}
+          onClose={() => setShowCallModal(false)}
+        />
       )}
 
       {/* ═══ MODALS ═══ */}

@@ -5,7 +5,9 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { WhatsAppService } from './whatsapp.service';
 import { WhatsAppAIService } from './whatsapp-ai.service';
 import { WhatsAppCampaignsService } from './whatsapp-campaigns.service';
+import { WhatsAppCallingService } from './whatsapp-calling.service';
 import { WhatsAppController } from './whatsapp.controller';
+import { WhatsAppCallingController } from './whatsapp-calling.controller';
 import { Contact } from '../../database/entities/contact.entity';
 import { Activity } from '../../database/entities/activity.entity';
 import { Integration } from '../../database/entities/integration.entity';
@@ -27,8 +29,8 @@ import { WhatsAppFollowupDispatchModule } from './whatsapp-followup-dispatch.mod
     UploadModule,
     WhatsAppFollowupDispatchModule,
   ],
-  controllers: [WhatsAppController],
-  providers: [WhatsAppService, WhatsAppAIService, WhatsAppCampaignsService],
-  exports: [WhatsAppService, WhatsAppAIService, WhatsAppCampaignsService],
+  controllers: [WhatsAppController, WhatsAppCallingController],
+  providers: [WhatsAppService, WhatsAppAIService, WhatsAppCampaignsService, WhatsAppCallingService],
+  exports: [WhatsAppService, WhatsAppAIService, WhatsAppCampaignsService, WhatsAppCallingService],
 })
 export class WhatsAppModule {}
