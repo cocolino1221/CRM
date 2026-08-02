@@ -26,6 +26,25 @@ interface CallModalProps {
 // if real-world NAT traversal needs one, this is the first thing to revisit.
 const ICE_SERVERS: RTCIceServer[] = [{ urls: 'stun:stun.l.google.com:19302' }];
 
+// getUserMedia's DOMException names/messages are raw browser text ("The
+// object can not be found here.", etc.) — not helpful on their own. Map the
+// common ones to something actionable; NotFoundError in particular usually
+// means the OS never granted the browser mic access at all (macOS Firefox
+// reports "no device found" rather than "permission denied" in that case).
+function describeCallError(err: any): string {
+  const name = err?.name || '';
+  if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
+    return 'No microphone found. Check that a microphone is connected, and that your browser has microphone access enabled at the OS level (e.g. on macOS: System Settings → Privacy & Security → Microphone).';
+  }
+  if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
+    return 'Microphone access was blocked. Allow microphone access for this site in your browser settings and try again.';
+  }
+  if (name === 'NotReadableError' || name === 'TrackStartError') {
+    return 'Could not access the microphone — it may be in use by another application.';
+  }
+  return err?.response?.data?.message || err?.message || 'Failed to start call';
+}
+
 export default function CallModal({ waId, contactName, onClose }: CallModalProps) {
   const [phase, setPhase] = useState<CallPhase>('checking_permission');
   const [error, setError] = useState('');
@@ -175,7 +194,7 @@ export default function CallModal({ waId, contactName, onClose }: CallModalProps
       }
       setPhase('ringing');
     } catch (err: any) {
-      setError(err.response?.data?.message || err.message || 'Failed to start call');
+      setError(describeCallError(err));
       setPhase('failed');
       cleanup();
     }
