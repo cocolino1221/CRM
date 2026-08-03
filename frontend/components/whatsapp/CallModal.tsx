@@ -89,6 +89,15 @@ export default function CallModal() {
                 {muted ? <MicOff className="h-4 w-4 text-gray-700" /> : <Mic className="h-4 w-4 text-gray-700" />}
               </button>
             )}
+            {phase === 'connected' && (
+              <button
+                onClick={() => void callManager.toggleRecording()}
+                className={`h-11 w-11 rounded-full flex items-center justify-center border ${isRecording ? 'bg-red-600 border-red-600 hover:bg-red-700' : 'bg-white border-gray-200 hover:bg-gray-50'}`}
+                title={isRecording ? 'Stop recording' : 'Start recording'}
+              >
+                <Circle className={`h-4 w-4 ${isRecording ? 'fill-white text-white' : 'fill-red-500 text-red-500'}`} />
+              </button>
+            )}
             {(phase === 'connecting' || phase === 'ringing' || phase === 'connected') && (
               <button onClick={() => void callManager.hangUp()} className="h-11 w-11 rounded-full bg-red-600 hover:bg-red-700 flex items-center justify-center" title="End call">
                 <PhoneOff className="h-5 w-5 text-white" />

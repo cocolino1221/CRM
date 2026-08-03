@@ -3,7 +3,7 @@ import { PhoneOff, Mic, MicOff, PhoneCall, Minus, Circle } from 'lucide-react-na
 import { useCallStore } from '../stores/call-store';
 
 export default function CallModal() {
-  const { isOpen, waId, contactName, phase, error, duration, muted, isRecording, minimize, requestPermission, checkAgain, toggleMute, hangUp, retry } = useCallStore();
+  const { isOpen, waId, contactName, phase, error, duration, muted, isRecording, minimize, requestPermission, checkAgain, toggleMute, toggleRecording, hangUp, retry } = useCallStore();
 
   if (!isOpen || !waId) return null;
 
@@ -93,6 +93,14 @@ export default function CallModal() {
                   className={`h-12 w-12 rounded-full items-center justify-center border ${muted ? 'bg-gray-200 border-gray-300' : 'bg-white border-gray-200'}`}
                 >
                   {muted ? <MicOff size={18} color="#374151" /> : <Mic size={18} color="#374151" />}
+                </TouchableOpacity>
+              )}
+              {phase === 'connected' && (
+                <TouchableOpacity
+                  onPress={() => void toggleRecording()}
+                  className={`h-12 w-12 rounded-full items-center justify-center border ${isRecording ? 'bg-red-600 border-red-600' : 'bg-white border-gray-200'}`}
+                >
+                  <Circle size={18} color={isRecording ? '#fff' : '#ef4444'} fill={isRecording ? '#fff' : '#ef4444'} />
                 </TouchableOpacity>
               )}
               {(phase === 'connecting' || phase === 'ringing' || phase === 'connected') && (

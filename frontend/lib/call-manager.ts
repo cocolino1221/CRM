@@ -88,6 +88,9 @@ class CallManager {
   private audioContext: AudioContext | null = null;
   private mediaRecorder: MediaRecorder | null = null;
   private recordedChunks: Blob[] = [];
+  /** Set once the user manually stops recording mid-call, so finalizeCall
+   * doesn't need to (and can't) stop an already-stopped recorder again. */
+  private manualRecordingUrl: string | undefined = undefined;
 
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
@@ -196,6 +199,7 @@ class CallManager {
     this.setState({ phase: 'connecting', error: '' });
     this.hasConnected = false;
     this.finalized = false;
+    this.manualRecordingUrl = undefined;
     try {
       const localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
       this.localStream = localStream;
@@ -227,7 +231,6 @@ class CallManager {
               this.hasConnected = true;
               this.setState({ phase: 'connected' });
               this.startDurationTimer();
-              this.startRecording();
             })
             .catch((err) => this.setState({ error: `Failed to establish call audio: ${err.message}` }));
         }
@@ -277,7 +280,6 @@ class CallManager {
         this.setState({ callId: res.data.callId });
       }
       this.setState({ phase: 'ringing' });
-      api.post('/integrations/whatsapp/send', { to: waId, message: RECORDING_DISCLOSURE_TEXT }).catch(() => {});
     } catch (err: any) {
       this.setState({ error: describeCallError(err), phase: 'failed' });
       this.cleanup();
@@ -291,6 +293,22 @@ class CallManager {
       this.durationValue += 1;
       this.setState({ duration: this.durationValue });
     }, 1000);
+  }
+
+  /** Explicit user action (Record button) — not automatic. Sends the
+   * required consent disclosure right as recording actually begins. */
+  async toggleRecording() {
+    if (this.state.phase !== 'connected') return;
+    if (this.state.isRecording) {
+      const url = await this.stopRecordingAndUpload();
+      if (url) this.manualRecordingUrl = url;
+      return;
+    }
+    const waId = this.state.waId;
+    if (waId) {
+      api.post('/integrations/whatsapp/send', { to: waId, message: RECORDING_DISCLOSURE_TEXT }).catch(() => {});
+    }
+    this.startRecording();
   }
 
   private startRecording() {
@@ -348,7 +366,9 @@ class CallManager {
 
     const waId = this.state.waId;
     const finalDuration = this.durationValue;
-    const recordingUrl = status === 'completed' ? await this.stopRecordingAndUpload() : undefined;
+    const recordingUrl = status === 'completed'
+      ? (this.manualRecordingUrl || await this.stopRecordingAndUpload())
+      : undefined;
     this.cleanup();
 
     const id = this.callId;

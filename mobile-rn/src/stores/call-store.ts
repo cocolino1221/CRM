@@ -24,6 +24,11 @@ type CallStatus = 'completed' | 'missed' | 'no_answer' | 'rejected' | 'failed';
 
 const ICE_SERVERS = [{ urls: 'stun:stun.l.google.com:19302' }];
 
+// See web call-manager.ts for the same rationale — recording requires
+// notifying the other party (GDPR + several US states require all-party
+// consent). Sent only when recording is actually (manually) started.
+const RECORDING_DISCLOSURE_TEXT = 'This call may be recorded for quality and training purposes.';
+
 // NOTE: unlike web (full two-way mixed recording via the Web Audio API),
 // this only captures the LOCAL mic — react-native-webrtc has no way to also
 // capture the remote party's audio. Running expo-av's Audio.Recording
@@ -49,6 +54,7 @@ interface CallState {
   checkAgain: () => void;
   startCall: () => Promise<void>;
   toggleMute: () => void;
+  toggleRecording: () => Promise<void>;
   hangUp: () => Promise<void>;
   retry: () => void;
 }
@@ -64,6 +70,7 @@ let callId: string | null = null;
 let hasConnected = false;
 let finalized = false;
 let recording: Audio.Recording | null = null;
+let manualRecordingUrl: string | undefined;
 
 function cleanup() {
   if (durationTimer) clearInterval(durationTimer);
@@ -117,7 +124,9 @@ async function finalizeCall(status: CallStatus) {
   useCallStore.setState({ phase: 'ended' });
   const waId = useCallStore.getState().waId;
   const finalDuration = durationValue;
-  const recordingUrl = status === 'completed' ? await stopRecordingAndUpload() : undefined;
+  const recordingUrl = status === 'completed'
+    ? (manualRecordingUrl || await stopRecordingAndUpload())
+    : undefined;
   cleanup();
 
   const id = callId;
@@ -163,6 +172,7 @@ export const useCallStore = create<CallState>((set, get) => ({
     }
     finalized = false;
     hasConnected = false;
+    manualRecordingUrl = undefined;
     set({
       isOpen: true, waId, contactName, phase: 'checking_permission',
       error: '', duration: 0, muted: false, isRecording: false, callId: null,
@@ -243,7 +253,6 @@ export const useCallStore = create<CallState>((set, get) => ({
                 durationValue += 1;
                 set({ duration: durationValue });
               }, 1000);
-              void startRecording();
             })
             .catch((err: any) => set({ error: `Failed to establish call audio: ${err.message}` }));
         }
@@ -302,6 +311,20 @@ export const useCallStore = create<CallState>((set, get) => ({
     const nextMuted = !get().muted;
     localStream.getAudioTracks().forEach((track: any) => { track.enabled = !nextMuted; });
     set({ muted: nextMuted });
+  },
+
+  toggleRecording: async () => {
+    if (get().phase !== 'connected') return;
+    if (get().isRecording) {
+      const url = await stopRecordingAndUpload();
+      if (url) manualRecordingUrl = url;
+      return;
+    }
+    const waId = get().waId;
+    if (waId) {
+      api.post('/integrations/whatsapp/send', { to: waId, message: RECORDING_DISCLOSURE_TEXT }).catch(() => {});
+    }
+    void startRecording();
   },
 
   hangUp: async () => {
