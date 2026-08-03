@@ -25,11 +25,13 @@ import { UpdateUserDto, UpdateUserRoleDto, UpdateUserStatusDto } from './dto/upd
 import { InviteUserDto } from './dto/invite-user.dto';
 import { UserResponseDto } from './dto/user-response.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
 import { UserRole, UserStatus } from '../database/entities/user.entity';
 
 @ApiTags('Users')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('users')
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
@@ -43,6 +45,7 @@ export class UsersController {
   })
   @ApiResponse({ status: 403, description: 'Forbidden - insufficient permissions' })
   @ApiResponse({ status: 409, description: 'User already exists' })
+  @Roles('admin', 'manager')
   async create(
     @Body() createUserDto: CreateUserDto,
     @Req() req: any,
@@ -107,6 +110,7 @@ export class UsersController {
     type: UserResponseDto,
   })
   @ApiResponse({ status: 404, description: 'User not found' })
+  @Roles('admin', 'manager')
   async update(
     @Param('id') id: string,
     @Body() updateUserDto: UpdateUserDto,
@@ -130,6 +134,7 @@ export class UsersController {
   })
   @ApiResponse({ status: 403, description: 'Forbidden - admin only' })
   @ApiResponse({ status: 404, description: 'User not found' })
+  @Roles('admin')
   async updateRole(
     @Param('id') id: string,
     @Body() updateRoleDto: UpdateUserRoleDto,
@@ -152,6 +157,7 @@ export class UsersController {
   })
   @ApiResponse({ status: 403, description: 'Forbidden - insufficient permissions' })
   @ApiResponse({ status: 404, description: 'User not found' })
+  @Roles('admin', 'manager')
   async updateStatus(
     @Param('id') id: string,
     @Body() updateStatusDto: UpdateUserStatusDto,
@@ -167,10 +173,11 @@ export class UsersController {
 
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiOperation({ summary: 'Remove user from workspace (Admin only)' })
+  @ApiOperation({ summary: 'Remove user from workspace (Admin/Manager only)' })
   @ApiResponse({ status: 204, description: 'User removed successfully' })
-  @ApiResponse({ status: 403, description: 'Forbidden - admin only' })
+  @ApiResponse({ status: 403, description: 'Forbidden - admin/manager only' })
   @ApiResponse({ status: 404, description: 'User not found' })
+  @Roles('admin', 'manager')
   async remove(@Param('id') id: string, @Req() req: any): Promise<void> {
     return this.usersService.remove(id, req.user.workspaceId, req.user.role);
   }

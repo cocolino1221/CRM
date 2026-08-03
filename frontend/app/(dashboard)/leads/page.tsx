@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Plus, Search, Phone, Video, Trophy, TrendingUp, TrendingDown, UserCheck, Loader2, Mail, Building, Calendar, DollarSign, MoreVertical, Edit, Trash2, X, AlertCircle, Settings, Users, Tag, FileText, Star, Clock, Briefcase, Eye, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, MessageSquare, Send, ExternalLink, RefreshCw, Upload } from 'lucide-react';
+import { Plus, Search, Phone, Video, Trophy, TrendingUp, TrendingDown, UserCheck, Loader2, Mail, Building, Calendar, DollarSign, MoreVertical, Edit, Trash2, X, AlertCircle, Settings, Users, Tag, FileText, Star, Clock, Briefcase, Eye, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, MessageSquare, Send, ExternalLink, RefreshCw, Upload, CheckCircle2, Circle } from 'lucide-react';
 import { getInitials } from '@/lib/utils';
 import api from '@/lib/api';
 
@@ -59,6 +59,7 @@ interface Contact {
   caller?: User;
   closer?: User;
   customFields?: Record<string, any>;
+  preluat?: boolean;
 }
 
 interface Pipeline {
@@ -598,6 +599,18 @@ export default function LeadsPage() {
     }
   };
 
+  const handleTogglePreluat = async (contact: Contact, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const nextValue = !contact.preluat;
+    setContacts(prev => prev.map(c => c.id === contact.id ? { ...c, preluat: nextValue } : c));
+    try {
+      await api.put(`/contacts/${contact.id}/preluat`, { value: nextValue });
+    } catch (err: any) {
+      console.error('Failed to update preluat:', err);
+      setContacts(prev => prev.map(c => c.id === contact.id ? { ...c, preluat: !nextValue } : c));
+    }
+  };
+
   const handleInlineStatusChange = async (contact: Contact, newStatus: string) => {
     try {
       await api.put(`/contacts/${contact.id}`, { status: newStatus });
@@ -1045,13 +1058,22 @@ export default function LeadsPage() {
                               <h4 className="font-semibold text-gray-900 text-xs leading-tight">
                                 {contact.firstName} {contact.lastName}
                               </h4>
-                              <button
-                                onClick={(e) => handleDeleteLead(contact, e)}
-                                className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-red-50 hover:text-red-500 text-gray-300 flex-shrink-0"
-                                title="Delete lead"
-                              >
-                                <Trash2 className="h-3 w-3" />
-                              </button>
+                              <div className="flex items-center gap-0.5 flex-shrink-0">
+                                <button
+                                  onClick={(e) => handleTogglePreluat(contact, e)}
+                                  className={`p-0.5 rounded transition-opacity ${contact.preluat ? 'text-green-600' : 'text-gray-300 opacity-0 group-hover:opacity-100 hover:text-green-500'}`}
+                                  title={contact.preluat ? 'Preluat — click to unmark' : 'Mark as preluat'}
+                                >
+                                  {contact.preluat ? <CheckCircle2 className="h-3.5 w-3.5" /> : <Circle className="h-3.5 w-3.5" />}
+                                </button>
+                                <button
+                                  onClick={(e) => handleDeleteLead(contact, e)}
+                                  className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-red-50 hover:text-red-500 text-gray-300"
+                                  title="Delete lead"
+                                >
+                                  <Trash2 className="h-3 w-3" />
+                                </button>
+                              </div>
                             </div>
                             <div className="flex items-center gap-1 text-[10px] text-gray-500 mt-0.5">
                               <Mail className="h-2.5 w-2.5 flex-shrink-0" />

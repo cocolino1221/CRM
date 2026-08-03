@@ -13,6 +13,7 @@ import { UpdateContactDto } from './dto/update-contact.dto';
 import { QueryContactsDto, SortField } from './dto/query-contacts.dto';
 import { normalizePhoneDigits, normalizePhoneE164 } from '../common/utils/phone.util';
 import { NotificationsService } from '../notifications/notifications.service';
+import { GoogleSheetsService } from '../integrations/google-sheets/google-sheets.service';
 
 export interface ContactsListResult {
   contacts: Contact[];
@@ -47,6 +48,7 @@ export class ContactsService {
     private dealRepository: Repository<Deal>,
     private eventEmitter: EventEmitter2,
     private notificationsService: NotificationsService,
+    private googleSheetsService: GoogleSheetsService,
   ) {}
 
   async findAll(workspaceId: string, query: QueryContactsDto): Promise<ContactsListResult> {
@@ -528,6 +530,21 @@ export class ContactsService {
     const contact = await this.findOne(workspaceId, id);
     contact.status = status;
     await this.contactRepository.save(contact);
+    return contact;
+  }
+
+  /**
+   * Toggles the "preluat" (picked up/claimed) checkmark. Pushes the new
+   * value straight to the mapped Google Sheets column (if configured) —
+   * best-effort, doesn't fail the request if the sheet push errors.
+   */
+  async setPreluat(workspaceId: string, id: string, value: boolean): Promise<Contact> {
+    const contact = await this.findOne(workspaceId, id);
+    contact.preluat = value;
+    await this.contactRepository.save(contact);
+    this.googleSheetsService
+      .pushContactField(workspaceId, id, 'preluat', value ? 'TRUE' : 'FALSE')
+      .catch((err) => this.logger.warn(`Failed to push preluat to sheet for contact ${id}: ${err.message}`));
     return contact;
   }
 

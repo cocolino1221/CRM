@@ -8,12 +8,12 @@ import {
   Building2, Tag, Star, AlertTriangle, Timer, Edit, Trash2,
   Copy, ExternalLink, Mail, Briefcase, ArrowRight, ChevronLeft, Brain,
   GitBranch, Upload, Pin, BellOff, Bell, Archive, ArchiveRestore, CornerUpLeft, AudioLines, Filter,
-  PhoneCall, Ban,
+  PhoneCall, Ban, CheckCircle2, Circle,
 } from 'lucide-react';
 import Link from 'next/link';
 import api from '@/lib/api';
 import AudioLibraryPicker from '@/components/audio/AudioLibraryPicker';
-import CallModal from '@/components/whatsapp/CallModal';
+import { callManager } from '@/lib/call-manager';
 import { authService, User as CurrentUser } from '@/lib/auth';
 import { hasChannelAccess } from '@/lib/channel-access';
 
@@ -47,6 +47,9 @@ interface WhatsAppActivity {
     reactionMessageId?: string;
     replyToMessageId?: string;
     replyPreviewText?: string;
+    callStatus?: string;
+    callDurationSeconds?: number;
+    recordingUrl?: string;
   };
   contact: {
     id: string;
@@ -105,7 +108,9 @@ interface ContactDetail {
   company?: { id: string; name: string };
   deals?: Array<{ id: string; title: string; stage?: string; value?: number }>;
   createdAt: string;
+  pipelineId?: string;
   pipelineStageId?: string;
+  preluat?: boolean;
 }
 
 interface PipelineStageOption {
@@ -510,6 +515,23 @@ function MessageBubble({
     };
   }, [parsed.mediaId, parsed.mediaUrl, parsed.type, senderIntegrationId]);
 
+  if (parsed.type === 'call') {
+    const isMissed = parsed.callStatus === 'missed' || parsed.callStatus === 'no_answer' || parsed.callStatus === 'rejected';
+    return (
+      <div className="flex justify-center py-1">
+        <div className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-xs ${isMissed ? 'bg-red-50 border-red-100 text-red-600' : 'bg-gray-50 border-gray-100 text-gray-600'}`}>
+          <PhoneCall className="h-3.5 w-3.5" />
+          <span className="font-medium">{parsed.text}</span>
+          <span className="text-gray-400">·</span>
+          <span>{formatTime(msg.occurredAt)}</span>
+          {parsed.recordingUrl && (
+            <audio controls src={parsed.recordingUrl} className="h-6 ml-1" style={{ maxWidth: 180 }} />
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className={`flex ${isOutbound ? 'justify-end' : 'justify-start'}`}>
       <div className="group relative">
@@ -628,7 +650,7 @@ function EmojiPicker({ onSelect, onClose }: { onSelect: (emoji: string) => void;
   );
 }
 
-function ContactInfoSidebar({ contact, isLoading, onClose, pipelineStages, onStageChange }: { contact: ContactDetail | null; isLoading: boolean; onClose: () => void; pipelineStages: PipelineStageOption[]; onStageChange: (contactId: string, stageId: string) => void }) {
+function ContactInfoSidebar({ contact, isLoading, onClose, pipelines, onStageChange, onPipelineChange, onTogglePreluat }: { contact: ContactDetail | null; isLoading: boolean; onClose: () => void; pipelines: PipelineOption[]; onStageChange: (contactId: string, stageId: string) => void; onPipelineChange: (contactId: string, pipelineId: string) => void; onTogglePreluat: (contactId: string) => void }) {
   if (isLoading) {
     return (
       <div className="w-80 flex-shrink-0 border-l border-gray-100 bg-white flex items-center justify-center">
@@ -637,6 +659,9 @@ function ContactInfoSidebar({ contact, isLoading, onClose, pipelineStages, onSta
     );
   }
   if (!contact) return null;
+
+  const selectedPipeline = pipelines.find((p) => p.id === contact.pipelineId) || pipelines.find((p) => p.isDefault) || pipelines[0];
+  const pipelineStages = selectedPipeline?.stages || [];
 
   const statusColors: Record<string, string> = {
     lead: 'bg-blue-100 text-blue-700',
@@ -662,22 +687,45 @@ function ContactInfoSidebar({ contact, isLoading, onClose, pipelineStages, onSta
           <span className={`inline-block mt-1 px-2 py-0.5 rounded-full text-xs font-medium ${statusColors[contact.status?.toLowerCase()] || 'bg-gray-100 text-gray-600'}`}>
             {contact.status}
           </span>
+          <button
+            onClick={() => onTogglePreluat(contact.id)}
+            className={`mt-2 mx-auto flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border ${contact.preluat ? 'bg-green-50 border-green-200 text-green-700' : 'bg-gray-50 border-gray-200 text-gray-500 hover:bg-gray-100'}`}
+          >
+            {contact.preluat ? <CheckCircle2 className="h-3.5 w-3.5" /> : <Circle className="h-3.5 w-3.5" />}
+            {contact.preluat ? 'Preluat' : 'Mark as preluat'}
+          </button>
         </div>
 
-        {/* Pipeline Stage */}
-        {pipelineStages.length > 0 && (
-          <div className="p-4 border-b border-gray-100">
-            <p className="text-xs font-medium text-gray-500 mb-2 flex items-center gap-1.5"><Filter className="h-3.5 w-3.5" /> Pipeline Stage</p>
-            <select
-              value={contact.pipelineStageId || ''}
-              onChange={(e) => e.target.value && onStageChange(contact.id, e.target.value)}
-              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
-            >
-              <option value="" disabled>No stage assigned</option>
-              {pipelineStages.map((stage) => (
-                <option key={stage.id} value={stage.id}>{stage.name}</option>
-              ))}
-            </select>
+        {/* Pipeline + Stage */}
+        {pipelines.length > 0 && (
+          <div className="p-4 border-b border-gray-100 space-y-3">
+            <div>
+              <p className="text-xs font-medium text-gray-500 mb-2 flex items-center gap-1.5"><Filter className="h-3.5 w-3.5" /> Pipeline</p>
+              <select
+                value={selectedPipeline?.id || ''}
+                onChange={(e) => e.target.value && onPipelineChange(contact.id, e.target.value)}
+                className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
+              >
+                {pipelines.map((pipeline) => (
+                  <option key={pipeline.id} value={pipeline.id}>{pipeline.name}</option>
+                ))}
+              </select>
+            </div>
+            {pipelineStages.length > 0 && (
+              <div>
+                <p className="text-xs font-medium text-gray-500 mb-2">Pipeline Stage</p>
+                <select
+                  value={contact.pipelineStageId || ''}
+                  onChange={(e) => e.target.value && onStageChange(contact.id, e.target.value)}
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
+                >
+                  <option value="" disabled>No stage assigned</option>
+                  {pipelineStages.map((stage) => (
+                    <option key={stage.id} value={stage.id}>{stage.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
           </div>
         )}
 
@@ -803,12 +851,24 @@ function parseMessageContent(msg: WhatsAppActivity): {
   mediaId?: string;
   mediaUrl?: string;
   reactionEmoji?: string;
+  callStatus?: string;
+  callDurationSeconds?: number;
+  recordingUrl?: string;
 } {
   const desc = msg.description || '';
   const msgType = msg.metadata?.messageType || 'text';
   const mediaId = msg.metadata?.mediaId;
   const mediaUrl = msg.metadata?.mediaUrl;
   const reactionEmoji = String(msg.metadata?.reactionEmoji || '').trim();
+  if (msgType === 'call') {
+    return {
+      type: 'call',
+      text: desc,
+      callStatus: msg.metadata?.callStatus,
+      callDurationSeconds: msg.metadata?.callDurationSeconds,
+      recordingUrl: msg.metadata?.recordingUrl,
+    };
+  }
   if (reactionEmoji || msgType === 'reaction' || desc.startsWith('[Reaction]')) {
     return {
       type: 'reaction',
@@ -905,10 +965,9 @@ export default function WhatsAppPage() {
 
   // Contact info sidebar
   const [showContactInfo, setShowContactInfo] = useState(false);
-  const [showCallModal, setShowCallModal] = useState(false);
   const [contactDetail, setContactDetail] = useState<ContactDetail | null>(null);
   const [isLoadingContact, setIsLoadingContact] = useState(false);
-  const [pipelineStages, setPipelineStages] = useState<PipelineStageOption[]>([]);
+  const [pipelines, setPipelines] = useState<PipelineOption[]>([]);
 
   // Template panel
   const [showTemplatePanel, setShowTemplatePanel] = useState(false);
@@ -1873,12 +1932,10 @@ export default function WhatsAppPage() {
   useEffect(() => {
     api.get('/pipelines')
       .then((res: any) => {
-        const pipelines: PipelineOption[] = Array.isArray(res.data) ? res.data : [];
-        const defaultPipeline = pipelines.find(p => p.isDefault) || pipelines[0];
-        const stages = (defaultPipeline?.stages || []).slice().sort((a, b) => a.displayOrder - b.displayOrder);
-        setPipelineStages(stages);
+        const list: PipelineOption[] = Array.isArray(res.data) ? res.data : [];
+        setPipelines(list.map((p) => ({ ...p, stages: (p.stages || []).slice().sort((a, b) => a.displayOrder - b.displayOrder) })));
       })
-      .catch(() => setPipelineStages([]));
+      .catch(() => setPipelines([]));
   }, []);
 
   const handleContactStageChange = async (contactId: string, stageId: string) => {
@@ -1890,6 +1947,33 @@ export default function WhatsAppPage() {
       console.error('Failed to update pipeline stage:', err);
       setContactDetail(prev => (prev && prev.id === contactId ? { ...prev, pipelineStageId: previousStageId } : prev));
       alert('Failed to update pipeline stage');
+    }
+  };
+
+  const handleContactPipelineChange = async (contactId: string, pipelineId: string) => {
+    const previousPipelineId = contactDetail?.pipelineId;
+    const previousStageId = contactDetail?.pipelineStageId;
+    const newPipeline = pipelines.find((p) => p.id === pipelineId);
+    const firstStageId = newPipeline?.stages?.[0]?.id;
+    setContactDetail(prev => (prev && prev.id === contactId ? { ...prev, pipelineId, pipelineStageId: firstStageId } : prev));
+    try {
+      await api.put(`/pipelines/contacts/${contactId}`, { pipelineId, pipelineStageId: firstStageId });
+    } catch (err) {
+      console.error('Failed to update pipeline:', err);
+      setContactDetail(prev => (prev && prev.id === contactId ? { ...prev, pipelineId: previousPipelineId, pipelineStageId: previousStageId } : prev));
+      alert('Failed to update pipeline');
+    }
+  };
+
+  const handleTogglePreluat = async (contactId: string) => {
+    const previousValue = contactDetail?.preluat;
+    const nextValue = !previousValue;
+    setContactDetail(prev => (prev && prev.id === contactId ? { ...prev, preluat: nextValue } : prev));
+    try {
+      await api.put(`/contacts/${contactId}/preluat`, { value: nextValue });
+    } catch (err) {
+      console.error('Failed to update preluat:', err);
+      setContactDetail(prev => (prev && prev.id === contactId ? { ...prev, preluat: previousValue } : prev));
     }
   };
 
@@ -4114,7 +4198,12 @@ export default function WhatsAppPage() {
             </div>
             <div className="ml-auto flex items-center gap-1">
               <button
-                onClick={() => setShowCallModal(true)}
+                onClick={() => {
+                  const result = callManager.open(selectedConv.waId, selectedConv.contactName);
+                  if (result === 'busy') {
+                    alert(`You have an active call with someone else — end it before calling ${selectedConv.contactName}.`);
+                  }
+                }}
                 className="p-2 rounded-lg transition-all hover:bg-gray-100 text-gray-500"
                 title={`Call ${selectedConv.contactName} via WhatsApp`}
               >
@@ -4692,18 +4781,10 @@ export default function WhatsAppPage() {
 
       {/* ═══ RIGHT: Contact Info Sidebar ═══ */}
       {showContactInfo && selectedConv?.contactId && (
-        <ContactInfoSidebar contact={contactDetail} isLoading={isLoadingContact} onClose={() => setShowContactInfo(false)} pipelineStages={pipelineStages} onStageChange={handleContactStageChange} />
+        <ContactInfoSidebar contact={contactDetail} isLoading={isLoadingContact} onClose={() => setShowContactInfo(false)} pipelines={pipelines} onStageChange={handleContactStageChange} onPipelineChange={handleContactPipelineChange} onTogglePreluat={handleTogglePreluat} />
       )}
 
       </div>
-      )}
-
-      {showCallModal && selectedConv && (
-        <CallModal
-          waId={selectedConv.waId}
-          contactName={selectedConv.contactName}
-          onClose={() => setShowCallModal(false)}
-        />
       )}
 
       {/* ═══ MODALS ═══ */}

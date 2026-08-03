@@ -33,6 +33,7 @@ import {
   Check,
 } from 'lucide-react';
 import api from '@/lib/api';
+import { authService } from '@/lib/auth';
 import {
   CHANNEL_LABELS,
   ChannelAccess,
@@ -127,6 +128,8 @@ export default function UsersPage() {
     DEFAULT_WORKSPACE_CHANNEL_AVAILABILITY,
   );
   const [channelsResolved, setChannelsResolved] = useState(false);
+  const [currentUserRole, setCurrentUserRole] = useState<string>('');
+  const canManageTeam = ['admin', 'manager', 'super_admin'].includes(currentUserRole);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedRole, setSelectedRole] = useState<string>('all');
@@ -155,6 +158,13 @@ export default function UsersPage() {
 
   useEffect(() => {
     fetchUsers();
+  }, []);
+
+  useEffect(() => {
+    void authService
+      .getCurrentUser()
+      .catch(() => authService.getUser())
+      .then((user) => setCurrentUserRole(user?.role || ''));
   }, []);
 
   useEffect(() => {
@@ -698,20 +708,26 @@ export default function UsersPage() {
                       </td>
                       <td className="px-6 py-4 text-right">
                         <div className="flex items-center justify-end gap-2">
-                          <button
-                            onClick={() => openEditModal(user)}
-                            className="p-2 text-gray-600 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
-                            title="Edit user"
-                          >
-                            <Edit className="h-4 w-4" />
-                          </button>
-                          <button
-                            onClick={() => handleDeleteUser(user.id)}
-                            className="p-2 text-gray-600 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                            title="Delete user"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
+                          {canManageTeam ? (
+                            <>
+                              <button
+                                onClick={() => openEditModal(user)}
+                                className="p-2 text-gray-600 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                                title="Edit user"
+                              >
+                                <Edit className="h-4 w-4" />
+                              </button>
+                              <button
+                                onClick={() => handleDeleteUser(user.id)}
+                                className="p-2 text-gray-600 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                title="Delete user"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </button>
+                            </>
+                          ) : (
+                            <span className="text-xs text-gray-400">—</span>
+                          )}
                         </div>
                       </td>
                     </tr>

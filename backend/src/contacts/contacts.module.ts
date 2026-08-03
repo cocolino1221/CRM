@@ -8,11 +8,13 @@ import { Company } from '../database/entities/company.entity';
 import { Activity } from '../database/entities/activity.entity';
 import { Deal } from '../database/entities/deal.entity';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { GoogleSheetsModule } from '../integrations/google-sheets/google-sheets.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Contact, User, Company, Activity, Deal]),
     NotificationsModule,
+    GoogleSheetsModule,
   ],
   controllers: [ContactsController],
   providers: [ContactsService],

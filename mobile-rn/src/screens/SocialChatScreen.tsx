@@ -15,7 +15,7 @@ import { useNavigation, useRoute, type RouteProp } from '@react-navigation/nativ
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import * as DocumentPicker from 'expo-document-picker';
 import { Audio, ResizeMode, Video as ExpoVideo } from 'expo-av';
-import { ArrowLeft, AudioLines, Instagram, MessageCircle, Mic, Paperclip, Plus, RefreshCw, Send, Square, X } from 'lucide-react-native';
+import { ArrowLeft, AudioLines, CheckCircle2, Circle, Instagram, MessageCircle, Mic, Paperclip, Plus, RefreshCw, Send, Square, X } from 'lucide-react-native';
 import api from '../lib/api';
 import Avatar from '../components/Avatar';
 import AudioLibrarySheet from '../components/AudioLibrarySheet';
@@ -91,6 +91,7 @@ export default function SocialChatScreen() {
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
   const [linkingLead, setLinkingLead] = useState(false);
+  const [contactPreluat, setContactPreluat] = useState(false);
   const [message, setMessage] = useState('');
   const [pendingAudio, setPendingAudio] = useState<PendingAudioAttachment | null>(null);
   const [mediaPreview, setMediaPreview] = useState<{ source: { uri: string }; title: string } | null>(null);
@@ -251,6 +252,28 @@ export default function SocialChatScreen() {
       setLinkingLead(false);
     }
   }, [conversation.channel, conversation.contactId, conversation.contactName, conversation.externalUserId, showToast]);
+
+  useEffect(() => {
+    if (!conversation.contactId) {
+      setContactPreluat(false);
+      return;
+    }
+    api.get(`/contacts/${conversation.contactId}`)
+      .then((res) => setContactPreluat(!!res.data?.preluat))
+      .catch(() => setContactPreluat(false));
+  }, [conversation.contactId]);
+
+  const handleTogglePreluat = useCallback(async () => {
+    if (!conversation.contactId) return;
+    const nextValue = !contactPreluat;
+    setContactPreluat(nextValue);
+    try {
+      await api.put(`/contacts/${conversation.contactId}/preluat`, { value: nextValue });
+    } catch {
+      setContactPreluat(!nextValue);
+      showToast('Failed to update preluat', 'error');
+    }
+  }, [conversation.contactId, contactPreluat, showToast]);
 
   const handlePickAudio = useCallback(async () => {
     try {
@@ -520,6 +543,15 @@ export default function SocialChatScreen() {
               )}
             </View>
           </View>
+          {conversation.contactId && (
+            <TouchableOpacity
+              onPress={() => void handleTogglePreluat()}
+              className={`h-11 w-11 rounded-2xl items-center justify-center ${contactPreluat ? 'bg-emerald-500' : 'bg-slate-100'}`}
+              activeOpacity={0.8}
+            >
+              {contactPreluat ? <CheckCircle2 size={18} color="#fff" /> : <Circle size={18} color="#334155" />}
+            </TouchableOpacity>
+          )}
           <TouchableOpacity
             onPress={loadConversation}
             className="h-11 w-11 rounded-2xl bg-slate-100 items-center justify-center"

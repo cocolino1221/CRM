@@ -1,17 +1,28 @@
-import { Controller, Get, Post, Body, Param, Req, UseGuards, BadRequestException } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Req, UseGuards, UseInterceptors, UploadedFile, BadRequestException } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { Sse } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
 import { Observable, fromEvent, interval, merge } from 'rxjs';
 import { filter, map } from 'rxjs/operators';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { WhatsAppCallingService } from './whatsapp-calling.service';
+import { WhatsAppService } from './whatsapp.service';
+import { UploadService } from '../../upload/upload.service';
+
+const recordingUploadInterceptor = FileInterceptor('file', {
+  storage: memoryStorage(),
+  limits: { fileSize: 64 * 1024 * 1024 },
+});
 
 @ApiTags('WhatsApp Calling')
 @Controller('integrations/whatsapp/calls')
 export class WhatsAppCallingController {
   constructor(
     private readonly callingService: WhatsAppCallingService,
+    private readonly whatsappService: WhatsAppService,
+    private readonly uploadService: UploadService,
     private readonly eventEmitter: EventEmitter2,
   ) {}
 
@@ -65,6 +76,45 @@ export class WhatsAppCallingController {
     const workspaceId = req.user?.workspaceId;
     if (!workspaceId) throw new BadRequestException('Workspace ID required');
     await this.callingService.terminateCall(workspaceId, callId);
+    return { success: true };
+  }
+
+  @Post('recording')
+  @UseGuards(JwtAuthGuard)
+  @UseInterceptors(recordingUploadInterceptor)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Upload a finished call recording, returns a durable URL' })
+  async uploadRecording(@UploadedFile() file: Express.Multer.File) {
+    if (!file) throw new BadRequestException('Recording file is required');
+    const mimeType = String(file.mimetype || 'audio/webm').trim().toLowerCase();
+    const saved = await this.uploadService.saveBufferToStorage(
+      file.buffer,
+      mimeType,
+      file.originalname || 'call-recording.webm',
+      'call-recordings',
+    );
+    return { url: saved.url };
+  }
+
+  @Post(':callId/log')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Log a finished call as an activity in the conversation thread' })
+  async logCall(
+    @Req() req: any,
+    @Param('callId') callId: string,
+    @Body() body: { waId: string; status: 'completed' | 'missed' | 'no_answer' | 'rejected' | 'failed'; durationSeconds?: number; recordingUrl?: string },
+  ) {
+    const workspaceId = req.user?.workspaceId;
+    if (!workspaceId) throw new BadRequestException('Workspace ID required');
+    if (!body?.waId || !body?.status) throw new BadRequestException('waId and status are required');
+    await this.whatsappService.logCallActivity(workspaceId, body.waId, {
+      callId,
+      status: body.status,
+      durationSeconds: body.durationSeconds,
+      recordingUrl: body.recordingUrl,
+      ownerId: req.user.id,
+    });
     return { success: true };
   }
 

@@ -15,6 +15,7 @@ const CRM_FIELDS: Array<{ key: string; label: string; required?: boolean }> = [
   { key: 'company', label: 'Company' },
   { key: 'stage', label: 'Pipeline stage (by name)' },
   { key: 'notes', label: 'Notes' },
+  { key: 'preluat', label: 'Preluat (checkmark)' },
 ];
 
 type SpreadsheetItem = { id: string; name: string };

@@ -5,13 +5,14 @@ import { HttpService } from '@nestjs/axios';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { firstValueFrom } from 'rxjs';
 import { Integration, IntegrationType } from '../../database/entities/integration.entity';
-import { Activity, ActivityType, ActivityDirection } from '../../database/entities/activity.entity';
 import { normalizePhoneDigits } from '../../common/utils/phone.util';
 
 export interface CallPermissionState {
   status: 'not_requested' | 'requested' | 'granted' | 'declined';
   requestedAt?: string;
   grantedAt?: string;
+  /** Set only for temporary (non-permanent) grants — Meta expires these ~7 days after acceptance. */
+  expiresAt?: string;
 }
 
 /**
@@ -33,31 +34,9 @@ export class WhatsAppCallingService {
   constructor(
     @InjectRepository(Integration)
     private readonly integrationRepository: Repository<Integration>,
-    @InjectRepository(Activity)
-    private readonly activityRepository: Repository<Activity>,
     private readonly httpService: HttpService,
     private readonly eventEmitter: EventEmitter2,
   ) {}
-
-  /**
-   * Confirmed live against Meta's API: a call to a contact with an active
-   * 24h session (recent inbound message) never hits a permission error —
-   * only SDP validation — even with zero prior call_permission_request ever
-   * sent. Calling permission is implicitly satisfied by the same session
-   * window that lets free-form text messages send without a template.
-   */
-  private async hasActive24hSession(workspaceId: string, waId: string): Promise<boolean> {
-    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    const recent = await this.activityRepository
-      .createQueryBuilder('activity')
-      .where('activity.workspaceId = :workspaceId', { workspaceId })
-      .andWhere('activity.type = :type', { type: ActivityType.WHATSAPP_MESSAGE })
-      .andWhere('activity.direction = :direction', { direction: ActivityDirection.INBOUND })
-      .andWhere("activity.metadata->>'waId' = :waId", { waId })
-      .andWhere('activity.occurredAt > :since', { since })
-      .getCount();
-    return recent > 0;
-  }
 
   private async getIntegration(workspaceId: string): Promise<Integration> {
     const integration = await this.integrationRepository.findOne({
@@ -148,6 +127,9 @@ export class WhatsAppCallingService {
           interactive: {
             type: 'call_permission_request',
             action: { name: 'call_permission_request' },
+            // Meta requires a body.text on this interactive type — omitting
+            // it was previously causing validation failures.
+            body: { text: 'We would like to call you regarding your inquiry. Can we call you on WhatsApp?' },
           },
         },
         { headers: { Authorization: `Bearer ${accessToken}` } },
@@ -162,17 +144,45 @@ export class WhatsAppCallingService {
     await this.integrationRepository.save(integration);
   }
 
+  /**
+   * Meta's own authoritative permission state — `GET
+   * /{phone-number-id}/call_permissions?user_wa_id=...` — returns
+   * `permission.status`: 'no_permission' | 'temporary' | 'permanent'. This
+   * replaces guessing locally (a 24h-session heuristic was tried first and
+   * proved wrong — Meta rejected a real call despite an active session).
+   * Falls back to our own request-tracking map only if the live check
+   * itself fails (rate limit, transient error), so the UI still functions.
+   */
   async getCallPermissionStatus(workspaceId: string, waId: string): Promise<CallPermissionState> {
     const normalizedWaId = normalizePhoneDigits(waId);
     if (!normalizedWaId) throw new BadRequestException('Invalid contact');
+    const integration = await this.getIntegration(workspaceId);
+    const { accessToken, phoneNumberId } = this.getCredentials(integration);
 
-    if (await this.hasActive24hSession(workspaceId, normalizedWaId)) {
-      return { status: 'granted' };
+    try {
+      const res = await firstValueFrom(this.httpService.get(
+        `${this.apiUrl}/${phoneNumberId}/call_permissions`,
+        { params: { user_wa_id: normalizedWaId }, headers: { Authorization: `Bearer ${accessToken}` } },
+      ));
+      const permission = res.data?.permission;
+      if (permission?.status === 'permanent') return { status: 'granted' };
+      if (permission?.status === 'temporary') {
+        const expiresAt = permission.expiration_time ? new Date(permission.expiration_time * 1000).toISOString() : undefined;
+        if (expiresAt && new Date(expiresAt) <= new Date()) return { status: 'not_requested' };
+        return { status: 'granted', expiresAt };
+      }
+      return { status: 'not_requested' };
+    } catch (err: any) {
+      this.logger.warn(`Live call_permissions check failed for ${normalizedWaId}, falling back to local record: ${this.metaErrorMessage(err, err.message)}`);
     }
 
-    const integration = await this.getIntegration(workspaceId);
     const map = this.normalizePermissionMap(integration.config?.callPermissionMap);
-    return map[normalizedWaId] || { status: 'not_requested' };
+    const state = map[normalizedWaId];
+    if (!state) return { status: 'not_requested' };
+    if (state.status === 'granted' && state.expiresAt && new Date(state.expiresAt) <= new Date()) {
+      return { status: 'not_requested' };
+    }
+    return state;
   }
 
   /**
@@ -250,21 +260,42 @@ export class WhatsAppCallingService {
         timestamp: call.timestamp,
       });
 
-      // A granted call_permission_request surfaces here too (Meta delivers
-      // it as a status/interactive event on the same webhook object type
-      // used for messages, not the calls array) — permission-state updates
-      // from the messages path are handled in whatsapp.service.ts and
-      // should call recordCallPermissionGranted below.
+      // A call_permission_reply surfaces as a regular inbound message
+      // (message.type === 'interactive', interactive.type ===
+      // 'call_permission_reply'), not on this calls[] array — handled in
+      // whatsapp.service.ts's message loop, which calls
+      // recordCallPermissionResponse below.
     }
   }
 
-  async recordCallPermissionGranted(workspaceId: string, waId: string): Promise<void> {
+  /**
+   * Records a contact's response to an explicit call_permission_request.
+   * This is Meta's real, independent calling-consent gate — separate from
+   * the 24h customer-service messaging window, which does NOT imply calling
+   * permission (confirmed the hard way: a call to a contact with an active
+   * message session was still rejected by Meta for lacking this consent).
+   */
+  async recordCallPermissionResponse(
+    workspaceId: string,
+    waId: string,
+    response: 'accept' | 'reject',
+    options?: { isPermanent?: boolean; expirationTimestamp?: number },
+  ): Promise<void> {
     const normalizedWaId = normalizePhoneDigits(waId);
     if (!normalizedWaId) return;
     const integration = await this.getIntegration(workspaceId).catch(() => null);
     if (!integration) return;
     const map = this.normalizePermissionMap(integration.config?.callPermissionMap);
-    map[normalizedWaId] = { ...(map[normalizedWaId] || {}), status: 'granted', grantedAt: new Date().toISOString() } as CallPermissionState;
+
+    if (response === 'accept') {
+      const expiresAt = !options?.isPermanent && options?.expirationTimestamp
+        ? new Date(options.expirationTimestamp * 1000).toISOString()
+        : undefined;
+      map[normalizedWaId] = { status: 'granted', grantedAt: new Date().toISOString(), expiresAt };
+    } else {
+      map[normalizedWaId] = { ...(map[normalizedWaId] || {}), status: 'declined' };
+    }
+
     integration.config = { ...(integration.config || {}), callPermissionMap: map };
     await this.integrationRepository.save(integration);
   }

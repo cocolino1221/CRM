@@ -3,7 +3,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AudioLines,
+  CheckCircle2,
   ChevronRight,
+  Circle,
   CircleDot,
   Copy,
   ExternalLink,
@@ -147,6 +149,7 @@ interface MetaContactDetails {
   setter?: TeamUser | null;
   closer?: TeamUser | null;
   owner?: TeamUser | null;
+  preluat?: boolean;
 }
 
 type AssignmentField = 'setterId' | 'closerId';
@@ -1049,6 +1052,18 @@ export default function MessagesPage() {
 
     setAssignmentError('Conversația nu este încă legată de un contact CRM.');
     setAssignmentBusy(null);
+  };
+
+  const toggleContactPreluat = async () => {
+    if (!selectedConversation?.contactId || !contactDetails) return;
+    const previousValue = contactDetails.preluat;
+    const nextValue = !previousValue;
+    setContactDetails((prev) => (prev ? { ...prev, preluat: nextValue } : prev));
+    try {
+      await api.put(`/contacts/${selectedConversation.contactId}/preluat`, { value: nextValue });
+    } catch (error: any) {
+      setContactDetails((prev) => (prev ? { ...prev, preluat: previousValue } : prev));
+    }
   };
 
   const addConversationToCrm = async () => {
@@ -2407,6 +2422,23 @@ export default function MessagesPage() {
                           <div className="text-xs text-slate-400">Owner</div>
                           <div className="mt-1 text-slate-900">{getUserDisplayName(contactDetails?.owner) || 'Unassigned'}</div>
                         </div>
+                        {selectedConversation.contactId && (
+                          <div>
+                            <div className="text-xs text-slate-400">Preluat</div>
+                            <button
+                              onClick={() => void toggleContactPreluat()}
+                              className={cn(
+                                'mt-1 flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-medium',
+                                contactDetails?.preluat
+                                  ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                                  : 'bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100',
+                              )}
+                            >
+                              {contactDetails?.preluat ? <CheckCircle2 className="h-3.5 w-3.5" /> : <Circle className="h-3.5 w-3.5" />}
+                              {contactDetails?.preluat ? 'Preluat' : 'Marchează preluat'}
+                            </button>
+                          </div>
+                        )}
                         <div>
                           <div className="text-xs text-slate-400">Channel</div>
                           <div className="mt-1"><ChannelBadge channel={selectedConversation.channel} /></div>

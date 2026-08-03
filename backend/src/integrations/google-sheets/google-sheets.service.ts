@@ -11,7 +11,7 @@ import { NotificationsService } from '../../notifications/notifications.service'
 
 // CRM fields a sheet column can map to. "stage" moves the contact between
 // pipeline stages by stage NAME. Keys are stored in integration.config.
-export const MAPPABLE_FIELDS = ['firstName', 'lastName', 'email', 'phone', 'company', 'source', 'notes', 'stage'] as const;
+export const MAPPABLE_FIELDS = ['firstName', 'lastName', 'email', 'phone', 'company', 'source', 'notes', 'stage', 'preluat'] as const;
 export type MappableField = (typeof MAPPABLE_FIELDS)[number];
 
 export interface SheetsSyncConfig {
@@ -134,6 +134,48 @@ export class GoogleSheetsService {
     integration.config = { ...(integration.config as any), sheetsSync: config };
     await this.integrationRepository.save(integration);
     return { config };
+  }
+
+  /**
+   * Instant single-cell push for one contact/field — used by UI toggles
+   * (e.g. the "Preluat" checkmark) that shouldn't wait for the next
+   * periodic full sync. No-ops silently if Sheets sync isn't configured or
+   * the field isn't mapped to a column; a missing row (contact not yet
+   * present in the sheet) is left for the next full sync to add.
+   */
+  async pushContactField(workspaceId: string, contactId: string, field: MappableField, value: string): Promise<void> {
+    const integration = await this.getGoogleIntegration(workspaceId).catch(() => null);
+    if (!integration) return;
+    const config = this.getConfig(integration);
+    if (!config?.enabled) return;
+    const header = config.mapping[field];
+    if (!header) return;
+
+    try {
+      const range = `'${config.sheetName}'!A1:AZ10000`;
+      const sheet = await this.googleHandler.getSheetData(integration, config.spreadsheetId, range);
+      const rows: any[][] = sheet.values || [];
+      const headerIdx = Math.max(0, (config.headerRow || 1) - 1);
+      const firstDataRow = headerIdx + 1;
+      const headers: string[] = (rows[headerIdx] || []).map((h: any) => String(h ?? '').trim());
+
+      const fieldCol = headers.findIndex((h) => h.toLowerCase() === header.toLowerCase());
+      const crmIdCol = headers.findIndex((h) => h.toLowerCase() === CRM_ID_HEADER.toLowerCase());
+      if (fieldCol === -1 || crmIdCol === -1) return;
+
+      for (let r = firstDataRow; r < rows.length; r++) {
+        if (String((rows[r] || [])[crmIdCol] ?? '').trim() !== contactId) continue;
+        await this.googleHandler.updateSheetValues(
+          integration,
+          config.spreadsheetId,
+          `'${config.sheetName}'!${columnLetter(fieldCol)}${r + 1}`,
+          [[value]],
+        );
+        return;
+      }
+    } catch (error: any) {
+      this.logger.warn(`Failed to push ${field} for contact ${contactId} to sheet: ${error.message}`);
+    }
   }
 
   // ── sync engine ──
@@ -274,6 +316,7 @@ export class GoogleSheetsService {
             if (config.pipelineId) c.pipelineId = config.pipelineId;
             if (stageId) c.pipelineStageId = stageId;
             else if (!c.pipelineStageId && config.pipelineStageId) c.pipelineStageId = config.pipelineStageId;
+            if (cell(colOf.preluat)) c.preluat = /^(true|1|yes|da)$/i.test(cell(colOf.preluat));
             const custom = { ...(c.customFields as any || {}) };
             if (cell(colOf.company)) custom.company = cell(colOf.company);
             if (cell(colOf.notes)) custom.sheetNotes = cell(colOf.notes);
@@ -363,6 +406,7 @@ export class GoogleSheetsService {
             set(colOf.phone, contact.phone || '');
             set(colOf.company, String((contact.customFields as any)?.company || ''));
             set(colOf.stage, contact.pipelineStageId ? (stageNameById.get(contact.pipelineStageId) || '') : '');
+            set(colOf.preluat, contact.preluat ? 'TRUE' : 'FALSE');
             out[crmIdCol] = contact.id;
             return out;
           };

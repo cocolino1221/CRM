@@ -6,6 +6,7 @@ import {
 import {
   ArrowLeft, Edit, Phone, Mail, Building2, Briefcase, Tag, MessageCircle,
   ChevronLeft, ChevronRight, UserPlus, Check, X, Clock, FileText,
+  CheckCircle2, Circle,
 } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
@@ -87,20 +88,47 @@ export default function LeadDetailScreen() {
   };
 
   const fetchContact = async () => {
-    setIsLoading(true);
+    const fallbackContact = normalizeContact(route.params.contact);
+    const hasLocalContact = Boolean(contact || fallbackContact);
+    if (!hasLocalContact) {
+      setIsLoading(true);
+    }
     try {
       const res = await api.get(`/contacts/${route.params.contactId}`, { params: { include: 'company,owner' } });
-      setContact(normalizeContact(res.data));
+      const normalized = normalizeContact(res.data);
+      if (normalized) {
+        setContact(normalized);
+      } else if (fallbackContact) {
+        setContact(fallbackContact);
+      }
     } catch {
       try {
         const fallback = await api.get(`/contacts/${route.params.contactId}`);
-        setContact(normalizeContact(fallback.data));
+        const normalized = normalizeContact(fallback.data);
+        if (normalized) {
+          setContact(normalized);
+        } else if (fallbackContact) {
+          setContact(fallbackContact);
+        }
       } catch (err: any) {
         showToast(err?.response?.data?.message || 'Failed to load contact', 'error');
-        if (!initialContact) navigation.goBack();
+        if (!hasLocalContact) navigation.goBack();
       }
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleTogglePreluat = async () => {
+    if (!contact) return;
+    const previousValue = contact.preluat;
+    const nextValue = !previousValue;
+    setContact(prev => (prev ? { ...prev, preluat: nextValue } : prev));
+    try {
+      await api.put(`/contacts/${contact.id}/preluat`, { value: nextValue });
+    } catch (err: any) {
+      setContact(prev => (prev ? { ...prev, preluat: previousValue } : prev));
+      showToast(err?.response?.data?.message || 'Failed to update preluat', 'error');
     }
   };
 
@@ -227,6 +255,13 @@ export default function LeadDetailScreen() {
                 )}
               </View>
             </View>
+            <TouchableOpacity
+              onPress={() => void handleTogglePreluat()}
+              className={`flex-row items-center gap-1 px-2.5 py-1.5 rounded-lg border ${contact.preluat ? 'bg-green-50 border-green-200' : 'bg-slate-50 border-slate-200'}`}
+            >
+              {contact.preluat ? <CheckCircle2 size={14} color="#16a34a" /> : <Circle size={14} color="#94a3b8" />}
+              <Text className={`text-[11px] font-semibold ${contact.preluat ? 'text-green-700' : 'text-slate-500'}`}>Preluat</Text>
+            </TouchableOpacity>
           </View>
 
           {contact.leadScore != null && contact.leadScore > 0 && (

@@ -7,6 +7,7 @@ import { MessageSquare, Users, LayoutDashboard, MoreHorizontal } from 'lucide-re
 import Sidebar from '@/components/layout/Sidebar';
 import Header from '@/components/layout/Header';
 import QuickActionsWrapper from '@/components/layout/quick-actions-wrapper';
+import GlobalCallUI from '@/components/whatsapp/GlobalCallUI';
 import { initPushNotifications } from '@/lib/push-notifications';
 
 const mobileNavItems = [
@@ -61,6 +62,7 @@ export default function DashboardLayout({
 
   return (
     <div className="flex h-screen overflow-hidden bg-gray-50 dark:bg-gray-900">
+      <GlobalCallUI />
       <Sidebar
         isOpen={isMobileMenuOpen}
         onClose={() => setIsMobileMenuOpen(false)}

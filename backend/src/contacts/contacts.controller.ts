@@ -148,6 +148,21 @@ export class ContactsController {
     return this.contactsService.updateStatus(workspaceId, id, status);
   }
 
+  @Put(':id/preluat')
+  @ApiOperation({ summary: 'Toggle the "preluat" checkmark, pushed to the mapped Google Sheets column if configured' })
+  @ApiParam({ name: 'id', description: 'Contact ID' })
+  @ApiBody({ schema: { type: 'object', properties: { value: { type: 'boolean' } } } })
+  @ApiResponse({ status: 200, description: 'Preluat updated successfully' })
+  @ApiResponse({ status: 404, description: 'Contact not found' })
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter')
+  async updatePreluat(
+    @CurrentWorkspace('id') workspaceId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body('value') value: boolean,
+  ) {
+    return this.contactsService.setPreluat(workspaceId, id, !!value);
+  }
+
   @Post('bulk/delete')
   @ApiOperation({ summary: 'Bulk delete contacts' })
   @ApiBody({ schema: { type: 'object', properties: { ids: { type: 'array', items: { type: 'string', format: 'uuid' } } } } })

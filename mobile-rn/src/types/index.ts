@@ -40,6 +40,9 @@ export interface WhatsAppActivity {
     reactionMessageId?: string;
     replyToMessageId?: string;
     replyPreviewText?: string;
+    callStatus?: string;
+    callDurationSeconds?: number;
+    recordingUrl?: string;
   };
   contact: {
     id: string;
@@ -100,6 +103,7 @@ export interface Contact {
   customFields?: any;
   createdAt: string;
   updatedAt?: string;
+  preluat?: boolean;
 }
 
 export interface PipelineStage {

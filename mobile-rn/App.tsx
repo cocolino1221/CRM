@@ -17,6 +17,8 @@ import {
 import TabNavigator from './src/navigation/TabNavigator';
 import LoginScreen from './src/screens/LoginScreen';
 import ToastContainer from './src/components/Toast';
+import CallModal from './src/components/CallModal';
+import MiniCallBar from './src/components/MiniCallBar';
 
 export default function App() {
   const { isAuthenticated, checkAuth } = useAuthStore();
@@ -131,6 +133,12 @@ export default function App() {
           <StatusBar style="light" />
           {isAuthenticated ? <TabNavigator /> : <LoginScreen />}
           <ToastContainer />
+          {isAuthenticated && (
+            <>
+              <MiniCallBar />
+              <CallModal />
+            </>
+          )}
         </NavigationContainer>
       </SafeAreaProvider>
     </GestureHandlerRootView>

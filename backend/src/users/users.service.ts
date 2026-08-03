@@ -272,9 +272,9 @@ export class UsersService {
     workspaceId: string,
     currentUserRole: UserRole,
   ): Promise<void> {
-    // Only ADMIN can delete users
-    if (![UserRole.SUPER_ADMIN, UserRole.ADMIN].includes(currentUserRole)) {
-      throw new ForbiddenException('Only administrators can remove users');
+    // Only ADMIN and MANAGER can delete users
+    if (![UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.MANAGER].includes(currentUserRole)) {
+      throw new ForbiddenException('Only administrators and managers can remove users');
     }
 
     const user = await this.userRepository.findOne({
@@ -283,6 +283,10 @@ export class UsersService {
 
     if (!user) {
       throw new NotFoundException('User not found');
+    }
+
+    if (currentUserRole === UserRole.MANAGER && [UserRole.ADMIN, UserRole.SUPER_ADMIN].includes(user.role)) {
+      throw new ForbiddenException('Managers cannot remove ADMIN or SUPER_ADMIN users');
     }
 
     await this.userRepository.softRemove(user);

@@ -91,7 +91,12 @@ export interface WhatsAppWebhook {
           audio?: { id: string; mime_type: string };
           video?: { id: string; mime_type: string; sha256: string; caption?: string };
           reaction?: { message_id: string; emoji: string };
-          interactive?: { type: string; button_reply?: { id: string; title: string }; list_reply?: { id: string; title: string } };
+          interactive?: {
+            type: string;
+            button_reply?: { id: string; title: string };
+            list_reply?: { id: string; title: string };
+            call_permission_reply?: { response: string; is_permanent?: boolean; expiration_timestamp?: number };
+          };
         }>;
         statuses?: Array<{
           id: string;
@@ -1231,6 +1236,9 @@ export class WhatsAppService {
       mediaMetadata.mediaId = message.video?.id;
       mediaMetadata.mediaMimeType = message.video?.mime_type;
       mediaMetadata.mediaCaption = message.video?.caption;
+    } else if (message.type === 'interactive' && message.interactive?.type === 'call_permission_reply') {
+      const accepted = message.interactive?.call_permission_reply?.response === 'accept';
+      messageBody = accepted ? '[Call permission accepted]' : '[Call permission declined]';
     } else if (message.type === 'interactive') {
       const reply = message.interactive?.button_reply?.title || message.interactive?.list_reply?.title || '';
       messageBody = `[Button reply: ${reply}]`;
@@ -1318,6 +1326,83 @@ export class WhatsAppService {
       await this.activityRepository.save(activity);
     } catch (error) {
       this.logger.warn(`Failed to save outbound activity: ${error.message}`);
+    }
+  }
+
+  private static readonly CALL_STATUS_LABELS: Record<string, string> = {
+    completed: 'Call ended',
+    missed: 'Missed call',
+    no_answer: 'No answer',
+    rejected: 'Call declined',
+    failed: 'Call failed',
+  };
+
+  private static readonly CALL_STATUS_OUTCOMES: Record<string, ActivityOutcome> = {
+    completed: ActivityOutcome.SUCCESSFUL,
+    missed: ActivityOutcome.NO_ANSWER,
+    no_answer: ActivityOutcome.NO_ANSWER,
+    rejected: ActivityOutcome.FAILED,
+    failed: ActivityOutcome.FAILED,
+  };
+
+  private formatCallDuration(seconds: number): string {
+    const total = Math.max(0, Math.floor(seconds));
+    const m = Math.floor(total / 60).toString().padStart(2, '0');
+    const s = (total % 60).toString().padStart(2, '0');
+    return `${m}:${s}`;
+  }
+
+  /**
+   * Logs a finished outbound WhatsApp voice call as a single Activity entry
+   * so it shows up inline in the conversation thread (same list the chat UI
+   * already renders — reuses ActivityType.WHATSAPP_MESSAGE + a
+   * metadata.messageType discriminator rather than a new type, so every
+   * existing WHATSAPP_MESSAGE-scoped query picks it up for free).
+   */
+  async logCallActivity(
+    workspaceId: string,
+    waId: string,
+    opts: {
+      callId?: string;
+      status: 'completed' | 'missed' | 'no_answer' | 'rejected' | 'failed';
+      durationSeconds?: number;
+      recordingUrl?: string;
+      ownerId?: string;
+      senderIntegrationId?: string;
+      senderPhoneDisplay?: string;
+    },
+  ): Promise<void> {
+    try {
+      const phone = normalizePhoneE164(waId) || `+${waId}`;
+      const contact = await this.findContactByPhone(workspaceId, phone) || await this.findContactByPhone(workspaceId, waId);
+      const statusLabel = WhatsAppService.CALL_STATUS_LABELS[opts.status] || 'Call ended';
+      const durationLabel = opts.durationSeconds ? this.formatCallDuration(opts.durationSeconds) : undefined;
+      const description = durationLabel ? `${statusLabel} · ${durationLabel}` : statusLabel;
+
+      const activity = this.activityRepository.create({
+        workspaceId,
+        contactId: contact?.id || undefined,
+        userId: opts.ownerId,
+        type: ActivityType.WHATSAPP_MESSAGE,
+        title: `WhatsApp call to ${contact ? `${contact.firstName} ${contact.lastName}` : phone}`,
+        description,
+        direction: ActivityDirection.OUTBOUND,
+        outcome: WhatsAppService.CALL_STATUS_OUTCOMES[opts.status] || ActivityOutcome.FAILED,
+        occurredAt: new Date(),
+        metadata: {
+          messageType: 'call',
+          waId: normalizePhoneDigits(waId) || waId,
+          callId: opts.callId,
+          callStatus: opts.status,
+          callDurationSeconds: opts.durationSeconds,
+          recordingUrl: opts.recordingUrl,
+          ...(opts.senderIntegrationId ? { senderIntegrationId: opts.senderIntegrationId, senderPhoneDisplay: opts.senderPhoneDisplay } : {}),
+        },
+      });
+
+      await this.activityRepository.save(activity);
+    } catch (error: any) {
+      this.logger.warn(`Failed to log call activity: ${error.message}`);
     }
   }
 
@@ -1694,6 +1779,15 @@ export class WhatsAppService {
 
             await this.saveMessageActivity(contact, message, integration.workspaceId, ownerId, integration);
             await this.markMessageAsRead(message.id, integration.credentials);
+
+            const callPermissionReply = message.interactive?.call_permission_reply;
+            if (message.type === 'interactive' && message.interactive?.type === 'call_permission_reply' && callPermissionReply) {
+              const response = callPermissionReply.response === 'accept' ? 'accept' : 'reject';
+              await this.callingService.recordCallPermissionResponse(integration.workspaceId, message.from, response, {
+                isPermanent: callPermissionReply.is_permanent,
+                expirationTimestamp: callPermissionReply.expiration_timestamp,
+              });
+            }
 
             const interactiveReply = message.interactive?.button_reply || message.interactive?.list_reply;
             const inferredMessageText =

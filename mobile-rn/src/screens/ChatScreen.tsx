@@ -6,7 +6,7 @@ import {
 import {
   ArrowLeft, Send, Paperclip, X, Image as ImageIcon, FileText, Mic, Video,
   Check, CheckCheck, AlertTriangle, Clock, Users, Smile, Search, Zap, CornerUpLeft, Square, AudioLines,
-  PhoneCall, Ban,
+  PhoneCall, Ban, GitBranch, CheckCircle2, Circle,
 } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
@@ -19,7 +19,7 @@ import { useToastStore } from '../stores/toast-store';
 import { API_BASE_URL } from '../lib/api';
 import Avatar from '../components/Avatar';
 import AudioLibrarySheet from '../components/AudioLibrarySheet';
-import CallModal from '../components/CallModal';
+import { useCallStore } from '../stores/call-store';
 import type { WhatsAppStackParams } from '../navigation/WhatsAppStack';
 import type { WhatsAppActivity } from '../types';
 
@@ -50,6 +50,19 @@ type ReplyDraft = {
   messageId: string;
   previewText: string;
   direction: 'inbound' | 'outbound';
+};
+
+type PipelineStageOption = {
+  id: string;
+  name: string;
+  displayOrder: number;
+};
+
+type PipelineOption = {
+  id: string;
+  name: string;
+  isDefault?: boolean;
+  stages: PipelineStageOption[];
 };
 
 const DEFAULT_QUICK_REPLIES: QuickReply[] = [
@@ -129,6 +142,15 @@ function parseMessage(msg: WhatsAppActivity) {
   const fileName = asText(msg.metadata?.fileName).trim();
   const mediaCaption = asText(msg.metadata?.mediaCaption).trim();
 
+  if (t === 'call') {
+    return {
+      type: 'call',
+      text: desc,
+      callStatus: asText(msg.metadata?.callStatus),
+      callDurationSeconds: msg.metadata?.callDurationSeconds as number | undefined,
+      recordingUrl: asText(msg.metadata?.recordingUrl) || undefined,
+    };
+  }
   if (reactionEmoji || t === 'reaction' || desc.startsWith('[Reaction]')) {
     return { type: 'reaction', text: reactionEmoji || desc.replace('[Reaction]', '').trim() || 'Reaction', emoji: reactionEmoji || '👍' };
   }
@@ -257,8 +279,14 @@ export default function ChatScreen() {
     title: string;
   } | null>(null);
   const [showAssignModal, setShowAssignModal] = useState(false);
-  const [showCallModal, setShowCallModal] = useState(false);
   const [isAssigning, setIsAssigning] = useState(false);
+  const [showPipelineModal, setShowPipelineModal] = useState(false);
+  const [pipelines, setPipelines] = useState<PipelineOption[]>([]);
+  const [contactPipelineId, setContactPipelineId] = useState<string | null>(null);
+  const [contactStageId, setContactStageId] = useState<string | null>(null);
+  const [isLoadingPipelineInfo, setIsLoadingPipelineInfo] = useState(false);
+  const [isSavingPipeline, setIsSavingPipeline] = useState(false);
+  const [contactPreluat, setContactPreluat] = useState(false);
   const [templates, setTemplates] = useState<TemplateItem[]>([]);
   const [isLoadingTemplates, setIsLoadingTemplates] = useState(false);
   const [isSendingTemplate, setIsSendingTemplate] = useState(false);
@@ -698,6 +726,78 @@ export default function ChatScreen() {
     showToast(user ? `Assigned to ${user.firstName || user.email}` : 'Conversation unassigned', 'success');
   };
 
+  useEffect(() => {
+    api.get('/pipelines')
+      .then((res: any) => {
+        const list: PipelineOption[] = Array.isArray(res.data) ? res.data : [];
+        setPipelines(list.map((p) => ({ ...p, stages: (p.stages || []).slice().sort((a, b) => a.displayOrder - b.displayOrder) })));
+      })
+      .catch(() => setPipelines([]));
+  }, []);
+
+  const openPipelineModal = async () => {
+    if (!conv.contactId) {
+      showToast('No linked contact for this conversation yet', 'error');
+      return;
+    }
+    setShowPipelineModal(true);
+    setIsLoadingPipelineInfo(true);
+    try {
+      const res = await api.get(`/contacts/${conv.contactId}`);
+      setContactPipelineId(res.data?.pipelineId || null);
+      setContactStageId(res.data?.pipelineStageId || null);
+    } catch {
+      showToast('Failed to load pipeline info', 'error');
+    } finally {
+      setIsLoadingPipelineInfo(false);
+    }
+  };
+
+  const handlePipelineSelect = (pipelineId: string) => {
+    const pipeline = pipelines.find((p) => p.id === pipelineId);
+    setContactPipelineId(pipelineId);
+    setContactStageId(pipeline?.stages?.[0]?.id || null);
+  };
+
+  const handleSavePipeline = async () => {
+    if (!conv.contactId || isSavingPipeline) return;
+    setIsSavingPipeline(true);
+    try {
+      await api.put(`/pipelines/contacts/${conv.contactId}`, {
+        ...(contactPipelineId ? { pipelineId: contactPipelineId } : {}),
+        ...(contactStageId ? { pipelineStageId: contactStageId } : {}),
+      });
+      setShowPipelineModal(false);
+      showToast('Pipeline updated', 'success');
+    } catch {
+      showToast('Failed to update pipeline', 'error');
+    } finally {
+      setIsSavingPipeline(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!conv.contactId) {
+      setContactPreluat(false);
+      return;
+    }
+    api.get(`/contacts/${conv.contactId}`)
+      .then((res) => setContactPreluat(!!res.data?.preluat))
+      .catch(() => setContactPreluat(false));
+  }, [conv.contactId]);
+
+  const handleTogglePreluat = async () => {
+    if (!conv.contactId) return;
+    const nextValue = !contactPreluat;
+    setContactPreluat(nextValue);
+    try {
+      await api.put(`/contacts/${conv.contactId}/preluat`, { value: nextValue });
+    } catch {
+      setContactPreluat(!nextValue);
+      showToast('Failed to update preluat', 'error');
+    }
+  };
+
   const handleSendSelectedTemplate = async () => {
     if (!selectedTemplate || isSendingTemplate) return;
     if (selectedTemplate.requiresMediaHeader && !selectedTemplate.hasReusableHeaderMedia) {
@@ -785,7 +885,12 @@ export default function ChatScreen() {
           )}
         </View>
         <TouchableOpacity
-          onPress={() => setShowCallModal(true)}
+          onPress={() => {
+            const result = useCallStore.getState().open(route.params.waId, conv.contactName || route.params.contactName);
+            if (result === 'busy') {
+              showToast('You have an active call with someone else — end it first', 'error');
+            }
+          }}
           className="h-8 w-8 rounded-full items-center justify-center border bg-white/15 border-white/30"
         >
           <PhoneCall size={14} color="#fff" />
@@ -832,6 +937,18 @@ export default function ChatScreen() {
           ) : (
             <Users size={15} color="#fff" />
           )}
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={() => void openPipelineModal()}
+          className="mr-1 h-8 w-8 rounded-full items-center justify-center border bg-white/15 border-white/30"
+        >
+          <GitBranch size={14} color="#fff" />
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={() => void handleTogglePreluat()}
+          className={`mr-1 h-8 w-8 rounded-full items-center justify-center border ${contactPreluat ? 'bg-emerald-500/80 border-emerald-300' : 'bg-white/15 border-white/30'}`}
+        >
+          {contactPreluat ? <CheckCircle2 size={15} color="#fff" /> : <Circle size={14} color="#fff" />}
         </TouchableOpacity>
         <View className={`${sessionBadge.bg} px-2 py-1 rounded-full`}>
           <Text className={`text-[10px] font-bold ${sessionBadge.text}`}>{sessionBadge.label}</Text>
@@ -899,6 +1016,32 @@ export default function ChatScreen() {
           const mediaSource = buildMediaSource(parsed, accessToken);
           const time = getTimeLabel(msg.occurredAt);
           const status = msg.metadata?.messageStatus;
+
+          if (parsed.type === 'call') {
+            const isMissed = ['missed', 'no_answer', 'rejected'].includes(parsed.callStatus || '');
+            return (
+              <View className="items-center my-1">
+                <TouchableOpacity
+                  disabled={!parsed.recordingUrl}
+                  onPress={async () => {
+                    if (!parsed.recordingUrl) return;
+                    try {
+                      const { sound } = await Audio.Sound.createAsync({ uri: parsed.recordingUrl }, { shouldPlay: true });
+                      sound.setOnPlaybackStatusUpdate((s) => { if ('didJustFinish' in s && s.didJustFinish) sound.unloadAsync(); });
+                    } catch {
+                      showToast('Could not play recording', 'error');
+                    }
+                  }}
+                  className={`flex-row items-center gap-1.5 px-3 py-2 rounded-xl border ${isMissed ? 'bg-red-50 border-red-100' : 'bg-slate-100 border-slate-200'}`}
+                >
+                  <PhoneCall size={13} color={isMissed ? '#dc2626' : '#475569'} />
+                  <Text className={`text-xs font-medium ${isMissed ? 'text-red-600' : 'text-slate-600'}`}>{parsed.text}</Text>
+                  <Text className="text-xs text-slate-400">· {time}</Text>
+                  {!!parsed.recordingUrl && <Text className="text-xs text-emerald-600 ml-1">▶</Text>}
+                </TouchableOpacity>
+              </View>
+            );
+          }
 
           return (
             <View className={`flex-row mb-1.5 ${isOut ? 'justify-end' : 'justify-start'}`}>
@@ -1140,12 +1283,6 @@ export default function ChatScreen() {
         </View>
       </View>
 
-      <CallModal
-        visible={showCallModal}
-        waId={route.params.waId}
-        contactName={conv.contactName || route.params.contactName}
-        onClose={() => setShowCallModal(false)}
-      />
 
       <AudioLibrarySheet
         visible={showAudioLibrary}
@@ -1327,6 +1464,84 @@ export default function ChatScreen() {
                 >
                   <Text className="text-xs font-semibold text-rose-600">Unassign</Text>
                 </TouchableOpacity>
+              </View>
+            )}
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={showPipelineModal} animationType="slide" transparent onRequestClose={() => setShowPipelineModal(false)}>
+        <View className="flex-1 bg-black/40 justify-end">
+          <View className="bg-white rounded-t-3xl" style={{ paddingBottom: insets.bottom > 0 ? insets.bottom : 16 }}>
+            <View className="px-4 py-3 border-b border-slate-100 flex-row items-center justify-between">
+              <View>
+                <Text className="text-base font-bold text-slate-900">Pipeline</Text>
+                <Text className="text-xs text-slate-500 mt-0.5" numberOfLines={1}>{conv.contactName}</Text>
+              </View>
+              <TouchableOpacity onPress={() => setShowPipelineModal(false)} className="h-8 w-8 rounded-full bg-slate-100 items-center justify-center">
+                <X size={14} color="#64748b" />
+              </TouchableOpacity>
+            </View>
+
+            {isLoadingPipelineInfo ? (
+              <View className="py-8 items-center">
+                <ActivityIndicator color="#0369a1" />
+              </View>
+            ) : (
+              <View style={{ maxHeight: 420 }}>
+                <View className="px-4 pt-3">
+                  <Text className="text-xs font-semibold text-slate-500 mb-2">PIPELINE</Text>
+                  <View className="flex-row flex-wrap gap-2">
+                    {pipelines.map((pipeline) => {
+                      const isSelected = contactPipelineId === pipeline.id;
+                      return (
+                        <TouchableOpacity
+                          key={pipeline.id}
+                          onPress={() => handlePipelineSelect(pipeline.id)}
+                          className={`px-3 py-1.5 rounded-full border ${isSelected ? 'bg-sky-700 border-sky-700' : 'bg-white border-slate-200'}`}
+                        >
+                          <Text className={`text-xs font-medium ${isSelected ? 'text-white' : 'text-slate-700'}`}>{pipeline.name}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </View>
+
+                {contactPipelineId && (
+                  <View className="px-4 pt-4">
+                    <Text className="text-xs font-semibold text-slate-500 mb-2">STAGE</Text>
+                    <FlatList
+                      data={pipelines.find((p) => p.id === contactPipelineId)?.stages || []}
+                      keyExtractor={(item) => item.id}
+                      style={{ maxHeight: 220 }}
+                      renderItem={({ item }) => {
+                        const isCurrent = contactStageId === item.id;
+                        return (
+                          <TouchableOpacity
+                            onPress={() => setContactStageId(item.id)}
+                            className={`py-2.5 px-3 rounded-xl flex-row items-center justify-between mb-1 ${isCurrent ? 'bg-sky-50' : ''}`}
+                          >
+                            <Text className="text-sm font-medium text-slate-800">{item.name}</Text>
+                            {isCurrent && <Check size={16} color="#0284c7" />}
+                          </TouchableOpacity>
+                        );
+                      }}
+                      ListEmptyComponent={
+                        <Text className="text-xs text-slate-400 py-2">No stages in this pipeline</Text>
+                      }
+                    />
+                  </View>
+                )}
+
+                <View className="px-4 pt-3">
+                  <TouchableOpacity
+                    onPress={() => void handleSavePipeline()}
+                    disabled={isSavingPipeline || !contactPipelineId}
+                    className={`px-4 py-2.5 rounded-xl items-center ${!isSavingPipeline && contactPipelineId ? 'bg-sky-700' : 'bg-slate-300'}`}
+                  >
+                    <Text className="text-xs font-semibold text-white">{isSavingPipeline ? 'Saving...' : 'Save'}</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
             )}
           </View>

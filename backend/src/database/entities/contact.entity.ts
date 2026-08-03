@@ -162,6 +162,13 @@ export class Contact extends WorkspaceEntity {
   })
   emailOptIn: boolean;
 
+  @Column({
+    type: 'boolean',
+    default: false,
+    comment: 'Whether this lead has been "preluat" (picked up/claimed) — toggled from the UI, optionally synced to a mapped Google Sheets column',
+  })
+  preluat: boolean;
+
   // Relationships
   @Column('uuid', { nullable: true })
   ownerId?: string;
