@@ -596,6 +596,32 @@ export default function ChatScreen() {
     }
   ), []);
 
+  // These must run unconditionally on every render (Rules of Hooks) — the
+  // `if (!conv) return` guard below means anything declared after it only
+  // runs once `conv` resolves, which crashes React the moment it does
+  // (hook count changes between renders). Both use the raw selectedConv
+  // check directly since `conv` itself isn't computed until after this.
+  const activeContactId = selectedConv?.waId === route.params.waId ? selectedConv?.contactId : undefined;
+
+  useEffect(() => {
+    api.get('/pipelines')
+      .then((res: any) => {
+        const list: PipelineOption[] = Array.isArray(res.data) ? res.data : [];
+        setPipelines(list.map((p) => ({ ...p, stages: (p.stages || []).slice().sort((a, b) => a.displayOrder - b.displayOrder) })));
+      })
+      .catch(() => setPipelines([]));
+  }, []);
+
+  useEffect(() => {
+    if (!activeContactId) {
+      setContactPreluat(false);
+      return;
+    }
+    api.get(`/contacts/${activeContactId}`)
+      .then((res) => setContactPreluat(!!res.data?.preluat))
+      .catch(() => setContactPreluat(false));
+  }, [activeContactId]);
+
   const conv = selectedConv && selectedConv.waId === route.params.waId
     ? selectedConv
     : null;
@@ -726,15 +752,6 @@ export default function ChatScreen() {
     showToast(user ? `Assigned to ${user.firstName || user.email}` : 'Conversation unassigned', 'success');
   };
 
-  useEffect(() => {
-    api.get('/pipelines')
-      .then((res: any) => {
-        const list: PipelineOption[] = Array.isArray(res.data) ? res.data : [];
-        setPipelines(list.map((p) => ({ ...p, stages: (p.stages || []).slice().sort((a, b) => a.displayOrder - b.displayOrder) })));
-      })
-      .catch(() => setPipelines([]));
-  }, []);
-
   const openPipelineModal = async () => {
     if (!conv.contactId) {
       showToast('No linked contact for this conversation yet', 'error');
@@ -775,16 +792,6 @@ export default function ChatScreen() {
       setIsSavingPipeline(false);
     }
   };
-
-  useEffect(() => {
-    if (!conv.contactId) {
-      setContactPreluat(false);
-      return;
-    }
-    api.get(`/contacts/${conv.contactId}`)
-      .then((res) => setContactPreluat(!!res.data?.preluat))
-      .catch(() => setContactPreluat(false));
-  }, [conv.contactId]);
 
   const handleTogglePreluat = async () => {
     if (!conv.contactId) return;
@@ -852,7 +859,7 @@ export default function ChatScreen() {
 
   return (
     <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       className="flex-1 bg-slate-50"
       keyboardVerticalOffset={0}
     >

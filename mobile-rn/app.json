@@ -1,0 +1,57 @@
+{
+  "expo": {
+    "name": "EasyTeam CRM",
+    "slug": "easyteam-crm",
+    "version": "1.2.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "scheme": "easyteamcrm",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#f7faf8"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.primafisoft.etcrm",
+      "buildNumber": "202607132131",
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "EasyTeam CRM uses your microphone to record and send audio messages and to make voice calls in WhatsApp, Messenger and Instagram.",
+        "NSCameraUsageDescription": "EasyTeam CRM uses your camera to attach photos and videos to WhatsApp, Messenger and Instagram conversations.",
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": false
+        },
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#f7faf8"
+      },
+      "package": "com.primafisoft.etcrm",
+      "versionCode": 35,
+      "permissions": [
+        "RECORD_AUDIO"
+      ],
+      "edgeToEdgeEnabled": true,
+      "googleServicesFile": "./google-services.json"
+    },
+    "plugins": [
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#0c4a6e"
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "a57fc9c5-16f0-421f-96aa-3abb49ccd734"
+      }
+    }
+  }
+}

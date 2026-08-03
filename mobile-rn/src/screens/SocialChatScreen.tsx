@@ -496,7 +496,7 @@ export default function SocialChatScreen() {
 
   return (
     <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       className="flex-1 bg-slate-50"
     >
       <View className="px-4 pb-4 bg-white border-b border-slate-200" style={{ paddingTop: insets.top + 10 }}>
