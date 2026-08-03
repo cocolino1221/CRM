@@ -165,6 +165,30 @@ export default function LeadFormScreen() {
           />
         </View>
 
+        {/* Pipeline */}
+        {pipelines.length > 0 && (
+          <View className="mb-4">
+            <Text className="text-xs font-semibold text-slate-500 mb-2">Pipeline</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+              <View className="flex-row gap-2">
+                {pipelines.map(p => (
+                  <TouchableOpacity
+                    key={p.id}
+                    onPress={() => handleSelectPipeline(p)}
+                    className={`px-3 py-2 rounded-xl border ${
+                      formPipeline?.id === p.id ? 'bg-sky-900 border-sky-900' : 'bg-white border-slate-200'
+                    }`}
+                  >
+                    <Text className={`text-xs font-semibold ${formPipeline?.id === p.id ? 'text-white' : 'text-slate-600'}`}>
+                      {p.name}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </ScrollView>
+          </View>
+        )}
+
         {/* Pipeline Stage */}
         {stageNames.length > 0 && (
           <View className="mb-4">
