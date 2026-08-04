@@ -101,6 +101,11 @@ interface MetaActivityMetadata {
   senderAccountName?: string;
   senderProfileId?: string;
   senderProfileName?: string;
+  /** The Meta-fetched sender's real name (fetchSenderProfile) — distinct
+   * from senderProfileName, which is our own outbound "message profile"
+   * identity. Used to display a real name in the conversation list before
+   * the contact has been added to the CRM (no linked Contact yet). */
+  contactProfileName?: string;
   senderAvatarUrl?: string;
   attachmentUrl?: string;
   attachmentMimeType?: string;
@@ -377,7 +382,7 @@ export class MetaMessagingService {
           messageProfileId: messageProfile?.id || null,
           messageProfileName: messageProfile?.name || null,
           contactId: activity.contact?.id || null,
-          contactName: this.getContactDisplayName(activity.contact, activityChannel, externalUserId),
+          contactName: this.getContactDisplayName(activity.contact, activityChannel, externalUserId, metadata.contactProfileName),
           contactSource: activity.contact?.source || null,
           setterId: activity.contact?.setterId || null,
           setterName: getUserName(activity.contact?.setter) || null,
@@ -395,6 +400,14 @@ export class MetaMessagingService {
       // Keep the most recent known avatar for the sender.
       if (metadata.senderAvatarUrl) {
         conversation.avatarUrl = metadata.senderAvatarUrl;
+      }
+      // Same for the sender's real name — older stored activities may
+      // predate this fix or hit a failed profile fetch; a later message
+      // with a resolved name should still upgrade the display name away
+      // from the raw "Messenger {id}" fallback (but never override an
+      // actual linked CRM contact's name).
+      if (metadata.contactProfileName && !conversation.contactId) {
+        conversation.contactName = metadata.contactProfileName;
       }
       const messageType = String(metadata.messageType || 'text');
       const message = {
@@ -1180,6 +1193,7 @@ export class MetaMessagingService {
         senderAccountId: provider === 'instagram' ? String(integration.config?.igUserId || recipientId) : undefined,
         senderAccountName: provider === 'instagram' ? String(integration.config?.igUsername || integration.name || '') : undefined,
         senderAvatarUrl: senderProfile.avatarUrl,
+        contactProfileName: senderProfile.name,
         ...this.getMessageProfileMetadata(integration),
         attachmentUrl,
         attachmentMimeType: this.guessMimeTypeFromUrl(attachmentUrl, attachmentType),
@@ -1514,7 +1528,7 @@ export class MetaMessagingService {
         messageProfileId: metadata.senderProfileId || null,
         messageProfileName: metadata.senderProfileName || null,
         contactId: contact?.id || null,
-        contactName: this.getContactDisplayName(contact, channel, externalUserId),
+        contactName: this.getContactDisplayName(contact, channel, externalUserId, metadata.contactProfileName),
         contactSource: contact?.source || null,
       },
       message: {
@@ -2141,9 +2155,12 @@ export class MetaMessagingService {
     contact: Contact | undefined,
     channel: MetaChannel,
     externalUserId: string,
+    fetchedProfileName?: string,
   ): string {
     const fullName = `${contact?.firstName || ''} ${contact?.lastName || ''}`.trim();
     if (fullName) return fullName;
+    const profileName = String(fetchedProfileName || '').trim();
+    if (profileName) return profileName;
     return channel === 'messenger'
       ? `Messenger ${externalUserId}`
       : `Instagram ${externalUserId}`;
