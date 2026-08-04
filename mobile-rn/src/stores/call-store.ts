@@ -74,6 +74,8 @@ let recording: Audio.Recording | null = null;
 let manualRecordingUrl: string | undefined;
 let recordingTimer: ReturnType<typeof setInterval> | null = null;
 let recordingDurationValue = 0;
+let disclosureSent = false;
+let recordingBusy = false;
 
 function cleanup() {
   if (durationTimer) clearInterval(durationTimer);
@@ -91,7 +93,11 @@ function cleanup() {
 async function startRecording(): Promise<void> {
   try {
     await Audio.requestPermissionsAsync();
-    await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
+    // Deliberately NOT calling Audio.setAudioModeAsync here: react-native-webrtc
+    // already owns the OS audio session for the live call, and re-declaring the
+    // session category out from under it drops the in-progress call (confirmed —
+    // this is what caused calls to end when Record was pressed). expo-av's
+    // Recording can attach to the session WebRTC already opened without this.
     const rec = new Audio.Recording();
     await rec.prepareToRecordAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
     await rec.startAsync();
@@ -186,6 +192,8 @@ export const useCallStore = create<CallState>((set, get) => ({
     finalized = false;
     hasConnected = false;
     manualRecordingUrl = undefined;
+    disclosureSent = false;
+    recordingBusy = false;
     set({
       isOpen: true, waId, contactName, phase: 'checking_permission',
       error: '', duration: 0, muted: false, isRecording: false, recordingDuration: 0, callId: null,
@@ -327,17 +335,25 @@ export const useCallStore = create<CallState>((set, get) => ({
   },
 
   toggleRecording: async () => {
-    if (get().phase !== 'connected') return;
-    if (get().isRecording) {
-      const url = await stopRecordingAndUpload();
-      if (url) manualRecordingUrl = url;
-      return;
+    if (get().phase !== 'connected' || recordingBusy) return;
+    recordingBusy = true;
+    try {
+      if (get().isRecording) {
+        const url = await stopRecordingAndUpload();
+        if (url) manualRecordingUrl = url;
+        return;
+      }
+      if (!disclosureSent) {
+        disclosureSent = true;
+        const waId = get().waId;
+        if (waId) {
+          api.post('/integrations/whatsapp/send', { to: waId, message: RECORDING_DISCLOSURE_TEXT }).catch(() => {});
+        }
+      }
+      await startRecording();
+    } finally {
+      recordingBusy = false;
     }
-    const waId = get().waId;
-    if (waId) {
-      api.post('/integrations/whatsapp/send', { to: waId, message: RECORDING_DISCLOSURE_TEXT }).catch(() => {});
-    }
-    void startRecording();
   },
 
   hangUp: async () => {
