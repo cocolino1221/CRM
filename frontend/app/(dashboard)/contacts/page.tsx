@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Search, Filter, Plus, Mail, Phone, MoreVertical, Star, Loader2, X, Edit, Trash2, AlertCircle, User, Briefcase, Building2, Grid3x3, List, Calendar, Tag, FileText, ExternalLink, Clock, MessageSquare, Eye, Send, Upload } from 'lucide-react';
+import { Search, Filter, Plus, Mail, Phone, MoreVertical, Star, Loader2, X, Edit, Trash2, AlertCircle, User, Briefcase, Building2, Grid3x3, List, Calendar, Tag, FileText, ExternalLink, Clock, MessageSquare, Eye, Send, Upload, Video } from 'lucide-react';
 import { getInitials } from '@/lib/utils';
 import api from '@/lib/api';
 
@@ -50,6 +50,7 @@ interface Contact {
   notes?: string;
   leadScore?: number;
   owner?: { firstName: string; lastName: string };
+  meetingRecordings?: Array<{ id: string; url: string; label?: string; addedAt: string }>;
 }
 
 interface ContactsResponse {
@@ -105,6 +106,13 @@ export default function ContactsPage() {
   const [isLoadingDetail, setIsLoadingDetail] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [modalError, setModalError] = useState('');
+
+  // Recordings (WhatsApp call recordings + manually-added Zoom/Meet links)
+  const [detailCallRecordings, setDetailCallRecordings] = useState<any[]>([]);
+  const [showAddRecording, setShowAddRecording] = useState(false);
+  const [newRecordingUrl, setNewRecordingUrl] = useState('');
+  const [newRecordingLabel, setNewRecordingLabel] = useState('');
+  const [recordingBusy, setRecordingBusy] = useState(false);
 
   // WhatsApp quick send from detail modal
   const [showWaDropdown, setShowWaDropdown] = useState(false);
@@ -329,15 +337,56 @@ export default function ContactsPage() {
     setWaHeaderMediaType('');
     setWaHeaderMediaId('');
     setWaHeaderMediaUrl('');
+    setDetailCallRecordings([]);
+    setShowAddRecording(false);
+    setNewRecordingUrl('');
+    setNewRecordingLabel('');
     try {
-      const response = await api.get(`/contacts/${contact.id}`, {
-        params: { relations: 'company,owner' },
-      });
-      setDetailContact(response.data);
+      const [contactRes, activitiesRes] = await Promise.all([
+        api.get(`/contacts/${contact.id}`, { params: { relations: 'company,owner' } }),
+        api.get(`/contacts/${contact.id}/activities`).catch(() => ({ data: [] })),
+      ]);
+      setDetailContact(contactRes.data);
+      const activities = Array.isArray(activitiesRes.data) ? activitiesRes.data : [];
+      setDetailCallRecordings(
+        activities.filter((a: any) => a?.metadata?.messageType === 'call' && a?.metadata?.recordingUrl),
+      );
     } catch (err) {
       console.error('Failed to fetch contact details:', err);
     } finally {
       setIsLoadingDetail(false);
+    }
+  };
+
+  const addMeetingRecording = async () => {
+    if (!detailContact || !newRecordingUrl.trim()) return;
+    setRecordingBusy(true);
+    try {
+      const res = await api.post(`/contacts/${detailContact.id}/recordings`, {
+        url: newRecordingUrl.trim(),
+        label: newRecordingLabel.trim() || undefined,
+      });
+      setDetailContact(res.data);
+      setNewRecordingUrl('');
+      setNewRecordingLabel('');
+      setShowAddRecording(false);
+    } catch (err) {
+      console.error('Failed to add recording:', err);
+    } finally {
+      setRecordingBusy(false);
+    }
+  };
+
+  const removeMeetingRecording = async (recordingId: string) => {
+    if (!detailContact) return;
+    setRecordingBusy(true);
+    try {
+      const res = await api.delete(`/contacts/${detailContact.id}/recordings/${recordingId}`);
+      setDetailContact(res.data);
+    } catch (err) {
+      console.error('Failed to remove recording:', err);
+    } finally {
+      setRecordingBusy(false);
     }
   };
 
@@ -1001,6 +1050,94 @@ export default function ContactsPage() {
                     </div>
                   </div>
                 )}
+
+                {/* Recordings — WhatsApp call recordings + manually-added Zoom/Meet links */}
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider flex items-center gap-2">
+                      <Video className="h-4 w-4" /> Recordings
+                    </h3>
+                    <button
+                      onClick={() => setShowAddRecording((v) => !v)}
+                      className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-600 hover:text-indigo-700"
+                    >
+                      <Plus className="h-3.5 w-3.5" /> Add Zoom / Meet link
+                    </button>
+                  </div>
+
+                  {showAddRecording && (
+                    <div className="mb-3 flex flex-col gap-2 rounded-xl border border-gray-200 bg-gray-50 p-3">
+                      <input
+                        type="url"
+                        value={newRecordingUrl}
+                        onChange={(e) => setNewRecordingUrl(e.target.value)}
+                        placeholder="https://zoom.us/rec/... or Google Meet link"
+                        className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-indigo-400"
+                      />
+                      <input
+                        type="text"
+                        value={newRecordingLabel}
+                        onChange={(e) => setNewRecordingLabel(e.target.value)}
+                        placeholder="Label (optional) — e.g. Discovery call 12 Aug"
+                        className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-indigo-400"
+                      />
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={addMeetingRecording}
+                          disabled={!newRecordingUrl.trim() || recordingBusy}
+                          className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
+                        >
+                          Save link
+                        </button>
+                        <button
+                          onClick={() => { setShowAddRecording(false); setNewRecordingUrl(''); setNewRecordingLabel(''); }}
+                          className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-100"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {detailCallRecordings.length === 0 && !(detailContact.meetingRecordings || []).length ? (
+                    <p className="text-sm text-gray-400">No call recordings or meeting links yet.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {detailCallRecordings.map((activity: any) => (
+                        <div key={activity.id} className="rounded-xl border border-gray-100 bg-gray-50 p-3">
+                          <div className="flex items-center justify-between gap-2 mb-1.5">
+                            <span className="text-xs font-semibold text-gray-600">
+                              WhatsApp call · {new Date(activity.occurredAt).toLocaleString('ro-RO')}
+                              {activity.metadata?.callDurationSeconds ? ` · ${Math.floor(activity.metadata.callDurationSeconds / 60)}:${String(activity.metadata.callDurationSeconds % 60).padStart(2, '0')}` : ''}
+                            </span>
+                          </div>
+                          <audio controls src={activity.metadata.recordingUrl} className="w-full h-9" />
+                        </div>
+                      ))}
+                      {(detailContact.meetingRecordings || []).map((rec) => (
+                        <div key={rec.id} className="flex items-center justify-between gap-2 rounded-xl border border-gray-100 bg-gray-50 p-3">
+                          <a
+                            href={rec.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex items-center gap-2 min-w-0 text-sm font-medium text-indigo-600 hover:underline"
+                          >
+                            <ExternalLink className="h-3.5 w-3.5 flex-shrink-0" />
+                            <span className="truncate">{rec.label || rec.url}</span>
+                          </a>
+                          <button
+                            onClick={() => removeMeetingRecording(rec.id)}
+                            disabled={recordingBusy}
+                            className="flex-shrink-0 text-gray-400 hover:text-rose-600 disabled:opacity-50"
+                            title="Remove"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
 
                 {/* Typeform Data */}
                 {(() => {
