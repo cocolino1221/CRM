@@ -33,7 +33,7 @@ export default function LeadFormScreen() {
   const route = useRoute<FormRoute>();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
-  const { createContact, updateContact, selectedPipeline, pipelines, users, fetchUsers } = useLeadsStore();
+  const { createContact, updateContact, selectedPipeline, pipelines, fetchPipelines, users, fetchUsers } = useLeadsStore();
   const showToast = useToastStore(s => s.show);
   const contact = route.params?.contact;
   const isEdit = !!contact;
@@ -62,6 +62,28 @@ export default function LeadFormScreen() {
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => { fetchUsers(); }, []);
+
+  // This screen is reachable without ever visiting the leads list (deep
+  // links, "Edit" straight from search, etc.) — don't rely on some other
+  // screen having already populated the store, or the whole Pipeline
+  // section silently disappears with zero indication why.
+  useEffect(() => {
+    if (pipelines.length === 0) void fetchPipelines();
+  }, []);
+
+  // Once pipelines arrive (possibly after this screen already mounted with
+  // an empty list), pick a sensible default if nothing's selected yet.
+  useEffect(() => {
+    if (formPipeline || pipelines.length === 0) return;
+    const fallback = isEdit
+      ? pipelines.find(p => p.id === (contact as any)?.pipelineId) || pipelines.find(p => p.isDefault) || pipelines[0]
+      : pipelines.find(p => p.isDefault) || pipelines[0];
+    setFormPipeline(fallback);
+    if (!contactStage) {
+      const stageNames = (fallback?.stages || []).map(s => asStageName(s)).filter(Boolean);
+      setStage(stageNames[0] || '');
+    }
+  }, [pipelines]);
 
   const stageNames = (formPipeline?.stages || [])
     .map(stageValue => asStageName(stageValue))
