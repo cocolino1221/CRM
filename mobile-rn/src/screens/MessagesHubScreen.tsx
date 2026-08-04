@@ -70,12 +70,12 @@ export default function MessagesHubScreen() {
     }
   }, [loadData]);
 
-  const messengerAccount = useMemo(
-    () => metaAccounts.find(account => account.provider === 'facebook') || null,
+  const messengerAccounts = useMemo(
+    () => metaAccounts.filter(account => account.provider === 'facebook'),
     [metaAccounts],
   );
-  const instagramAccount = useMemo(
-    () => metaAccounts.find(account => account.provider === 'instagram') || null,
+  const instagramAccounts = useMemo(
+    () => metaAccounts.filter(account => account.provider === 'instagram'),
     [metaAccounts],
   );
 
@@ -106,9 +106,11 @@ export default function MessagesHubScreen() {
       items.push({
         key: 'messenger',
         title: 'Messenger',
-        subtitle: messengerAccount?.account?.pageName
-          ? `${messengerAccount.account.pageName}`
-          : 'Facebook Page connected',
+        subtitle: messengerAccounts.length > 1
+          ? pluralize(messengerAccounts.length, 'connected page', 'connected pages')
+          : messengerAccounts[0]?.account?.pageName
+            ? `${messengerAccounts[0].account.pageName}`
+            : 'Facebook Page connected',
         accent: '#2563eb',
         onPress: () => navigation.navigate('SocialInbox', { initialChannel: 'messenger' }),
         icon: MessageCircle,
@@ -119,9 +121,11 @@ export default function MessagesHubScreen() {
       items.push({
         key: 'instagram',
         title: 'Instagram',
-        subtitle: instagramAccount?.account?.igUsername
-          ? `@${instagramAccount.account.igUsername}`
-          : 'Instagram account connected',
+        subtitle: instagramAccounts.length > 1
+          ? pluralize(instagramAccounts.length, 'connected account', 'connected accounts')
+          : instagramAccounts[0]?.account?.igUsername
+            ? `@${instagramAccounts[0].account.igUsername}`
+            : 'Instagram account connected',
         accent: '#c026d3',
         onPress: () => navigation.navigate('SocialInbox', { initialChannel: 'instagram' }),
         icon: Instagram,
@@ -133,8 +137,8 @@ export default function MessagesHubScreen() {
     availability.instagram,
     availability.messenger,
     availability.whatsapp,
-    instagramAccount?.account?.igUsername,
-    messengerAccount?.account?.pageName,
+    instagramAccounts,
+    messengerAccounts,
     navigation,
     user,
     whatsAppAccountsCount,
