@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Put, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { GoogleSheetsService, SheetsSyncConfig } from './google-sheets.service';
@@ -27,22 +27,28 @@ export class GoogleSheetsController {
   }
 
   @Get('config')
-  @ApiOperation({ summary: 'Get current Sheets sync configuration' })
+  @ApiOperation({ summary: 'Get all connected Sheets sync configurations' })
   async getConfig(@Req() req: any) {
     return this.sheetsService.getSyncConfig(req.user.workspaceId);
   }
 
   @Put('config')
-  @ApiOperation({ summary: 'Save Sheets sync configuration (mapping, pipeline, direction)' })
-  async saveConfig(@Req() req: any, @Body() dto: Partial<SheetsSyncConfig>) {
+  @ApiOperation({ summary: 'Create or update one Sheets sync configuration (pass id to update, omit to add a new connected sheet)' })
+  async saveConfig(@Req() req: any, @Body() dto: Partial<SheetsSyncConfig> & { id?: string }) {
     return this.sheetsService.saveSyncConfig(req.user.workspaceId, dto);
+  }
+
+  @Delete('config/:id')
+  @ApiOperation({ summary: 'Disconnect one Sheets sync configuration' })
+  async deleteConfig(@Req() req: any, @Param('id') id: string) {
+    return this.sheetsService.deleteSyncConfig(req.user.workspaceId, id);
   }
 
   // Keep this path distinct from IntegrationsController's generic :id/sync route.
   @Post('sync-now')
-  @ApiOperation({ summary: 'Run the 2-way sync now' })
-  async syncNow(@Req() req: any) {
-    return this.sheetsService.syncNow(req.user.workspaceId);
+  @ApiOperation({ summary: 'Run the 2-way sync now (all connected sheets, or one via ?configId=)' })
+  async syncNow(@Req() req: any, @Query('configId') configId?: string) {
+    return this.sheetsService.syncNow(req.user.workspaceId, configId);
   }
 
   // ── Drive document backup ──

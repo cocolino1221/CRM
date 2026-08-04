@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, MoreThan } from 'typeorm';
@@ -15,6 +16,7 @@ export const MAPPABLE_FIELDS = ['firstName', 'lastName', 'email', 'phone', 'comp
 export type MappableField = (typeof MAPPABLE_FIELDS)[number];
 
 export interface SheetsSyncConfig {
+  id: string;
   enabled: boolean;
   spreadsheetId: string;
   spreadsheetName?: string;
@@ -65,9 +67,36 @@ export class GoogleSheetsService {
     return integration;
   }
 
-  private getConfig(integration: Integration): SheetsSyncConfig | null {
-    const cfg = (integration.config as any)?.sheetsSync;
-    return cfg?.spreadsheetId ? cfg : null;
+  // Multiple sheets can be connected per workspace (e.g. one per lead
+  // source). Stored as integration.config.sheetsSyncs[]; a workspace that
+  // configured sync before multi-sheet support shipped still has the old
+  // singular integration.config.sheetsSync, migrated in-memory here and
+  // persisted back as an array on the next write.
+  private getConfigs(integration: Integration): SheetsSyncConfig[] {
+    const cfg = integration.config as any;
+    if (Array.isArray(cfg?.sheetsSyncs)) {
+      return cfg.sheetsSyncs.filter((c: any) => c?.spreadsheetId);
+    }
+    if (cfg?.sheetsSync?.spreadsheetId) {
+      return [{ id: cfg.sheetsSync.id || 'legacy', ...cfg.sheetsSync }];
+    }
+    return [];
+  }
+
+  private async saveConfigs(integration: Integration, configs: SheetsSyncConfig[]): Promise<void> {
+    const cfg = { ...(integration.config as any) };
+    delete cfg.sheetsSync;
+    cfg.sheetsSyncs = configs;
+    integration.config = cfg;
+    await this.integrationRepository.save(integration);
+  }
+
+  /** Write one config entry (by id) back into the array, e.g. after a sync run updates its lastResult. */
+  private async upsertConfig(integration: Integration, config: SheetsSyncConfig): Promise<void> {
+    const configs = this.getConfigs(integration);
+    const idx = configs.findIndex((c) => c.id === config.id);
+    if (idx !== -1) configs[idx] = config; else configs.push(config);
+    await this.saveConfigs(integration, configs);
   }
 
   // ── configuration surface (backs the mapping UI) ──
@@ -108,10 +137,10 @@ export class GoogleSheetsService {
 
   async getSyncConfig(workspaceId: string) {
     const integration = await this.getGoogleIntegration(workspaceId);
-    return { config: this.getConfig(integration) };
+    return { configs: this.getConfigs(integration) };
   }
 
-  async saveSyncConfig(workspaceId: string, dto: Partial<SheetsSyncConfig>) {
+  async saveSyncConfig(workspaceId: string, dto: Partial<SheetsSyncConfig> & { id?: string }) {
     const integration = await this.getGoogleIntegration(workspaceId);
     if (!dto.spreadsheetId || !dto.sheetName) {
       throw new BadRequestException('spreadsheetId and sheetName are required');
@@ -119,7 +148,10 @@ export class GoogleSheetsService {
     if (!dto.mapping || (!dto.mapping.email && !dto.mapping.phone)) {
       throw new BadRequestException('Column mapping must include "email" or "phone" — one of them is the matching key');
     }
+    const configs = this.getConfigs(integration);
+    const existingIdx = dto.id ? configs.findIndex((c) => c.id === dto.id) : -1;
     const config: SheetsSyncConfig = {
+      id: existingIdx !== -1 ? configs[existingIdx].id : randomUUID(),
       enabled: dto.enabled !== false,
       spreadsheetId: dto.spreadsheetId,
       spreadsheetName: dto.spreadsheetName,
@@ -129,11 +161,19 @@ export class GoogleSheetsService {
       pipelineId: dto.pipelineId,
       pipelineStageId: dto.pipelineStageId,
       direction: dto.direction || 'two-way',
-      lastSyncAt: this.getConfig(integration)?.lastSyncAt,
+      lastSyncAt: existingIdx !== -1 ? configs[existingIdx].lastSyncAt : undefined,
+      lastResult: existingIdx !== -1 ? configs[existingIdx].lastResult : undefined,
     };
-    integration.config = { ...(integration.config as any), sheetsSync: config };
-    await this.integrationRepository.save(integration);
-    return { config };
+    if (existingIdx !== -1) configs[existingIdx] = config; else configs.push(config);
+    await this.saveConfigs(integration, configs);
+    return { config, configs };
+  }
+
+  async deleteSyncConfig(workspaceId: string, id: string) {
+    const integration = await this.getGoogleIntegration(workspaceId);
+    const configs = this.getConfigs(integration).filter((c) => c.id !== id);
+    await this.saveConfigs(integration, configs);
+    return { configs };
   }
 
   /**
@@ -146,8 +186,19 @@ export class GoogleSheetsService {
   async pushContactField(workspaceId: string, contactId: string, field: MappableField, value: string): Promise<void> {
     const integration = await this.getGoogleIntegration(workspaceId).catch(() => null);
     if (!integration) return;
-    const config = this.getConfig(integration);
-    if (!config?.enabled) return;
+    const configs = this.getConfigs(integration).filter((c) => c.enabled && c.mapping[field]);
+    for (const config of configs) {
+      await this.pushFieldToConfig(integration, config, contactId, field, value);
+    }
+  }
+
+  private async pushFieldToConfig(
+    integration: Integration,
+    config: SheetsSyncConfig,
+    contactId: string,
+    field: MappableField,
+    value: string,
+  ): Promise<void> {
     const header = config.mapping[field];
     if (!header) return;
 
@@ -180,11 +231,17 @@ export class GoogleSheetsService {
 
   // ── sync engine ──
 
-  async syncNow(workspaceId: string) {
+  async syncNow(workspaceId: string, configId?: string) {
     const integration = await this.getGoogleIntegration(workspaceId);
-    const config = this.getConfig(integration);
-    if (!config) throw new BadRequestException('Sheets sync is not configured yet');
-    return this.runSync(integration, config);
+    const configs = this.getConfigs(integration);
+    if (!configs.length) throw new BadRequestException('Sheets sync is not configured yet');
+    const targets = configId ? configs.filter((c) => c.id === configId) : configs;
+    if (configId && !targets.length) throw new NotFoundException('Sheet sync config not found');
+    const results: any[] = [];
+    for (const config of targets) {
+      results.push({ id: config.id, ...(await this.runSync(integration, config)) });
+    }
+    return configId ? results[0] : { results };
   }
 
   /** Auto sync every 10 minutes for all enabled workspaces. */
@@ -193,16 +250,17 @@ export class GoogleSheetsService {
     const integrations = await this.integrationRepository
       .createQueryBuilder('integration')
       .where('integration.type = :type', { type: IntegrationType.GOOGLE })
-      .andWhere("integration.config -> 'sheetsSync' ->> 'enabled' = 'true'")
+      .andWhere("(integration.config -> 'sheetsSyncs' IS NOT NULL OR integration.config -> 'sheetsSync' IS NOT NULL)")
       .getMany();
 
     for (const integration of integrations) {
-      const config = this.getConfig(integration);
-      if (!config?.enabled) continue;
-      try {
-        await this.runSync(integration, config);
-      } catch (error) {
-        this.logger.warn(`Scheduled Sheets sync failed ws=${integration.workspaceId}: ${error.message}`);
+      const configs = this.getConfigs(integration).filter((c) => c.enabled);
+      for (const config of configs) {
+        try {
+          await this.runSync(integration, config);
+        } catch (error) {
+          this.logger.warn(`Scheduled Sheets sync failed ws=${integration.workspaceId} config=${config.id}: ${error.message}`);
+        }
       }
     }
   }
@@ -442,11 +500,10 @@ export class GoogleSheetsService {
 
       config.lastSyncAt = new Date().toISOString();
       config.lastResult = result;
-      integration.config = { ...(integration.config as any), sheetsSync: config };
-      await this.integrationRepository.save(integration);
+      await this.upsertConfig(integration, config);
 
       this.logger.log(
-        `Sheets sync ws=${integration.workspaceId}: fromSheet=${result.fromSheet} toSheet=${result.toSheet} skipped=${result.skipped}`,
+        `Sheets sync ws=${integration.workspaceId} config=${config.id}: fromSheet=${result.fromSheet} toSheet=${result.toSheet} skipped=${result.skipped}`,
       );
       return result;
     } catch (error) {
@@ -457,12 +514,8 @@ export class GoogleSheetsService {
           ? 'Google refused access to the spreadsheet. Reconnect Google and accept the Sheets permission, then try again.'
           : error.message;
 
-      const config2 = this.getConfig(integration);
-      if (config2) {
-        config2.lastResult = { fromSheet: 0, toSheet: 0, skipped: 0, error: friendly };
-        integration.config = { ...(integration.config as any), sheetsSync: config2 };
-        await this.integrationRepository.save(integration).catch(() => undefined);
-      }
+      config.lastResult = { fromSheet: 0, toSheet: 0, skipped: 0, error: friendly };
+      await this.upsertConfig(integration, config).catch(() => undefined);
       if (status === 403 || status === 401) {
         throw new BadRequestException(friendly);
       }
