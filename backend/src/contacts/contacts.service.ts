@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { Injectable, NotFoundException, BadRequestException, ConflictException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, SelectQueryBuilder, FindOptionsWhere, ILike, In } from 'typeorm';
@@ -545,6 +546,30 @@ export class ContactsService {
     this.googleSheetsService
       .pushContactField(workspaceId, id, 'preluat', value ? 'TRUE' : 'FALSE')
       .catch((err) => this.logger.warn(`Failed to push preluat to sheet for contact ${id}: ${err.message}`));
+    return contact;
+  }
+
+  /** Adds a manually-entered meeting recording link (Zoom, Google Meet, etc.) to a contact. */
+  async addMeetingRecording(
+    workspaceId: string,
+    id: string,
+    url: string,
+    label: string | undefined,
+    userId: string,
+  ): Promise<Contact> {
+    const contact = await this.findOne(workspaceId, id);
+    const recordings = [...(contact.meetingRecordings || [])];
+    recordings.push({ id: randomUUID(), url, label, addedAt: new Date().toISOString(), addedByUserId: userId });
+    contact.meetingRecordings = recordings;
+    await this.contactRepository.save(contact);
+    return contact;
+  }
+
+  /** Removes one meeting recording link (manual, or a previously-attached WhatsApp call recording) from a contact. */
+  async removeMeetingRecording(workspaceId: string, id: string, recordingId: string): Promise<Contact> {
+    const contact = await this.findOne(workspaceId, id);
+    contact.meetingRecordings = (contact.meetingRecordings || []).filter((r) => r.id !== recordingId);
+    await this.contactRepository.save(contact);
     return contact;
   }
 

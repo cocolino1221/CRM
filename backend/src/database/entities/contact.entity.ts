@@ -169,6 +169,13 @@ export class Contact extends WorkspaceEntity {
   })
   preluat: boolean;
 
+  @Column({
+    type: 'jsonb',
+    nullable: true,
+    comment: 'Manually-added meeting recording links (Zoom, Google Meet, etc.) — [{id, url, label, addedAt, addedByUserId}]',
+  })
+  meetingRecordings?: Array<{ id: string; url: string; label?: string; addedAt: string; addedByUserId?: string }>;
+
   // Relationships
   @Column('uuid', { nullable: true })
   ownerId?: string;

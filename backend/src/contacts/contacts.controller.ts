@@ -163,6 +163,41 @@ export class ContactsController {
     return this.contactsService.setPreluat(workspaceId, id, !!value);
   }
 
+  @Post(':id/recordings')
+  @ApiOperation({ summary: 'Add a manual meeting recording link (Zoom, Google Meet, etc.) to a contact' })
+  @ApiParam({ name: 'id', description: 'Contact ID' })
+  @ApiBody({ schema: { type: 'object', properties: { url: { type: 'string' }, label: { type: 'string' } } } })
+  @ApiResponse({ status: 200, description: 'Recording link added' })
+  @ApiResponse({ status: 404, description: 'Contact not found' })
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter')
+  async addRecording(
+    @CurrentWorkspace('id') workspaceId: string,
+    @CurrentUser('id') userId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body('url') url: string,
+    @Body('label') label?: string,
+  ) {
+    if (!url || typeof url !== 'string' || !url.trim()) {
+      throw new BadRequestException('url is required');
+    }
+    return this.contactsService.addMeetingRecording(workspaceId, id, url.trim(), label?.trim(), userId);
+  }
+
+  @Delete(':id/recordings/:recordingId')
+  @ApiOperation({ summary: 'Remove a manual meeting recording link from a contact' })
+  @ApiParam({ name: 'id', description: 'Contact ID' })
+  @ApiParam({ name: 'recordingId', description: 'Recording entry ID' })
+  @ApiResponse({ status: 200, description: 'Recording link removed' })
+  @ApiResponse({ status: 404, description: 'Contact not found' })
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter')
+  async removeRecording(
+    @CurrentWorkspace('id') workspaceId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('recordingId') recordingId: string,
+  ) {
+    return this.contactsService.removeMeetingRecording(workspaceId, id, recordingId);
+  }
+
   @Post('bulk/delete')
   @ApiOperation({ summary: 'Bulk delete contacts' })
   @ApiBody({ schema: { type: 'object', properties: { ids: { type: 'array', items: { type: 'string', format: 'uuid' } } } } })
