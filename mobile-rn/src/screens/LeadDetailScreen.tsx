@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
 import {
   View, Text, TouchableOpacity, ScrollView, ActivityIndicator,
-  Linking, Modal, FlatList,
+  Linking, Modal, FlatList, TextInput,
 } from 'react-native';
+import { Audio } from 'expo-av';
 import {
   ArrowLeft, Edit, Phone, Mail, Building2, Briefcase, Tag, MessageCircle,
   ChevronLeft, ChevronRight, UserPlus, Check, X, Clock, FileText,
-  CheckCircle2, Circle,
+  CheckCircle2, Circle, Video, Plus, Trash2, ExternalLink, PhoneCall,
 } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
@@ -63,6 +64,19 @@ interface Activity {
   occurredAt: string;
 }
 
+interface CallRecordingActivity {
+  id: string;
+  occurredAt: string;
+  metadata?: { messageType?: string; recordingUrl?: string; callDurationSeconds?: number };
+}
+
+const formatCallDuration = (seconds?: number): string => {
+  if (!seconds) return '';
+  const m = Math.floor(seconds / 60).toString().padStart(2, '0');
+  const s = (seconds % 60).toString().padStart(2, '0');
+  return `${m}:${s}`;
+};
+
 export default function LeadDetailScreen() {
   const route = useRoute<DetailRoute>();
   const navigation = useNavigation<Nav>();
@@ -76,6 +90,11 @@ export default function LeadDetailScreen() {
   const [activities, setActivities] = useState<Activity[]>([]);
   const [showUserPicker, setShowUserPicker] = useState(false);
   const [isAssigning, setIsAssigning] = useState(false);
+  const [callRecordings, setCallRecordings] = useState<CallRecordingActivity[]>([]);
+  const [showAddRecording, setShowAddRecording] = useState(false);
+  const [newRecordingUrl, setNewRecordingUrl] = useState('');
+  const [newRecordingLabel, setNewRecordingLabel] = useState('');
+  const [recordingBusy, setRecordingBusy] = useState(false);
 
   // Next/back navigation
   const contactIds = route.params.contactIds || [];
@@ -144,11 +163,68 @@ export default function LeadDetailScreen() {
     }
   };
 
+  // Uses the full per-contact activity feed (not the limit:10 list above) so
+  // an older call recording never gets pushed out of the window by newer,
+  // unrelated activity.
+  const fetchCallRecordings = async () => {
+    try {
+      const res = await api.get(`/contacts/${route.params.contactId}/activities`);
+      const list: CallRecordingActivity[] = Array.isArray(res.data) ? res.data : [];
+      setCallRecordings(list.filter((a) => a?.metadata?.messageType === 'call' && a?.metadata?.recordingUrl));
+    } catch {
+      // non-critical
+    }
+  };
+
   useEffect(() => {
     fetchContact();
     fetchActivities();
+    fetchCallRecordings();
     fetchUsers();
   }, [route.params.contactId]);
+
+  const playRecording = async (url: string) => {
+    try {
+      const { sound } = await Audio.Sound.createAsync({ uri: url }, { shouldPlay: true });
+      sound.setOnPlaybackStatusUpdate((s) => { if ('didJustFinish' in s && s.didJustFinish) sound.unloadAsync(); });
+    } catch {
+      showToast('Could not play recording', 'error');
+    }
+  };
+
+  const addMeetingRecording = async () => {
+    if (!contact || !newRecordingUrl.trim()) return;
+    setRecordingBusy(true);
+    try {
+      const res = await api.post(`/contacts/${contact.id}/recordings`, {
+        url: newRecordingUrl.trim(),
+        label: newRecordingLabel.trim() || undefined,
+      });
+      const normalized = normalizeContact(res.data);
+      if (normalized) setContact(normalized);
+      setNewRecordingUrl('');
+      setNewRecordingLabel('');
+      setShowAddRecording(false);
+    } catch (err: any) {
+      showToast(err?.response?.data?.message || 'Failed to add recording', 'error');
+    } finally {
+      setRecordingBusy(false);
+    }
+  };
+
+  const removeMeetingRecording = async (recordingId: string) => {
+    if (!contact) return;
+    setRecordingBusy(true);
+    try {
+      const res = await api.delete(`/contacts/${contact.id}/recordings/${recordingId}`);
+      const normalized = normalizeContact(res.data);
+      if (normalized) setContact(normalized);
+    } catch (err: any) {
+      showToast(err?.response?.data?.message || 'Failed to remove recording', 'error');
+    } finally {
+      setRecordingBusy(false);
+    }
+  };
 
   const handleAssign = async (user: User) => {
     setShowUserPicker(false);
@@ -433,6 +509,83 @@ export default function LeadDetailScreen() {
             ))}
           </View>
         )}
+
+        {/* Recordings — WhatsApp call recordings + manually-added Zoom/Meet links */}
+        <View className="bg-white rounded-2xl p-4 mt-3 border border-slate-100">
+            <View className="flex-row items-center justify-between mb-3">
+              <Text className="text-[11px] font-semibold text-slate-400 uppercase tracking-widest">Recordings</Text>
+              <TouchableOpacity onPress={() => setShowAddRecording(v => !v)} className="flex-row items-center gap-1">
+                <Plus size={14} color="#4f46e5" />
+                <Text className="text-xs font-semibold text-indigo-600">Add link</Text>
+              </TouchableOpacity>
+            </View>
+
+            {showAddRecording && (
+              <View className="mb-3 gap-2 rounded-xl border border-slate-100 bg-slate-50 p-3">
+                <TextInput
+                  value={newRecordingUrl}
+                  onChangeText={setNewRecordingUrl}
+                  placeholder="https://zoom.us/rec/... or Meet link"
+                  autoCapitalize="none"
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800"
+                />
+                <TextInput
+                  value={newRecordingLabel}
+                  onChangeText={setNewRecordingLabel}
+                  placeholder="Label (optional)"
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800"
+                />
+                <View className="flex-row gap-2">
+                  <TouchableOpacity
+                    onPress={addMeetingRecording}
+                    disabled={!newRecordingUrl.trim() || recordingBusy}
+                    className="rounded-lg bg-indigo-600 px-3 py-1.5"
+                  >
+                    <Text className="text-xs font-semibold text-white">Save link</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => { setShowAddRecording(false); setNewRecordingUrl(''); setNewRecordingLabel(''); }}
+                    className="rounded-lg border border-slate-200 px-3 py-1.5"
+                  >
+                    <Text className="text-xs font-medium text-slate-600">Cancel</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
+
+            {callRecordings.map((activity, i) => (
+              <TouchableOpacity
+                key={activity.id}
+                onPress={() => activity.metadata?.recordingUrl && playRecording(activity.metadata.recordingUrl)}
+                className={`flex-row items-center gap-2 py-2 ${i > 0 || contact.meetingRecordings?.length ? 'border-t border-slate-50' : ''}`}
+              >
+                <PhoneCall size={14} color="#0284c7" />
+                <View className="flex-1">
+                  <Text className="text-sm text-slate-700">
+                    WhatsApp call · {new Date(activity.occurredAt).toLocaleDateString()}
+                    {activity.metadata?.callDurationSeconds ? ` · ${formatCallDuration(activity.metadata.callDurationSeconds)}` : ''}
+                  </Text>
+                </View>
+                <Text className="text-xs text-emerald-600">▶</Text>
+              </TouchableOpacity>
+            ))}
+
+            {(contact.meetingRecordings || []).map((rec, i) => (
+              <View key={rec.id} className={`flex-row items-center gap-2 py-2 ${i > 0 ? 'border-t border-slate-50' : ''}`}>
+                <TouchableOpacity onPress={() => Linking.openURL(rec.url)} className="flex-1 flex-row items-center gap-2">
+                  <ExternalLink size={14} color="#4f46e5" />
+                  <Text className="flex-1 text-sm text-indigo-600" numberOfLines={1}>{rec.label || rec.url}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => removeMeetingRecording(rec.id)} disabled={recordingBusy}>
+                  <Trash2 size={14} color="#94a3b8" />
+                </TouchableOpacity>
+              </View>
+            ))}
+
+            {callRecordings.length === 0 && !(contact.meetingRecordings || []).length && !showAddRecording && (
+              <Text className="text-sm text-slate-400">No call recordings or meeting links yet.</Text>
+            )}
+          </View>
 
         {/* Created at */}
         <View className="mt-3 px-2 pb-4">

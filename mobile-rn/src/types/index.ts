@@ -104,6 +104,7 @@ export interface Contact {
   createdAt: string;
   updatedAt?: string;
   preluat?: boolean;
+  meetingRecordings?: Array<{ id: string; url: string; label?: string; addedAt: string }>;
 }
 
 export interface PipelineStage {
