@@ -95,6 +95,9 @@ class CallManager {
   /** Set once the user manually stops recording mid-call, so finalizeCall
    * doesn't need to (and can't) stop an already-stopped recorder again. */
   private manualRecordingUrl: string | undefined = undefined;
+  /** Send the recording-disclosure message once per call, not once per
+   * start/stop/restart toggle. */
+  private disclosureSent = false;
 
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
@@ -131,6 +134,7 @@ class CallManager {
       this.setState({ isOpen: true });
       return 'busy';
     }
+    this.disclosureSent = false;
     this.setState({ ...initialState, isOpen: true, waId, contactName, phase: 'checking_permission' });
     void this.checkPermissionAndMaybeStart();
     return 'started';
@@ -308,9 +312,12 @@ class CallManager {
       if (url) this.manualRecordingUrl = url;
       return;
     }
-    const waId = this.state.waId;
-    if (waId) {
-      api.post('/integrations/whatsapp/send', { to: waId, message: RECORDING_DISCLOSURE_TEXT }).catch(() => {});
+    if (!this.disclosureSent) {
+      this.disclosureSent = true;
+      const waId = this.state.waId;
+      if (waId) {
+        api.post('/integrations/whatsapp/send', { to: waId, message: RECORDING_DISCLOSURE_TEXT }).catch(() => {});
+      }
     }
     this.startRecording();
   }
