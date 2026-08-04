@@ -1,11 +1,13 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { FileSpreadsheet, LoaderCircle, RefreshCw, Save, CheckCircle2, AlertTriangle } from 'lucide-react';
+import { FileSpreadsheet, LoaderCircle, RefreshCw, Save, CheckCircle2, AlertTriangle, Plus, Trash2, Pencil } from 'lucide-react';
 import api from '@/lib/api';
 
 // 2-way Google Sheets ↔ CRM contact sync configuration.
 // Rendered on the Integrations page once Google is connected.
+// A workspace can connect multiple sheets (e.g. one per lead source),
+// each with its own mapping, pipeline and sync direction.
 
 const CRM_FIELDS: Array<{ key: string; label: string; required?: boolean }> = [
   { key: 'email', label: 'Email (matching key)' },
@@ -24,8 +26,9 @@ type Pipeline = { id: string; name: string; stages?: Array<{ id: string; name: s
 export default function GoogleSheetsSync({ autoOpen = false }: { autoOpen?: boolean }) {
   const [loading, setLoading] = useState(true);
   const [googleMissing, setGoogleMissing] = useState(false);
-  const [config, setConfig] = useState<any>(null);
-  const [editing, setEditing] = useState(false);
+  const [configs, setConfigs] = useState<any[]>([]);
+  // null = list view; 'new' = adding a sheet; a config id = editing that sheet
+  const [editingId, setEditingId] = useState<string | 'new' | null>(null);
   const [autoOpened, setAutoOpened] = useState(false);
 
   const [spreadsheets, setSpreadsheets] = useState<SpreadsheetItem[]>([]);
@@ -46,7 +49,7 @@ export default function GoogleSheetsSync({ autoOpen = false }: { autoOpen?: bool
     setLoading(true);
     try {
       const res = await api.get('/integrations/google-sheets/config');
-      setConfig(res.data?.config || null);
+      setConfigs(Array.isArray(res.data?.configs) ? res.data.configs : []);
       setGoogleMissing(false);
     } catch (err: any) {
       if (err?.response?.status === 404) setGoogleMissing(true);
@@ -59,15 +62,27 @@ export default function GoogleSheetsSync({ autoOpen = false }: { autoOpen?: bool
 
   // When opened from the integrations card, jump straight into the setup form.
   useEffect(() => {
-    if (autoOpen && !loading && !googleMissing && !editing && !autoOpened) {
+    if (autoOpen && !loading && !googleMissing && editingId === null && !autoOpened) {
       setAutoOpened(true);
       void startSetup();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoOpen, loading, googleMissing]);
 
-  const startSetup = async () => {
-    setEditing(true);
+  const resetForm = () => {
+    setSpreadsheetId('');
+    setTabs([]);
+    setSheetName('');
+    setMapping({});
+    setPipelineId('');
+    setPipelineStageId('');
+    setDirection('two-way');
+  };
+
+  // Pass an existing config to edit it in place; omit to connect a new sheet.
+  const startSetup = async (existing?: any) => {
+    resetForm();
+    setEditingId(existing?.id || 'new');
     setBusy('spreadsheets');
     setMessage(null);
     try {
@@ -84,15 +99,14 @@ export default function GoogleSheetsSync({ autoOpen = false }: { autoOpen?: bool
         });
       }
       setPipelines(Array.isArray(pipesRes.data) ? pipesRes.data : pipesRes.data?.data || []);
-      // prefill from existing config
-      if (config) {
-        setSpreadsheetId(config.spreadsheetId || '');
-        setSheetName(config.sheetName || '');
-        setMapping(config.mapping || {});
-        setPipelineId(config.pipelineId || '');
-        setPipelineStageId(config.pipelineStageId || '');
-        setDirection(config.direction || 'two-way');
-        if (config.spreadsheetId) await loadSpreadsheetInfo(config.spreadsheetId);
+      if (existing) {
+        setSpreadsheetId(existing.spreadsheetId || '');
+        setSheetName(existing.sheetName || '');
+        setMapping(existing.mapping || {});
+        setPipelineId(existing.pipelineId || '');
+        setPipelineStageId(existing.pipelineStageId || '');
+        setDirection(existing.direction || 'two-way');
+        if (existing.spreadsheetId) await loadSpreadsheetInfo(existing.spreadsheetId);
       }
     } catch (err: any) {
       setMessage({ kind: 'err', text: err?.response?.data?.message || 'Could not load spreadsheets.' });
@@ -126,6 +140,7 @@ export default function GoogleSheetsSync({ autoOpen = false }: { autoOpen?: bool
     setMessage(null);
     try {
       const res = await api.put('/integrations/google-sheets/config', {
+        id: editingId && editingId !== 'new' ? editingId : undefined,
         enabled: true,
         spreadsheetId,
         spreadsheetName: spreadsheets.find((s) => s.id === spreadsheetId)?.name,
@@ -136,8 +151,8 @@ export default function GoogleSheetsSync({ autoOpen = false }: { autoOpen?: bool
         pipelineStageId: pipelineStageId || undefined,
         direction,
       });
-      setConfig(res.data?.config || null);
-      setEditing(false);
+      setConfigs(Array.isArray(res.data?.configs) ? res.data.configs : []);
+      setEditingId(null);
       setMessage({ kind: 'ok', text: 'Sync configured. It runs automatically every ~10 minutes.' });
     } catch (err: any) {
       setMessage({ kind: 'err', text: err?.response?.data?.message || 'Could not save the configuration.' });
@@ -146,13 +161,34 @@ export default function GoogleSheetsSync({ autoOpen = false }: { autoOpen?: bool
     }
   };
 
-  const syncNow = async () => {
-    setBusy('sync');
+  const removeConfig = async (id: string) => {
+    if (!confirm('Disconnect this sheet? It stops syncing but nothing already imported into the CRM is removed.')) return;
+    setBusy(`delete-${id}`);
     setMessage(null);
     try {
-      const res = await api.post('/integrations/google-sheets/sync-now');
-      const r = res.data || {};
-      setMessage({ kind: 'ok', text: `Synced — ${r.fromSheet ?? 0} from sheet, ${r.toSheet ?? 0} to sheet${r.skipped ? `, ${r.skipped} skipped` : ''}.` });
+      const res = await api.delete(`/integrations/google-sheets/config/${id}`);
+      setConfigs(Array.isArray(res.data?.configs) ? res.data.configs : []);
+    } catch (err: any) {
+      setMessage({ kind: 'err', text: err?.response?.data?.message || 'Could not disconnect that sheet.' });
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const syncNow = async (id?: string) => {
+    setBusy(id ? `sync-${id}` : 'sync-all');
+    setMessage(null);
+    try {
+      const res = await api.post('/integrations/google-sheets/sync-now', null, { params: id ? { configId: id } : undefined });
+      if (id) {
+        const r = res.data || {};
+        setMessage({ kind: 'ok', text: `Synced — ${r.fromSheet ?? 0} from sheet, ${r.toSheet ?? 0} to sheet${r.skipped ? `, ${r.skipped} skipped` : ''}.` });
+      } else {
+        const results = res.data?.results || [];
+        const totalFrom = results.reduce((n: number, r: any) => n + (r.fromSheet || 0), 0);
+        const totalTo = results.reduce((n: number, r: any) => n + (r.toSheet || 0), 0);
+        setMessage({ kind: 'ok', text: `Synced ${results.length} sheet${results.length === 1 ? '' : 's'} — ${totalFrom} from sheet, ${totalTo} to sheet.` });
+      }
       await loadConfig();
     } catch (err: any) {
       setMessage({ kind: 'err', text: err?.response?.data?.message || 'Sync failed.' });
@@ -208,29 +244,23 @@ export default function GoogleSheetsSync({ autoOpen = false }: { autoOpen?: bool
             <FileSpreadsheet className="h-4 w-4 text-emerald-600" /> Google Sheets sync
           </div>
           <p className="mt-1 text-sm text-slate-500">
-            {config
-              ? <>Linked to <span className="font-medium text-slate-700">{config.spreadsheetName || config.spreadsheetId}</span> · tab „{config.sheetName}” · {config.direction}</>
-              : '2-way sync: sheet rows become contacts in a pipeline; CRM contacts get written back to the sheet.'}
+            {configs.length
+              ? `${configs.length} sheet${configs.length === 1 ? '' : 's'} connected. Each syncs its own mapping and pipeline every ~10 minutes.`
+              : '2-way sync: sheet rows become contacts in a pipeline; CRM contacts get written back to the sheet. Connect as many sheets as you need — one per lead source, for example.'}
           </p>
-          {config?.lastSyncAt && (
-            <p className="mt-0.5 text-xs text-slate-400">
-              Last sync: {new Date(config.lastSyncAt).toLocaleString('ro-RO')}
-              {config.lastResult?.error ? ` — error: ${config.lastResult.error}` : config.lastResult ? ` — ↓${config.lastResult.fromSheet} ↑${config.lastResult.toSheet}` : ''}
-            </p>
-          )}
         </div>
         <div className="flex items-center gap-2">
-          {config && (
-            <button onClick={syncNow} disabled={!!busy}
+          {configs.length > 1 && (
+            <button onClick={() => syncNow()} disabled={!!busy}
               className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-[13px] font-semibold text-white transition hover:bg-emerald-500 disabled:opacity-60">
-              {busy === 'sync' ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-              Sync now
+              {busy === 'sync-all' ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+              Sync all
             </button>
           )}
-          <button onClick={startSetup} disabled={!!busy}
+          <button onClick={() => startSetup()} disabled={!!busy}
             className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-2 text-[13px] font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-60">
-            {busy === 'spreadsheets' ? <LoaderCircle className="h-4 w-4 animate-spin" /> : null}
-            {config ? 'Edit setup' : 'Set up sync'}
+            {busy === 'spreadsheets' && editingId === 'new' ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+            Connect another sheet
           </button>
         </div>
       </div>
@@ -247,7 +277,43 @@ export default function GoogleSheetsSync({ autoOpen = false }: { autoOpen?: bool
         </div>
       )}
 
-      {editing && (
+      {configs.length > 0 && (
+        <div className="mt-4 space-y-2">
+          {configs.map((c) => (
+            <div key={c.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50/60 px-4 py-3">
+              <div className="min-w-0">
+                <div className="text-sm font-medium text-slate-800">
+                  {c.spreadsheetName || c.spreadsheetId} <span className="text-slate-400">· tab „{c.sheetName}” · {c.direction}</span>
+                </div>
+                {c.lastSyncAt ? (
+                  <p className="mt-0.5 text-xs text-slate-400">
+                    Last sync: {new Date(c.lastSyncAt).toLocaleString('ro-RO')}
+                    {c.lastResult?.error ? ` — error: ${c.lastResult.error}` : c.lastResult ? ` — ↓${c.lastResult.fromSheet} ↑${c.lastResult.toSheet}` : ''}
+                  </p>
+                ) : (
+                  <p className="mt-0.5 text-xs text-slate-400">Not synced yet</p>
+                )}
+              </div>
+              <div className="flex items-center gap-1.5">
+                <button onClick={() => syncNow(c.id)} disabled={!!busy} title="Sync now"
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-emerald-600 transition hover:bg-emerald-50 disabled:opacity-60">
+                  {busy === `sync-${c.id}` ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                </button>
+                <button onClick={() => startSetup(c)} disabled={!!busy} title="Edit"
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-slate-600 transition hover:bg-slate-100 disabled:opacity-60">
+                  <Pencil className="h-4 w-4" />
+                </button>
+                <button onClick={() => removeConfig(c.id)} disabled={!!busy} title="Disconnect"
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-rose-600 transition hover:bg-rose-50 disabled:opacity-60">
+                  {busy === `delete-${c.id}` ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {editingId && (
         <div className="mt-4 space-y-4 rounded-2xl border border-slate-100 bg-slate-50/60 p-4">
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
@@ -287,7 +353,10 @@ export default function GoogleSheetsSync({ autoOpen = false }: { autoOpen?: bool
                   </div>
                 ))}
               </div>
-              <p className="mt-1.5 text-xs text-slate-400">A „CRM ID” column is managed automatically for exact matching — don't delete it.</p>
+              <p className="mt-1.5 text-xs text-slate-400">
+                Map „Preluat (checkmark)” to a column and that column updates in the sheet the instant a setter/closer taps the preluat checkmark on a lead — no need to wait for the ~10-minute sync.
+              </p>
+              <p className="mt-1 text-xs text-slate-400">A „CRM ID” column is managed automatically for exact matching — don't delete it.</p>
             </div>
           )}
 
@@ -325,7 +394,7 @@ export default function GoogleSheetsSync({ autoOpen = false }: { autoOpen?: bool
               {busy === 'save' ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
               Save configuration
             </button>
-            <button onClick={() => setEditing(false)} disabled={!!busy}
+            <button onClick={() => setEditingId(null)} disabled={!!busy}
               className="rounded-xl border border-slate-200 px-4 py-2.5 text-[13px] font-medium text-slate-600 transition hover:bg-slate-100">
               Cancel
             </button>
