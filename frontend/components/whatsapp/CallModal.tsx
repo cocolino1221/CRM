@@ -1,11 +1,11 @@
 'use client';
 
-import { PhoneCall, PhoneOff, Loader2, X, Mic, MicOff, Minus, Circle } from 'lucide-react';
+import { PhoneCall, PhoneOff, Loader2, X, Mic, MicOff, Minus, Circle, Square } from 'lucide-react';
 import { callManager, useCallManager } from '@/lib/call-manager';
 
 export default function CallModal() {
   const state = useCallManager();
-  const { isOpen, waId, contactName, phase, error, duration, muted, isRecording } = state;
+  const { isOpen, waId, contactName, phase, error, duration, muted, isRecording, recordingDuration } = state;
 
   if (!isOpen || !waId) return null;
 
@@ -65,7 +65,7 @@ export default function CallModal() {
               {isRecording && (
                 <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-red-50 border border-red-100">
                   <Circle className="h-2 w-2 fill-red-500 text-red-500 animate-pulse" />
-                  <span className="text-[11px] font-semibold text-red-600">Recording</span>
+                  <span className="text-[11px] font-semibold text-red-600">Recording · {formatDuration(recordingDuration)}</span>
                 </span>
               )}
             </div>
@@ -95,7 +95,11 @@ export default function CallModal() {
                 className={`h-11 w-11 rounded-full flex items-center justify-center border ${isRecording ? 'bg-red-600 border-red-600 hover:bg-red-700' : 'bg-white border-gray-200 hover:bg-gray-50'}`}
                 title={isRecording ? 'Stop recording' : 'Start recording'}
               >
-                <Circle className={`h-4 w-4 ${isRecording ? 'fill-white text-white' : 'fill-red-500 text-red-500'}`} />
+                {isRecording ? (
+                  <Square className="h-3.5 w-3.5 fill-white text-white" />
+                ) : (
+                  <Circle className="h-4 w-4 fill-red-500 text-red-500" />
+                )}
               </button>
             )}
             {(phase === 'connecting' || phase === 'ringing' || phase === 'connected') && (

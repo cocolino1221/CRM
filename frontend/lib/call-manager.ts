@@ -30,6 +30,7 @@ export interface CallManagerState {
   duration: number;
   muted: boolean;
   isRecording: boolean;
+  recordingDuration: number;
   callId: string | null;
 }
 
@@ -68,6 +69,7 @@ const initialState: CallManagerState = {
   duration: 0,
   muted: false,
   isRecording: false,
+  recordingDuration: 0,
   callId: null,
 };
 
@@ -88,6 +90,8 @@ class CallManager {
   private audioContext: AudioContext | null = null;
   private mediaRecorder: MediaRecorder | null = null;
   private recordedChunks: Blob[] = [];
+  private recordingTimer: ReturnType<typeof setInterval> | null = null;
+  private recordingDurationValue = 0;
   /** Set once the user manually stops recording mid-call, so finalizeCall
    * doesn't need to (and can't) stop an already-stopped recorder again. */
   private manualRecordingUrl: string | undefined = undefined;
@@ -330,7 +334,12 @@ class CallManager {
       recorder.ondataavailable = (e) => { if (e.data.size > 0) this.recordedChunks.push(e.data); };
       recorder.start(1000);
       this.mediaRecorder = recorder;
-      this.setState({ isRecording: true });
+      this.recordingDurationValue = 0;
+      this.setState({ isRecording: true, recordingDuration: 0 });
+      this.recordingTimer = setInterval(() => {
+        this.recordingDurationValue += 1;
+        this.setState({ recordingDuration: this.recordingDurationValue });
+      }, 1000);
     } catch {
       // Recording is a nice-to-have on top of the call itself.
     }
@@ -338,7 +347,9 @@ class CallManager {
 
   private async stopRecordingAndUpload(): Promise<string | undefined> {
     const recorder = this.mediaRecorder;
-    this.setState({ isRecording: false });
+    if (this.recordingTimer) clearInterval(this.recordingTimer);
+    this.recordingTimer = null;
+    this.setState({ isRecording: false, recordingDuration: 0 });
     if (!recorder || recorder.state === 'inactive') return undefined;
 
     const blob = await new Promise<Blob | null>((resolve) => {
@@ -419,6 +430,8 @@ class CallManager {
 
   private cleanup() {
     if (this.durationTimer) clearInterval(this.durationTimer);
+    if (this.recordingTimer) clearInterval(this.recordingTimer);
+    this.recordingTimer = null;
     this.eventSource?.close();
     this.localStream?.getTracks().forEach((t) => t.stop());
     this.pc?.close();

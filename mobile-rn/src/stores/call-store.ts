@@ -45,6 +45,7 @@ interface CallState {
   duration: number;
   muted: boolean;
   isRecording: boolean;
+  recordingDuration: number;
   callId: string | null;
 
   open: (waId: string, contactName: string) => 'started' | 'reopened' | 'busy';
@@ -71,9 +72,13 @@ let hasConnected = false;
 let finalized = false;
 let recording: Audio.Recording | null = null;
 let manualRecordingUrl: string | undefined;
+let recordingTimer: ReturnType<typeof setInterval> | null = null;
+let recordingDurationValue = 0;
 
 function cleanup() {
   if (durationTimer) clearInterval(durationTimer);
+  if (recordingTimer) clearInterval(recordingTimer);
+  recordingTimer = null;
   eventSource?.close();
   localStream?.getTracks().forEach((t: any) => t.stop());
   pc?.close();
@@ -91,7 +96,12 @@ async function startRecording(): Promise<void> {
     await rec.prepareToRecordAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
     await rec.startAsync();
     recording = rec;
-    useCallStore.setState({ isRecording: true });
+    recordingDurationValue = 0;
+    useCallStore.setState({ isRecording: true, recordingDuration: 0 });
+    recordingTimer = setInterval(() => {
+      recordingDurationValue += 1;
+      useCallStore.setState({ recordingDuration: recordingDurationValue });
+    }, 1000);
   } catch {
     // Best-effort only — never let a recording failure affect the call.
     recording = null;
@@ -99,7 +109,9 @@ async function startRecording(): Promise<void> {
 }
 
 async function stopRecordingAndUpload(): Promise<string | undefined> {
-  useCallStore.setState({ isRecording: false });
+  if (recordingTimer) clearInterval(recordingTimer);
+  recordingTimer = null;
+  useCallStore.setState({ isRecording: false, recordingDuration: 0 });
   const rec = recording;
   recording = null;
   if (!rec) return undefined;
@@ -147,7 +159,7 @@ async function finalizeCall(status: CallStatus) {
     if (useCallStore.getState().phase === 'ended') {
       useCallStore.setState({
         isOpen: false, waId: null, contactName: '', phase: 'checking_permission',
-        error: '', duration: 0, muted: false, isRecording: false, callId: null,
+        error: '', duration: 0, muted: false, isRecording: false, recordingDuration: 0, callId: null,
       });
     }
   }, 2500);
@@ -162,6 +174,7 @@ export const useCallStore = create<CallState>((set, get) => ({
   duration: 0,
   muted: false,
   isRecording: false,
+  recordingDuration: 0,
   callId: null,
 
   open: (waId, contactName) => {
@@ -175,7 +188,7 @@ export const useCallStore = create<CallState>((set, get) => ({
     manualRecordingUrl = undefined;
     set({
       isOpen: true, waId, contactName, phase: 'checking_permission',
-      error: '', duration: 0, muted: false, isRecording: false, callId: null,
+      error: '', duration: 0, muted: false, isRecording: false, recordingDuration: 0, callId: null,
     });
     void checkPermissionAndMaybeStart();
     return 'started';

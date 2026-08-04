@@ -1,9 +1,9 @@
 import { View, Text, TouchableOpacity, Modal, ActivityIndicator } from 'react-native';
-import { PhoneOff, Mic, MicOff, PhoneCall, Minus, Circle } from 'lucide-react-native';
+import { PhoneOff, Mic, MicOff, PhoneCall, Minus, Circle, Square } from 'lucide-react-native';
 import { useCallStore } from '../stores/call-store';
 
 export default function CallModal() {
-  const { isOpen, waId, contactName, phase, error, duration, muted, isRecording, minimize, requestPermission, checkAgain, toggleMute, toggleRecording, hangUp, retry } = useCallStore();
+  const { isOpen, waId, contactName, phase, error, duration, muted, isRecording, recordingDuration, minimize, requestPermission, checkAgain, toggleMute, toggleRecording, hangUp, retry } = useCallStore();
 
   if (!isOpen || !waId) return null;
 
@@ -72,7 +72,7 @@ export default function CallModal() {
                 {isRecording && (
                   <View className="flex-row items-center gap-1.5 px-2 py-0.5 rounded-full bg-red-50 border border-red-100">
                     <Circle size={8} color="#ef4444" fill="#ef4444" />
-                    <Text className="text-[11px] font-semibold text-red-600">Recording</Text>
+                    <Text className="text-[11px] font-semibold text-red-600">Recording · {formatDuration(recordingDuration)}</Text>
                   </View>
                 )}
               </View>
@@ -100,7 +100,11 @@ export default function CallModal() {
                   onPress={() => void toggleRecording()}
                   className={`h-12 w-12 rounded-full items-center justify-center border ${isRecording ? 'bg-red-600 border-red-600' : 'bg-white border-gray-200'}`}
                 >
-                  <Circle size={18} color={isRecording ? '#fff' : '#ef4444'} fill={isRecording ? '#fff' : '#ef4444'} />
+                  {isRecording ? (
+                    <Square size={16} color="#fff" fill="#fff" />
+                  ) : (
+                    <Circle size={18} color="#ef4444" fill="#ef4444" />
+                  )}
                 </TouchableOpacity>
               )}
               {(phase === 'connecting' || phase === 'ringing' || phase === 'connected') && (
