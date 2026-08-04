@@ -32,7 +32,7 @@
         "backgroundColor": "#f7faf8"
       },
       "package": "com.primafisoft.etcrm",
-      "versionCode": 36,
+      "versionCode": 37,
       "permissions": [
         "RECORD_AUDIO"
       ],
