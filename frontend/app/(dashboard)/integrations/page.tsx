@@ -2109,6 +2109,12 @@ export default function IntegrationsPage() {
                             Status: <span className="font-medium text-gray-700">{entry?.status || 'active'}</span>
                             {entry?.createdAt ? ` • Added ${new Date(entry.createdAt).toLocaleDateString('ro-RO')}` : ''}
                           </div>
+                          {entry?.config?.warning && (
+                            <div className="mt-2 flex items-start gap-1.5 rounded-lg bg-amber-50 px-2.5 py-1.5 text-xs text-amber-800">
+                              <AlertCircle className="h-3.5 w-3.5 flex-shrink-0 mt-0.5" />
+                              <span>{entry.config.warning} Click Reconnect below to fix it.</span>
+                            </div>
+                          )}
                         </div>
 
                         <div className="flex flex-wrap gap-2">
