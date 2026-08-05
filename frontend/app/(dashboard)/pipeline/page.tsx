@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from 'react';
 import { DndContext, DragEndEvent, DragOverlay, DragStartEvent, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
-import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
-import { Loader2, Plus, TrendingUp, DollarSign, Calendar, User, ChevronRight } from 'lucide-react';
+import { SortableContext, verticalListSortingStrategy, horizontalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import { Loader2, Plus, TrendingUp, DollarSign, Calendar, User, ChevronRight, GripVertical, Pencil, Trash2, Check, X } from 'lucide-react';
 import api from '@/lib/api';
 import { formatCurrency } from '@/lib/utils';
 
@@ -94,6 +95,14 @@ export default function PipelinePage() {
   const [newStatusType, setNewStatusType] = useState<'normal' | 'won' | 'lost'>('normal');
   const [savingStatus, setSavingStatus] = useState(false);
   const [statusError, setStatusError] = useState('');
+  const [editingStageId, setEditingStageId] = useState<string | null>(null);
+  const [editStageName, setEditStageName] = useState('');
+  const [editStageColor, setEditStageColor] = useState('#6366F1');
+  const [stageActionBusy, setStageActionBusy] = useState(false);
+
+  const stageSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+  );
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -239,6 +248,78 @@ export default function PipelinePage() {
       }
     } finally {
       setSavingStatus(false);
+    }
+  };
+
+  const handleReorderStages = async (activeId: string, overId: string) => {
+    if (activeId === overId) return;
+    const pipelineRow = contactPipelines.find((row) => row.id === selectedContactPipelineId);
+    if (!pipelineRow) return;
+
+    const sorted = pipelineRow.stages.slice().sort((a, b) => a.displayOrder - b.displayOrder);
+    const oldIndex = sorted.findIndex((s) => s.id === activeId);
+    const newIndex = sorted.findIndex((s) => s.id === overId);
+    if (oldIndex === -1 || newIndex === -1) return;
+
+    const reordered = arrayMove(sorted, oldIndex, newIndex).map((s, i) => ({ ...s, displayOrder: i }));
+
+    // Optimistic update
+    setContactPipelines((rows) =>
+      rows.map((row) => (row.id === pipelineRow.id ? { ...row, stages: reordered } : row)),
+    );
+
+    try {
+      await Promise.all(
+        reordered.map((s, i) =>
+          s.displayOrder === sorted.find((orig) => orig.id === s.id)?.displayOrder
+            ? Promise.resolve()
+            : api.put(`/pipelines/stages/${s.id}`, { displayOrder: i }),
+        ),
+      );
+    } catch (error) {
+      console.error('Failed to persist stage order:', error);
+      await fetchContactPipelines();
+    }
+  };
+
+  const startEditStage = (stage: ContactPipelineStage) => {
+    setEditingStageId(stage.id);
+    setEditStageName(stage.name);
+    setEditStageColor(stage.color || '#6366F1');
+  };
+
+  const cancelEditStage = () => {
+    setEditingStageId(null);
+    setEditStageName('');
+  };
+
+  const saveEditStage = async () => {
+    if (!editingStageId || !editStageName.trim()) return;
+    setStageActionBusy(true);
+    try {
+      await api.put(`/pipelines/stages/${editingStageId}`, {
+        name: editStageName.trim(),
+        color: editStageColor,
+      });
+      setEditingStageId(null);
+      await fetchContactPipelines();
+    } catch (error: any) {
+      setStatusError(error?.response?.data?.message || 'Nu am putut actualiza statusul.');
+    } finally {
+      setStageActionBusy(false);
+    }
+  };
+
+  const deleteStage = async (stageId: string) => {
+    if (!confirm('Stergi acest status din pipeline? Nu se poate sterge daca mai are lead-uri.')) return;
+    setStageActionBusy(true);
+    try {
+      await api.delete(`/pipelines/stages/${stageId}`);
+      await fetchContactPipelines();
+    } catch (error: any) {
+      setStatusError(error?.response?.data?.message || 'Nu am putut sterge statusul.');
+    } finally {
+      setStageActionBusy(false);
     }
   };
 
@@ -392,22 +473,41 @@ export default function PipelinePage() {
 
         {selectedContactPipeline ? (
           <>
-            <div className="flex flex-wrap gap-2">
-              {selectedContactPipeline.stages
-                .slice()
-                .sort((a, b) => a.displayOrder - b.displayOrder)
-                .map((stage) => (
-                  <span
-                    key={stage.id}
-                    className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-semibold text-white"
-                    style={{ backgroundColor: stage.color || '#6366F1' }}
-                  >
-                    {stage.name}
-                    {stage.isClosedWon ? ' (Won)' : ''}
-                    {stage.isClosedLost ? ' (Lost)' : ''}
-                  </span>
-                ))}
-            </div>
+            <p className="text-xs text-gray-500">Trage statusurile ca sa le rearanjezi. Click pe un status ca sa il editezi.</p>
+            <DndContext
+              sensors={stageSensors}
+              onDragEnd={(event: DragEndEvent) => {
+                const { active, over } = event;
+                if (over) handleReorderStages(active.id as string, over.id as string);
+              }}
+            >
+              <SortableContext
+                items={selectedContactPipeline.stages.slice().sort((a, b) => a.displayOrder - b.displayOrder).map((s) => s.id)}
+                strategy={horizontalListSortingStrategy}
+              >
+                <div className="flex flex-wrap gap-2">
+                  {selectedContactPipeline.stages
+                    .slice()
+                    .sort((a, b) => a.displayOrder - b.displayOrder)
+                    .map((stage) => (
+                      <SortableStageChip
+                        key={stage.id}
+                        stage={stage}
+                        isEditing={editingStageId === stage.id}
+                        editName={editStageName}
+                        editColor={editStageColor}
+                        busy={stageActionBusy}
+                        onStartEdit={() => startEditStage(stage)}
+                        onCancelEdit={cancelEditStage}
+                        onSaveEdit={saveEditStage}
+                        onDelete={() => deleteStage(stage.id)}
+                        onNameChange={setEditStageName}
+                        onColorChange={setEditStageColor}
+                      />
+                    ))}
+                </div>
+              </SortableContext>
+            </DndContext>
 
             <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
               <input
@@ -541,6 +641,82 @@ export default function PipelinePage() {
           {activeDeal && <DealCard deal={activeDeal} isDragging isLastStage={false} />}
         </DragOverlay>
       </DndContext>
+    </div>
+  );
+}
+
+interface SortableStageChipProps {
+  stage: ContactPipelineStage;
+  isEditing: boolean;
+  editName: string;
+  editColor: string;
+  busy: boolean;
+  onStartEdit: () => void;
+  onCancelEdit: () => void;
+  onSaveEdit: () => void;
+  onDelete: () => void;
+  onNameChange: (value: string) => void;
+  onColorChange: (value: string) => void;
+}
+
+function SortableStageChip({
+  stage, isEditing, editName, editColor, busy,
+  onStartEdit, onCancelEdit, onSaveEdit, onDelete, onNameChange, onColorChange,
+}: SortableStageChipProps) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: stage.id });
+  const style = { transform: CSS.Transform.toString(transform), transition };
+
+  if (isEditing) {
+    return (
+      <div
+        ref={setNodeRef}
+        style={style}
+        className="inline-flex items-center gap-1.5 rounded-full border border-indigo-300 bg-white px-2 py-1"
+      >
+        <input
+          type="color"
+          value={editColor}
+          onChange={(e) => onColorChange(e.target.value)}
+          className="h-6 w-6 rounded border border-gray-200"
+        />
+        <input
+          type="text"
+          value={editName}
+          onChange={(e) => onNameChange(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') onSaveEdit(); if (e.key === 'Escape') onCancelEdit(); }}
+          className="w-32 rounded border border-gray-200 px-2 py-1 text-xs"
+          autoFocus
+        />
+        <button type="button" onClick={onSaveEdit} disabled={busy || !editName.trim()} className="text-emerald-600 disabled:opacity-50">
+          <Check className="h-3.5 w-3.5" />
+        </button>
+        <button type="button" onClick={onCancelEdit} className="text-gray-400 hover:text-gray-600">
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ ...style, backgroundColor: stage.color || '#6366F1' }}
+      className={`group inline-flex items-center gap-1 rounded-full pl-1.5 pr-2.5 py-1 text-xs font-semibold text-white ${isDragging ? 'opacity-50' : ''}`}
+    >
+      <span {...attributes} {...listeners} className="cursor-grab active:cursor-grabbing opacity-70 hover:opacity-100" title="Drag to reorder">
+        <GripVertical className="h-3.5 w-3.5" />
+      </span>
+      <span>
+        {stage.name}
+        {stage.isClosedWon ? ' (Won)' : ''}
+        {stage.isClosedLost ? ' (Lost)' : ''}
+      </span>
+      <button type="button" onClick={onStartEdit} className="opacity-0 group-hover:opacity-100 hover:scale-110 transition-opacity" title="Edit">
+        <Pencil className="h-3 w-3" />
+      </button>
+      <button type="button" onClick={onDelete} className="opacity-0 group-hover:opacity-100 hover:scale-110 transition-opacity" title="Delete">
+        <Trash2 className="h-3 w-3" />
+      </button>
     </div>
   );
 }
