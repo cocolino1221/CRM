@@ -129,6 +129,14 @@ export class MetaMessagingController {
     return this.metaMessagingService.getAccounts(req.user.workspaceId, refresh === '1');
   }
 
+  @Post('backfill-profile-names')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Re-resolve sender names for inbound Messenger/Instagram messages that never got one' })
+  async backfillProfileNames(@Req() req: any) {
+    return this.metaMessagingService.backfillMissingProfileNames(req.user.workspaceId);
+  }
+
   @Get('inbox')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()

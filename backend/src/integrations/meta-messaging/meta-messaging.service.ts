@@ -334,6 +334,72 @@ export class MetaMessagingService {
     return results;
   }
 
+  /**
+   * Re-resolves the real sender name for inbound Messenger/Instagram
+   * activities that never got one (fetchSenderProfile failed at the time,
+   * e.g. a transient Meta rate-limit/timeout, and no later message from the
+   * same person ever came in to retry it). Manually triggered — not a
+   * scheduled job, to avoid adding another recurring DB-polling cost.
+   */
+  async backfillMissingProfileNames(workspaceId: string): Promise<{ checked: number; resolved: number }> {
+    const integrations = await this.findMetaIntegrations(workspaceId);
+    const integrationsById = new Map(integrations.map((i) => [i.id, i]));
+
+    const activities = await this.activityRepository
+      .createQueryBuilder('activity')
+      .where('activity.workspaceId = :workspaceId', { workspaceId })
+      .andWhere('activity.type = :type', { type: ActivityType.OTHER })
+      .andWhere("activity.metadata->>'channel' IN ('messenger','instagram')")
+      .andWhere("activity.direction = :direction", { direction: ActivityDirection.INBOUND })
+      .getMany();
+
+    // Group by (integration, sender) — resolve each unique sender once even
+    // if they have many stored messages, and skip anyone who already has a
+    // resolved name on at least one of their messages.
+    const bySender = new Map<string, { integrationId: string; externalUserId: string; provider: MetaProvider; activityIds: string[]; alreadyResolved: boolean }>();
+    for (const activity of activities) {
+      const metadata = (activity.metadata || {}) as MetaActivityMetadata;
+      const integrationId = String(metadata.senderIntegrationId || '');
+      const externalUserId = String(metadata.externalUserId || '');
+      if (!integrationId || !externalUserId) continue;
+      const key = `${integrationId}:${externalUserId}`;
+      const entry = bySender.get(key) || {
+        integrationId,
+        externalUserId,
+        provider: metadata.provider,
+        activityIds: [],
+        alreadyResolved: false,
+      };
+      entry.activityIds.push(activity.id);
+      if (metadata.contactProfileName) entry.alreadyResolved = true;
+      bySender.set(key, entry);
+    }
+
+    let checked = 0;
+    let resolved = 0;
+    for (const entry of bySender.values()) {
+      if (entry.alreadyResolved) continue;
+      const integration = integrationsById.get(entry.integrationId);
+      if (!integration) continue;
+      checked++;
+
+      const profile = await this.fetchSenderProfile(entry.provider, integration, entry.externalUserId);
+      if (!profile.name) continue;
+
+      await this.activityRepository
+        .createQueryBuilder()
+        .update(Activity)
+        .set({ metadata: () => `jsonb_set(metadata, '{contactProfileName}', to_jsonb(:profileName::text))` })
+        .where('id IN (:...ids)', { ids: entry.activityIds })
+        .setParameter('profileName', profile.name)
+        .execute();
+      resolved++;
+    }
+
+    this.logger.log(`[inbox] backfillMissingProfileNames ws=${workspaceId} checked=${checked} resolved=${resolved}`);
+    return { checked, resolved };
+  }
+
   async getInbox(workspaceId: string, channel?: MetaChannel): Promise<any> {
     const integrations = await this.findMetaIntegrations(workspaceId);
     const integrationsById = new Map(integrations.map((integration) => [integration.id, integration]));
@@ -2083,6 +2149,25 @@ export class MetaMessagingService {
   }
 
   private async fetchSenderProfile(
+    provider: MetaProvider,
+    integration: Integration,
+    senderId: string,
+  ): Promise<{ name?: string; avatarUrl?: string }> {
+    // Meta's Graph API occasionally times out or rate-limits a single call —
+    // transient enough that a couple of quick retries clear most of them.
+    // Without this, a failed lookup on someone's FIRST message left the
+    // conversation stuck showing "Messenger {id}" forever, since nothing
+    // ever retries a profile fetch for a sender who already has one message
+    // stored (see the getInbox "upgrade" comment for the other half of this).
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const result = await this.fetchSenderProfileOnce(provider, integration, senderId);
+      if (result.name) return result;
+      if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, attempt * 400));
+    }
+    return {};
+  }
+
+  private async fetchSenderProfileOnce(
     provider: MetaProvider,
     integration: Integration,
     senderId: string,
