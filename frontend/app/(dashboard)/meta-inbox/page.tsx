@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  AlertTriangle,
   AudioLines,
   CheckCircle2,
   ChevronRight,
@@ -533,6 +534,7 @@ export default function MessagesPage() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [conversations, setConversations] = useState<MetaConversation[]>([]);
   const [accounts, setAccounts] = useState<MetaAccount[]>([]);
+  const [reconnectingId, setReconnectingId] = useState<string | null>(null);
   const [setupInfo, setSetupInfo] = useState<MetaSetupInfo[]>([]);
   const [teamUsers, setTeamUsers] = useState<TeamUser[]>([]);
   const [contactDetails, setContactDetails] = useState<MetaContactDetails | null>(null);
@@ -811,6 +813,28 @@ export default function MessagesPage() {
 
       return prev;
     });
+  };
+
+  const reconnectAccount = async (account: MetaAccount) => {
+    setReconnectingId(account.integrationId);
+    try {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000/api/v1';
+      const accessToken = localStorage.getItem('accessToken');
+      if (!accessToken) {
+        setReconnectingId(null);
+        return;
+      }
+      const me = await fetch(`${apiUrl}/auth/me`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      }).then((r) => r.json());
+      if (!me?.id || !me?.workspaceId) {
+        setReconnectingId(null);
+        return;
+      }
+      window.location.href = `${apiUrl}/integrations/oauth/${account.provider}?workspace_id=${me.workspaceId}&user_id=${me.id}&integration_id=${account.integrationId}`;
+    } catch {
+      setReconnectingId(null);
+    }
   };
 
   const fetchTeamUsers = async () => {
@@ -1643,6 +1667,23 @@ export default function MessagesPage() {
             </div>
           </div>
         </div>
+
+        {accounts.filter((a) => a.warning).map((account) => (
+          <div key={account.integrationId} className="flex flex-wrap items-center gap-2 border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-800">
+            <AlertTriangle className="h-3.5 w-3.5 flex-shrink-0" />
+            <span className="flex-1">
+              <span className="font-semibold">{account.name}</span>: {account.warning}
+            </span>
+            <button
+              onClick={() => void reconnectAccount(account)}
+              disabled={reconnectingId === account.integrationId}
+              className="inline-flex items-center gap-1 rounded-lg border border-amber-300 bg-white px-2.5 py-1 font-semibold text-amber-800 hover:bg-amber-100 disabled:opacity-60"
+            >
+              {reconnectingId === account.integrationId ? <LoaderCircle className="h-3 w-3 animate-spin" /> : null}
+              Reconnect
+            </button>
+          </div>
+        ))}
 
         {(sendError || sendSuccess) && (
           <div
