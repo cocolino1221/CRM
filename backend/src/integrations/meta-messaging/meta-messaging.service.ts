@@ -2154,15 +2154,24 @@ export class MetaMessagingService {
     senderId: string,
   ): Promise<{ name?: string; avatarUrl?: string }> {
     // Meta's Graph API occasionally times out or rate-limits a single call —
-    // transient enough that a couple of quick retries clear most of them.
+    // transient enough that retries clear most of them, but a burst of many
+    // inbound messages within a couple minutes (a broadcast reply flood) can
+    // stay rate-limited longer than a couple of quick retries survive. 5
+    // attempts with growing backoff (up to ~6s total) gives it real room —
+    // this call is fire-and-forget from the webhook handler, so it never
+    // blocks or delays the webhook's response to Meta.
     // Without this, a failed lookup on someone's FIRST message left the
     // conversation stuck showing "Messenger {id}" forever, since nothing
     // ever retries a profile fetch for a sender who already has one message
     // stored (see the getInbox "upgrade" comment for the other half of this).
-    for (let attempt = 1; attempt <= 3; attempt++) {
+    for (let attempt = 1; attempt <= 5; attempt++) {
       const result = await this.fetchSenderProfileOnce(provider, integration, senderId);
       if (result.name) return result;
-      if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, attempt * 400));
+      // "No matching user found" / invalid token are permanent for this
+      // sender — the person blocked the page, deleted their account, or the
+      // token itself is dead. Retrying just burns API calls for nothing.
+      if (result.permanent) return {};
+      if (attempt < 5) await new Promise((resolve) => setTimeout(resolve, attempt * 600));
     }
     return {};
   }
@@ -2171,7 +2180,7 @@ export class MetaMessagingService {
     provider: MetaProvider,
     integration: Integration,
     senderId: string,
-  ): Promise<{ name?: string; avatarUrl?: string }> {
+  ): Promise<{ name?: string; avatarUrl?: string; permanent?: boolean }> {
     try {
       if (provider === 'facebook') {
         const { pageAccessToken } = await this.ensureFacebookPageCredentials(integration);
@@ -2216,7 +2225,10 @@ export class MetaMessagingService {
           metaError ? `${metaError.message} (code ${metaError.code})` : error?.message || 'unknown error'
         }`,
       );
-      return {};
+      // code 100 = "No matching user found" (blocked the page / deleted the
+      // account); code 190 = invalid/expired token. Neither clears on retry.
+      const permanent = metaError?.code === 100 || metaError?.code === 190;
+      return { permanent };
     }
   }
 
