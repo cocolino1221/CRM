@@ -381,6 +381,11 @@ export class MetaMessagingService {
       if (entry.alreadyResolved) continue;
       const integration = integrationsById.get(entry.integrationId);
       if (!integration) continue;
+      // Space out calls to the same page's token — firing many lookups
+      // back-to-back is exactly the kind of burst that causes the rate-limit
+      // failures this backfill exists to clean up. Retrying into the same
+      // self-inflicted rate limit would make this a no-op.
+      if (checked > 0) await new Promise((resolve) => setTimeout(resolve, 500));
       checked++;
 
       const profile = await this.fetchSenderProfile(entry.provider, integration, entry.externalUserId);
