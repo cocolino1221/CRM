@@ -345,12 +345,15 @@ export class MetaMessagingService {
     const integrations = await this.findMetaIntegrations(workspaceId);
     const integrationsById = new Map(integrations.map((i) => [i.id, i]));
 
+    // Covers both directions: an inbound message can fail to resolve a name
+    // (the original bug), but so can an outbound-only conversation — e.g.
+    // the page shares a post to someone who never replies, so there's no
+    // inbound message to ever have triggered a lookup in the first place.
     const activities = await this.activityRepository
       .createQueryBuilder('activity')
       .where('activity.workspaceId = :workspaceId', { workspaceId })
       .andWhere('activity.type = :type', { type: ActivityType.OTHER })
       .andWhere("activity.metadata->>'channel' IN ('messenger','instagram')")
-      .andWhere("activity.direction = :direction", { direction: ActivityDirection.INBOUND })
       .getMany();
 
     // Group by (integration, sender) — resolve each unique sender once even
@@ -1210,6 +1213,11 @@ export class MetaMessagingService {
     // real participant (recipient), not as an inbound from the page itself.
     if (isEcho) {
       const outboundContact = await this.findExistingSocialContact(workspaceId, channel, recipientId);
+      // If the page messaged this person first (e.g. sharing a post) and they
+      // never reply, there's no inbound message to ever trigger a name
+      // lookup — the conversation would show the raw id forever. Resolve it
+      // here too, for the same reason the inbound path does.
+      const recipientProfile = outboundContact ? {} : await this.fetchSenderProfile(provider, integration, recipientId);
       await this.saveOutboundActivity(
         workspaceId,
         ownerId,
@@ -1225,6 +1233,8 @@ export class MetaMessagingService {
           senderPageName: String(integration.config?.pageName || integration.name || ''),
           senderAccountId: provider === 'instagram' ? String(integration.config?.igUserId || senderId) : undefined,
           senderAccountName: provider === 'instagram' ? String(integration.config?.igUsername || integration.name || '') : undefined,
+          senderAvatarUrl: recipientProfile.avatarUrl,
+          contactProfileName: recipientProfile.name,
           ...this.getMessageProfileMetadata(integration),
           attachmentUrl,
           attachmentMimeType: this.guessMimeTypeFromUrl(attachmentUrl, attachmentType),
