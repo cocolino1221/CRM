@@ -378,10 +378,22 @@ export class MetaMessagingService {
       bySender.set(key, entry);
     }
 
+    // Meta's per-token rate limit is cumulative over a rolling window, not a
+    // burst thing — confirmed live: 390 lookups in one run logged 1080
+    // "Application request limit reached" (code 3) failures despite 500ms
+    // spacing and per-call retries, while the exact same senders resolved
+    // fine seconds earlier in isolation. Sub-second spacing and short
+    // per-call backoff cannot fix a hittable-once-per-window limit — the
+    // only thing that works is doing much less work per run (batch cap),
+    // spacing further apart, and giving up early once the limit is hit
+    // instead of burning through hundreds of guaranteed-to-fail retries.
+    const maxSenders = 60;
     let checked = 0;
     let resolved = 0;
+    let consecutiveRateLimits = 0;
     for (const entry of bySender.values()) {
       if (entry.alreadyResolved) continue;
+      if (checked >= maxSenders) break;
       // A page reconnect replaces the integration row (new id, same real
       // page/token), but old activities still carry the old id forever —
       // seen live: 422 Messenger senders orphaned under one deleted
@@ -393,18 +405,24 @@ export class MetaMessagingService {
         ? [exactIntegration]
         : integrations.filter((i) => this.getIntegrationProvider(i) === entry.provider);
       if (!candidates.length) continue;
-      // Space out calls to the same page's token — firing many lookups
-      // back-to-back is exactly the kind of burst that causes the rate-limit
-      // failures this backfill exists to clean up. Retrying into the same
-      // self-inflicted rate limit would make this a no-op.
-      if (checked > 0) await new Promise((resolve) => setTimeout(resolve, 500));
+      if (checked > 0) await new Promise((resolve) => setTimeout(resolve, 2000));
       checked++;
 
-      let profile: { name?: string; avatarUrl?: string } = {};
+      let profile: { name?: string; avatarUrl?: string; rateLimited?: boolean } = {};
       for (const candidate of candidates) {
         profile = await this.fetchSenderProfile(entry.provider, candidate, entry.externalUserId);
-        if (profile.name) break;
+        if (profile.name || profile.rateLimited) break;
       }
+
+      if (profile.rateLimited) {
+        consecutiveRateLimits++;
+        if (consecutiveRateLimits >= 3) {
+          this.logger.warn(`[inbox] backfillMissingProfileNames ws=${workspaceId}: stopping early, rate-limited ${consecutiveRateLimits}x in a row`);
+          break;
+        }
+        continue;
+      }
+      consecutiveRateLimits = 0;
       if (!profile.name) continue;
 
       await this.activityRepository
@@ -2180,25 +2198,31 @@ export class MetaMessagingService {
     provider: MetaProvider,
     integration: Integration,
     senderId: string,
-  ): Promise<{ name?: string; avatarUrl?: string }> {
-    // Meta's Graph API occasionally times out or rate-limits a single call —
-    // transient enough that retries clear most of them, but a burst of many
-    // inbound messages within a couple minutes (a broadcast reply flood) can
-    // stay rate-limited longer than a couple of quick retries survive. 5
-    // attempts with growing backoff (up to ~6s total) gives it real room —
-    // this call is fire-and-forget from the webhook handler, so it never
-    // blocks or delays the webhook's response to Meta.
-    // Without this, a failed lookup on someone's FIRST message left the
-    // conversation stuck showing "Messenger {id}" forever, since nothing
-    // ever retries a profile fetch for a sender who already has one message
-    // stored (see the getInbox "upgrade" comment for the other half of this).
+  ): Promise<{ name?: string; avatarUrl?: string; rateLimited?: boolean }> {
+    // Meta's Graph API occasionally times out on a single call — transient
+    // enough that a couple of quick retries clear it. Without this, a failed
+    // lookup on someone's FIRST message left the conversation stuck showing
+    // "Messenger {id}" forever, since nothing ever retries a profile fetch
+    // for a sender who already has one message stored (see the getInbox
+    // "upgrade" comment for the other half of this).
+    //
+    // Rate limiting (code 3) is a DIFFERENT animal — it's a cumulative quota
+    // over a rolling window, not a per-request thing. Confirmed live: the
+    // same lookup that fails here with "Application request limit reached"
+    // succeeds instantly when tried in isolation minutes later. Sub-second
+    // retries cannot out-wait a quota window, so this only tries 2 short
+    // retries for it (in case it clears fast) and otherwise reports
+    // rateLimited so the caller (the backfill sweep) can back off at the
+    // batch level instead of wasting the whole retry budget per sender.
     for (let attempt = 1; attempt <= 5; attempt++) {
       const result = await this.fetchSenderProfileOnce(provider, integration, senderId);
       if (result.name) return result;
-      // "No matching user found" / invalid token are permanent for this
-      // sender — the person blocked the page, deleted their account, or the
-      // token itself is dead. Retrying just burns API calls for nothing.
       if (result.permanent) return {};
+      if (result.rateLimited) {
+        if (attempt >= 2) return { rateLimited: true };
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+        continue;
+      }
       if (attempt < 5) await new Promise((resolve) => setTimeout(resolve, attempt * 600));
     }
     return {};
@@ -2208,7 +2232,7 @@ export class MetaMessagingService {
     provider: MetaProvider,
     integration: Integration,
     senderId: string,
-  ): Promise<{ name?: string; avatarUrl?: string; permanent?: boolean }> {
+  ): Promise<{ name?: string; avatarUrl?: string; permanent?: boolean; rateLimited?: boolean }> {
     try {
       if (provider === 'facebook') {
         const { pageAccessToken } = await this.ensureFacebookPageCredentials(integration);
@@ -2254,9 +2278,15 @@ export class MetaMessagingService {
         }`,
       );
       // code 100 = "No matching user found" (blocked the page / deleted the
-      // account); code 190 = invalid/expired token. Neither clears on retry.
-      const permanent = metaError?.code === 100 || metaError?.code === 190;
-      return { permanent };
+      // account); code 190 = invalid/expired token; code 230 = Instagram
+      // requires the user to have messaged first before releasing their
+      // profile to a business account; code 9010 = no matching Instagram
+      // user. None of these clear on retry.
+      const permanent = [100, 190, 230, 9010].includes(metaError?.code);
+      // code 3 = "Application request limit reached" — a cumulative quota,
+      // not a per-request throttle.
+      const rateLimited = metaError?.code === 3;
+      return { permanent, rateLimited };
     }
   }
 
