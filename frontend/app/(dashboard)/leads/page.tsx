@@ -612,7 +612,11 @@ export default function LeadsPage() {
     const nextValue = !contact.preluat;
     setContacts(prev => prev.map(c => c.id === contact.id ? { ...c, preluat: nextValue } : c));
     try {
-      await api.put(`/contacts/${contact.id}/preluat`, { value: nextValue });
+      // Marking as preluat also auto-advances the pipeline stage server-side.
+      const res = await api.put(`/contacts/${contact.id}/preluat`, { value: nextValue });
+      if (res.data?.pipelineStageId && res.data.pipelineStageId !== contact.pipelineStageId) {
+        setContacts(prev => prev.map(c => c.id === contact.id ? { ...c, pipelineStageId: res.data.pipelineStageId, pipelineId: res.data.pipelineId } : c));
+      }
     } catch (err: any) {
       console.error('Failed to update preluat:', err);
       setContacts(prev => prev.map(c => c.id === contact.id ? { ...c, preluat: !nextValue } : c));

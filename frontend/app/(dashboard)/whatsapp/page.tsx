@@ -1970,7 +1970,12 @@ export default function WhatsAppPage() {
     const nextValue = !previousValue;
     setContactDetail(prev => (prev && prev.id === contactId ? { ...prev, preluat: nextValue } : prev));
     try {
-      await api.put(`/contacts/${contactId}/preluat`, { value: nextValue });
+      // Marking as preluat also auto-advances the pipeline stage server-side —
+      // apply the returned contact so the stage picker reflects it immediately.
+      const res = await api.put(`/contacts/${contactId}/preluat`, { value: nextValue });
+      if (res.data?.pipelineStageId) {
+        setContactDetail(prev => (prev && prev.id === contactId ? { ...prev, pipelineStageId: res.data.pipelineStageId, pipelineId: res.data.pipelineId } : prev));
+      }
     } catch (err) {
       console.error('Failed to update preluat:', err);
       setContactDetail(prev => (prev && prev.id === contactId ? { ...prev, preluat: previousValue } : prev));
