@@ -535,18 +535,60 @@ export class ContactsService {
   }
 
   /**
-   * Toggles the "preluat" (picked up/claimed) checkmark. Pushes the new
-   * value straight to the mapped Google Sheets column (if configured) —
+   * Toggles the "preluat" (picked up/claimed) checkmark. Marking a lead as
+   * preluat also advances it to the next pipeline stage (picking up a lead
+   * is itself progress), and both the checkmark and the new stage push
+   * straight to the mapped Google Sheets columns (if configured) —
    * best-effort, doesn't fail the request if the sheet push errors.
    */
   async setPreluat(workspaceId: string, id: string, value: boolean): Promise<Contact> {
     const contact = await this.findOne(workspaceId, id);
     contact.preluat = value;
+
+    let advancedStageName: string | null = null;
+    if (value) {
+      advancedStageName = await this.advanceToNextStage(workspaceId, contact);
+    }
+
     await this.contactRepository.save(contact);
     this.googleSheetsService
       .pushContactField(workspaceId, id, 'preluat', value ? 'TRUE' : 'FALSE')
       .catch((err) => this.logger.warn(`Failed to push preluat to sheet for contact ${id}: ${err.message}`));
+    if (advancedStageName) {
+      this.googleSheetsService
+        .pushContactField(workspaceId, id, 'stage', advancedStageName)
+        .catch((err) => this.logger.warn(`Failed to push stage to sheet for contact ${id}: ${err.message}`));
+    }
     return contact;
+  }
+
+  /**
+   * Moves a contact to the next stage (by displayOrder) within its current
+   * pipeline. No-ops if the contact isn't in a pipeline yet, is already on
+   * the last stage, or is already in a closed (won/lost) stage. Returns the
+   * new stage's name on success, for pushing to the mapped Sheets column.
+   */
+  private async advanceToNextStage(workspaceId: string, contact: Contact): Promise<string | null> {
+    if (!contact.pipelineId || !contact.pipelineStageId) return null;
+
+    const pipelineStageRepository = this.contactRepository.manager.getRepository(PipelineStage);
+    const currentStage = await pipelineStageRepository.findOne({
+      where: { id: contact.pipelineStageId, workspaceId, deletedAt: null as any },
+    });
+    if (!currentStage || currentStage.isClosedWon || currentStage.isClosedLost) return null;
+
+    const nextStage = await pipelineStageRepository
+      .createQueryBuilder('stage')
+      .where('stage.workspaceId = :workspaceId', { workspaceId })
+      .andWhere('stage.pipelineId = :pipelineId', { pipelineId: contact.pipelineId })
+      .andWhere('stage.deletedAt IS NULL')
+      .andWhere('stage.displayOrder > :currentOrder', { currentOrder: currentStage.displayOrder })
+      .orderBy('stage.displayOrder', 'ASC')
+      .getOne();
+    if (!nextStage) return null;
+
+    contact.pipelineStageId = nextStage.id;
+    return nextStage.name;
   }
 
   /** Adds a manually-entered meeting recording link (Zoom, Google Meet, etc.) to a contact. */
