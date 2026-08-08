@@ -112,18 +112,25 @@ export class GoogleSheetsService {
     const tabs: string[] = (meta?.sheets || []).map((s: any) => s?.properties?.title).filter(Boolean);
 
     // Headers per tab for the mapping UI. Real-world sheets often have title
-    // rows above the header row, so scan the first 5 rows and pick the first
-    // one that looks like a header (>= 2 non-empty cells).
+    // rows above the header row (or extra columns whose headers only show up
+    // further down/right — e.g. columns backfilled from an import), so scan
+    // a wide window and pick the row with the MOST filled cells rather than
+    // just the first row that clears a low bar. Picking "first row with >=2"
+    // meant a sparse manually-typed title row (1-2 cells) at the top would
+    // win by default and every other imported column's header, sitting a
+    // few rows down or further right, was silently dropped from the mapping
+    // dropdown.
     const headersByTab: Record<string, string[]> = {};
     const headerRowByTab: Record<string, number> = {};
     for (const tab of tabs.slice(0, 10)) {
       try {
-        const data = await this.googleHandler.getSheetData(integration, spreadsheetId, `'${tab}'!A1:AZ5`);
+        const data = await this.googleHandler.getSheetData(integration, spreadsheetId, `'${tab}'!A1:CZ20`);
         const firstRows: any[][] = data.values || [];
         let headerIdx = 0;
+        let bestNonEmpty = -1;
         for (let i = 0; i < firstRows.length; i++) {
           const nonEmpty = (firstRows[i] || []).filter((v) => String(v ?? '').trim()).length;
-          if (nonEmpty >= 2) { headerIdx = i; break; }
+          if (nonEmpty > bestNonEmpty) { bestNonEmpty = nonEmpty; headerIdx = i; }
         }
         headersByTab[tab] = (firstRows[headerIdx] || []).map((h: any) => String(h ?? '').trim());
         headerRowByTab[tab] = headerIdx + 1; // 1-based
@@ -203,7 +210,7 @@ export class GoogleSheetsService {
     if (!header) return;
 
     try {
-      const range = `'${config.sheetName}'!A1:AZ10000`;
+      const range = `'${config.sheetName}'!A1:CZ10000`;
       const sheet = await this.googleHandler.getSheetData(integration, config.spreadsheetId, range);
       const rows: any[][] = sheet.values || [];
       const headerIdx = Math.max(0, (config.headerRow || 1) - 1);
@@ -274,7 +281,7 @@ export class GoogleSheetsService {
       const result = { fromSheet: 0, toSheet: 0, skipped: 0, error: undefined as string | undefined };
 
       // read the whole table once
-      const range = `'${config.sheetName}'!A1:AZ10000`;
+      const range = `'${config.sheetName}'!A1:CZ10000`;
       const sheet = await this.googleHandler.getSheetData(integration, config.spreadsheetId, range);
       const rows: any[][] = sheet.values || [];
       // Headers can live below title rows — config.headerRow is 1-based.
