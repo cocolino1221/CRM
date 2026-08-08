@@ -369,7 +369,7 @@ export class MetaMessagingService {
       const entry = bySender.get(key) || {
         integrationId,
         externalUserId,
-        provider: metadata.provider,
+        provider: metadata.provider || (metadata.channel === 'instagram' ? 'instagram' : 'facebook'),
         activityIds: [],
         alreadyResolved: false,
       };
@@ -382,8 +382,17 @@ export class MetaMessagingService {
     let resolved = 0;
     for (const entry of bySender.values()) {
       if (entry.alreadyResolved) continue;
-      const integration = integrationsById.get(entry.integrationId);
-      if (!integration) continue;
+      // A page reconnect replaces the integration row (new id, same real
+      // page/token), but old activities still carry the old id forever —
+      // seen live: 422 Messenger senders orphaned under one deleted
+      // integration alone. A PSID belongs to the physical page, not to our
+      // internal row, so any currently-active integration for the same
+      // provider can resolve it. Try the exact one first, then fall back.
+      const exactIntegration = integrationsById.get(entry.integrationId);
+      const candidates = exactIntegration
+        ? [exactIntegration]
+        : integrations.filter((i) => this.getIntegrationProvider(i) === entry.provider);
+      if (!candidates.length) continue;
       // Space out calls to the same page's token — firing many lookups
       // back-to-back is exactly the kind of burst that causes the rate-limit
       // failures this backfill exists to clean up. Retrying into the same
@@ -391,7 +400,11 @@ export class MetaMessagingService {
       if (checked > 0) await new Promise((resolve) => setTimeout(resolve, 500));
       checked++;
 
-      const profile = await this.fetchSenderProfile(entry.provider, integration, entry.externalUserId);
+      let profile: { name?: string; avatarUrl?: string } = {};
+      for (const candidate of candidates) {
+        profile = await this.fetchSenderProfile(entry.provider, candidate, entry.externalUserId);
+        if (profile.name) break;
+      }
       if (!profile.name) continue;
 
       await this.activityRepository
