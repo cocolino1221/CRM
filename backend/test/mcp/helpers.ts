@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { ExecutionContext, INestApplication, ValidationPipe } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule } from '@nestjs/config';
+import * as cookieParser from 'cookie-parser';
 import { McpModule } from '../../src/mcp/mcp.module';
 import authConfig from '../../src/config/auth.config';
 import { JwtAuthGuard } from '../../src/auth/guards/jwt-auth.guard';
@@ -75,6 +76,10 @@ export async function bootstrapTestApp(
   const moduleFixture: TestingModule = await moduleBuilder.compile();
 
   const app = moduleFixture.createNestApplication();
+
+  // Replicate main.ts's cookie parsing so req.cookies (e.g. the consent CSRF
+  // nonce) is populated the same way it is in production.
+  app.use(cookieParser());
 
   // Replicate main.ts's prefix + exclusion so root-level well-known routes resolve.
   app.setGlobalPrefix('api/v1', {

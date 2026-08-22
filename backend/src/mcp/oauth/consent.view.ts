@@ -8,6 +8,8 @@ export interface ConsentViewParams {
   codeChallenge: string;
   codeChallengeMethod: string;
   state?: string;
+  /** CSRF nonce (see McpOauthService.issueConsentNonce) mirrored into the form. */
+  csrf: string;
 }
 
 function escapeHtml(value: string): string {
@@ -37,6 +39,7 @@ export function renderConsentPage(params: ConsentViewParams): string {
     ['code_challenge_method', params.codeChallengeMethod],
     ['state', params.state ?? ''],
     ['scope', params.scopes.join(' ')],
+    ['csrf', params.csrf],
   ];
 
   const hiddenFieldsHtml = hiddenFields

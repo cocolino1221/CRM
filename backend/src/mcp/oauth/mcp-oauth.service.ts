@@ -26,6 +26,11 @@ export interface UpsertGrantParams {
   scopes: string[];
 }
 
+export interface ConsentNoncePayload {
+  userId: string;
+  clientId: string;
+}
+
 @Injectable()
 export class McpOauthService {
   constructor(
@@ -113,5 +118,42 @@ export class McpOauthService {
       { ...payload, typ: 'mcp-auth-code' },
       { expiresIn: '60s' },
     );
+  }
+
+  /**
+   * CSRF protection for the authorize -> consent hop. Mints a short-lived
+   * (5min) signed nonce binding the consent POST to the specific
+   * (user, client) pair that saw the GET consent screen. The same value is
+   * set as a strict, httpOnly cookie AND embedded as a hidden form field —
+   * a cross-site forged POST can't attach the cookie (SameSite=strict), so
+   * the two values won't match at verification time.
+   */
+  issueConsentNonce(payload: ConsentNoncePayload): string {
+    return this.jwtService.sign(
+      { ...payload, typ: 'mcp-consent-nonce' },
+      { expiresIn: '5m' },
+    );
+  }
+
+  /**
+   * Verifies signature, expiry, and token type of a consent nonce. Returns
+   * null (never throws) on any failure — mirrors AuthService's
+   * getOAuthStateSource pattern — so callers decide how to fail (403).
+   */
+  verifyConsentNonce(token: string): ConsentNoncePayload | null {
+    if (!token) return null;
+
+    let decoded: any;
+    try {
+      decoded = this.jwtService.verify(token);
+    } catch {
+      return null;
+    }
+
+    if (decoded?.typ !== 'mcp-consent-nonce' || !decoded.userId || !decoded.clientId) {
+      return null;
+    }
+
+    return { userId: decoded.userId, clientId: decoded.clientId };
   }
 }
