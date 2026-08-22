@@ -18,7 +18,7 @@ import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
 import { User } from '../../database/entities/user.entity';
 import { McpOauthClient } from '../../database/entities/mcp-oauth-client.entity';
-import { McpOauthService } from './mcp-oauth.service';
+import { McpOauthService, McpOAuthTokenException } from './mcp-oauth.service';
 import { RegisterClientDto } from './dto/register-client.dto';
 import { renderConsentPage } from './consent.view';
 
@@ -35,6 +35,15 @@ interface AuthorizeParams {
 interface ConsentParams extends AuthorizeParams {
   decision?: string;
   csrf?: string;
+}
+
+interface TokenRequestBody {
+  grant_type?: string;
+  code?: string;
+  code_verifier?: string;
+  client_id?: string;
+  redirect_uri?: string;
+  refresh_token?: string;
 }
 
 const CONSENT_NONCE_COOKIE = 'mcp_consent_nonce';
@@ -60,6 +69,39 @@ export class McpOauthController {
       redirect_uris: client.redirectUris,
       client_name: client.clientName,
     };
+  }
+
+  /**
+   * POST /api/v1/oauth/mcp/token
+   * Public (no auth guard — this IS the endpoint that mints auth). Handles
+   * both `grant_type=authorization_code` (PKCE-verified code exchange) and
+   * `grant_type=refresh_token` (rotation). Errors follow RFC 6749 §5.2:
+   * HTTP 400 with `{ error, error_description? }`.
+   */
+  @Post('token')
+  @HttpCode(HttpStatus.OK)
+  async token(@Body() body: TokenRequestBody) {
+    if (!body?.grant_type) {
+      throw new McpOAuthTokenException('invalid_request', 'grant_type is required');
+    }
+
+    if (body.grant_type === 'authorization_code') {
+      return this.mcpOauthService.exchangeCode({
+        code: body.code,
+        codeVerifier: body.code_verifier,
+        clientId: body.client_id,
+        redirectUri: body.redirect_uri,
+      });
+    }
+
+    if (body.grant_type === 'refresh_token') {
+      return this.mcpOauthService.refresh({ refreshToken: body.refresh_token });
+    }
+
+    throw new McpOAuthTokenException(
+      'unsupported_grant_type',
+      `Unsupported grant_type: ${body.grant_type}`,
+    );
   }
 
   /**
