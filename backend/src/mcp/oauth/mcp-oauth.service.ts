@@ -34,14 +34,21 @@ export interface ConsentNoncePayload {
 }
 
 export interface ExchangeCodeParams {
-  code?: string;
-  codeVerifier?: string;
-  clientId?: string;
-  redirectUri?: string;
+  // Typed `unknown` (not `string`) deliberately: these arrive from an
+  // unauthenticated public endpoint via a loosely-validated DTO (see
+  // TokenRequestDto — code_verifier is intentionally NOT
+  // class-validator-enforced so a wrong-typed value reaches this service's
+  // own typeof guards and gets a spec-shaped OAuth error instead of
+  // NestJS's generic ValidationPipe 400). Never assume these are strings
+  // without checking first.
+  code?: unknown;
+  codeVerifier?: unknown;
+  clientId?: unknown;
+  redirectUri?: unknown;
 }
 
 export interface RefreshParams {
-  refreshToken?: string;
+  refreshToken?: unknown;
 }
 
 export interface TokenResponse {
@@ -57,6 +64,18 @@ export interface TokenResponse {
  * body `{ error, error_description? }` — deliberately NOT NestJS's default
  * `{statusCode, message, error}` shape, since OAuth clients (and the spec)
  * expect `error` to be the machine-readable code itself.
+ *
+ * Also includes a `message` field aliased to `error_description` (falling
+ * back to the OAuth error code itself). Production wires
+ * `AllExceptionsFilter` globally (see main.ts), which reshapes every
+ * HttpException's response via
+ * `message = exceptionResponse.message || exception.message` and
+ * `error = exceptionResponse.error || error`. Without an explicit
+ * `message` here, that filter would fall back to `exception.message`
+ * (HttpException's own generic message string) instead of our
+ * OAuth-specific description — `error: 'invalid_grant'` still survives
+ * either way (the filter reads `.error` off our body directly), but this
+ * keeps `message` meaningful too.
  */
 export class McpOAuthTokenException extends HttpException {
   constructor(
@@ -64,7 +83,11 @@ export class McpOAuthTokenException extends HttpException {
     errorDescription?: string,
   ) {
     super(
-      errorDescription ? { error: oauthError, error_description: errorDescription } : { error: oauthError },
+      {
+        error: oauthError,
+        ...(errorDescription ? { error_description: errorDescription } : {}),
+        message: errorDescription ?? oauthError,
+      },
       HttpStatus.BAD_REQUEST,
     );
   }
@@ -227,11 +250,34 @@ export class McpOauthService {
   async exchangeCode(params: ExchangeCodeParams): Promise<TokenResponse> {
     const { code, codeVerifier, clientId, redirectUri } = params;
 
-    if (!code || !codeVerifier || !clientId || !redirectUri) {
+    // Structural presence check first (covers undefined/missing fields —
+    // RFC 6749 §5.2 invalid_request). This alone is NOT sufficient type
+    // safety: a truthy non-string (e.g. a number or object body field)
+    // would pass `!code` etc. and reach jwtService.verify/createHash
+    // below untyped, so every field is also explicitly typeof-checked.
+    if (
+      typeof code !== 'string' ||
+      !code ||
+      typeof clientId !== 'string' ||
+      !clientId ||
+      typeof redirectUri !== 'string' ||
+      !redirectUri
+    ) {
       throw new McpOAuthTokenException(
         'invalid_request',
-        'code, code_verifier, client_id, and redirect_uri are required',
+        'code, client_id, and redirect_uri are required strings',
       );
+    }
+
+    // code_verifier gets its own dedicated check (rather than folding into
+    // the invalid_request bucket above): a malformed/wrong-typed
+    // code_verifier is the specific input that used to reach
+    // `crypto.createHash(...).update(codeVerifier)` untyped and crash with
+    // an uncaught TypeError (500) — createHash.update() only accepts a
+    // string/Buffer/TypedArray. Guarding it here, before that call, turns
+    // any non-string value into a clean 400 invalid_grant instead.
+    if (typeof codeVerifier !== 'string' || codeVerifier.length === 0) {
+      throw new McpOAuthTokenException('invalid_grant', 'code_verifier must be a non-empty string');
     }
 
     let payload: AuthCodePayload & { typ?: string };
@@ -288,14 +334,17 @@ export class McpOauthService {
    * Token endpoint: `grant_type=refresh_token`.
    * 1. Verify the refresh JWT (typ 'mcp-refresh').
    * 2. Look up its persisted row by jti; reject if missing/revoked/expired.
-   * 3. Load the grant; reject if revoked.
-   * 4. Rotate: revoke the old row, mint + persist a new access/refresh pair,
-   *    and bump grant.lastUsedAt.
+   * 3. Atomically claim it (conditional UPDATE, see below) so concurrent
+   *    redemptions of the SAME refresh_token can't both succeed.
+   * 4. Load the LIVE grant; reject if revoked.
+   * 5. Mint + persist a new access/refresh pair using the grant's CURRENT
+   *    scopes (not the stale snapshot on the old refresh-token row), and
+   *    bump grant.lastUsedAt.
    */
   async refresh(params: RefreshParams): Promise<TokenResponse> {
     const { refreshToken } = params;
 
-    if (!refreshToken) {
+    if (typeof refreshToken !== 'string' || refreshToken.length === 0) {
       throw new McpOAuthTokenException('invalid_request', 'refresh_token is required');
     }
 
@@ -316,14 +365,34 @@ export class McpOauthService {
       throw new McpOAuthTokenException('invalid_grant', 'refresh_token is invalid, revoked, or expired');
     }
 
+    // Atomically claim this refresh token via a conditional UPDATE
+    // (revoked:false -> true), rather than the previous find-then-save
+    // pattern (load a snapshot, flip a JS boolean, save unconditionally).
+    // That pattern was a TOCTOU race: two concurrent requests for the
+    // SAME refresh_token could both observe revoked:false, then both
+    // save(revoked:true) and both mint a fresh token pair
+    // (double-redemption). A single-row `UPDATE ... WHERE jti = ? AND
+    // revoked = false` is atomic at the database level — under
+    // concurrent execution, Postgres serializes the two UPDATEs via its
+    // normal row lock; only the one that runs first sees revoked:false
+    // and flips it (affected === 1). The second blocks until the first
+    // commits, then re-evaluates the WHERE clause against the now-true
+    // value and matches zero rows (affected === 0) — so only ONE
+    // concurrent caller ever proceeds past this point.
+    const claim = await this.refreshTokenRepository.update(
+      { jti: payload.jti, revoked: false },
+      { revoked: true },
+    );
+
+    if (claim.affected !== 1) {
+      throw new McpOAuthTokenException('invalid_grant', 'refresh_token has already been used');
+    }
+
     const grant = await this.grantRepository.findOne({ where: { id: tokenRow.grantId } });
 
     if (!grant || grant.revoked) {
       throw new McpOAuthTokenException('invalid_grant', 'grant not found or revoked');
     }
-
-    tokenRow.revoked = true;
-    await this.refreshTokenRepository.save(tokenRow);
 
     grant.lastUsedAt = new Date();
     await this.grantRepository.save(grant);
@@ -333,7 +402,12 @@ export class McpOauthService {
       workspaceId: tokenRow.workspaceId,
       userId: tokenRow.userId,
       role: payload.role,
-      scopes: tokenRow.scopes,
+      // Live grant scopes, not tokenRow.scopes (a snapshot frozen at the
+      // time this refresh token was originally issued) — so a scope
+      // change applied to the grant since then takes effect on the very
+      // next refresh, rather than only after every outstanding refresh
+      // token eventually expires.
+      scopes: grant.scopes,
     });
   }
 

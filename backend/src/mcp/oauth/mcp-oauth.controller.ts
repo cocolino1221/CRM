@@ -20,6 +20,7 @@ import { User } from '../../database/entities/user.entity';
 import { McpOauthClient } from '../../database/entities/mcp-oauth-client.entity';
 import { McpOauthService, McpOAuthTokenException } from './mcp-oauth.service';
 import { RegisterClientDto } from './dto/register-client.dto';
+import { TokenRequestDto } from './dto/token-request.dto';
 import { renderConsentPage } from './consent.view';
 
 interface AuthorizeParams {
@@ -35,15 +36,6 @@ interface AuthorizeParams {
 interface ConsentParams extends AuthorizeParams {
   decision?: string;
   csrf?: string;
-}
-
-interface TokenRequestBody {
-  grant_type?: string;
-  code?: string;
-  code_verifier?: string;
-  client_id?: string;
-  redirect_uri?: string;
-  refresh_token?: string;
 }
 
 const CONSENT_NONCE_COOKIE = 'mcp_consent_nonce';
@@ -80,7 +72,7 @@ export class McpOauthController {
    */
   @Post('token')
   @HttpCode(HttpStatus.OK)
-  async token(@Body() body: TokenRequestBody) {
+  async token(@Body() body: TokenRequestDto) {
     if (!body?.grant_type) {
       throw new McpOAuthTokenException('invalid_request', 'grant_type is required');
     }

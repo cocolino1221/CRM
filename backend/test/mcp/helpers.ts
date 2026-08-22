@@ -6,6 +6,7 @@ import * as cookieParser from 'cookie-parser';
 import { McpModule } from '../../src/mcp/mcp.module';
 import authConfig from '../../src/config/auth.config';
 import { JwtAuthGuard } from '../../src/auth/guards/jwt-auth.guard';
+import { AllExceptionsFilter } from '../../src/common/filters/http-exception.filter';
 // Only imported for typing BootstrapTestAppOptions — deliberately NOT added
 // to the TypeOrmModule `entities` list below. User has OneToMany relations
 // to Contact/Deal/Task (which cascade into Company/Pipeline/Activity/etc.),
@@ -89,6 +90,11 @@ export async function bootstrapTestApp(
     ],
   });
   app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true }));
+
+  // Replicate main.ts's global exception filter so tests exercise the REAL
+  // production response shape (statusCode/timestamp/path/method/message/
+  // error), not NestJS's raw default HttpException body.
+  app.useGlobalFilters(new AllExceptionsFilter());
 
   await app.init();
   return app;

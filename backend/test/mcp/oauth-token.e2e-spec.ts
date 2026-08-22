@@ -1,8 +1,9 @@
 import { INestApplication } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { getRepositoryToken } from '@nestjs/typeorm';
 import * as request from 'supertest';
 import { randomUUID, randomBytes, createHash } from 'crypto';
-import { DataSource } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { bootstrapTestApp } from './helpers';
 import { Workspace } from '../../src/database/entities/workspace.entity';
 import { User, UserRole, UserStatus } from '../../src/database/entities/user.entity';
@@ -56,7 +57,7 @@ describe('MCP OAuth token endpoint (e2e)', () => {
     });
   }
 
-  function postToken(body: Record<string, string>) {
+  function postToken(body: Record<string, unknown>) {
     return request(app.getHttpServer()).post('/api/v1/oauth/mcp/token').send(body);
   }
 
@@ -275,6 +276,36 @@ describe('MCP OAuth token endpoint (e2e)', () => {
       }
     });
 
+    it('rejects a numeric code_verifier with 400 invalid_grant (not a 500 crash)', async () => {
+      const { challenge } = makePkcePair();
+      const code = issueCode(challenge);
+
+      const res = await postToken({
+        grant_type: 'authorization_code',
+        code,
+        code_verifier: 123456,
+        client_id: client.clientId,
+        redirect_uri: REDIRECT_URI,
+      }).expect(400);
+
+      expect(res.body.error).toBe('invalid_grant');
+    });
+
+    it('rejects an object code_verifier with 400 invalid_grant (not a 500 crash)', async () => {
+      const { challenge } = makePkcePair();
+      const code = issueCode(challenge);
+
+      const res = await postToken({
+        grant_type: 'authorization_code',
+        code,
+        code_verifier: { nested: 'object' },
+        client_id: client.clientId,
+        redirect_uri: REDIRECT_URI,
+      }).expect(400);
+
+      expect(res.body.error).toBe('invalid_grant');
+    });
+
     it('rejects an unsupported grant_type with 400 unsupported_grant_type', async () => {
       const res = await postToken({ grant_type: 'password' }).expect(400);
       expect(res.body.error).toBe('unsupported_grant_type');
@@ -351,6 +382,106 @@ describe('MCP OAuth token endpoint (e2e)', () => {
     it('rejects a missing refresh_token with 400 invalid_request', async () => {
       const res = await postToken({ grant_type: 'refresh_token' }).expect(400);
       expect(res.body.error).toBe('invalid_request');
+    });
+
+    it('under concurrent use of the SAME refresh_token, exactly one request succeeds and the other is rejected (no double-redemption)', async () => {
+      const first = await exchangeHappyPath();
+
+      // Force the two concurrent refresh() calls to genuinely interleave:
+      // both must complete their read of the not-yet-revoked row BEFORE
+      // EITHER one is allowed to proceed to writing — exactly the TOCTOU
+      // window the atomic conditional UPDATE in refresh() has to close.
+      //
+      // A fixed setTimeout delay on findOne is NOT sufficient here (this
+      // was tried first): both calls' real DB round-trips (read, then
+      // write) only take a few ms locally, comparable to the few-ms
+      // scheduling gap between when the two concurrent calls each start
+      // their delay. That means the SECOND call's delayed read can easily
+      // land AFTER the FIRST call's write has already committed — so the
+      // second read observes revoked:true (freshly, correctly) even
+      // against the OLD, unfixed find-then-save code, making the race
+      // never actually manifest and this test pass for the wrong reason.
+      //
+      // Instead, use an explicit two-party barrier: findOne performs the
+      // REAL read immediately (so both calls read the genuine
+      // not-yet-revoked row), then blocks until BOTH concurrent calls have
+      // reached this point, and only then releases both simultaneously.
+      // This guarantees both requests hold a stale (pre-write) snapshot
+      // before either is allowed to act on it, deterministically
+      // reproducing the vulnerable window regardless of local DB latency.
+      const refreshRepo = app.get<Repository<McpRefreshToken>>(getRepositoryToken(McpRefreshToken));
+      const originalFindOne = refreshRepo.findOne.bind(refreshRepo);
+      const PARTIES = 2;
+      let arrived: Array<() => void> = [];
+      const findOneSpy = jest
+        .spyOn(refreshRepo, 'findOne')
+        .mockImplementation(async (...args: Parameters<typeof originalFindOne>) => {
+          const result = await originalFindOne(...args);
+          await new Promise<void>((release) => {
+            arrived.push(release);
+            if (arrived.length >= PARTIES) {
+              arrived.forEach((r) => r());
+              arrived = [];
+            }
+          });
+          return result;
+        });
+
+      try {
+        const [resA, resB] = await Promise.all([
+          postToken({ grant_type: 'refresh_token', refresh_token: first.refresh_token }),
+          postToken({ grant_type: 'refresh_token', refresh_token: first.refresh_token }),
+        ]);
+
+        const statuses = [resA.status, resB.status].sort();
+        expect(statuses).toEqual([200, 400]);
+
+        const failed = resA.status === 400 ? resA : resB;
+        expect(failed.body.error).toBe('invalid_grant');
+
+        // The winner's newly-minted refresh row must exist and be
+        // non-revoked. (Not asserting this is the ONLY non-revoked row for
+        // the grant: earlier tests in this file share the same grant and
+        // legitimately leave their own non-revoked rows behind — the
+        // meaningful invariant here is specifically that the LOSER never
+        // got a row of its own, which is already covered by asserting its
+        // response was a 400 before issueTokens() could ever run.)
+        const succeeded = resA.status === 200 ? resA : resB;
+        const newDecoded: any = jwtService.decode(succeeded.body.refresh_token);
+        const newRow = await dataSource
+          .getRepository(McpRefreshToken)
+          .findOneOrFail({ where: { jti: newDecoded.jti } });
+        expect(newRow.revoked).toBe(false);
+      } finally {
+        findOneSpy.mockRestore();
+      }
+    });
+
+    it('re-derives scopes from the LIVE grant (not the stale refresh-token row) when issuing new tokens', async () => {
+      const first = await exchangeHappyPath();
+
+      const grantRepo = dataSource.getRepository(McpOauthGrant);
+      const grant = await grantRepo.findOneOrFail({
+        where: { workspaceId: workspace.id, userId: user.id, clientId: client.clientId },
+      });
+      grant.scopes = ['crm.read'];
+      await grantRepo.save(grant);
+
+      try {
+        const res = await postToken({
+          grant_type: 'refresh_token',
+          refresh_token: first.refresh_token,
+        }).expect(200);
+
+        expect(res.body.scope).toBe('crm.read');
+
+        const decodedAccess: any = jwtService.decode(res.body.access_token);
+        expect(decodedAccess.scopes).toEqual(['crm.read']);
+      } finally {
+        // restore for subsequent tests in this file
+        grant.scopes = SCOPES;
+        await grantRepo.save(grant);
+      }
     });
   });
 });
