@@ -46,7 +46,7 @@ export class TasksController {
   @Get()
   @ApiOperation({ summary: 'Get all tasks with filtering and pagination' })
   @ApiResponse({ status: 200, description: 'Tasks retrieved successfully' })
-  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'support_agent')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'caller', 'support_agent')
   async findAll(
     @CurrentWorkspace('id') workspaceId: string,
     @Query(ValidationPipe) query: QueryTasksDto,
@@ -57,7 +57,7 @@ export class TasksController {
   @Get('stats')
   @ApiOperation({ summary: 'Get task statistics for workspace' })
   @ApiResponse({ status: 200, description: 'Task statistics retrieved successfully' })
-  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'support_agent')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'caller', 'support_agent')
   async getStats(@CurrentWorkspace('id') workspaceId: string) {
     return this.tasksService.getStats(workspaceId);
   }
@@ -67,7 +67,7 @@ export class TasksController {
   @ApiQuery({ name: 'startDate', required: true, description: 'Start date', type: String })
   @ApiQuery({ name: 'endDate', required: true, description: 'End date', type: String })
   @ApiResponse({ status: 200, description: 'Calendar data retrieved successfully' })
-  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'support_agent')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'caller', 'support_agent')
   async getCalendar(
     @CurrentWorkspace('id') workspaceId: string,
     @Query('startDate') startDate: string,
@@ -89,7 +89,7 @@ export class TasksController {
   @ApiQuery({ name: 'include', required: false, description: 'Relations to include (assignee,contact,deal,creator)' })
   @ApiResponse({ status: 200, description: 'Task retrieved successfully' })
   @ApiResponse({ status: 404, description: 'Task not found' })
-  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'support_agent')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'caller', 'support_agent')
   async findOne(
     @CurrentWorkspace('id') workspaceId: string,
     @Param('id', ParseUUIDPipe) id: string,
@@ -104,7 +104,7 @@ export class TasksController {
   @ApiBody({ type: CreateTaskDto })
   @ApiResponse({ status: 201, description: 'Task created successfully' })
   @ApiResponse({ status: 400, description: 'Bad request - validation failed' })
-  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'caller')
   async create(
     @CurrentWorkspace('id') workspaceId: string,
     @CurrentUser('id') userId: string,
@@ -120,7 +120,7 @@ export class TasksController {
   @ApiResponse({ status: 200, description: 'Task updated successfully' })
   @ApiResponse({ status: 400, description: 'Bad request - validation failed' })
   @ApiResponse({ status: 404, description: 'Task not found' })
-  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'caller')
   async update(
     @CurrentWorkspace('id') workspaceId: string,
     @Param('id', ParseUUIDPipe) id: string,
@@ -149,7 +149,7 @@ export class TasksController {
   @ApiBody({ schema: { type: 'object', properties: { notes: { type: 'string' } } } })
   @ApiResponse({ status: 200, description: 'Task marked as complete' })
   @ApiResponse({ status: 404, description: 'Task not found' })
-  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'caller')
   async complete(
     @CurrentWorkspace('id') workspaceId: string,
     @Param('id', ParseUUIDPipe) id: string,
@@ -187,7 +187,7 @@ export class TasksController {
   })
   @ApiResponse({ status: 200, description: 'Task statuses updated successfully' })
   @HttpCode(HttpStatus.OK)
-  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'caller')
   async bulkUpdateStatus(
     @CurrentWorkspace('id') workspaceId: string,
     @Body('ids') ids: string[],

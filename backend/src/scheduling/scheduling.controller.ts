@@ -44,7 +44,7 @@ export class SchedulingController {
   @UseGuards(JwtAuthGuard, WorkspaceGuard, RolesGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Create availability schedule' })
-  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'caller')
   async createAvailability(
     @CurrentWorkspace('id') workspaceId: string,
     @CurrentUser('id') userId: string,
@@ -57,7 +57,7 @@ export class SchedulingController {
   @UseGuards(JwtAuthGuard, WorkspaceGuard, RolesGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get my availability schedule' })
-  @Roles('super_admin', 'admin', 'manager', 'sales_rep', 'closer', 'setter', 'support_agent')
+  @Roles('super_admin', 'admin', 'manager', 'sales_rep', 'closer', 'setter', 'caller', 'support_agent')
   async getAvailabilities(
     @CurrentWorkspace('id') workspaceId: string,
     @CurrentUser('id') userId: string,
@@ -69,7 +69,7 @@ export class SchedulingController {
   @UseGuards(JwtAuthGuard, WorkspaceGuard, RolesGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Update availability' })
-  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'caller')
   async updateAvailability(
     @CurrentWorkspace('id') workspaceId: string,
     @Param('id', ParseUUIDPipe) id: string,
@@ -83,7 +83,7 @@ export class SchedulingController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Delete availability' })
   @HttpCode(HttpStatus.NO_CONTENT)
-  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'caller')
   async deleteAvailability(
     @CurrentWorkspace('id') workspaceId: string,
     @Param('id', ParseUUIDPipe) id: string,
@@ -97,7 +97,7 @@ export class SchedulingController {
   @UseGuards(JwtAuthGuard, WorkspaceGuard, RolesGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Create meeting type' })
-  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'caller')
   async createMeetingType(
     @CurrentWorkspace('id') workspaceId: string,
     @CurrentUser('id') userId: string,
@@ -110,7 +110,7 @@ export class SchedulingController {
   @UseGuards(JwtAuthGuard, WorkspaceGuard, RolesGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get my meeting types' })
-  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'support_agent')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'caller', 'support_agent')
   async getMeetingTypes(
     @CurrentWorkspace('id') workspaceId: string,
     @CurrentUser('id') userId: string,
@@ -122,7 +122,7 @@ export class SchedulingController {
   @UseGuards(JwtAuthGuard, WorkspaceGuard, RolesGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Update meeting type' })
-  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'caller')
   async updateMeetingType(
     @CurrentWorkspace('id') workspaceId: string,
     @Param('id', ParseUUIDPipe) id: string,
@@ -136,7 +136,7 @@ export class SchedulingController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Delete meeting type' })
   @HttpCode(HttpStatus.NO_CONTENT)
-  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'caller')
   async deleteMeetingType(
     @CurrentWorkspace('id') workspaceId: string,
     @Param('id', ParseUUIDPipe) id: string,
@@ -209,7 +209,7 @@ export class SchedulingController {
   @ApiOperation({ summary: 'Get my bookings' })
   @ApiQuery({ name: 'startDate', required: false })
   @ApiQuery({ name: 'endDate', required: false })
-  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'support_agent')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'caller', 'support_agent')
   async getBookings(
     @CurrentWorkspace('id') workspaceId: string,
     @CurrentUser() user: User,

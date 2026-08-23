@@ -31,7 +31,7 @@ export class AnalyticsController {
   @Get('dashboard')
   @ApiOperation({ summary: 'Get dashboard overview with key metrics' })
   @ApiResponse({ status: 200, description: 'Dashboard overview retrieved' })
-  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'support_agent')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'caller', 'support_agent')
   async getDashboard(@CurrentWorkspace('id') workspaceId: string) {
     return this.analyticsService.getDashboardOverview(workspaceId);
   }
@@ -42,7 +42,7 @@ export class AnalyticsController {
   @ApiQuery({ name: 'startDate', required: false, type: String })
   @ApiQuery({ name: 'endDate', required: false, type: String })
   @ApiResponse({ status: 200, description: 'Sales metrics retrieved' })
-  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'support_agent')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'caller', 'support_agent')
   async getSalesMetrics(
     @CurrentWorkspace('id') workspaceId: string,
     @Query(ValidationPipe) dateRange: DateRangeDto,
@@ -57,7 +57,7 @@ export class AnalyticsController {
   @ApiQuery({ name: 'startDate', required: false, type: String })
   @ApiQuery({ name: 'endDate', required: false, type: String })
   @ApiResponse({ status: 200, description: 'Contacts metrics retrieved' })
-  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'support_agent')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'caller', 'support_agent')
   async getContactsMetrics(
     @CurrentWorkspace('id') workspaceId: string,
     @Query(ValidationPipe) dateRange: DateRangeDto,
@@ -72,7 +72,7 @@ export class AnalyticsController {
   @ApiQuery({ name: 'startDate', required: false, type: String })
   @ApiQuery({ name: 'endDate', required: false, type: String })
   @ApiResponse({ status: 200, description: 'Tasks metrics retrieved' })
-  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'support_agent')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'caller', 'support_agent')
   async getTasksMetrics(
     @CurrentWorkspace('id') workspaceId: string,
     @Query(ValidationPipe) dateRange: DateRangeDto,
@@ -88,7 +88,7 @@ export class AnalyticsController {
   @ApiQuery({ name: 'endDate', required: false, type: String })
   @ApiQuery({ name: 'groupBy', required: false, enum: ['day', 'week', 'month'] })
   @ApiResponse({ status: 200, description: 'Activity trend retrieved' })
-  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'support_agent')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'caller', 'support_agent')
   async getActivityTrend(
     @CurrentWorkspace('id') workspaceId: string,
     @Query(ValidationPipe) dateRange: DateRangeDto,
@@ -129,7 +129,7 @@ export class AnalyticsController {
   @ApiOperation({ summary: 'Get comprehensive dashboard with all analytics' })
   @ApiQuery({ name: 'range', required: false, enum: TimeRange })
   @ApiResponse({ status: 200, description: 'Comprehensive dashboard retrieved' })
-  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'support_agent')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'caller', 'support_agent')
   async getComprehensiveDashboard(
     @CurrentWorkspace('id') workspaceId: string,
     @Query('range') range?: TimeRange,
@@ -142,13 +142,25 @@ export class AnalyticsController {
   @ApiQuery({ name: 'metric', required: false, enum: ['revenue', 'deals', 'winRate'] })
   @ApiQuery({ name: 'limit', required: false, type: Number })
   @ApiResponse({ status: 200, description: 'Leaderboard retrieved' })
-  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'support_agent')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'caller', 'support_agent')
   async getLeaderboard(
     @CurrentWorkspace('id') workspaceId: string,
     @Query('metric') metric?: 'revenue' | 'deals' | 'winRate',
     @Query('limit', new ParseIntPipe({ optional: true })) limit?: number,
   ) {
     return this.analyticsService.getLeaderboard(workspaceId, metric || 'revenue', limit || 10);
+  }
+
+  @Get('system-logs')
+  @ApiOperation({ summary: 'Get unified system logs (admin only)' })
+  @ApiQuery({ name: 'limit', required: false, type: Number, description: 'Maximum number of logs (20-500)' })
+  @ApiResponse({ status: 200, description: 'System logs retrieved' })
+  @Roles('admin')
+  async getSystemLogs(
+    @CurrentWorkspace('id') workspaceId: string,
+    @Query('limit', new ParseIntPipe({ optional: true })) limit?: number,
+  ) {
+    return this.analyticsService.getSystemLogs(workspaceId, limit || 200);
   }
 
   private getDateRange(dateRange: DateRangeDto): { startDate: Date; endDate: Date } {
@@ -200,7 +212,7 @@ export class AnalyticsController {
   @ApiOperation({ summary: 'Get daily KPIs' })
   @ApiQuery({ name: 'date', required: false, type: String, description: 'Date in YYYY-MM-DD format' })
   @ApiResponse({ status: 200, description: 'Daily KPIs retrieved' })
-  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'support_agent')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'caller', 'support_agent')
   async getDailyKPIs(
     @CurrentWorkspace('id') workspaceId: string,
     @Query('date') date?: string,
@@ -214,7 +226,7 @@ export class AnalyticsController {
   @ApiQuery({ name: 'startDate', required: true, type: String })
   @ApiQuery({ name: 'endDate', required: true, type: String })
   @ApiResponse({ status: 200, description: 'KPI trend retrieved' })
-  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'support_agent')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'caller', 'support_agent')
   async getKPITrend(
     @CurrentWorkspace('id') workspaceId: string,
     @Query('startDate') startDate: string,

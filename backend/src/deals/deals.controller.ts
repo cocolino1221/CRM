@@ -46,7 +46,7 @@ export class DealsController {
   @Get()
   @ApiOperation({ summary: 'Get all deals with filtering and pagination' })
   @ApiResponse({ status: 200, description: 'Deals retrieved successfully' })
-  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'support_agent')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'caller', 'support_agent')
   async findAll(
     @CurrentWorkspace('id') workspaceId: string,
     @Query(ValidationPipe) query: QueryDealsDto,
@@ -57,7 +57,7 @@ export class DealsController {
   @Get('stats')
   @ApiOperation({ summary: 'Get deal statistics for workspace' })
   @ApiResponse({ status: 200, description: 'Deal statistics retrieved successfully' })
-  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'support_agent')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'caller', 'support_agent')
   async getStats(@CurrentWorkspace('id') workspaceId: string) {
     return this.dealsService.getStats(workspaceId);
   }
@@ -65,7 +65,7 @@ export class DealsController {
   @Get('pipeline')
   @ApiOperation({ summary: 'Get deal pipeline view' })
   @ApiResponse({ status: 200, description: 'Pipeline data retrieved successfully' })
-  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'support_agent')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'caller', 'support_agent')
   async getPipeline(@CurrentWorkspace('id') workspaceId: string) {
     return this.dealsService.getPipeline(workspaceId);
   }
@@ -74,7 +74,7 @@ export class DealsController {
   @ApiOperation({ summary: 'Get deals forecast by month' })
   @ApiQuery({ name: 'months', required: false, description: 'Number of months to forecast', type: Number })
   @ApiResponse({ status: 200, description: 'Forecast data retrieved successfully' })
-  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'support_agent')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'caller', 'support_agent')
   async getForecast(
     @CurrentWorkspace('id') workspaceId: string,
     @Query('months', new ParseIntPipe({ optional: true })) months?: number,
@@ -88,7 +88,7 @@ export class DealsController {
   @ApiQuery({ name: 'include', required: false, description: 'Relations to include (owner,contact,company,tasks,activities)' })
   @ApiResponse({ status: 200, description: 'Deal retrieved successfully' })
   @ApiResponse({ status: 404, description: 'Deal not found' })
-  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'support_agent')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'caller', 'support_agent')
   async findOne(
     @CurrentWorkspace('id') workspaceId: string,
     @Param('id', ParseUUIDPipe) id: string,
@@ -103,7 +103,7 @@ export class DealsController {
   @ApiBody({ type: CreateDealDto })
   @ApiResponse({ status: 201, description: 'Deal created successfully' })
   @ApiResponse({ status: 400, description: 'Bad request - validation failed' })
-  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'caller')
   async create(
     @CurrentWorkspace('id') workspaceId: string,
     @Body(ValidationPipe) createDealDto: CreateDealDto,
@@ -118,7 +118,7 @@ export class DealsController {
   @ApiResponse({ status: 200, description: 'Deal updated successfully' })
   @ApiResponse({ status: 400, description: 'Bad request - validation failed' })
   @ApiResponse({ status: 404, description: 'Deal not found' })
-  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'caller')
   async update(
     @CurrentWorkspace('id') workspaceId: string,
     @Param('id', ParseUUIDPipe) id: string,
@@ -133,7 +133,7 @@ export class DealsController {
   @ApiResponse({ status: 204, description: 'Deal deleted successfully' })
   @ApiResponse({ status: 404, description: 'Deal not found' })
   @HttpCode(HttpStatus.NO_CONTENT)
-  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'caller')
   async remove(
     @CurrentWorkspace('id') workspaceId: string,
     @Param('id', ParseUUIDPipe) id: string,
@@ -148,7 +148,7 @@ export class DealsController {
   @ApiResponse({ status: 200, description: 'Deal stage updated successfully' })
   @ApiResponse({ status: 400, description: 'Invalid stage value' })
   @ApiResponse({ status: 404, description: 'Deal not found' })
-  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'caller')
   async updateStage(
     @CurrentWorkspace('id') workspaceId: string,
     @Param('id', ParseUUIDPipe) id: string,
@@ -165,7 +165,7 @@ export class DealsController {
   @ApiBody({ schema: { type: 'object', properties: { ids: { type: 'array', items: { type: 'string', format: 'uuid' } } } } })
   @ApiResponse({ status: 200, description: 'Deals deleted successfully' })
   @HttpCode(HttpStatus.OK)
-  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'caller')
   async bulkDelete(
     @CurrentWorkspace('id') workspaceId: string,
     @Body('ids') ids: string[],
@@ -189,7 +189,7 @@ export class DealsController {
   })
   @ApiResponse({ status: 200, description: 'Deal stages updated successfully' })
   @HttpCode(HttpStatus.OK)
-  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'caller')
   async bulkUpdateStage(
     @CurrentWorkspace('id') workspaceId: string,
     @Body('ids') ids: string[],
@@ -207,7 +207,7 @@ export class DealsController {
   @Get('analytics/velocity')
   @ApiOperation({ summary: 'Get deal velocity metrics' })
   @ApiResponse({ status: 200, description: 'Velocity metrics retrieved successfully' })
-  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'support_agent')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'caller', 'support_agent')
   async getVelocity(@CurrentWorkspace('id') workspaceId: string) {
     return this.dealsService.getVelocityMetrics(workspaceId);
   }
@@ -215,7 +215,7 @@ export class DealsController {
   @Get('analytics/conversion')
   @ApiOperation({ summary: 'Get conversion rates between stages' })
   @ApiResponse({ status: 200, description: 'Conversion rates retrieved successfully' })
-  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'support_agent')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'caller', 'support_agent')
   async getConversionRates(@CurrentWorkspace('id') workspaceId: string) {
     return this.dealsService.getConversionRates(workspaceId);
   }
@@ -223,7 +223,7 @@ export class DealsController {
   @Get('analytics/stages')
   @ApiOperation({ summary: 'Get comprehensive stage analytics' })
   @ApiResponse({ status: 200, description: 'Stage analytics retrieved successfully' })
-  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'support_agent')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'caller', 'support_agent')
   async getStageAnalytics(@CurrentWorkspace('id') workspaceId: string) {
     return this.dealsService.getStageAnalytics(workspaceId);
   }
@@ -235,7 +235,7 @@ export class DealsController {
   @ApiResponse({ status: 200, description: 'Deal moved successfully' })
   @ApiResponse({ status: 400, description: 'Invalid stage' })
   @ApiResponse({ status: 404, description: 'Deal not found' })
-  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'caller')
   async moveDealToStage(
     @CurrentWorkspace('id') workspaceId: string,
     @Param('id', ParseUUIDPipe) id: string,
