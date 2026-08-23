@@ -6,6 +6,7 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  Logger,
   Param,
   Post,
   Query,
@@ -26,6 +27,7 @@ import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagg
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { Public } from '../../common/decorators/public.decorator';
 import { MetaMessagingService, MetaChannel } from './meta-messaging.service';
+import { MetaLeadsService } from '../meta-leads/meta-leads.service';
 
 const audioUploadInterceptor = AnyFilesInterceptor({
   storage: diskStorage({
@@ -41,8 +43,11 @@ const audioUploadInterceptor = AnyFilesInterceptor({
 @ApiTags('Meta Messaging')
 @Controller('integrations/meta-messaging')
 export class MetaMessagingController {
+  private readonly logger = new Logger(MetaMessagingController.name);
+
   constructor(
     private readonly metaMessagingService: MetaMessagingService,
+    private readonly metaLeadsService: MetaLeadsService,
     private readonly eventEmitter: EventEmitter2,
   ) {}
 
@@ -98,6 +103,13 @@ export class MetaMessagingController {
     @Param('provider') provider: 'facebook' | 'instagram',
     @Body() payload: any,
   ) {
+    // Lead Ads deliveries (entry[].changes[] field:'leadgen') arrive on this
+    // same callback URL alongside messaging events — Meta subscribes both
+    // fields to one Page webhook. Process in the background so the leadgen
+    // Graph API round-trip never delays Meta's ack.
+    void this.metaLeadsService.processWebhookPayload(payload).catch((error) => {
+      this.logger.error(`Lead Ads webhook processing failed: ${error?.message || error}`);
+    });
     return this.metaMessagingService.handleProviderWebhook(provider, payload);
   }
 
@@ -110,6 +122,9 @@ export class MetaMessagingController {
     @Param('integrationId') integrationId: string,
     @Body() payload: any,
   ) {
+    void this.metaLeadsService.processWebhookPayload(payload).catch((error) => {
+      this.logger.error(`Lead Ads webhook processing failed: ${error?.message || error}`);
+    });
     return this.metaMessagingService.handleWebhook(provider, integrationId, payload);
   }
 

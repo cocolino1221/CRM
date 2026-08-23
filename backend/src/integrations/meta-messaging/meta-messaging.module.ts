@@ -10,12 +10,14 @@ import { Integration } from '../../database/entities/integration.entity';
 import { User } from '../../database/entities/user.entity';
 import { Workspace } from '../../database/entities/workspace.entity';
 import { NotificationsModule } from '../../notifications/notifications.module';
+import { MetaLeadsModule } from '../meta-leads/meta-leads.module';
 
 @Module({
   imports: [
     HttpModule,
     ConfigModule,
     NotificationsModule,
+    MetaLeadsModule,
     TypeOrmModule.forFeature([Contact, Activity, Integration, User, Workspace]),
   ],
   controllers: [MetaMessagingController],

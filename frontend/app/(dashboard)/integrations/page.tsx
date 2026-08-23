@@ -95,7 +95,16 @@ export default function IntegrationsPage() {
   const [newFormId, setNewFormId] = useState('');
   const [newFormName, setNewFormName] = useState('');
   const [isLoadingForms, setIsLoadingForms] = useState(false);
-  const credentialFieldNames = ['apiToken', 'apiKey', 'accessToken', 'secretKey', 'authToken', 'secret', 'consumerKey', 'consumerSecret', 'clientSecret', 'apiSecret'];
+
+  // Meta (Facebook/Instagram) Lead Ads form management
+  const [metaLeadForms, setMetaLeadForms] = useState<any[]>([]);
+  const [isLoadingMetaLeadForms, setIsLoadingMetaLeadForms] = useState(false);
+  const [showAddMetaLeadForm, setShowAddMetaLeadForm] = useState(false);
+  const [availableMetaLeadForms, setAvailableMetaLeadForms] = useState<any[]>([]);
+  const [isLoadingAvailableMetaLeadForms, setIsLoadingAvailableMetaLeadForms] = useState(false);
+  const [selectedMetaLeadFormId, setSelectedMetaLeadFormId] = useState('');
+  const [isSubscribingLeadgen, setIsSubscribingLeadgen] = useState(false);
+  const credentialFieldNames =['apiToken', 'apiKey', 'accessToken', 'secretKey', 'authToken', 'secret', 'consumerKey', 'consumerSecret', 'clientSecret', 'apiSecret'];
 
   const buildConnectedIntegrationMap = (rows: any[]): Record<string, any> => {
     const sortedRows = [...rows].sort((a, b) => {
@@ -1061,6 +1070,13 @@ export default function IntegrationsPage() {
           .then(res => setTypeformForms(res.data.forms || []))
           .catch(() => setTypeformForms([]))
           .finally(() => setIsLoadingForms(false));
+      }
+      if (integration.id === 'facebook' && existing.id) {
+        setIsLoadingMetaLeadForms(true);
+        api.get(`/integrations/meta-leads/${existing.id}/forms`)
+          .then(res => setMetaLeadForms(res.data.forms || []))
+          .catch(() => setMetaLeadForms([]))
+          .finally(() => setIsLoadingMetaLeadForms(false));
       }
       return;
     }
@@ -2346,6 +2362,172 @@ export default function IntegrationsPage() {
                         </button>
                       </div>
                     </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Meta Lead Ads Forms Management */}
+            {managingIntegration.id === 'facebook' && connectedIntegrations[managingIntegration.id]?.id && (
+              <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 mb-6">
+                <div className="flex items-center justify-between mb-3">
+                  <h4 className="text-sm font-semibold text-blue-900 flex items-center gap-2">
+                    <FileText className="h-4 w-4" />
+                    Lead Ads Forms
+                  </h4>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={isSubscribingLeadgen}
+                      onClick={async () => {
+                        setIsSubscribingLeadgen(true);
+                        try {
+                          await api.post(`/integrations/meta-leads/${connectedIntegrations[managingIntegration.id].id}/subscribe`);
+                          alert('Page subscribed to Lead Ads events.');
+                        } catch (err: any) {
+                          alert(err.response?.data?.message || 'Failed to subscribe Page to Lead Ads events');
+                        } finally {
+                          setIsSubscribingLeadgen(false);
+                        }
+                      }}
+                      className="flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-blue-700 bg-white border border-blue-300 rounded-lg hover:bg-blue-100 transition-all disabled:opacity-50"
+                      title="Subscribe the connected Page to leadgen webhook events"
+                    >
+                      {isSubscribingLeadgen ? <Loader2 className="h-3 w-3 animate-spin" /> : <Webhook className="h-3 w-3" />}
+                      Subscribe Page
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowAddMetaLeadForm(true);
+                        setSelectedMetaLeadFormId('');
+                        setIsLoadingAvailableMetaLeadForms(true);
+                        api.get(`/integrations/meta-leads/${connectedIntegrations[managingIntegration.id].id}/available-forms`)
+                          .then(res => setAvailableMetaLeadForms(res.data.forms || []))
+                          .catch((err) => {
+                            setAvailableMetaLeadForms([]);
+                            alert(err.response?.data?.message || 'Failed to load forms from Facebook. Make sure a Page is connected.');
+                          })
+                          .finally(() => setIsLoadingAvailableMetaLeadForms(false));
+                      }}
+                      className="flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-blue-700 bg-white border border-blue-300 rounded-lg hover:bg-blue-100 transition-all"
+                    >
+                      <Plus className="h-3 w-3" />
+                      Add Form
+                    </button>
+                  </div>
+                </div>
+
+                <p className="text-xs text-blue-700 mb-3">
+                  Requires Meta's <code className="bg-white px-1 rounded text-blue-800">leads_retrieval</code> permission (Advanced Access / App Review) on your Facebook App before real leads will flow in.
+                </p>
+
+                {isLoadingMetaLeadForms ? (
+                  <div className="flex items-center justify-center py-4">
+                    <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
+                  </div>
+                ) : metaLeadForms.length === 0 ? (
+                  <p className="text-xs text-blue-700 py-3 text-center">
+                    No Lead Ads forms connected yet. Click "Add Form" to pick one from your connected Page.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {metaLeadForms.map((form: any) => (
+                      <div key={form.formId} className="flex items-center justify-between bg-white rounded-lg border border-blue-100 p-3">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-gray-900 truncate">{form.name || form.formId}</p>
+                          <p className="text-xs text-gray-500">ID: {form.formId}</p>
+                          {form.enabled === false && (
+                            <p className="text-xs text-yellow-600 mt-0.5">Disabled — new leads from this form are skipped</p>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2 ml-3">
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              if (!confirm(`Remove form "${form.name || form.formId}"?`)) return;
+                              try {
+                                await api.delete(`/integrations/meta-leads/${connectedIntegrations[managingIntegration.id].id}/forms/${form.formId}`);
+                                setMetaLeadForms(prev => prev.filter(f => f.formId !== form.formId));
+                              } catch (err) {
+                                console.error('Failed to remove form:', err);
+                              }
+                            }}
+                            className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition-all"
+                            title="Remove form"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Add Form Picker */}
+                {showAddMetaLeadForm && (
+                  <div className="mt-3 p-3 bg-white rounded-lg border border-blue-200">
+                    <p className="text-xs font-semibold text-gray-700 mb-2">Add Lead Ads Form</p>
+                    {isLoadingAvailableMetaLeadForms ? (
+                      <div className="flex items-center justify-center py-4">
+                        <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <select
+                          value={selectedMetaLeadFormId}
+                          onChange={(e) => setSelectedMetaLeadFormId(e.target.value)}
+                          className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        >
+                          <option value="">
+                            {availableMetaLeadForms.length === 0 ? 'No forms found on this Page' : 'Select a form...'}
+                          </option>
+                          {availableMetaLeadForms
+                            .filter((f: any) => !metaLeadForms.some((mf) => mf.formId === f.id))
+                            .map((f: any) => (
+                              <option key={f.id} value={f.id}>
+                                {f.name || f.id} {f.status ? `(${f.status})` : ''}
+                              </option>
+                            ))}
+                        </select>
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => { setShowAddMetaLeadForm(false); setSelectedMetaLeadFormId(''); }}
+                            className="flex-1 px-3 py-2 text-xs font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-all"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="button"
+                            disabled={!selectedMetaLeadFormId || isSubmitting}
+                            onClick={async () => {
+                              const selected = availableMetaLeadForms.find((f: any) => f.id === selectedMetaLeadFormId);
+                              setIsSubmitting(true);
+                              try {
+                                const res = await api.post(`/integrations/meta-leads/${connectedIntegrations[managingIntegration.id].id}/forms`, {
+                                  formId: selectedMetaLeadFormId,
+                                  name: selected?.name,
+                                });
+                                if (res.data.success && res.data.form) {
+                                  setMetaLeadForms(prev => [...prev, res.data.form]);
+                                }
+                                setShowAddMetaLeadForm(false);
+                                setSelectedMetaLeadFormId('');
+                              } catch (err: any) {
+                                alert(err.response?.data?.message || 'Failed to add form');
+                              } finally {
+                                setIsSubmitting(false);
+                              }
+                            }}
+                            className="flex-1 px-3 py-2 text-xs font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-1"
+                          >
+                            {isSubmitting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />}
+                            Add
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
