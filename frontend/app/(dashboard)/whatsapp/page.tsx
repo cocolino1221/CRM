@@ -6627,6 +6627,91 @@ export default function WhatsAppPage() {
                             </div>
                           )}
                         </div>
+
+                        {/* Email step type toggle — mutually exclusive with template/interactive */}
+                        <div className="border-t border-gray-200 pt-2 mt-1">
+                          <label className="flex items-center gap-2 text-xs font-medium text-gray-600">
+                            <input
+                              type="checkbox"
+                              checked={step.type === 'email'}
+                              onChange={e => {
+                                updateFlowStep(si, 'type', e.target.checked ? 'email' : undefined);
+                                if (e.target.checked) updateFlowStep(si, 'emailSubject', step.emailSubject || '');
+                              }}
+                              className="h-3.5 w-3.5 rounded border-gray-300 accent-green-600"
+                            />
+                            Send as email instead of WhatsApp
+                          </label>
+                          {step.type === 'email' && (
+                            <input
+                              type="text"
+                              placeholder="Email subject"
+                              value={step.emailSubject || ''}
+                              onChange={e => updateFlowStep(si, 'emailSubject', e.target.value)}
+                              className="mt-1.5 w-full px-2 py-1 text-xs border border-gray-200 rounded-lg focus:outline-none focus:border-green-400"
+                            />
+                          )}
+                        </div>
+
+                        {/* Anchor-date timing — for a funnel step whose send time is computed from the funnel's anchorDate, not a relative delay */}
+                        <div className="border-t border-gray-200 pt-2 mt-1">
+                          <label className="flex items-center gap-2 text-xs font-medium text-gray-600">
+                            <input
+                              type="checkbox"
+                              checked={!!step.anchorOffset}
+                              onChange={e => updateFlowStep(si, 'anchorOffset', e.target.checked
+                                ? { relation: 'before', minutes: 1440 }
+                                : undefined)}
+                              className="h-3.5 w-3.5 rounded border-gray-300 accent-green-600"
+                            />
+                            Time relative to funnel anchor date
+                          </label>
+                          {step.anchorOffset && (
+                            <div className="mt-1.5 flex items-center gap-1.5">
+                              <select
+                                value={step.anchorOffset.relation}
+                                onChange={e => updateFlowStep(si, 'anchorOffset', { ...step.anchorOffset, relation: e.target.value })}
+                                className="px-2 py-1 text-xs border border-gray-200 rounded-lg focus:outline-none focus:border-green-400 bg-white"
+                              >
+                                <option value="before">Before</option>
+                                <option value="after">After</option>
+                              </select>
+                              <input
+                                type="number"
+                                min={1}
+                                value={step.anchorOffset.minutes}
+                                onChange={e => updateFlowStep(si, 'anchorOffset', { ...step.anchorOffset, minutes: Math.max(1, Number(e.target.value) || 1) })}
+                                className="w-20 px-2 py-1 text-xs border border-gray-200 rounded-lg focus:outline-none focus:border-green-400"
+                              />
+                              <span className="text-[11px] text-gray-500">minutes (anchor date)</span>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Attended branch — sent immediately when someone toggles "mark attended" on this enrollment */}
+                        <div className="border-t border-gray-200 pt-2 mt-1">
+                          <label className="flex items-center gap-2 text-xs font-medium text-gray-600">
+                            <input
+                              type="checkbox"
+                              checked={!!step.attendedNextStepId}
+                              onChange={e => updateFlowStep(si, 'attendedNextStepId', e.target.checked ? '' : undefined)}
+                              className="h-3.5 w-3.5 rounded border-gray-300 accent-green-600"
+                            />
+                            On "mark attended", send
+                          </label>
+                          {step.attendedNextStepId !== undefined && (
+                            <select
+                              value={step.attendedNextStepId}
+                              onChange={e => updateFlowStep(si, 'attendedNextStepId', e.target.value)}
+                              className="mt-1.5 w-full px-2 py-1 text-xs border border-gray-200 rounded-lg focus:outline-none focus:border-green-400 bg-white"
+                            >
+                              <option value="">Choose a step…</option>
+                              {editingFlow.steps.filter((s: any) => s.id !== step.id).map((s: any) => (
+                                <option key={s.id} value={s.id}>{s.id}</option>
+                              ))}
+                            </select>
+                          )}
+                        </div>
                       </div>
                     ))}
                   </div>
