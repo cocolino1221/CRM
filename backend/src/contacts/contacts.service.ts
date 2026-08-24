@@ -136,7 +136,7 @@ export class ContactsService {
   }
 
   async findOne(workspaceId: string, id: string, relations: string[] = []): Promise<Contact> {
-    const queryBuilder = this.createBaseQuery(workspaceId).where('contact.id = :id', { id });
+    const queryBuilder = this.createBaseQuery(workspaceId).andWhere('contact.id = :id', { id });
 
     // Add requested relations
     relations.forEach(relation => {
@@ -630,8 +630,14 @@ export class ContactsService {
     averageLeadScore: number;
     recentlyActive: number;
   }> {
-    const queryBuilder = this.createBaseQuery(workspaceId);
-
+    // Each branch below gets its OWN query builder from createBaseQuery
+    // (rather than sharing/mutating one across the whole Promise.all) —
+    // they used to share a single `queryBuilder` instance, and each
+    // branch's `.select()`/`.where()` calls mutate that shared builder's
+    // state in place. `.where()` in particular *replaces* rather than ANDs
+    // previously set conditions, which silently dropped the workspaceId
+    // scope from the sourceStats/recentlyActive queries (and would have let
+    // one branch's filters bleed into another's) — see task-14-report.md.
     const [
       total,
       statusStats,
@@ -639,23 +645,23 @@ export class ContactsService {
       avgLeadScore,
       recentlyActive,
     ] = await Promise.all([
-      queryBuilder.getCount(),
-      queryBuilder
+      this.createBaseQuery(workspaceId).getCount(),
+      this.createBaseQuery(workspaceId)
         .select('contact.status', 'status')
         .addSelect('COUNT(*)', 'count')
         .groupBy('contact.status')
         .getRawMany(),
-      queryBuilder
+      this.createBaseQuery(workspaceId)
         .select('contact.source', 'source')
         .addSelect('COUNT(*)', 'count')
-        .where('contact.source IS NOT NULL')
+        .andWhere('contact.source IS NOT NULL')
         .groupBy('contact.source')
         .getRawMany(),
-      queryBuilder
+      this.createBaseQuery(workspaceId)
         .select('AVG(contact.leadScore)', 'average')
         .getRawOne(),
-      queryBuilder
-        .where('contact.lastContactedAt > :date', { date: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) })
+      this.createBaseQuery(workspaceId)
+        .andWhere('contact.lastContactedAt > :date', { date: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) })
         .getCount(),
     ]);
 
