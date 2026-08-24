@@ -13,9 +13,9 @@ export class WhatsAppFollowupProcessor {
 
   @Process(JOB_TYPES.CHECK_FOLLOWUP_REPLY)
   async handle(job: Job<FollowupCheckJobData>) {
-    const { workspaceId, waId, flowId, armedStepId } = job.data;
+    const { workspaceId, waId, flowId, armedStepId, targetStepId } = job.data;
     try {
-      await this.whatsAppService.handleFollowupTimeout(workspaceId, waId, flowId, armedStepId);
+      await this.whatsAppService.handleFollowupTimeout(workspaceId, waId, flowId, armedStepId, targetStepId);
     } catch (err: any) {
       this.logger.warn(`Follow-up check failed for ${waId} (flow ${flowId}, step ${armedStepId}): ${err?.message}`);
     }

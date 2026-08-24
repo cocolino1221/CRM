@@ -8,6 +8,7 @@ export interface FollowupCheckJobData {
   waId: string;
   flowId: string;
   armedStepId: string;
+  targetStepId?: string;
 }
 
 /**
@@ -32,11 +33,20 @@ export class WhatsAppFollowupDispatchService {
     return `${flowId}:${waId}`;
   }
 
-  async schedule(flowId: string, waId: string, workspaceId: string, armedStepId: string, delayMs: number): Promise<void> {
+  async schedule(
+    flowId: string,
+    waId: string,
+    workspaceId: string,
+    armedStepId: string,
+    delayMs: number,
+    targetStepId?: string,
+  ): Promise<void> {
     await this.cancel(flowId, waId);
+    const data: FollowupCheckJobData = { workspaceId, waId, flowId, armedStepId };
+    if (targetStepId) data.targetStepId = targetStepId;
     await this.queue.add(
       JOB_TYPES.CHECK_FOLLOWUP_REPLY,
-      { workspaceId, waId, flowId, armedStepId } as FollowupCheckJobData,
+      data,
       {
         jobId: this.jobId(flowId, waId),
         delay: Math.max(0, delayMs),
@@ -45,7 +55,7 @@ export class WhatsAppFollowupDispatchService {
         removeOnFail: 50,
       },
     );
-    this.logger.log(`Armed follow-up for ${waId} (flow ${flowId}, step ${armedStepId}) in ${Math.round(delayMs / 1000)}s`);
+    this.logger.log(`Armed follow-up for ${waId} (flow ${flowId}, step ${armedStepId}${targetStepId ? ` → ${targetStepId}` : ''}) in ${Math.round(delayMs / 1000)}s`);
   }
 
   async cancel(flowId: string, waId: string): Promise<void> {
