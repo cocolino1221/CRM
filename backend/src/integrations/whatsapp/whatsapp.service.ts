@@ -3909,7 +3909,7 @@ export class WhatsAppService {
     const resolveVars = (value: string): string =>
       variables ? value.replace(/\{\{\s*(\w+)\s*\}\}/g, (match, key) => variables[key] ?? match) : value;
     if (step.type === 'email') {
-      const contact = await this.contactRepository.findOne({ where: { phone: waId, workspaceId } });
+      const contact = await this.findContactByPhone(workspaceId, waId);
       const email = contact?.email;
       if (!email || email.endsWith('@whatsapp.placeholder.invalid')) {
         this.logger.warn(`Flow step "${step.id}": no real email on file for ${waId}, skipping email step`);

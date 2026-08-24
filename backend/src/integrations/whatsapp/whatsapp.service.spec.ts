@@ -114,8 +114,11 @@ describe('WhatsAppService flow arming', () => {
 
   it('sendFlowStep with type "email" sends via EmailService using the contact\'s email, not WhatsApp', async () => {
     const emailService = moduleRef.get(EmailService);
-    const contactRepo = moduleRef.get(getRepositoryToken(Contact));
-    contactRepo.findOne = jest.fn().mockResolvedValue({ id: 'c1', email: 'lead@example.com', phone: '+40700000000' });
+    // The email branch looks up the contact via the private findContactByPhone helper
+    // (same helper every other phone lookup in this file uses — it matches on
+    // phoneNormalized / regexp-stripped digits, not a raw exact-match on `phone`),
+    // so stub that helper directly rather than the repository's findOne.
+    jest.spyOn<any, any>(service, 'findContactByPhone').mockResolvedValue({ id: 'c1', email: 'lead@example.com', phone: '+40700000000' });
 
     integrationRepository.find.mockResolvedValueOnce([{
       ...baseIntegration,
@@ -129,6 +132,7 @@ describe('WhatsAppService flow arming', () => {
     }]);
 
     await service.startFlowForWorkspace('ws1', '40700000000', 'flow1');
+    expect((service as any).findContactByPhone).toHaveBeenCalledWith('ws1', '40700000000');
     expect(emailService.sendEmail).toHaveBeenCalledWith(expect.objectContaining({
       to: 'lead@example.com',
       subject: 'Reminder',
