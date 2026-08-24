@@ -62,6 +62,7 @@ export interface LandingPage {
   content?: LandingPageContent;
   captureType: LandingPageCaptureType;
   formId?: string;
+  funnelId?: string;
   typeformConfig?: LandingPageTypeformConfig;
   postSubmit?: LandingPagePostSubmit;
   viewCount: number;

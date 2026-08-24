@@ -10,6 +10,7 @@ import {
   LandingPageCaptureType,
   ThemePreset,
 } from '@/types/landing-page';
+import { Funnel } from '@/types/funnel';
 
 interface FormOption {
   id: string;
@@ -82,6 +83,7 @@ export default function LandingPageEditor({ initial }: Props) {
   );
   const [forms, setForms] = useState<FormOption[]>([]);
   const [presets, setPresets] = useState<ThemePreset[]>([]);
+  const [funnels, setFunnels] = useState<Funnel[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [uploading, setUploading] = useState<string | null>(null);
@@ -89,6 +91,7 @@ export default function LandingPageEditor({ initial }: Props) {
   useEffect(() => {
     api.get<FormOption[]>('/forms').then((r) => setForms(r.data)).catch(() => {});
     api.get<ThemePreset[]>('/landing-pages/theme-presets').then((r) => setPresets(r.data)).catch(() => {});
+    api.get<Funnel[]>('/funnels').then((r) => setFunnels(r.data)).catch(() => {});
   }, []);
 
   const hero = draft.content?.hero || {};
@@ -421,6 +424,21 @@ export default function LandingPageEditor({ initial }: Props) {
                   className="w-full rounded-lg border border-gray-200 px-3 py-2"
                 />
               )}
+              <div className="mt-3">
+                <label className="mb-1 block text-sm font-medium text-gray-700">
+                  Auto-enroll into funnel (optional)
+                </label>
+                <select
+                  value={draft.funnelId || ''}
+                  onChange={(e) => setDraft({ ...draft, funnelId: e.target.value || undefined })}
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2"
+                >
+                  <option value="">None</option>
+                  {funnels.map((f) => (
+                    <option key={f.id} value={f.id}>{f.name}</option>
+                  ))}
+                </select>
+              </div>
             </section>
           )}
 
