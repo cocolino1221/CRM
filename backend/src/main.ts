@@ -18,7 +18,12 @@ async function bootstrap() {
   const nodeEnv = configService.get('NODE_ENV', 'development');
 
   // Global prefix for API routes
-  app.setGlobalPrefix('api/v1');
+  app.setGlobalPrefix('api/v1', {
+    exclude: [
+      '.well-known/oauth-authorization-server',
+      '.well-known/oauth-protected-resource',
+    ],
+  });
   app.set('trust proxy', 1);
 
   // Serve uploaded files statically

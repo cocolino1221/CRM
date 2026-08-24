@@ -199,6 +199,18 @@ The integration system is designed for extensibility:
 - HubSpot, Salesforce, Microsoft, Zoom (stubs)
 - WhatsApp (in progress)
 
+### MCP Server
+
+The CRM exposes itself as a remote MCP (Model Context Protocol) server so AI clients (Claude, ChatGPT, etc.) can read and act on workspace data directly.
+
+- **Tool-call endpoint**: `POST /api/v1/mcp` — the single JSON-RPC-style endpoint AI clients call to list/invoke tools (contacts, deals, tasks, analytics, workflows, WhatsApp, email campaigns). Guarded by `McpGuard`, which validates the MCP access token (not the regular CRM `JwtAuthGuard`).
+- **Discovery**: `GET /.well-known/oauth-authorization-server` (and `/.well-known/oauth-protected-resource`) publishes OAuth metadata so clients can self-configure.
+- **Connect flow (OAuth 2.1 + PKCE)**: the customer pastes the server URL into their AI client, which dynamically registers itself (`POST /api/v1/oauth/mcp/register`), redirects the user to `GET /api/v1/oauth/mcp/authorize` to log in with their normal CRM account, and the user approves a consent screen (`POST /api/v1/oauth/mcp/authorize/consent`) naming the client and requested scopes. Tokens are minted via `POST /api/v1/oauth/mcp/token` (short-lived ~15m access tokens + rotating refresh tokens).
+- **Scopes**: `crm.read` (read-only lookups), `crm.write` (create/update), `crm.automations` (trigger workflows/sends, e.g. WhatsApp/email campaigns).
+- **Destructive/automation tools require `confirm: true`** in the tool input — enforced by the tool runner (`src/mcp/tools/tool.runner.ts`), independent of scope.
+- **Grant management** (Settings UI-facing): `GET /api/v1/mcp/grants` lists the workspace's active AI-client grants; `DELETE /api/v1/mcp/grants/:id` revokes one — flips the grant and its refresh tokens to `revoked: true`, so the client can't refresh; any already-issued access token still expires naturally within ~15m. Both are regular JWT-guarded CRM endpoints (`src/mcp/mcp-settings.controller.ts`).
+- **Key files**: `backend/src/mcp/mcp.module.ts` (prod module, tool-call endpoint + domain modules), `backend/src/mcp/mcp-oauth.module.ts` (OAuth Authorization Server, split out so it can boot standalone in e2e tests), `backend/src/mcp/oauth/` (authorize/consent/token controllers), `backend/src/mcp/tools/` (per-domain tool definitions).
+
 ## Important Development Notes
 
 ### Authentication & Authorization

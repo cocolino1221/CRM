@@ -886,6 +886,49 @@ git commit -m "chore(mcp): env config, docs, deploy wiring"
 
 ---
 
+### Task 16: Frontend — "AI Connect (MCP)" integrations card (added mid-build per user request)
+
+**Files:**
+- Modify: `frontend/app/(dashboard)/integrations/page.tsx` (add an AI Connect card + management modal, following the existing integration-card pattern)
+- Modify: `frontend/lib/api.ts` (add a small `mcpApi` helper: `listGrants()`, `revokeGrant(id)`) — or call `api.get`/`api.delete` inline following existing usage
+- Test: manual/visual verification in the running app (frontend has no e2e harness for this; a light component render test is optional)
+
+**Interfaces:**
+- Consumes (from Task 13, backend, JWT-guarded, workspace-scoped): `GET /mcp/grants` → `[{ id, clientName, scopes, createdAt, lastUsedAt }]`; `DELETE /mcp/grants/:id` → revokes.
+- The MCP connect URL is derived from the existing API base: `` `${process.env.NEXT_PUBLIC_API_URL || 'https://slackcrm-backend.fly.dev/api/v1'}/mcp` `` (see `frontend/lib/api.ts:3`).
+
+**Context:** The integrations page (`frontend/app/(dashboard)/integrations/page.tsx`, ~2600 lines) renders integration cards from objects shaped `{ id, name/title, description, icon, ... }`. Add an "AI Connect (MCP)" entry with icon `🤖`. It is NOT an OAuth-client integration like the others (no Connect-to-third-party button) — it's an inbound connector: the card shows the URL customers paste into their AI client, plus a management view of who has connected. Reuse the page's existing card styling, modal pattern, and the shared `api` axios client (which already injects the JWT).
+
+- [ ] **Step 1: Add the card definition**
+
+Add an integration entry with `id: 'mcp-ai-connect'`, `name: 'AI Connect (MCP)'`, `icon: '🤖'`, `description: 'Connect Claude, ChatGPT, or any MCP-compatible AI assistant directly to your CRM. Your AI can read contacts & deals, create tasks, and (with confirmation) run automations — scoped to your workspace.'`. Render it in the same grid as the other cards.
+
+- [ ] **Step 2: Card body — connect info**
+
+The card (or its "Manage" modal) shows:
+- The MCP URL (derived as above) with a **Copy** button (reuse any existing copy-to-clipboard helper on the page; if none, `navigator.clipboard.writeText`).
+- A short "How to connect" list: (1) In Claude/ChatGPT → Settings → Connectors → Add custom connector; (2) paste this URL; (3) approve the consent screen with your CRM login.
+- The three scopes explained: `crm.read` (view contacts, deals, analytics), `crm.write` (create/update tasks, contacts, deals), `crm.automations` (delete, trigger workflows, send WhatsApp/campaigns — always requires AI confirmation).
+
+- [ ] **Step 3: Card body — connected clients (management)**
+
+In the card/modal, fetch `GET /mcp/grants` on open and render the list: each row shows `clientName`, its `scopes`, `lastUsedAt` (or "never"), and a **Revoke** button. Revoke calls `DELETE /mcp/grants/:id`, then refetches the list. Show an empty state ("No AI assistants connected yet") when the list is empty, and a loading state while fetching. Handle the request error path with a visible message (don't fail silently).
+
+- [ ] **Step 4: Verify in the running app**
+
+Start the frontend (`cd frontend && npm run dev`) against the backend, open `/integrations`, confirm: the card renders, Copy copies the URL, the connected-clients list loads (empty is fine with no grants), and Revoke removes a row. Because grants require a real connected client to populate, it's acceptable to verify the list renders + the empty state; if a grant exists (from an e2e or manual OAuth run), verify Revoke.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add "frontend/app/(dashboard)/integrations/page.tsx" frontend/lib/api.ts
+git commit -m "feat(mcp): AI Connect card on integrations page with connect info + grant management"
+```
+
+**Note:** This task is frontend-only and does not run in the backend jest/e2e harness. It depends on Task 13 (grants API) being complete. Run it after Task 15.
+
+---
+
 ## Self-Review Notes
 
 - **Spec coverage:** OAuth 2.1/DCR/PKCE (T4-6), consent+revoke (T5,T13), tool tiers read/write/destructive (T9-11), confirm gate + audit (T8,T11,T14), scopes-ceiling/role-floor (T8), workspace isolation (T14), in-backend module + well-known root routes (T1), Streamable HTTP (T12), deploy (T15). All spec sections map to a task.

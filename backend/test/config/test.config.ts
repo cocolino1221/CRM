@@ -2,6 +2,14 @@
  * Test configuration and environment setup
  */
 
+import { config as loadDotenv } from 'dotenv';
+
+// Populate process.env from .env before reading DB_*/JWT_* below — without
+// this, the global e2e setup (test/setup-e2e.ts) always fell back to the
+// 'test'/'test' DB placeholder credentials instead of the real local
+// Postgres credentials in .env, and every e2e suite failed at boot.
+loadDotenv();
+
 export const testConfig = {
   // Database configuration
   database: {
