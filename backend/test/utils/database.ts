@@ -4,13 +4,10 @@
 
 import { DataSource, DataSourceOptions } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
+import { join } from 'path';
 import { Contact } from '../../src/database/entities/contact.entity';
 import { User } from '../../src/database/entities/user.entity';
 import { Company } from '../../src/database/entities/company.entity';
-import { Deal } from '../../src/database/entities/deal.entity';
-import { Task } from '../../src/database/entities/task.entity';
-import { Activity } from '../../src/database/entities/activity.entity';
-import { Integration } from '../../src/database/entities/integration.entity';
 
 /**
  * Get test database configuration
@@ -25,7 +22,9 @@ export const getTestDatabaseConfig = (configService?: ConfigService): DataSource
     username: configService?.get('DB_USERNAME') || process.env.DB_USERNAME || 'test',
     password: configService?.get('DB_PASSWORD') || process.env.DB_PASSWORD || 'test',
     database: configService?.get('DB_NAME') || process.env.DB_NAME || (isE2E ? 'slackcrm_test_e2e' : 'slackcrm_test'),
-    entities: [Contact, User, Company, Deal, Task, Activity, Integration],
+    // Glob-load all entities (mirrors src/database/data-source.ts) instead of a
+    // hand-maintained list, so this stays in sync as entities/relations are added.
+    entities: [join(__dirname, '../../src/database/entities/**/*.entity{.ts,.js}')],
     synchronize: true,
     logging: false,
     dropSchema: isE2E, // Fresh database for E2E tests
@@ -56,21 +55,19 @@ export const cleanDatabase = async (dataSource: DataSource): Promise<void> => {
     throw new Error('Database connection is not initialized');
   }
 
-  const entities = dataSource.entityMetadatas;
+  const tableNames = dataSource.entityMetadatas
+    .map((entity) => `"${entity.tableName}"`)
+    .join(', ');
 
-  // Disable foreign key constraints temporarily
-  await dataSource.query('SET FOREIGN_KEY_CHECKS = 0');
-
-  try {
-    // Clear all tables
-    for (const entity of entities) {
-      const repository = dataSource.getRepository(entity.name);
-      await repository.clear();
-    }
-  } finally {
-    // Re-enable foreign key constraints
-    await dataSource.query('SET FOREIGN_KEY_CHECKS = 1');
+  if (!tableNames) {
+    return;
   }
+
+  // Truncate all tables in a single statement with CASCADE so foreign-key
+  // relationships between entities don't block cleanup (Postgres refuses to
+  // TRUNCATE a table referenced elsewhere unless all referencing tables are
+  // truncated together, or CASCADE is used).
+  await dataSource.query(`TRUNCATE TABLE ${tableNames} RESTART IDENTITY CASCADE`);
 };
 
 /**
@@ -118,8 +115,8 @@ export const seedTestData = async (dataSource: DataSource) => {
     workspaceId,
     name: 'Test Company',
     website: 'https://testcompany.com',
-    industry: 'Technology',
-    size: '50-100',
+    industry: 'Technology' as any,
+    size: '50-100' as any,
   });
   await companyRepository.save(testCompany);
 
@@ -168,7 +165,7 @@ export class TestDatabasePool {
     if (!this.connections.has(name)) {
       const config = getTestDatabaseConfig(configService);
       // Use unique database name for each connection
-      config.database = `${config.database}_${name}`;
+      (config as { database?: string }).database = `${config.database}_${name}`;
 
       const dataSource = new DataSource(config);
       await dataSource.initialize();

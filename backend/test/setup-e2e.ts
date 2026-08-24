@@ -57,7 +57,7 @@ process.on('uncaughtException', (error) => {
 // Mock external services for E2E tests
 jest.mock('@sendgrid/mail', () => ({
   setApiKey: jest.fn(),
-  send: jest.fn().mockResolvedValue([{ statusCode: 202 }]),
+  send: jest.fn(() => Promise.resolve([{ statusCode: 202 }])),
 }));
 
 jest.mock('@slack/bolt', () => ({

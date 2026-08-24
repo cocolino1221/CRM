@@ -42,6 +42,7 @@ import { UploadModule } from './upload/upload.module';
 import { PlatformAdminModule } from './platform-admin/platform-admin.module';
 import { EmailCampaignsModule } from './email-campaigns/email-campaigns.module';
 import { CampaignSchedulerModule } from './scheduler/campaign-scheduler.module';
+import { McpModule } from './mcp/mcp.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import databaseConfig from './config/database.config';
@@ -192,6 +193,7 @@ import { validationSchema } from './config/env.validation';
     CampaignSchedulerModule,
     QueueModule,
     AnalyticsModule,
+    McpModule,
   ],
   controllers: [AppController],
   providers: [AppService],
