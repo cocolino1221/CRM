@@ -124,4 +124,12 @@ describe('FunnelsService CRUD', () => {
     expect(updated.attendedManual).toBe(false);
     expect(whatsapp.armFlowStepAt).not.toHaveBeenCalled();
   });
+
+  it('listEnrollments scopes to workspace and funnel', async () => {
+    const enrollmentRepo = moduleRef.get(getRepositoryToken(FunnelEnrollment));
+    enrollmentRepo.find = jest.fn().mockResolvedValue([{ id: 'e1' }]);
+    const result = await service.listEnrollments('ws1', 'f1');
+    expect(enrollmentRepo.find).toHaveBeenCalledWith({ where: { workspaceId: 'ws1', funnelId: 'f1' }, order: { enrolledAt: 'DESC' } });
+    expect(result).toEqual([{ id: 'e1' }]);
+  });
 });

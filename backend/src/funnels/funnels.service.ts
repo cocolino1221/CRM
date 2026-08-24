@@ -52,6 +52,10 @@ export class FunnelsService {
     await this.funnelRepository.remove(funnel);
   }
 
+  async listEnrollments(workspaceId: string, funnelId: string): Promise<FunnelEnrollment[]> {
+    return this.enrollmentRepository.find({ where: { workspaceId, funnelId }, order: { enrolledAt: 'DESC' } });
+  }
+
   async enroll(contact: { id: string; workspaceId: string; phone?: string }, funnelId: string): Promise<FunnelEnrollment | null> {
     const funnel = await this.funnelRepository.findOne({ where: { id: funnelId, workspaceId: contact.workspaceId } });
     if (!funnel || funnel.status !== FunnelStatus.ACTIVE) {
