@@ -92,4 +92,28 @@ export class FunnelsService {
 
     return saved;
   }
+
+  async setAttended(workspaceId: string, enrollmentId: string, attended: boolean): Promise<FunnelEnrollment> {
+    const enrollment = await this.enrollmentRepository.findOne({ where: { id: enrollmentId, workspaceId } });
+    if (!enrollment) throw new NotFoundException('Enrollment not found');
+
+    enrollment.attendedManual = attended;
+    const saved = await this.enrollmentRepository.save(enrollment);
+
+    if (attended && enrollment.currentStepId) {
+      const funnel = await this.funnelRepository.findOne({ where: { id: enrollment.funnelId, workspaceId } });
+      if (funnel) {
+        const flows = await this.whatsappService.getFlows(workspaceId);
+        const flow = flows.find((f: any) => f.id === funnel.flowId && f.enabled);
+        const currentStep = flow?.steps?.find((s: any) => s.id === enrollment.currentStepId);
+        if (currentStep?.attendedNextStepId) {
+          await this.whatsappService.armFlowStepAt(
+            workspaceId, enrollment.waId, funnel.flowId, enrollment.currentStepId, currentStep.attendedNextStepId, 0,
+          );
+        }
+      }
+    }
+
+    return saved;
+  }
 }
