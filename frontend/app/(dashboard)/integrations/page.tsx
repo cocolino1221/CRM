@@ -64,6 +64,12 @@ export default function IntegrationsPage() {
   const [filter, setFilter] = useState('all');
   const [selectedIntegration, setSelectedIntegration] = useState<Integration | null>(null);
   const [showSheetsModal, setShowSheetsModal] = useState(false);
+  const [showMcpModal, setShowMcpModal] = useState(false);
+  const [mcpGrants, setMcpGrants] = useState<any[]>([]);
+  const [mcpGrantsLoading, setMcpGrantsLoading] = useState(false);
+  const [mcpGrantsError, setMcpGrantsError] = useState('');
+  const [mcpRevokingId, setMcpRevokingId] = useState<string | null>(null);
+  const [mcpUrlCopied, setMcpUrlCopied] = useState(false);
   const [managingIntegration, setManagingIntegration] = useState<Integration | null>(null);
   const [configData, setConfigData] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -425,6 +431,20 @@ export default function IntegrationsPage() {
           helpText: 'Optional: set a security key and add it to your ManyChat External Request as the "key" field to validate incoming webhooks.',
         },
       ],
+    },
+
+    // AI Connect (MCP)
+    {
+      id: 'mcp-ai-connect',
+      name: 'AI Connect (MCP)',
+      description: 'Connect Claude, ChatGPT, or any MCP-compatible AI assistant directly to your CRM — scoped to your workspace.',
+      category: 'ai',
+      icon: '🤖',
+      logoUrl: '',
+      color: 'from-violet-500 to-fuchsia-600',
+      connected: false,
+      features: ['Read contacts, deals & analytics', 'Create & update tasks', 'Automations always require confirmation'],
+      configFields: [],
     },
 
     {
@@ -899,6 +919,7 @@ export default function IntegrationsPage() {
 
   const categories = [
     { id: 'all', name: 'All Integrations' },
+    { id: 'ai', name: 'AI Assistants' },
     { id: 'communication', name: 'Communication' },
     { id: 'email', name: 'Email & Marketing' },
     { id: 'automation', name: 'Automation' },
@@ -1042,11 +1063,68 @@ export default function IntegrationsPage() {
     }
   };
 
+  // AI Connect (MCP) — the CRM itself is the MCP server; there's no
+  // OAuth-client "connect" flow here, just the connect URL + grant management.
+  const mcpConnectUrl = `${(process.env.NEXT_PUBLIC_API_URL || 'https://slackcrm-backend.fly.dev/api/v1')}/mcp`;
+
+  const fetchMcpGrants = async () => {
+    setMcpGrantsLoading(true);
+    setMcpGrantsError('');
+    try {
+      const response = await api.get('/mcp/grants');
+      const data = response.data;
+      setMcpGrants(Array.isArray(data) ? data : data?.grants || []);
+    } catch (err: any) {
+      console.error('Failed to fetch MCP grants:', err);
+      setMcpGrantsError(err.response?.data?.message || 'Failed to load connected AI assistants.');
+    } finally {
+      setMcpGrantsLoading(false);
+    }
+  };
+
+  const openMcpModal = () => {
+    setShowMcpModal(true);
+    setMcpUrlCopied(false);
+    setMcpGrantsError('');
+    void fetchMcpGrants();
+  };
+
+  const handleCopyMcpUrl = async () => {
+    try {
+      await navigator.clipboard.writeText(mcpConnectUrl);
+      setMcpUrlCopied(true);
+      setTimeout(() => setMcpUrlCopied(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy MCP URL:', err);
+    }
+  };
+
+  const handleRevokeMcpGrant = async (grantId: string) => {
+    setMcpRevokingId(grantId);
+    setMcpGrantsError('');
+    try {
+      await api.delete(`/mcp/grants/${grantId}`);
+      await fetchMcpGrants();
+    } catch (err: any) {
+      console.error('Failed to revoke MCP grant:', err);
+      setMcpGrantsError(err.response?.data?.message || 'Failed to revoke access. Please try again.');
+    } finally {
+      setMcpRevokingId(null);
+    }
+  };
+
   const handleConnect = async (integration: Integration) => {
     // Google Sheets is a configuration of the Google integration, not a
     // separate connectable app — its card opens the sync setup directly.
     if (integration.id === 'google-sheets') {
       setShowSheetsModal(true);
+      return;
+    }
+
+    // AI Connect (MCP) is an inbound connector (AI clients connect to us),
+    // not an outbound OAuth-client integration — open the management modal.
+    if (integration.id === 'mcp-ai-connect') {
+      openMcpModal();
       return;
     }
 
@@ -1472,6 +1550,152 @@ export default function IntegrationsPage() {
                 <button onClick={() => setShowSheetsModal(false)} className="rounded-full px-2 py-1 text-sm text-gray-400 hover:bg-gray-100 hover:text-gray-700">✕ Close</button>
               </div>
               <GoogleSheetsSync autoOpen />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* AI Connect (MCP) — connect info + connected-clients management */}
+      {showMcpModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm animate-fade-in p-4 sm:p-6 overflow-y-auto"
+          onClick={() => setShowMcpModal(false)}
+        >
+          <div
+            className="relative w-full max-w-2xl my-auto max-h-[90vh] overflow-y-auto glass-effect rounded-2xl p-6 sm:p-8 shadow-2xl animate-scale-in"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              onClick={() => setShowMcpModal(false)}
+              className="absolute right-4 top-4 rounded-xl p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-all"
+            >
+              <X className="h-6 w-6" />
+            </button>
+
+            <div className="mb-6 flex items-center gap-4">
+              <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-white p-3 shadow-lg border border-gray-100">
+                <span className="text-3xl">🤖</span>
+              </div>
+              <div>
+                <h2 className="text-2xl font-bold text-gray-900">AI Connect (MCP)</h2>
+                <p className="text-sm text-gray-600">Connect an AI assistant to this workspace</p>
+              </div>
+            </div>
+
+            {/* Connect info */}
+            <div className="space-y-3">
+              <label className="block text-sm font-semibold text-gray-700">MCP Server URL</label>
+              <div className="flex items-center gap-2">
+                <code className="flex-1 text-xs bg-white border border-gray-200 rounded-lg px-3 py-2.5 text-gray-900 break-all">
+                  {mcpConnectUrl}
+                </code>
+                <button
+                  type="button"
+                  onClick={handleCopyMcpUrl}
+                  className="p-2.5 rounded-lg bg-white border border-gray-200 hover:bg-gray-50 transition-all shrink-0"
+                  title="Copy MCP URL"
+                >
+                  {mcpUrlCopied ? <Check className="h-4 w-4 text-emerald-600" /> : <Copy className="h-4 w-4 text-gray-600" />}
+                </button>
+              </div>
+
+              <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-4">
+                <p className="text-xs font-semibold text-indigo-900 mb-2">How to connect</p>
+                <ol className="list-decimal list-inside space-y-1 text-xs text-indigo-800">
+                  <li>In Claude or ChatGPT, go to Settings → Connectors → Add custom connector.</li>
+                  <li>Paste the URL above.</li>
+                  <li>Log in with your CRM account and approve the consent screen.</li>
+                </ol>
+              </div>
+            </div>
+
+            {/* Scopes explainer */}
+            <div className="mt-6">
+              <p className="text-sm font-semibold text-gray-700 mb-2">What your AI assistant can do</p>
+              <div className="space-y-2">
+                <div className="flex items-start gap-3 rounded-xl border border-gray-200 bg-white p-3">
+                  <span className="mt-0.5 shrink-0 rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-blue-700">
+                    crm.read
+                  </span>
+                  <span className="text-xs text-gray-600">View contacts, deals, and analytics.</span>
+                </div>
+                <div className="flex items-start gap-3 rounded-xl border border-gray-200 bg-white p-3">
+                  <span className="mt-0.5 shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-700">
+                    crm.write
+                  </span>
+                  <span className="text-xs text-gray-600">Create and update tasks, contacts, and deals.</span>
+                </div>
+                <div className="flex items-start gap-3 rounded-xl border border-gray-200 bg-white p-3">
+                  <span className="mt-0.5 shrink-0 rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-red-700">
+                    crm.automations
+                  </span>
+                  <span className="text-xs text-gray-600">
+                    Delete records, trigger workflows, send WhatsApp/email — always requires the AI to confirm before running.
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Connected clients */}
+            <div className="mt-6">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-sm font-semibold text-gray-700">Connected AI assistants</p>
+                <button
+                  type="button"
+                  onClick={() => void fetchMcpGrants()}
+                  disabled={mcpGrantsLoading}
+                  className="text-xs font-semibold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <RefreshCw className={`h-3.5 w-3.5 ${mcpGrantsLoading ? 'animate-spin' : ''}`} /> Refresh
+                </button>
+              </div>
+
+              {mcpGrantsError && (
+                <div className="mb-3 flex items-start gap-3 rounded-xl bg-red-50 border border-red-200 p-3">
+                  <AlertCircle className="h-4 w-4 text-red-600 mt-0.5 shrink-0" />
+                  <p className="text-xs text-red-700">{mcpGrantsError}</p>
+                </div>
+              )}
+
+              {mcpGrantsLoading ? (
+                <div className="flex items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white py-8 text-sm text-gray-500">
+                  <Loader2 className="h-4 w-4 animate-spin" /> Loading connected assistants...
+                </div>
+              ) : mcpGrants.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-gray-300 bg-gray-50 py-8 text-center text-sm text-gray-500">
+                  No AI assistants connected yet.
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {mcpGrants.map((grant: any) => (
+                    <div key={grant.id} className="flex items-center justify-between gap-3 rounded-xl border border-gray-200 bg-white p-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-gray-900 truncate">{grant.clientName || 'Unnamed client'}</p>
+                        <p className="text-xs text-gray-500 truncate">
+                          {(Array.isArray(grant.scopes) ? grant.scopes.join(', ') : grant.scopes) || 'no scopes'}
+                          {' · Last used: '}
+                          {grant.lastUsedAt ? new Date(grant.lastUsedAt).toLocaleString() : 'never'}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void handleRevokeMcpGrant(grant.id)}
+                        disabled={mcpRevokingId === grant.id}
+                        className="flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100 transition-all disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+                      >
+                        {mcpRevokingId === grant.id ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Trash2 className="h-3.5 w-3.5" />
+                        )}
+                        Revoke
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <p className="mt-3 text-[11px] text-gray-400">Access ends within ~15 minutes after revoking.</p>
             </div>
           </div>
         </div>
