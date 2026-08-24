@@ -11,6 +11,7 @@ import { User } from '../database/entities/user.entity';
 import { WellKnownController } from './oauth/well-known.controller';
 import { McpOauthController } from './oauth/mcp-oauth.controller';
 import { McpOauthService } from './oauth/mcp-oauth.service';
+import { McpSettingsController } from './mcp-settings.controller';
 
 /**
  * The MCP OAuth Authorization Server — deliberately split out from
@@ -43,7 +44,7 @@ import { McpOauthService } from './oauth/mcp-oauth.service';
       inject: [ConfigService],
     }),
   ],
-  controllers: [WellKnownController, McpOauthController],
+  controllers: [WellKnownController, McpOauthController, McpSettingsController],
   providers: [McpTokenService, McpOauthService],
   exports: [McpTokenService, McpOauthService, JwtModule],
 })
