@@ -15,6 +15,7 @@ import {
 import { ContactSource } from '../database/entities/contact.entity';
 import { FormsService } from '../forms/forms.service';
 import { WhatsAppService } from '../integrations/whatsapp/whatsapp.service';
+import { FunnelsService } from '../funnels/funnels.service';
 import { CreateLandingPageDto } from './dto/create-landing-page.dto';
 import { UpdateLandingPageDto } from './dto/update-landing-page.dto';
 import { SubmitLandingPageDto } from './dto/submit-landing-page.dto';
@@ -34,6 +35,7 @@ export class LandingPagesService {
     private readonly landingPageRepository: Repository<LandingPage>,
     private readonly formsService: FormsService,
     private readonly whatsappService: WhatsAppService,
+    private readonly funnelsService: FunnelsService,
   ) {}
 
   async create(
@@ -224,6 +226,12 @@ export class LandingPagesService {
     });
 
     await this.maybeSendWhatsAppWelcome(page, form, submission, contact);
+
+    if (page.funnelId) {
+      this.funnelsService.enroll(contact, page.funnelId).catch((error: any) => {
+        this.logger.error(`Funnel enroll for landing page ${page.id} failed (submit still succeeded): ${error?.message}`);
+      });
+    }
 
     return {
       success: true,

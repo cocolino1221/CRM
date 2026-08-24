@@ -42,6 +42,10 @@ export class CreateLandingPageDto {
   formId?: string;
 
   @IsOptional()
+  @IsUUID()
+  funnelId?: string;
+
+  @IsOptional()
   @IsObject()
   typeformConfig?: LandingPageTypeformConfig;
 

@@ -9,6 +9,7 @@ import {
 } from '../database/entities/landing-page.entity';
 import { FormsService } from '../forms/forms.service';
 import { WhatsAppService } from '../integrations/whatsapp/whatsapp.service';
+import { FunnelsService } from '../funnels/funnels.service';
 import { ContactSource } from '../database/entities/contact.entity';
 
 describe('LandingPagesService', () => {
@@ -16,6 +17,7 @@ describe('LandingPagesService', () => {
   let repo: any;
   let formsService: any;
   let whatsappService: any;
+  let funnelsService: any;
 
   beforeEach(async () => {
     repo = {
@@ -35,6 +37,7 @@ describe('LandingPagesService', () => {
       createSubmissionForForm: jest.fn(),
     };
     whatsappService = { sendMessageForWorkspace: jest.fn() };
+    funnelsService = { enroll: jest.fn().mockResolvedValue(null) };
 
     const moduleRef = await Test.createTestingModule({
       providers: [
@@ -42,6 +45,7 @@ describe('LandingPagesService', () => {
         { provide: getRepositoryToken(LandingPage), useValue: repo },
         { provide: FormsService, useValue: formsService },
         { provide: WhatsAppService, useValue: whatsappService },
+        { provide: FunnelsService, useValue: funnelsService },
       ],
     }).compile();
 
@@ -153,6 +157,33 @@ describe('LandingPagesService', () => {
 
     const res = await service.submitPublic('promo', { data: { p: '+15551234567' } } as any, {});
     expect(res.success).toBe(true);
+  });
+
+  it('submitPublic enrolls the new contact into the linked funnel when the page has one', async () => {
+    repo.findOne.mockResolvedValueOnce({
+      id: 'lp1', workspaceId: 'ws1', formId: 'form1', funnelId: 'funnel1',
+      captureType: LandingPageCaptureType.NATIVE, submissionCount: 0,
+    });
+    formsService.findFormById.mockResolvedValueOnce({ id: 'form1', fields: [] });
+    const contact = { id: 'c1', workspaceId: 'ws1', phone: '+40700000000' };
+    formsService.createSubmissionForForm.mockResolvedValueOnce({ submission: { data: {} }, contact });
+
+    await service.submitPublic('promo', { data: {} } as any, {});
+
+    expect(funnelsService.enroll).toHaveBeenCalledWith(contact, 'funnel1');
+  });
+
+  it('submitPublic does not call enroll when the page has no funnelId', async () => {
+    repo.findOne.mockResolvedValueOnce({
+      id: 'lp1', workspaceId: 'ws1', formId: 'form1', funnelId: undefined,
+      captureType: LandingPageCaptureType.NATIVE, submissionCount: 0,
+    });
+    formsService.findFormById.mockResolvedValueOnce({ id: 'form1', fields: [] });
+    formsService.createSubmissionForForm.mockResolvedValueOnce({ submission: { data: {} }, contact: { id: 'c1' } });
+
+    await service.submitPublic('promo', { data: {} } as any, {});
+
+    expect(funnelsService.enroll).not.toHaveBeenCalled();
   });
 
   it('rejects native submit on a typeform page', async () => {

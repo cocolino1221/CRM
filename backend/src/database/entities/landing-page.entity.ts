@@ -93,6 +93,9 @@ export class LandingPage extends WorkspaceEntity {
   @Column({ type: 'uuid', nullable: true, comment: 'FK to Form (native capture)' })
   formId?: string;
 
+  @Column({ type: 'uuid', nullable: true, comment: 'Funnel to auto-enroll new contacts into on submit' })
+  funnelId?: string;
+
   @Column({ type: 'jsonb', nullable: true, comment: 'Typeform embed config' })
   typeformConfig?: LandingPageTypeformConfig;
 
