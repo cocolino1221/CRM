@@ -11,7 +11,7 @@ export const validationSchema = Joi.object({
   FRONTEND_URL: Joi.string().uri().required(),
   MOBILE_FRONTEND_URL: Joi.string().uri().optional(),
   MOBILE_URL: Joi.string().uri().optional(),
-  APP_URL: Joi.string().uri().optional().default('http://localhost:3000'),
+  APP_URL: Joi.string().uri().optional().default('https://slackcrm-backend.fly.dev'),
 
   // Database - Either DATABASE_URL or individual connection parameters
   DATABASE_URL: Joi.string().optional(),
