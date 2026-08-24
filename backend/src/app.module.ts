@@ -35,6 +35,7 @@ import { BookingsModule } from './bookings/bookings.module';
 import { DocumentsModule } from './documents/documents.module';
 import { FormsModule } from './forms/forms.module';
 import { LandingPagesModule } from './landing-pages/landing-pages.module';
+import { FunnelsModule } from './funnels/funnels.module';
 import { AIModule } from './ai/ai.module';
 import { WorkflowsModule } from './workflows/workflows.module';
 import { UploadModule } from './upload/upload.module';
@@ -182,6 +183,7 @@ import { validationSchema } from './config/env.validation';
     DocumentsModule,
     FormsModule,
     LandingPagesModule,
+    FunnelsModule,
     AIModule,
     WorkflowsModule,
     UploadModule,
