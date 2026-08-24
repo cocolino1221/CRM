@@ -1,17 +1,9 @@
 import { Module } from '@nestjs/common';
-import { JwtModule } from '@nestjs/jwt';
-import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { McpTokenService } from './auth/mcp-token.service';
 import { McpGuard } from './auth/mcp.guard';
-import { McpOauthClient } from '../database/entities/mcp-oauth-client.entity';
-import { McpOauthGrant } from '../database/entities/mcp-oauth-grant.entity';
-import { McpRefreshToken } from '../database/entities/mcp-refresh-token.entity';
 import { McpToolInvocation } from '../database/entities/mcp-tool-invocation.entity';
 import { User } from '../database/entities/user.entity';
-import { WellKnownController } from './oauth/well-known.controller';
-import { McpOauthController } from './oauth/mcp-oauth.controller';
-import { McpOauthService } from './oauth/mcp-oauth.service';
+import { McpOauthModule } from './mcp-oauth.module';
 import { McpService } from './mcp.service';
 import { McpController } from './mcp.controller';
 import { ContactsModule } from '../contacts/contacts.module';
@@ -22,24 +14,18 @@ import { WorkflowsModule } from '../workflows/workflows.module';
 import { WhatsAppModule } from '../integrations/whatsapp/whatsapp.module';
 import { EmailCampaignsModule } from '../email-campaigns/email-campaigns.module';
 
+/**
+ * Production MCP surface: OAuth Authorization Server (`McpOauthModule`) +
+ * the tool-call endpoint (`McpController`/`McpService`), which needs the
+ * real domain services injected. Split out of `McpOauthModule` (Task 12
+ * regression fix) so a focused e2e test can boot just the OAuth AS without
+ * the domain-module graph — see `mcp-oauth.module.ts` for the rationale.
+ * `McpTokenService`/`McpOauthService` are reused from `McpOauthModule`,
+ * not re-declared here.
+ */
 @Module({
   imports: [
-    ConfigModule,
-    TypeOrmModule.forFeature([
-      McpOauthClient,
-      McpOauthGrant,
-      McpRefreshToken,
-      McpToolInvocation,
-      User,
-    ]),
-    JwtModule.registerAsync({
-      imports: [ConfigModule],
-      useFactory: (configService: ConfigService) => ({
-        secret: configService.get('auth.jwtSecret'),
-        signOptions: { expiresIn: configService.get('auth.jwtExpiresIn') },
-      }),
-      inject: [ConfigService],
-    }),
+    McpOauthModule,
     ContactsModule,
     DealsModule,
     TasksModule,
@@ -47,9 +33,9 @@ import { EmailCampaignsModule } from '../email-campaigns/email-campaigns.module'
     WorkflowsModule,
     WhatsAppModule,
     EmailCampaignsModule,
+    TypeOrmModule.forFeature([McpToolInvocation, User]),
   ],
-  controllers: [WellKnownController, McpOauthController, McpController],
-  providers: [McpTokenService, McpOauthService, McpGuard, McpService],
-  exports: [McpTokenService, McpOauthService, McpGuard],
+  controllers: [McpController],
+  providers: [McpService, McpGuard],
 })
 export class McpModule {}

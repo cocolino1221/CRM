@@ -3,7 +3,7 @@ import { ExecutionContext, INestApplication, ValidationPipe } from '@nestjs/comm
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule } from '@nestjs/config';
 import * as cookieParser from 'cookie-parser';
-import { McpModule } from '../../src/mcp/mcp.module';
+import { McpOauthModule } from '../../src/mcp/mcp-oauth.module';
 import authConfig from '../../src/config/auth.config';
 import { JwtAuthGuard } from '../../src/auth/guards/jwt-auth.guard';
 import { AllExceptionsFilter } from '../../src/common/filters/http-exception.filter';
@@ -31,7 +31,12 @@ export interface BootstrapTestAppOptions {
 }
 
 /**
- * Builds a focused NestJS test application hosting the MCP module.
+ * Builds a focused NestJS test application hosting the MCP OAuth
+ * Authorization Server (`McpOauthModule`) — deliberately NOT the full
+ * `McpModule`, which also imports the 7 heavy domain modules (Contacts/
+ * Deals/Tasks/Analytics/Workflows/WhatsApp/EmailCampaigns) for the
+ * tool-call endpoint; those drag in Bull/Redis/the full entity graph that
+ * this focused e2e DB doesn't provide. See `src/mcp/mcp-oauth.module.ts`.
  *
  * IMPORTANT: hardcodes `database: 'slackcrm_mcp_e2e'` — do NOT read DB_NAME
  * from env. The env DB_NAME (slackcrm) is a migrated baseline DB that
@@ -59,7 +64,7 @@ export async function bootstrapTestApp(
         dropSchema: true,
         logging: false,
       }),
-      McpModule,
+      McpOauthModule,
     ],
   });
 
