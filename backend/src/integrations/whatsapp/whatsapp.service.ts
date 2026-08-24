@@ -4066,6 +4066,40 @@ export class WhatsAppService {
   }
 
   /**
+   * Public entry point to arm a flow directly by id, for callers (e.g. the
+   * Funnels module) with no inbound WhatsApp message to match against —
+   * unlike armAfterAutoSendFlow, this doesn't require a prior auto-send rule.
+   */
+  async startFlowForWorkspace(
+    workspaceId: string,
+    waId: string,
+    flowId: string,
+    variables?: Record<string, string>,
+  ): Promise<boolean> {
+    const integration = await this.findIntegrationForWorkspace(workspaceId);
+    if (!integration) return false;
+    return this.startFlow(workspaceId, waId, flowId, integration, variables);
+  }
+
+  /**
+   * Durably arms a follow-up job that fires `targetStepId` after `delayMs`,
+   * as long as the contact is still sitting at `armedStepId` when it fires.
+   * Used for funnel steps whose timing is computed from a Funnel's
+   * anchorDate (delayMs > 0) or for an immediate manual branch dispatch
+   * (delayMs 0) — e.g. a "mark attended" toggle routing to the next step.
+   */
+  async armFlowStepAt(
+    workspaceId: string,
+    waId: string,
+    flowId: string,
+    armedStepId: string,
+    targetStepId: string,
+    delayMs: number,
+  ): Promise<void> {
+    await this.followupDispatch.schedule(flowId, waId, workspaceId, armedStepId, Math.max(0, delayMs), targetStepId);
+  }
+
+  /**
    * Resolve flow state by exact waId or loose phone match.
    * This handles test numbers entered without country code.
    */
@@ -4169,7 +4203,8 @@ export class WhatsAppService {
     const flows: any[] = integration.config?.conversationFlows || [];
     const flow = flows.find((f: any) => f.id === flowId && f.enabled);
     const armedStep = flow?.steps?.find((s: any) => s.id === armedStepId);
-    const nextStep = flow?.steps?.find((s: any) => s.id === armedStep?.timeoutBranch?.nextStepId);
+    const resolvedTargetId = targetStepId || armedStep?.timeoutBranch?.nextStepId;
+    const nextStep = flow?.steps?.find((s: any) => s.id === resolvedTargetId);
     if (!flow || !nextStep) {
       delete flowStates[stateKey];
       integration.config = { ...(integration.config || {}), flowStates };
