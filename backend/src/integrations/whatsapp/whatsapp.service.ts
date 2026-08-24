@@ -1302,12 +1302,18 @@ export class WhatsAppService {
       const contact2 = await this.findContactByPhone(workspaceId, phone) || await this.findContactByPhone(workspaceId, to);
       const normalizedUserId = userId?.trim() || undefined;
 
+      // Most outbound touchpoints are WhatsApp sends, but a flow's email step
+      // routes through here too (messageType 'email') and must be recorded as an
+      // EMAIL activity so the feed labels it accurately instead of "WhatsApp".
+      const isEmail = messageType === 'email';
       const activity = this.activityRepository.create({
         workspaceId,
         contactId: contact2?.id || undefined,
         userId: normalizedUserId,
-        type: ActivityType.WHATSAPP_MESSAGE,
-        title: `WhatsApp to ${contact2 ? `${contact2.firstName} ${contact2.lastName}` : phone}`,
+        type: isEmail ? ActivityType.EMAIL : ActivityType.WHATSAPP_MESSAGE,
+        title: isEmail
+          ? `Email to ${contact2 ? `${contact2.firstName} ${contact2.lastName}` : phone}`
+          : `WhatsApp to ${contact2 ? `${contact2.firstName} ${contact2.lastName}` : phone}`,
         description: messageBody,
         direction: ActivityDirection.OUTBOUND,
         outcome: ActivityOutcome.SUCCESSFUL,
@@ -4114,6 +4120,26 @@ export class WhatsAppService {
     delayMs: number,
   ): Promise<void> {
     await this.followupDispatch.schedule(flowId, waId, workspaceId, armedStepId, Math.max(0, delayMs), targetStepId);
+  }
+
+  /**
+   * Returns the flow step a contact is currently parked at, per the live
+   * engine state (not any external record of it) — the source of truth for
+   * "where is this contact right now" is always flowStates[waId], never a
+   * DB row that can't track engine-driven advances. Callers outside the
+   * engine (e.g. FunnelsService.setAttended) must resolve the current step
+   * through this, since their own stored currentStepId can be stale.
+   */
+  async getFlowState(
+    workspaceId: string,
+    waId: string,
+  ): Promise<{ flowId: string; currentStepId: string } | null> {
+    const integration = await this.findIntegrationForWorkspace(workspaceId);
+    if (!integration) return null;
+    const flowStates = integration.config?.flowStates || {};
+    const resolved = this.resolveFlowState(flowStates, waId);
+    if (!resolved) return null;
+    return { flowId: resolved.state.flowId, currentStepId: resolved.state.currentStepId };
   }
 
   /**

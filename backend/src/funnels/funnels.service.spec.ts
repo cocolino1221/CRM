@@ -31,7 +31,7 @@ describe('FunnelsService CRUD', () => {
         FunnelsService,
         { provide: getRepositoryToken(Funnel), useValue: funnelRepo },
         { provide: getRepositoryToken(FunnelEnrollment), useValue: enrollmentRepoMock },
-        { provide: WhatsAppService, useValue: { getFlows: jest.fn(), startFlowForWorkspace: jest.fn(), armFlowStepAt: jest.fn() } },
+        { provide: WhatsAppService, useValue: { getFlows: jest.fn(), startFlowForWorkspace: jest.fn(), armFlowStepAt: jest.fn(), getFlowState: jest.fn() } },
       ],
     }).compile();
     service = moduleRef.get(FunnelsService);
@@ -95,6 +95,8 @@ describe('FunnelsService CRUD', () => {
     enrollmentRepoMock.save = jest.fn(async (x: any) => x);
     funnelRepo.findOne.mockResolvedValueOnce({ id: 'f1', workspaceId: 'ws1', flowId: 'flow1' });
     const whatsapp = moduleRef.get(WhatsAppService);
+    // Engine's live state agrees with the enrollment record here (contact still at step2).
+    whatsapp.getFlowState.mockResolvedValue({ flowId: 'flow1', currentStepId: 'step2' });
     whatsapp.getFlows.mockResolvedValue([{
       id: 'flow1', enabled: true,
       steps: [
@@ -110,13 +112,56 @@ describe('FunnelsService CRUD', () => {
     expect(whatsapp.armFlowStepAt).toHaveBeenCalledWith('ws1', '+40700000000', 'flow1', 'step2', 'step3-thanks', 0);
   });
 
+  it('setAttended(true) targets the engine\'s LIVE current step, not the stale enrollment.currentStepId', async () => {
+    // Real-world seam: the anchor job already advanced the engine to step2, but the
+    // DB's enrollment.currentStepId was written once at enroll() and is still 'step1'.
+    // setAttended must branch off the live engine step (step2), not the stale DB value.
+    enrollmentRepoMock.findOne = jest.fn().mockResolvedValue({
+      id: 'e1', workspaceId: 'ws1', funnelId: 'f1', waId: '+40700000000', currentStepId: 'step1',
+    });
+    enrollmentRepoMock.save = jest.fn(async (x: any) => x);
+    funnelRepo.findOne.mockResolvedValueOnce({ id: 'f1', workspaceId: 'ws1', flowId: 'flow1' });
+    const whatsapp = moduleRef.get(WhatsAppService);
+    whatsapp.getFlowState.mockResolvedValue({ flowId: 'flow1', currentStepId: 'step2' });
+    whatsapp.getFlows.mockResolvedValue([{
+      id: 'flow1', enabled: true,
+      steps: [
+        { id: 'step1', message: 'Thanks for registering!' }, // no attendedNextStepId — the stale step
+        { id: 'step2', attendedNextStepId: 'step3-thanks', timeoutBranch: { delayValue: 4, delayUnit: 'hours', nextStepId: 'step3-noshow' } },
+        { id: 'step3-thanks', message: 'Thanks for coming!' },
+      ],
+    }]);
+
+    await service.setAttended('ws1', 'e1', true);
+
+    // Arms off the engine's step2 → step3-thanks, NOT the stale enrollment step1.
+    expect(whatsapp.armFlowStepAt).toHaveBeenCalledWith('ws1', '+40700000000', 'flow1', 'step2', 'step3-thanks', 0);
+    expect(whatsapp.armFlowStepAt).not.toHaveBeenCalledWith(
+      'ws1', '+40700000000', 'flow1', 'step1', expect.anything(), expect.anything(),
+    );
+  });
+
+  it('setAttended(true) skips the branch dispatch when the contact is not in any live flow', async () => {
+    enrollmentRepoMock.findOne = jest.fn().mockResolvedValue({
+      id: 'e1', workspaceId: 'ws1', funnelId: 'f1', waId: '+40700000000', currentStepId: 'step2',
+    });
+    enrollmentRepoMock.save = jest.fn(async (x: any) => x);
+    const whatsapp = moduleRef.get(WhatsAppService);
+    whatsapp.getFlowState.mockResolvedValue(null); // flow already ended / never started
+
+    const updated = await service.setAttended('ws1', 'e1', true);
+
+    expect(updated.attendedManual).toBe(true);
+    expect(whatsapp.armFlowStepAt).not.toHaveBeenCalled();
+  });
+
   it('setAttended(false) just records the flag, leaving the existing no-show timeoutBranch to fire on its own', async () => {
     enrollmentRepoMock.findOne = jest.fn().mockResolvedValue({
       id: 'e1', workspaceId: 'ws1', funnelId: 'f1', waId: '+40700000000', currentStepId: 'step2',
     });
     enrollmentRepoMock.save = jest.fn(async (x: any) => x);
-    funnelRepo.findOne.mockResolvedValueOnce({ id: 'f1', workspaceId: 'ws1', flowId: 'flow1' });
     const whatsapp = moduleRef.get(WhatsAppService);
+    whatsapp.getFlowState.mockResolvedValue({ flowId: 'flow1', currentStepId: 'step2' });
     whatsapp.getFlows.mockResolvedValue([{ id: 'flow1', enabled: true, steps: [{ id: 'step2', attendedNextStepId: 'step3-thanks' }] }]);
 
     const updated = await service.setAttended('ws1', 'e1', false);

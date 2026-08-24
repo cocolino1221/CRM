@@ -86,6 +86,13 @@ export class FunnelsService {
 
     await this.whatsappService.startFlowForWorkspace(contact.workspaceId, waId, flow.id);
 
+    // Phase-1 limitation (known, deliberate scope boundary — not an oversight):
+    // only the FIRST step carrying an anchorOffset is armed here. A flow with two
+    // parallel anchor-timed steps (e.g. a simultaneous email + WhatsApp reminder,
+    // both offset from anchorDate) would silently never fire the second one.
+    // Supporting multiple parallel anchor steps needs more design work (arming a
+    // job per anchor step, each with its own armed/target seam) and is out of
+    // scope for this wave.
     const anchorStep = flow.steps.find((s: any) => s.anchorOffset);
     if (anchorStep && funnel.anchorDate) {
       const offsetMs = anchorStep.anchorOffset.minutes * 60000 * (anchorStep.anchorOffset.relation === 'before' ? -1 : 1);
@@ -104,16 +111,23 @@ export class FunnelsService {
     enrollment.attendedManual = attended;
     const saved = await this.enrollmentRepository.save(enrollment);
 
-    if (attended && enrollment.currentStepId) {
-      const funnel = await this.funnelRepository.findOne({ where: { id: enrollment.funnelId, workspaceId } });
-      if (funnel) {
-        const flows = await this.whatsappService.getFlows(workspaceId);
-        const flow = flows.find((f: any) => f.id === funnel.flowId && f.enabled);
-        const currentStep = flow?.steps?.find((s: any) => s.id === enrollment.currentStepId);
-        if (currentStep?.attendedNextStepId) {
-          await this.whatsappService.armFlowStepAt(
-            workspaceId, enrollment.waId, funnel.flowId, enrollment.currentStepId, currentStep.attendedNextStepId, 0,
-          );
+    if (attended) {
+      // The contact's real current step lives in the WhatsApp engine's flow
+      // state, which advances via anchor/timeout jobs. enrollment.currentStepId
+      // is written once at enroll() and goes stale the moment the flow moves on,
+      // so we must branch off the engine's LIVE step, not the DB row.
+      const liveState = await this.whatsappService.getFlowState(workspaceId, enrollment.waId);
+      if (liveState?.currentStepId) {
+        const funnel = await this.funnelRepository.findOne({ where: { id: enrollment.funnelId, workspaceId } });
+        if (funnel) {
+          const flows = await this.whatsappService.getFlows(workspaceId);
+          const flow = flows.find((f: any) => f.id === funnel.flowId && f.enabled);
+          const currentStep = flow?.steps?.find((s: any) => s.id === liveState.currentStepId);
+          if (currentStep?.attendedNextStepId) {
+            await this.whatsappService.armFlowStepAt(
+              workspaceId, enrollment.waId, funnel.flowId, liveState.currentStepId, currentStep.attendedNextStepId, 0,
+            );
+          }
         }
       }
     }
