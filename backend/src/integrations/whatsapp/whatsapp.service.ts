@@ -22,6 +22,7 @@ import { UploadService } from '../../upload/upload.service';
 import { normalizePhoneDigits, normalizePhoneE164 } from '../../common/utils/phone.util';
 import { WhatsAppFollowupDispatchService } from './whatsapp-followup-dispatch.service';
 import { WhatsAppCallingService } from './whatsapp-calling.service';
+import { EmailService } from '../../email/email.service';
 
 const execFileAsync = promisify(execFile);
 
@@ -192,6 +193,7 @@ export class WhatsAppService {
     private readonly uploadService: UploadService,
     private readonly followupDispatch: WhatsAppFollowupDispatchService,
     private readonly callingService: WhatsAppCallingService,
+    private readonly emailService: EmailService,
   ) {}
 
   /**
@@ -3883,7 +3885,8 @@ export class WhatsAppService {
     step: {
       id: string;
       message: string;
-      type?: 'template' | 'interactive';
+      type?: 'template' | 'interactive' | 'email';
+      emailSubject?: string;
       templateName?: string;
       templateLanguage?: string;
       templateParams?: string[];
@@ -3905,6 +3908,20 @@ export class WhatsAppService {
     // the flow, read here on every step so it's available on later steps too.
     const resolveVars = (value: string): string =>
       variables ? value.replace(/\{\{\s*(\w+)\s*\}\}/g, (match, key) => variables[key] ?? match) : value;
+    if (step.type === 'email') {
+      const contact = await this.contactRepository.findOne({ where: { phone: waId, workspaceId } });
+      const email = contact?.email;
+      if (!email || email.endsWith('@whatsapp.placeholder.invalid')) {
+        this.logger.warn(`Flow step "${step.id}": no real email on file for ${waId}, skipping email step`);
+        return;
+      }
+      const subject = resolveVars(step.emailSubject || '');
+      const text = resolveVars(stepMessage);
+      await this.emailService.sendEmail({ to: email, subject, text });
+      await this.saveOutboundActivity(waId, `[Flow email: ${subject}] ${text}`, 'email', workspaceId, '', undefined);
+      this.logger.log(`Flow step "${step.id}" (email) sent to ${email}`);
+      return;
+    }
     if (step.type === 'template' && step.templateName) {
       // Send approved template (can initiate conversations outside 24h window)
       const components: any[] = [];

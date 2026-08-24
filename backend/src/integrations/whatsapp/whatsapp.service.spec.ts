@@ -1,4 +1,4 @@
-import { Test } from '@nestjs/testing';
+import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { WhatsAppService } from './whatsapp.service';
 import { Contact } from '../../database/entities/contact.entity';
@@ -20,6 +20,7 @@ describe('WhatsAppService flow arming', () => {
   let service: WhatsAppService;
   let integrationRepository: any;
   let followupDispatch: any;
+  let moduleRef: TestingModule;
 
   const baseIntegration = {
     id: 'int1',
@@ -48,7 +49,7 @@ describe('WhatsAppService flow arming', () => {
     };
     followupDispatch = { schedule: jest.fn(), cancel: jest.fn() };
 
-    const moduleRef = await Test.createTestingModule({
+    moduleRef = await Test.createTestingModule({
       providers: [
         WhatsAppService,
         { provide: getRepositoryToken(Contact), useValue: { findOne: jest.fn(), createQueryBuilder: jest.fn() } },
@@ -64,7 +65,7 @@ describe('WhatsAppService flow arming', () => {
         { provide: WhatsAppCallingService, useValue: {} },
         { provide: HttpService, useValue: {} },
         { provide: ConfigService, useValue: { get: jest.fn() } },
-        { provide: EmailService, useValue: { sendMail: jest.fn() } },
+        { provide: EmailService, useValue: { sendEmail: jest.fn() } },
       ],
     }).compile();
 
@@ -108,6 +109,31 @@ describe('WhatsAppService flow arming', () => {
       },
     }]);
     await service.handleFollowupTimeout('ws1', '40700000000', 'flow1', 'step1', 'step2');
+    expect((service as any).sendTextMessage).not.toHaveBeenCalled();
+  });
+
+  it('sendFlowStep with type "email" sends via EmailService using the contact\'s email, not WhatsApp', async () => {
+    const emailService = moduleRef.get(EmailService);
+    const contactRepo = moduleRef.get(getRepositoryToken(Contact));
+    contactRepo.findOne = jest.fn().mockResolvedValue({ id: 'c1', email: 'lead@example.com', phone: '+40700000000' });
+
+    integrationRepository.find.mockResolvedValueOnce([{
+      ...baseIntegration,
+      config: {
+        conversationFlows: [{
+          id: 'flow1', enabled: true, trigger: 'landing_page_submit',
+          steps: [{ id: 'step1', type: 'email', emailSubject: 'Reminder', message: 'See you at 6pm!' }],
+        }],
+        flowStates: {},
+      },
+    }]);
+
+    await service.startFlowForWorkspace('ws1', '40700000000', 'flow1');
+    expect(emailService.sendEmail).toHaveBeenCalledWith(expect.objectContaining({
+      to: 'lead@example.com',
+      subject: 'Reminder',
+      text: 'See you at 6pm!',
+    }));
     expect((service as any).sendTextMessage).not.toHaveBeenCalled();
   });
 });

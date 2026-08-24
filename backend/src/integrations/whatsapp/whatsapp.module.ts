@@ -18,6 +18,7 @@ import { NotificationsModule } from '../../notifications/notifications.module';
 import { CampaignDispatchModule } from '../../scheduler/campaign-dispatch.module';
 import { UploadModule } from '../../upload/upload.module';
 import { WhatsAppFollowupDispatchModule } from './whatsapp-followup-dispatch.module';
+import { EmailModule } from '../../email/email.module';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { WhatsAppFollowupDispatchModule } from './whatsapp-followup-dispatch.mod
     CampaignDispatchModule,
     UploadModule,
     WhatsAppFollowupDispatchModule,
+    EmailModule,
   ],
   controllers: [WhatsAppController, WhatsAppCallingController],
   providers: [WhatsAppService, WhatsAppAIService, WhatsAppCampaignsService, WhatsAppCallingService],
