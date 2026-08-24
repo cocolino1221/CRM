@@ -12,6 +12,15 @@ import { User } from '../database/entities/user.entity';
 import { WellKnownController } from './oauth/well-known.controller';
 import { McpOauthController } from './oauth/mcp-oauth.controller';
 import { McpOauthService } from './oauth/mcp-oauth.service';
+import { McpService } from './mcp.service';
+import { McpController } from './mcp.controller';
+import { ContactsModule } from '../contacts/contacts.module';
+import { DealsModule } from '../deals/deals.module';
+import { TasksModule } from '../tasks/tasks.module';
+import { AnalyticsModule } from '../analytics/analytics.module';
+import { WorkflowsModule } from '../workflows/workflows.module';
+import { WhatsAppModule } from '../integrations/whatsapp/whatsapp.module';
+import { EmailCampaignsModule } from '../email-campaigns/email-campaigns.module';
 
 @Module({
   imports: [
@@ -31,9 +40,16 @@ import { McpOauthService } from './oauth/mcp-oauth.service';
       }),
       inject: [ConfigService],
     }),
+    ContactsModule,
+    DealsModule,
+    TasksModule,
+    AnalyticsModule,
+    WorkflowsModule,
+    WhatsAppModule,
+    EmailCampaignsModule,
   ],
-  controllers: [WellKnownController, McpOauthController],
-  providers: [McpTokenService, McpOauthService, McpGuard],
+  controllers: [WellKnownController, McpOauthController, McpController],
+  providers: [McpTokenService, McpOauthService, McpGuard, McpService],
   exports: [McpTokenService, McpOauthService, McpGuard],
 })
 export class McpModule {}
