@@ -9,6 +9,7 @@ import { WhatsAppService } from '../integrations/whatsapp/whatsapp.service';
 describe('FunnelsService CRUD', () => {
   let service: FunnelsService;
   let funnelRepo: any;
+  let moduleRef: any;
 
   beforeEach(async () => {
     funnelRepo = {
@@ -18,7 +19,7 @@ describe('FunnelsService CRUD', () => {
       findOne: jest.fn(),
       remove: jest.fn(async () => undefined),
     };
-    const moduleRef = await Test.createTestingModule({
+    moduleRef = await Test.createTestingModule({
       providers: [
         FunnelsService,
         { provide: getRepositoryToken(Funnel), useValue: funnelRepo },
@@ -38,5 +39,45 @@ describe('FunnelsService CRUD', () => {
   it('throws NotFoundException finding a funnel in another workspace', async () => {
     funnelRepo.findOne.mockResolvedValueOnce(null);
     await expect(service.findOne('ws1', 'missing')).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('enroll() starts the flow instantly and arms the anchor-relative step from the flow\'s second step', async () => {
+    funnelRepo.findOne.mockResolvedValueOnce({
+      id: 'f1', workspaceId: 'ws1', status: FunnelStatus.ACTIVE, flowId: 'flow1',
+      anchorDate: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000), // 2 days from now
+    });
+    const whatsapp = moduleRef.get(WhatsAppService);
+    whatsapp.getFlows.mockResolvedValue([{
+      id: 'flow1', enabled: true,
+      steps: [
+        { id: 'step1', message: 'Thanks for registering!' },
+        { id: 'step2', message: 'Reminder!', anchorOffset: { relation: 'before', minutes: 24 * 60 } },
+      ],
+    }]);
+    whatsapp.startFlowForWorkspace.mockResolvedValue(true);
+    const enrollmentRepo = moduleRef.get(getRepositoryToken(FunnelEnrollment));
+    enrollmentRepo.create = jest.fn((x: any) => x);
+    enrollmentRepo.save = jest.fn(async (x: any) => ({ id: 'e1', ...x }));
+
+    const contact = { id: 'c1', workspaceId: 'ws1', phone: '+40700000000' } as any;
+    const enrollment = await service.enroll(contact, 'f1');
+
+    expect(whatsapp.startFlowForWorkspace).toHaveBeenCalledWith('ws1', '+40700000000', 'flow1');
+    expect(whatsapp.armFlowStepAt).toHaveBeenCalledWith(
+      'ws1', '+40700000000', 'flow1', 'step1', 'step2', expect.any(Number),
+    );
+    const armedDelay = whatsapp.armFlowStepAt.mock.calls[0][5];
+    expect(armedDelay).toBeGreaterThan(0);
+    expect(armedDelay).toBeLessThanOrEqual(2 * 24 * 60 * 60 * 1000);
+    expect(enrollment?.id).toBe('e1');
+  });
+
+  it('enroll() returns null and does not start a flow if the contact has no phone', async () => {
+    funnelRepo.findOne.mockResolvedValueOnce({ id: 'f1', workspaceId: 'ws1', status: FunnelStatus.ACTIVE, flowId: 'flow1' });
+    const whatsapp = moduleRef.get(WhatsAppService);
+    const contact = { id: 'c1', workspaceId: 'ws1', phone: undefined } as any;
+    const enrollment = await service.enroll(contact, 'f1');
+    expect(enrollment).toBeNull();
+    expect(whatsapp.startFlowForWorkspace).not.toHaveBeenCalled();
   });
 });

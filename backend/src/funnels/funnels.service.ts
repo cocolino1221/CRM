@@ -1,7 +1,7 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { Funnel } from '../database/entities/funnel.entity';
+import { Funnel, FunnelStatus } from '../database/entities/funnel.entity';
 import { FunnelEnrollment } from '../database/entities/funnel-enrollment.entity';
 import { WhatsAppService } from '../integrations/whatsapp/whatsapp.service';
 import { CreateFunnelDto } from './dto/create-funnel.dto';
@@ -50,5 +50,46 @@ export class FunnelsService {
   async remove(workspaceId: string, id: string): Promise<void> {
     const funnel = await this.findOne(workspaceId, id);
     await this.funnelRepository.remove(funnel);
+  }
+
+  async enroll(contact: { id: string; workspaceId: string; phone?: string }, funnelId: string): Promise<FunnelEnrollment | null> {
+    const funnel = await this.funnelRepository.findOne({ where: { id: funnelId, workspaceId: contact.workspaceId } });
+    if (!funnel || funnel.status !== FunnelStatus.ACTIVE) {
+      this.logger.warn(`enroll(): funnel ${funnelId} not found or not active for workspace ${contact.workspaceId}`);
+      return null;
+    }
+    if (!contact.phone) {
+      this.logger.warn(`enroll(): contact ${contact.id} has no phone, cannot start WhatsApp flow`);
+      return null;
+    }
+
+    const flows = await this.whatsappService.getFlows(contact.workspaceId);
+    const flow = flows.find((f: any) => f.id === funnel.flowId && f.enabled);
+    if (!flow || !flow.steps?.length) {
+      this.logger.warn(`enroll(): flow ${funnel.flowId} not found/enabled/empty for workspace ${contact.workspaceId}`);
+      return null;
+    }
+
+    const waId = contact.phone;
+    const enrollment = this.enrollmentRepository.create({
+      workspaceId: contact.workspaceId,
+      funnelId: funnel.id,
+      contactId: contact.id,
+      waId,
+      currentStepId: flow.steps[0].id,
+    });
+    const saved = await this.enrollmentRepository.save(enrollment);
+
+    await this.whatsappService.startFlowForWorkspace(contact.workspaceId, waId, flow.id);
+
+    const anchorStep = flow.steps.find((s: any) => s.anchorOffset);
+    if (anchorStep && funnel.anchorDate) {
+      const offsetMs = anchorStep.anchorOffset.minutes * 60000 * (anchorStep.anchorOffset.relation === 'before' ? -1 : 1);
+      const fireAt = new Date(funnel.anchorDate).getTime() + offsetMs;
+      const delayMs = Math.max(0, fireAt - Date.now());
+      await this.whatsappService.armFlowStepAt(contact.workspaceId, waId, flow.id, flow.steps[0].id, anchorStep.id, delayMs);
+    }
+
+    return saved;
   }
 }
