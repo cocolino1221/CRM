@@ -4156,7 +4156,7 @@ export class WhatsAppService {
    * Re-checks the contact is still sitting at the step that armed this job —
    * if they replied/moved on since, this is a stale job and no-ops.
    */
-  async handleFollowupTimeout(workspaceId: string, waId: string, flowId: string, armedStepId: string): Promise<void> {
+  async handleFollowupTimeout(workspaceId: string, waId: string, flowId: string, armedStepId: string, targetStepId?: string): Promise<void> {
     const integration = await this.findIntegrationForWorkspace(workspaceId);
     if (!integration) return;
 
