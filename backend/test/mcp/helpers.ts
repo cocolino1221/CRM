@@ -6,6 +6,7 @@ import * as cookieParser from 'cookie-parser';
 import { McpOauthModule } from '../../src/mcp/mcp-oauth.module';
 import authConfig from '../../src/config/auth.config';
 import { JwtAuthGuard } from '../../src/auth/guards/jwt-auth.guard';
+import { OptionalJwtAuthGuard } from '../../src/auth/guards/optional-jwt-auth.guard';
 import { AllExceptionsFilter } from '../../src/common/filters/http-exception.filter';
 // Only imported for typing BootstrapTestAppOptions — deliberately NOT added
 // to the TypeOrmModule `entities` list below. User has OneToMany relations
@@ -70,13 +71,20 @@ export async function bootstrapTestApp(
 
   if (options.currentUserRef) {
     const currentUserRef = options.currentUserRef;
-    moduleBuilder.overrideGuard(JwtAuthGuard).useValue({
+    const injectUser = {
       canActivate: (ctx: ExecutionContext) => {
         const req = ctx.switchToHttp().getRequest();
         req.user = currentUserRef.user;
         return true;
       },
-    });
+    };
+    // JwtAuthGuard blocks (401) when user is null; OptionalJwtAuthGuard (used by
+    // the authorize GET) always allows and just sets req.user (possibly null) so
+    // the handler can redirect unauthenticated browsers to login. Both simply
+    // reflect currentUserRef here — set currentUserRef.user = null to exercise
+    // the unauthenticated path.
+    moduleBuilder.overrideGuard(JwtAuthGuard).useValue(injectUser);
+    moduleBuilder.overrideGuard(OptionalJwtAuthGuard).useValue(injectUser);
   }
 
   const moduleFixture: TestingModule = await moduleBuilder.compile();
