@@ -15,6 +15,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import type { Request, Response } from 'express';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
+import { OptionalJwtAuthGuard } from '../../auth/guards/optional-jwt-auth.guard';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
 import { User } from '../../database/entities/user.entity';
 import { McpOauthClient } from '../../database/entities/mcp-oauth-client.entity';
@@ -106,12 +107,26 @@ export class McpOauthController {
    * (see verifyCsrf).
    */
   @Get('authorize')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(OptionalJwtAuthGuard)
   async authorize(
     @Query() query: AuthorizeParams,
-    @CurrentUser() user: User,
-    @Res({ passthrough: true }) res: Response,
-  ): Promise<string> {
+    @Req() req: Request,
+    @Res() res: Response,
+  ): Promise<void> {
+    // This endpoint is entered as a top-level browser navigation (from the AI
+    // client), so there is no Authorization header — auth rides on the CRM
+    // session cookie. If the browser has no valid session on this (backend)
+    // domain, redirect to the CRM login and come back here afterwards with the
+    // OAuth params preserved, instead of dead-ending on a 401.
+    const user = req.user as User | undefined;
+    if (!user) {
+      const returnTo = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
+      const frontendUrl = (this.configService.get<string>('FRONTEND_URL') ?? '').replace(/\/+$/, '');
+      const loginUrl = `${frontendUrl}/login?returnTo=${encodeURIComponent(returnTo)}`;
+      res.redirect(302, loginUrl);
+      return;
+    }
+
     const { client, scopes } = await this.validateAuthorizeParams(query);
 
     const nonce = this.mcpOauthService.issueConsentNonce({
@@ -127,7 +142,7 @@ export class McpOauthController {
       path: '/',
     });
 
-    return renderConsentPage({
+    const html = renderConsentPage({
       clientId: client.clientId,
       clientName: client.clientName,
       workspaceName: user.workspace?.name ?? '',
@@ -139,6 +154,8 @@ export class McpOauthController {
       state: query.state,
       csrf: nonce,
     });
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(html);
   }
 
   /**

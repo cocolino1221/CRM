@@ -78,8 +78,30 @@ function LoginForm() {
     try {
       await authService.login(formData);
       setSuccess('Login successful! Redirecting...');
+      // Support an OAuth return URL (e.g. the MCP authorize endpoint sends the
+      // user here to log in, then back). Only allow returning to the backend
+      // API's MCP authorize URL — never an arbitrary origin (open-redirect).
+      const returnTo = searchParams.get('returnTo');
+      let safeReturnTo: string | null = null;
+      if (returnTo) {
+        try {
+          const target = new URL(returnTo);
+          const apiBase = new URL(
+            process.env.NEXT_PUBLIC_API_URL || 'https://slackcrm-backend.fly.dev/api/v1',
+          );
+          if (target.origin === apiBase.origin && target.pathname.includes('/oauth/mcp/authorize')) {
+            safeReturnTo = returnTo;
+          }
+        } catch {
+          safeReturnTo = null;
+        }
+      }
       setTimeout(() => {
-        router.push('/dashboard');
+        if (safeReturnTo) {
+          window.location.href = safeReturnTo;
+        } else {
+          router.push('/dashboard');
+        }
       }, 500);
     } catch (err: any) {
       console.error('Login error:', err);
