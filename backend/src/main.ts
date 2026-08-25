@@ -84,6 +84,9 @@ async function bootstrap() {
     ? [
       frontendUrl,
       'https://etcrm.primafisoft.com',
+      // The backend's own origin — the MCP OAuth consent page is served by this
+      // API and its form POSTs back to it, so same-origin must be allowed.
+      (process.env.APP_URL || 'https://slackcrm-backend.fly.dev').replace(/\/+$/, '').replace(/\/api\/v1$/, ''),
       process.env.MOBILE_URL,
       'capacitor://localhost',
       'ionic://localhost',
