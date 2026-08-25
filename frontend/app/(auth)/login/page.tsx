@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Mail, Lock, Eye, EyeOff, ArrowRight, AlertCircle, Loader2, Sparkles, CheckCircle } from 'lucide-react';
 import { authService } from '@/lib/auth';
+import { buildOauthReturnUrl } from '@/lib/oauth-return';
 
 function getLoginErrorMessage(err: any): string {
   const status = Number(err?.response?.status || 0);
@@ -78,27 +79,13 @@ function LoginForm() {
     try {
       await authService.login(formData);
       setSuccess('Login successful! Redirecting...');
-      // Support an OAuth return URL (e.g. the MCP authorize endpoint sends the
-      // user here to log in, then back). Only allow returning to the backend
-      // API's MCP authorize URL — never an arbitrary origin (open-redirect).
-      const returnTo = searchParams.get('returnTo');
-      let safeReturnTo: string | null = null;
-      if (returnTo) {
-        try {
-          const target = new URL(returnTo);
-          const apiBase = new URL(
-            process.env.NEXT_PUBLIC_API_URL || 'https://slackcrm-backend.fly.dev/api/v1',
-          );
-          if (target.origin === apiBase.origin && target.pathname.includes('/oauth/mcp/authorize')) {
-            safeReturnTo = returnTo;
-          }
-        } catch {
-          safeReturnTo = null;
-        }
-      }
+      // If the MCP OAuth authorize endpoint sent the user here to log in, send
+      // them back to finish that flow (with the token appended so the backend
+      // authenticates cross-origin). Otherwise go to the dashboard.
+      const oauthReturn = buildOauthReturnUrl();
       setTimeout(() => {
-        if (safeReturnTo) {
-          window.location.href = safeReturnTo;
+        if (oauthReturn) {
+          window.location.href = oauthReturn;
         } else {
           router.push('/dashboard');
         }

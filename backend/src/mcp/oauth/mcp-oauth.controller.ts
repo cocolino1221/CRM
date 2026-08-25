@@ -127,6 +127,27 @@ export class McpOauthController {
       return;
     }
 
+    // The user may have authenticated via the ?token= query param (the frontend
+    // appends it because the cross-site session cookie is not reliably sent).
+    // Re-affirm the session as a FIRST-PARTY cookie on this backend origin so
+    // the same-origin consent POST that follows is authenticated — a first-party
+    // Set-Cookie here is not blocked by ITP the way the cross-site one is.
+    const rawToken =
+      (typeof req.query.token === 'string' ? req.query.token : undefined) ||
+      req.cookies?.accessToken ||
+      (req.headers.authorization?.startsWith('Bearer ')
+        ? req.headers.authorization.slice(7)
+        : undefined);
+    if (rawToken) {
+      res.cookie('accessToken', rawToken, {
+        httpOnly: true,
+        sameSite: (this.isProduction() ? 'none' : 'lax') as 'none' | 'lax',
+        secure: this.isProduction(),
+        path: '/',
+        maxAge: 24 * 60 * 60 * 1000,
+      });
+    }
+
     const { client, scopes } = await this.validateAuthorizeParams(query);
 
     const nonce = this.mcpOauthService.issueConsentNonce({

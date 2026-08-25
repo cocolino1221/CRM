@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { authService } from '@/lib/auth';
+import { buildOauthReturnUrl } from '@/lib/oauth-return';
 import { Loader2, Clock, LogOut } from 'lucide-react';
 
 interface AuthGuardProps {
@@ -47,7 +48,17 @@ export default function AuthGuard({ children }: AuthGuardProps) {
       }
 
       if (authenticated && (pathname === '/login' || pathname === '/signin' || pathname === '/register' || pathname === '/signup')) {
-        // If already authenticated and trying to access auth pages, redirect to dashboard
+        // If already authenticated and trying to access an auth page, normally go
+        // to the dashboard — BUT if an OAuth flow (e.g. the MCP authorize endpoint)
+        // bounced the user here with a returnTo, continue that flow instead of
+        // stranding them on the dashboard. The token is appended as a query param
+        // because the backend lives on a different origin and its session cookie
+        // isn't reliably sent on the cross-site authorize navigation (Safari/ITP).
+        const oauthReturn = buildOauthReturnUrl();
+        if (oauthReturn) {
+          window.location.href = oauthReturn;
+          return;
+        }
         router.replace('/dashboard');
         return;
       }
