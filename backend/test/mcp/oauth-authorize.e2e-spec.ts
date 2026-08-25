@@ -10,6 +10,7 @@ import { McpOauthClient } from '../../src/database/entities/mcp-oauth-client.ent
 import { McpOauthGrant } from '../../src/database/entities/mcp-oauth-grant.entity';
 import { McpOauthController } from '../../src/mcp/oauth/mcp-oauth.controller';
 import { JwtAuthGuard } from '../../src/auth/guards/jwt-auth.guard';
+import { OptionalJwtAuthGuard } from '../../src/auth/guards/optional-jwt-auth.guard';
 
 /**
  * NOTE: Workspace/User are intentionally NOT registered in this focused
@@ -142,6 +143,26 @@ describe('MCP OAuth authorize + consent (e2e)', () => {
     expect(res.text).toContain('Claude Desktop');
     expect(res.text).toContain('crm.read');
     expect(res.text).toContain('crm.write');
+  });
+
+  it('redirects an unauthenticated browser to the frontend login with a returnTo', async () => {
+    currentUserRef.user = null;
+    try {
+      const res = await request(app.getHttpServer())
+        .get('/api/v1/oauth/mcp/authorize')
+        .query(baseAuthorizeParams())
+        .expect(302);
+
+      const location = res.headers['location'];
+      expect(location).toContain('/login');
+      expect(location).toContain('returnTo=');
+      // The returnTo must carry the original authorize URL (so the flow resumes
+      // after login) — decode and confirm it points back at the authorize path.
+      const returnTo = decodeURIComponent(location.split('returnTo=')[1]);
+      expect(returnTo).toContain('/api/v1/oauth/mcp/authorize');
+    } finally {
+      currentUserRef.user = user;
+    }
   });
 
   it('rejects an unregistered redirect_uri without redirecting', async () => {
@@ -280,13 +301,16 @@ describe('MCP OAuth authorize + consent route guards', () => {
   // attaches to the handler — this is what JwtAuthGuard enforcement
   // actually depends on, and it fails loudly (empty/missing array) if the
   // decorator is ever removed from either handler.
-  it('declares JwtAuthGuard on both authorize and consent handlers', () => {
+  it('guards authorize (optional → redirect) and consent (strict) handlers', () => {
     const authorizeGuards =
       Reflect.getMetadata(GUARDS_METADATA, McpOauthController.prototype.authorize) ?? [];
     const consentGuards =
       Reflect.getMetadata(GUARDS_METADATA, McpOauthController.prototype.consent) ?? [];
 
-    expect(authorizeGuards).toContain(JwtAuthGuard);
+    // authorize is a top-level browser navigation: it uses the OPTIONAL guard
+    // (redirects unauthenticated users to login) rather than the strict one.
+    expect(authorizeGuards).toContain(OptionalJwtAuthGuard);
+    // consent is a POST from the backend-served page and must stay strict.
     expect(consentGuards).toContain(JwtAuthGuard);
   });
 });
