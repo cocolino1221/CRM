@@ -36,7 +36,14 @@ export class WellKnownController {
     };
   }
 
+  /**
+   * Base origin WITHOUT the `/api/v1` prefix. APP_URL in some environments is
+   * set to `https://host/api/v1` (to match the frontend API base); strip that
+   * (and any trailing slash) so the endpoint paths below don't double the
+   * prefix into `/api/v1/api/v1/...`.
+   */
   private getAppUrl(): string {
-    return this.configService.get<string>('APP_URL', 'https://slackcrm-backend.fly.dev');
+    const raw = this.configService.get<string>('APP_URL', 'https://slackcrm-backend.fly.dev');
+    return raw.replace(/\/+$/, '').replace(/\/api\/v1$/, '');
   }
 }
