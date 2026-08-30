@@ -35,6 +35,7 @@ export enum IntegrationType {
   API = 'api',
   DATABASE = 'database',
   CUSTOM = 'custom',
+  META_CAPI = 'meta_capi',
 }
 
 export enum IntegrationStatus {

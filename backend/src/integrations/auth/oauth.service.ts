@@ -129,6 +129,7 @@ export class OAuthService {
       [IntegrationType.DATABASE]: {},
       [IntegrationType.CUSTOM]: {},
       [IntegrationType.MANYCHAT]: {},
+      [IntegrationType.META_CAPI]: {},
     };
 
     let baseConfig = configs[type];
