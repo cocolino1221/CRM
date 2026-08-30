@@ -88,7 +88,12 @@ export class MetaConversionsService {
 
     integration.config = { ...(integration.config as any), datasetId: dto.datasetId.trim() };
     if (dto.accessToken?.trim()) {
-      integration.credentials = { ...(integration.credentials as any), accessToken: dto.accessToken.trim() };
+      // Meta system-user tokens are ~200+ chars and routinely pick up stray
+      // whitespace/newlines on copy-paste (line-wrapping, etc.), which makes
+      // Graph reject them with an auth error ("Bad signature" / "Cannot
+      // parse access token"). Strip ALL whitespace, not just leading/trailing.
+      const cleanToken = dto.accessToken.replace(/\s+/g, '');
+      integration.credentials = { ...(integration.credentials as any), accessToken: cleanToken };
     }
     if (dto.enabled !== undefined) {
       integration.status = dto.enabled ? IntegrationStatus.ACTIVE : IntegrationStatus.DISABLED;
@@ -209,7 +214,14 @@ export class MetaConversionsService {
       },
     };
 
-    await this.postEvent(integration, event, testEventCode);
+    try {
+      await this.postEvent(integration, event, testEventCode);
+    } catch (error: any) {
+      // postEvent throws a plain Error — let it surface as a real 400 with
+      // Meta's actual message (e.g. "Bad signature" from a corrupted token)
+      // instead of the generic "unexpected error" a raw Error becomes.
+      throw new BadRequestException(error.message);
+    }
     return { success: true };
   }
 }
