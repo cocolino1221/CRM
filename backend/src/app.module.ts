@@ -75,6 +75,15 @@ import { validationSchema } from './config/env.validation';
       useFactory: (configService: ConfigService) => {
         const url = configService.get<string>('database.url');
 
+        // Auto-run pending migrations on boot in production — this was
+        // previously only wired into the separate CLI data-source.ts (used
+        // by `npm run migration:*`), never into the app's own connection,
+        // so nothing here actually ran migrations. Schema changes were
+        // instead landing silently via DB_SYNC/synchronize, which must
+        // never be true in production (undocumented drift, no rollback,
+        // real risk of TypeORM deciding a column needs dropping).
+        const migrationsRun = configService.get<string>('NODE_ENV') === 'production';
+
         // If using DATABASE_URL (Neon, Supabase, etc.)
         if (url) {
           return {
@@ -82,6 +91,7 @@ import { validationSchema } from './config/env.validation';
             url,
             ssl: configService.get('database.ssl'),
             synchronize: configService.get<boolean>('database.synchronize'),
+            migrationsRun,
             logging: configService.get<boolean>('database.logging'),
             entities: [__dirname + '/**/*.entity{.ts,.js}'],
             migrations: [__dirname + '/database/migrations/*{.ts,.js}'],
@@ -103,6 +113,7 @@ import { validationSchema } from './config/env.validation';
           database: configService.get<string>('database.name'),
           ssl: configService.get('database.ssl'),
           synchronize: configService.get<boolean>('database.synchronize'),
+          migrationsRun,
           logging: configService.get<boolean>('database.logging'),
           entities: [__dirname + '/**/*.entity{.ts,.js}'],
           migrations: [__dirname + '/database/migrations/*{.ts,.js}'],
