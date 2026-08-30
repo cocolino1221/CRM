@@ -144,11 +144,22 @@ export class MetaConversionsService {
     const accessToken = integration.credentials?.accessToken;
     if (!datasetId || !accessToken) return;
 
-    const body: Record<string, any> = { data: [event], access_token: accessToken };
-    if (testEventCode) body.test_event_code = testEventCode;
+    // access_token goes in the query string, not the JSON body — matches
+    // every other Graph API call in this codebase (see e.g.
+    // meta-messaging.service.ts's takeThreadControl). Putting it in the
+    // body was almost certainly why Meta returned bizarre low-level parse
+    // errors ("Bad signature", "Expected 1 '.' in the input...") instead
+    // of a normal "invalid access token" — those read like errors from
+    // Graph trying to parse the body as something other than plain JSON.
+    const params: Record<string, string> = { access_token: accessToken };
+    if (testEventCode) params.test_event_code = testEventCode;
 
     try {
-      await this.httpService.axiosRef.post(`https://graph.facebook.com/${META_CAPI_VERSION}/${datasetId}/events`, body);
+      await this.httpService.axiosRef.post(
+        `https://graph.facebook.com/${META_CAPI_VERSION}/${datasetId}/events`,
+        { data: [event] },
+        { params, timeout: 10000 },
+      );
       integration.lastSync = { timestamp: new Date(), status: 'success' } as any;
       await this.integrationRepository.save(integration);
     } catch (error: any) {
