@@ -9,12 +9,14 @@ import { Activity } from '../database/entities/activity.entity';
 import { Deal } from '../database/entities/deal.entity';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { GoogleSheetsModule } from '../integrations/google-sheets/google-sheets.module';
+import { MetaConversionsModule } from '../integrations/meta-conversions/meta-conversions.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Contact, User, Company, Activity, Deal]),
     NotificationsModule,
     GoogleSheetsModule,
+    MetaConversionsModule,
   ],
   controllers: [ContactsController],
   providers: [ContactsService],

@@ -6,10 +6,12 @@ import { Pipeline } from '../database/entities/pipeline.entity';
 import { PipelineStage } from '../database/entities/pipeline-stage.entity';
 import { Contact } from '../database/entities/contact.entity';
 import { User } from '../database/entities/user.entity';
+import { MetaConversionsModule } from '../integrations/meta-conversions/meta-conversions.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Pipeline, PipelineStage, Contact, User]),
+    MetaConversionsModule,
   ],
   controllers: [PipelineController],
   providers: [PipelineService],

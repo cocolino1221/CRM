@@ -195,6 +195,11 @@ export const validationSchema = Joi.object({
   WHATSAPP_VERIFY_TOKEN: Joi.string().optional(),
   WHATSAPP_BUSINESS_ACCOUNT_ID: Joi.string().optional(),
 
+  // Meta Conversions API for CRM (reports pipeline stage changes back to
+  // Meta for ad optimization) — optional, feature is disabled if unset.
+  META_CAPI_DATASET_ID: Joi.string().optional(),
+  META_CAPI_ACCESS_TOKEN: Joi.string().optional(),
+
   // Phone normalization
   CONTACT_PHONE_DEFAULT_COUNTRY_CODE: Joi.string().pattern(/^\d{1,3}$/).default('40'),
 

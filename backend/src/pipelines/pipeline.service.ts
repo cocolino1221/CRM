@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Not } from 'typeorm';
 import { Pipeline } from '../database/entities/pipeline.entity';
@@ -7,9 +7,12 @@ import { Contact } from '../database/entities/contact.entity';
 import { User } from '../database/entities/user.entity';
 import { CreatePipelineDto } from './dto/create-pipeline.dto';
 import { UpdateContactPipelineDto } from './dto/update-contact-pipeline.dto';
+import { MetaConversionsService } from '../integrations/meta-conversions/meta-conversions.service';
 
 @Injectable()
 export class PipelineService {
+  private readonly logger = new Logger(PipelineService.name);
+
   constructor(
     @InjectRepository(Pipeline)
     private readonly pipelineRepository: Repository<Pipeline>,
@@ -19,6 +22,7 @@ export class PipelineService {
     private readonly contactRepository: Repository<Contact>,
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
+    private readonly metaConversionsService: MetaConversionsService,
   ) {}
 
   // ========== Pipeline Management ==========
@@ -201,11 +205,12 @@ export class PipelineService {
       await this.getPipelineById(workspaceId, dto.pipelineId);
     }
 
+    let newStage: PipelineStage | null = null;
     if (dto.pipelineStageId) {
-      const stage = await this.pipelineStageRepository.findOne({
+      newStage = await this.pipelineStageRepository.findOne({
         where: { id: dto.pipelineStageId, workspaceId, deletedAt: null as any },
       });
-      if (!stage) {
+      if (!newStage) {
         throw new NotFoundException('Pipeline stage not found');
       }
     }
@@ -221,8 +226,17 @@ export class PipelineService {
       await this.validateUser(workspaceId, dto.closerId);
     }
 
+    const stageChanged = !!newStage && newStage.id !== contact.pipelineStageId;
     Object.assign(contact, dto);
-    return this.contactRepository.save(contact);
+    const saved = await this.contactRepository.save(contact);
+
+    if (stageChanged && newStage) {
+      this.metaConversionsService
+        .reportStageChange(saved, newStage.name)
+        .catch((err) => this.logger.warn(`Failed to report stage change to Meta CAPI: ${err.message}`));
+    }
+
+    return saved;
   }
 
   async autoAssignContact(workspaceId: string, contactId: string) {

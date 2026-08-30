@@ -15,6 +15,7 @@ import { QueryContactsDto, SortField } from './dto/query-contacts.dto';
 import { normalizePhoneDigits, normalizePhoneE164 } from '../common/utils/phone.util';
 import { NotificationsService } from '../notifications/notifications.service';
 import { GoogleSheetsService } from '../integrations/google-sheets/google-sheets.service';
+import { MetaConversionsService } from '../integrations/meta-conversions/meta-conversions.service';
 
 export interface ContactsListResult {
   contacts: Contact[];
@@ -50,6 +51,7 @@ export class ContactsService {
     private eventEmitter: EventEmitter2,
     private notificationsService: NotificationsService,
     private googleSheetsService: GoogleSheetsService,
+    private metaConversionsService: MetaConversionsService,
   ) {}
 
   async findAll(workspaceId: string, query: QueryContactsDto): Promise<ContactsListResult> {
@@ -416,6 +418,19 @@ export class ContactsService {
     await this.moveTaggedContactToContactedStage(workspaceId, contact);
     const savedContact = await this.contactRepository.save(contact);
 
+    // Meta's CRM integration guide explicitly requires reporting the
+    // INITIAL lead stage too, not just later moves — otherwise Meta only
+    // ever sees a lead's second-and-later stage changes.
+    if (savedContact.pipelineStageId) {
+      const pipelineStageRepository = this.contactRepository.manager.getRepository(PipelineStage);
+      pipelineStageRepository
+        .findOne({ where: { id: savedContact.pipelineStageId, workspaceId, deletedAt: null as any } })
+        .then((stage) => {
+          if (stage) return this.metaConversionsService.reportStageChange(savedContact, stage.name);
+        })
+        .catch((err) => this.logger.warn(`Failed to report initial stage to Meta CAPI for contact ${savedContact.id}: ${err.message}`));
+    }
+
     // Emit contact.created event for workflow triggers
     this.eventEmitter.emit('contact.created', {
       contact: savedContact,
@@ -449,6 +464,7 @@ export class ContactsService {
 
   async update(workspaceId: string, id: string, dto: UpdateContactDto): Promise<Contact> {
     const contact = await this.findOne(workspaceId, id);
+    const previousStageId = contact.pipelineStageId;
 
     // Check duplicates only by phone (email duplicates are allowed)
     if (dto.phone && dto.phone !== contact.phone) {
@@ -491,6 +507,21 @@ export class ContactsService {
 
     await this.moveTaggedContactToContactedStage(workspaceId, contact);
     const updatedContact = await this.contactRepository.save(contact);
+
+    // Covers every way this method can change the stage — an explicit
+    // pipelineStageId in the edit form, or the tag-based auto-move above —
+    // in one place, so nothing needs its own separate Meta CAPI hook.
+    if (updatedContact.pipelineStageId && updatedContact.pipelineStageId !== previousStageId) {
+      const pipelineStageRepository = this.contactRepository.manager.getRepository(PipelineStage);
+      const newStage = await pipelineStageRepository.findOne({
+        where: { id: updatedContact.pipelineStageId, workspaceId, deletedAt: null as any },
+      });
+      if (newStage) {
+        this.metaConversionsService
+          .reportStageChange(updatedContact, newStage.name)
+          .catch((err) => this.logger.warn(`Failed to report stage change to Meta CAPI for contact ${id}: ${err.message}`));
+      }
+    }
 
     // Emit contact.updated event for workflow triggers
     this.eventEmitter.emit('contact.updated', {
@@ -558,6 +589,9 @@ export class ContactsService {
       this.googleSheetsService
         .pushContactField(workspaceId, id, 'stage', advancedStageName)
         .catch((err) => this.logger.warn(`Failed to push stage to sheet for contact ${id}: ${err.message}`));
+      this.metaConversionsService
+        .reportStageChange(contact, advancedStageName)
+        .catch((err) => this.logger.warn(`Failed to report stage change to Meta CAPI for contact ${id}: ${err.message}`));
     }
     return contact;
   }
