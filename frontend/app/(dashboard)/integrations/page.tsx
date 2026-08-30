@@ -6,6 +6,7 @@ import { Search, Check, ExternalLink, Zap, Settings, Webhook, X, Copy, Key, Lock
 import api from '@/lib/api';
 import { integrationIcons } from '@/lib/integration-icons';
 import GoogleSheetsSync from '@/components/integrations/GoogleSheetsSync';
+import MetaConversionsSettings from '@/components/integrations/MetaConversionsSettings';
 
 interface Integration {
   id: string;
@@ -64,6 +65,7 @@ export default function IntegrationsPage() {
   const [filter, setFilter] = useState('all');
   const [selectedIntegration, setSelectedIntegration] = useState<Integration | null>(null);
   const [showSheetsModal, setShowSheetsModal] = useState(false);
+  const [showMetaCapiModal, setShowMetaCapiModal] = useState(false);
   const [showMcpModal, setShowMcpModal] = useState(false);
   const [mcpGrants, setMcpGrants] = useState<any[]>([]);
   const [mcpGrantsLoading, setMcpGrantsLoading] = useState(false);
@@ -349,6 +351,18 @@ export default function IntegrationsPage() {
       color: 'from-green-500 to-emerald-600',
       connected: false,
       features: ['Sheet → CRM leads', 'CRM → Sheet rows', 'Custom column mapping', 'Auto-sync every 10 min'],
+      configFields: [],
+    },
+    {
+      id: 'meta-conversions',
+      name: 'Meta Conversions API',
+      description: 'Report pipeline stage changes back to Meta so ad delivery optimizes toward leads that actually convert, not just cheap clicks.',
+      category: 'marketing',
+      icon: '🎯',
+      logoUrl: '',
+      color: 'from-blue-600 to-sky-500',
+      connected: false,
+      features: ['Reports every pipeline stage move', 'Hashed email/phone matching', 'Native Lead Ads lead_id support', 'Built-in test event'],
       configFields: [],
     },
     {
@@ -1130,6 +1144,14 @@ export default function IntegrationsPage() {
       return;
     }
 
+    // Meta Conversions API is a plain dataset-id + access-token pair with
+    // its own test-event action — simple enough to skip the generic
+    // handler-registry integration path entirely.
+    if (integration.id === 'meta-conversions') {
+      setShowMetaCapiModal(true);
+      return;
+    }
+
     // AI Connect (MCP) is an inbound connector (AI clients connect to us),
     // not an outbound OAuth-client integration — open the management modal.
     if (integration.id === 'mcp-ai-connect') {
@@ -1566,6 +1588,21 @@ export default function IntegrationsPage() {
                 <button onClick={() => setShowSheetsModal(false)} className="rounded-full px-2 py-1 text-sm text-gray-400 hover:bg-gray-100 hover:text-gray-700">✕ Close</button>
               </div>
               <GoogleSheetsSync autoOpen />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Meta Conversions API setup — opened from its card in the grid */}
+      {showMetaCapiModal && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 p-4 pt-16" onClick={() => setShowMetaCapiModal(false)}>
+          <div className="w-full max-w-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="rounded-2xl bg-white p-1 shadow-2xl">
+              <div className="flex items-center justify-between px-4 pt-3">
+                <span className="text-sm font-semibold text-gray-500">Meta Conversions API</span>
+                <button onClick={() => setShowMetaCapiModal(false)} className="rounded-full px-2 py-1 text-sm text-gray-400 hover:bg-gray-100 hover:text-gray-700">✕ Close</button>
+              </div>
+              <MetaConversionsSettings autoOpen />
             </div>
           </div>
         </div>
