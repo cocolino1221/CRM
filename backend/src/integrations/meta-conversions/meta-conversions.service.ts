@@ -3,7 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { HttpService } from '@nestjs/axios';
 import { createHash } from 'crypto';
-import { Integration, IntegrationType, IntegrationStatus } from '../../database/entities/integration.entity';
+import { Integration, IntegrationType, IntegrationStatus, IntegrationAuthType } from '../../database/entities/integration.entity';
 import { Contact } from '../../database/entities/contact.entity';
 import { normalizePhoneE164 } from '../../common/utils/phone.util';
 
@@ -80,6 +80,7 @@ export class MetaConversionsService {
         workspaceId,
         userId,
         type: IntegrationType.META_CAPI,
+        authType: IntegrationAuthType.API_KEY,
         name: 'Meta Conversions API',
         status: IntegrationStatus.ACTIVE,
       });
