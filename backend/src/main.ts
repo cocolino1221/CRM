@@ -110,13 +110,18 @@ async function bootstrap() {
     exposedHeaders: ['Set-Cookie'],
   });
 
-  // Global validation pipe with detailed error handling
+  // Global validation pipe with detailed error handling.
+  // disableErrorMessages was on in production, which reduces every
+  // validation failure (weak password, missing field, bad email format —
+  // anywhere in the app) to a bare "Bad Request" with zero indication of
+  // what's actually wrong. Field-level validation messages ("Password must
+  // be at least 12 characters...") aren't sensitive; they're required for
+  // the app to be usable. Always leave them on.
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
       forbidNonWhitelisted: false, // Allow extra properties but strip them
       transform: true,
-      disableErrorMessages: nodeEnv === 'production',
       transformOptions: {
         enableImplicitConversion: true, // Auto-convert types
       },
