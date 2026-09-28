@@ -3037,7 +3037,11 @@ export class WhatsAppService {
 
   @OnEvent('contact.external_duplicate')
   async handleExternalDuplicateContact(payload: { contact: any; workspaceId: string; source?: string }): Promise<void> {
-    return this.handleContactCreatedEvent(payload);
+    // An existing contact re-arriving from another channel (e.g. a Typeform lead
+    // who later places a WooCommerce order) must be matched against rules for
+    // the channel that triggered this event, not the contact's original source.
+    const contact = payload.source ? { ...payload.contact, source: payload.source } : payload.contact;
+    return this.handleContactCreatedEvent({ ...payload, contact });
   }
 
   private async handleContactCreatedEvent(payload: { contact: any; workspaceId: string }): Promise<void> {
