@@ -11,7 +11,9 @@ import { AllExceptionsFilter } from './common/filters/http-exception.filter';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 
 async function bootstrap() {
-  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  // rawBody: needed to verify HMAC-signed webhooks (e.g. WooCommerce's
+  // X-WC-Webhook-Signature is computed over the exact raw request bytes).
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { rawBody: true });
 
   const configService = app.get(ConfigService);
   const port = configService.get('PORT', 4000);

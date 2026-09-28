@@ -829,17 +829,28 @@ export default function IntegrationsPage() {
     {
       id: 'woocommerce',
       name: 'WooCommerce',
-      description: 'Integrate your WooCommerce store to manage customers and track orders.',
+      description: 'Turn WooCommerce orders into CRM leads automatically and send WhatsApp messages per product (Auto-send rules on the WhatsApp page).',
       category: 'ecommerce',
       icon: '🛒',
       logoUrl: integrationIcons.woocommerce,
       color: 'from-purple-600 to-pink-600',
       connected: false,
-      features: ['Order sync', 'Customer data', 'Product catalog', 'Sales tracking'],
+      features: ['Orders → CRM leads', 'Products saved on the lead', 'WhatsApp auto-send per product', 'Repeat-customer detection'],
       configFields: [
-        { name: 'storeUrl', label: 'Store URL', type: 'url', required: true, placeholder: 'https://yourstore.com' },
-        { name: 'consumerKey', label: 'Consumer Key', type: 'text', required: true },
-        { name: 'consumerSecret', label: 'Consumer Secret', type: 'password', required: true },
+        { name: 'storeUrl', label: 'Store URL', type: 'url', required: true, placeholder: 'https://yourstore.com', helpText: 'Your shop address, without /wp-admin.' },
+        { name: 'consumerKey', label: 'Consumer Key', type: 'text', required: true, placeholder: 'ck_...', helpText: 'WooCommerce → Settings → Advanced → REST API → Add key (Read permission is enough). Used to list your products for WhatsApp rules.' },
+        { name: 'consumerSecret', label: 'Consumer Secret', type: 'password', required: true, placeholder: 'cs_...' },
+        { name: 'webhookSecret', label: 'Webhook Secret', type: 'password', required: true, placeholder: 'Choose any long random text', helpText: 'Paste this SAME value into the "Secret" field of the WooCommerce webhook (instructions appear after you connect).' },
+        {
+          name: 'triggerOn',
+          label: 'Create a lead when',
+          type: 'select',
+          required: true,
+          options: [
+            { label: 'Order is confirmed (paid, cash on delivery, bank transfer)', value: 'confirmed' },
+            { label: 'Any new order, even unpaid / pending', value: 'any' },
+          ],
+        },
       ],
     },
 
@@ -1443,6 +1454,13 @@ export default function IntegrationsPage() {
       } else if ((selectedIntegration.id === 'payfunnels' || selectedIntegration.id === 'gopayflow') && createdIntegrationId) {
         const webhookUrl = `${apiUrl}/api/v1/documents/webhooks/payfunnel/${createdIntegrationId}`;
         alert(`${selectedIntegration.name} connected!\n\nWebhook URL:\n${webhookUrl}\n\nConfigure this URL in ${selectedIntegration.name} for payment status callbacks.`);
+      } else if (selectedIntegration.id === 'woocommerce' && createdIntegrationId) {
+        const webhookUrl = `${apiUrl}/api/v1/integrations/woocommerce/webhook/${createdIntegrationId}`;
+        alert(
+          `WooCommerce connected!\n\nLast step — in WordPress go to WooCommerce → Settings → Advanced → Webhooks → Add webhook, and create TWO webhooks:\n\n` +
+          `1) Topic: Order created\n2) Topic: Order updated\n\nFor both:\n• Status: Active\n• Delivery URL:\n${webhookUrl}\n• Secret: the same Webhook Secret you just entered here\n• API version: WP REST API Integration v3\n\n` +
+          `Then set up WhatsApp messages per product on the WhatsApp page → Auto-send → source "woocommerce".`,
+        );
       } else if (createdIntegrationId && needsWebhook) {
         const webhookUrl = `${apiUrl}/api/v1/integrations/webhooks/${createdIntegrationId}`;
         alert(`Integration connected!\n\nYour unique webhook URL:\n${webhookUrl}\n\nPaste this URL in ${selectedIntegration.name}'s webhook settings.`);
@@ -1469,6 +1487,9 @@ export default function IntegrationsPage() {
     }
     if (['typeform', 'calendly', 'manychat'].includes(integrationKey)) {
       return `${baseUrl}/api/v1/integrations/webhooks/${record.id}`;
+    }
+    if (integrationKey === 'woocommerce') {
+      return `${baseUrl}/api/v1/integrations/woocommerce/webhook/${record.id}`;
     }
     return null;
   };

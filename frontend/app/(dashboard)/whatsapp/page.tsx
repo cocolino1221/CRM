@@ -167,6 +167,7 @@ interface AutoSendRuleForm {
     sources: string[];
     statuses: string[];
     typeformFormIds: string[];
+    wooProducts: string[];
     requirePhone: boolean;
   };
 }
@@ -413,7 +414,7 @@ function buildDemoConversations(now = new Date()): Conversation[] {
   ];
 }
 
-const AUTO_SEND_SOURCES = ['typeform', 'manychat', 'manual', 'form', 'import', 'webhook'];
+const AUTO_SEND_SOURCES = ['typeform', 'manychat', 'woocommerce', 'manual', 'form', 'import', 'webhook'];
 const AUTO_SEND_STATUSES = ['lead', 'prospect', 'customer', 'active'];
 const INBOX_ACTIVITY_LIMIT = 600;
 const INBOX_POLL_INTERVAL_MS = 12000;
@@ -433,6 +434,7 @@ const createAutoSendRule = (priority: number): AutoSendRuleForm => ({
     sources: [],
     statuses: [],
     typeformFormIds: [],
+    wooProducts: [],
     requirePhone: true,
   },
 });
@@ -1064,6 +1066,12 @@ export default function WhatsAppPage() {
   const [typeformForms, setTypeformForms] = useState<TypeformFormOption[]>([]);
   const [isLoadingTypeformForms, setIsLoadingTypeformForms] = useState(false);
   const [typeformFormInput, setTypeformFormInput] = useState('');
+  const [wooIntegrations, setWooIntegrations] = useState<Array<{ id: string; name: string }>>([]);
+  const [wooProductResults, setWooProductResults] = useState<Array<{ id: string; name: string; sku?: string; storeName: string }>>([]);
+  const [wooProductNames, setWooProductNames] = useState<Record<string, string>>({});
+  const [wooProductSearch, setWooProductSearch] = useState('');
+  const [isLoadingWooProducts, setIsLoadingWooProducts] = useState(false);
+  const [wooProductsError, setWooProductsError] = useState('');
 
   // Auto-responses
   const [showAutoResponses, setShowAutoResponses] = useState(false);
@@ -1196,6 +1204,7 @@ export default function WhatsAppPage() {
     fetchAutoResponses();
     fetchAutoSend();
     fetchTypeformForms();
+    fetchWooIntegrations();
     fetchAssignments();
     fetchTeamUsers();
   }, [accessResolved, canAccessWhatsApp]);
@@ -1783,6 +1792,7 @@ export default function WhatsAppPage() {
             sources: Array.isArray(rule?.conditions?.sources) ? rule.conditions.sources : [],
             statuses: Array.isArray(rule?.conditions?.statuses) ? rule.conditions.statuses : [],
             typeformFormIds: Array.isArray(rule?.conditions?.typeformFormIds) ? rule.conditions.typeformFormIds : [],
+            wooProducts: Array.isArray(rule?.conditions?.wooProducts) ? rule.conditions.wooProducts : [],
             requirePhone: rule?.conditions?.requirePhone !== false,
           },
         };
@@ -1820,6 +1830,52 @@ export default function WhatsAppPage() {
     }
   };
 
+  const fetchWooIntegrations = async () => {
+    try {
+      const res = await api.get('/integrations', { params: { type: 'api' } });
+      const rows = Array.isArray(res.data?.integrations) ? res.data.integrations : [];
+      setWooIntegrations(
+        rows
+          .filter((i: any) => String(i?.config?.provider || i?.externalId || '').toLowerCase() === 'woocommerce')
+          .map((i: any) => ({ id: String(i.id), name: String(i.config?.storeUrl || i.name || 'WooCommerce') })),
+      );
+    } catch {
+      setWooIntegrations([]);
+    }
+  };
+
+  // Searches every connected store's catalogue; products are stored in the
+  // rule by ID (stable even if renamed), names kept only for display.
+  const searchWooProducts = async () => {
+    if (wooIntegrations.length === 0) return;
+    setIsLoadingWooProducts(true);
+    setWooProductsError('');
+    try {
+      const results = await Promise.all(
+        wooIntegrations.map(async (store) => {
+          const res = await api.get(`/integrations/woocommerce/${store.id}/products`, {
+            params: { search: wooProductSearch.trim() || undefined },
+          });
+          const products = Array.isArray(res.data?.products) ? res.data.products : [];
+          return products.map((p: any) => ({ id: String(p.id), name: String(p.name || p.id), sku: p.sku, storeName: store.name }));
+        }),
+      );
+      const flat = results.flat();
+      setWooProductResults(flat);
+      setWooProductNames(prev => {
+        const next = { ...prev };
+        flat.forEach(p => { next[p.id] = p.name; });
+        return next;
+      });
+      if (flat.length === 0) setWooProductsError('No products found.');
+    } catch (err: any) {
+      setWooProductResults([]);
+      setWooProductsError(err?.response?.data?.message || 'Could not load products from WooCommerce. Check the Consumer Key/Secret on the Integrations page.');
+    } finally {
+      setIsLoadingWooProducts(false);
+    }
+  };
+
   const saveAutoSendConfig = async () => {
     setIsSavingAutoSend(true);
     setAutoSendSaveError('');
@@ -1839,6 +1895,7 @@ export default function WhatsAppPage() {
           sources: rule.conditions.sources.length > 0 ? rule.conditions.sources : undefined,
           statuses: rule.conditions.statuses.length > 0 ? rule.conditions.statuses : undefined,
           typeformFormIds: rule.conditions.typeformFormIds.length > 0 ? rule.conditions.typeformFormIds : undefined,
+          wooProducts: rule.conditions.wooProducts.length > 0 ? rule.conditions.wooProducts : undefined,
           requirePhone: rule.conditions.requirePhone,
         },
       }));
@@ -5958,6 +6015,110 @@ export default function WhatsAppPage() {
                               className="px-2 py-1 text-[11px] font-medium text-sky-700 bg-white border border-sky-300 rounded-full hover:bg-sky-100"
                             >
                               {formId} ✕
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {selectedAutoSendRule.conditions.sources.includes('woocommerce') && (
+                    <div className="space-y-2 rounded-xl border border-purple-200 bg-purple-50 p-3">
+                      <p className="text-xs font-semibold text-purple-700 uppercase tracking-wide">WooCommerce Product Filter</p>
+                      <p className="text-xs text-purple-600">
+                        Only send when the order contains one of these products. Leave empty to send for every WooCommerce order.
+                        Tip: put product-specific rules ABOVE a general WooCommerce rule — the first matching rule wins.
+                      </p>
+
+                      {wooIntegrations.length === 0 ? (
+                        <p className="text-xs text-purple-600">No WooCommerce store connected yet — connect one on the Integrations page. You can still add a product ID, SKU or exact name manually below.</p>
+                      ) : (
+                        <>
+                          <div className="flex gap-2">
+                            <input
+                              type="text"
+                              value={wooProductSearch}
+                              onChange={(e) => setWooProductSearch(e.target.value)}
+                              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void searchWooProducts(); } }}
+                              placeholder="Search your store's products..."
+                              className="flex-1 px-3 py-2 text-sm border border-purple-200 rounded-xl focus:outline-none focus:border-purple-400 focus:ring-2 focus:ring-purple-100 bg-white"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => void searchWooProducts()}
+                              disabled={isLoadingWooProducts}
+                              className="px-3 py-2 text-xs font-medium text-purple-700 bg-white border border-purple-300 rounded-xl hover:bg-purple-100 disabled:opacity-50"
+                            >
+                              {isLoadingWooProducts ? 'Loading...' : 'Search'}
+                            </button>
+                          </div>
+                          {wooProductsError && <p className="text-xs text-rose-600">{wooProductsError}</p>}
+                          {wooProductResults.length > 0 && (
+                            <div className="max-h-48 overflow-y-auto grid grid-cols-1 gap-1">
+                              {wooProductResults.map(product => (
+                                <label key={`${product.storeName}-${product.id}`} className="flex items-center gap-2 cursor-pointer p-2 rounded-lg hover:bg-purple-100/70">
+                                  <input
+                                    type="checkbox"
+                                    checked={selectedAutoSendRule.conditions.wooProducts.includes(product.id)}
+                                    onChange={e => updateSelectedAutoSendRule(rule => ({
+                                      ...rule,
+                                      conditions: {
+                                        ...rule.conditions,
+                                        wooProducts: e.target.checked
+                                          ? [...rule.conditions.wooProducts, product.id]
+                                          : rule.conditions.wooProducts.filter(id => id !== product.id),
+                                      },
+                                    }))}
+                                    className="h-4 w-4 rounded border-gray-300 accent-green-600"
+                                  />
+                                  <span className="text-sm text-gray-700 truncate">{product.name}</span>
+                                  <span className="text-[11px] text-gray-400">#{product.id}{product.sku ? ` · ${product.sku}` : ''}</span>
+                                </label>
+                              ))}
+                            </div>
+                          )}
+                        </>
+                      )}
+
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          id="woo-manual-product"
+                          placeholder="Or add product ID / SKU / exact name"
+                          onKeyDown={(e) => {
+                            if (e.key !== 'Enter') return;
+                            e.preventDefault();
+                            const value = (e.target as HTMLInputElement).value.trim();
+                            if (!value) return;
+                            updateSelectedAutoSendRule(rule => ({
+                              ...rule,
+                              conditions: {
+                                ...rule.conditions,
+                                wooProducts: rule.conditions.wooProducts.includes(value) ? rule.conditions.wooProducts : [...rule.conditions.wooProducts, value],
+                              },
+                            }));
+                            (e.target as HTMLInputElement).value = '';
+                          }}
+                          className="flex-1 px-3 py-2 text-sm border border-purple-200 rounded-xl focus:outline-none focus:border-purple-400 focus:ring-2 focus:ring-purple-100 bg-white"
+                        />
+                      </div>
+
+                      {selectedAutoSendRule.conditions.wooProducts.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5">
+                          {selectedAutoSendRule.conditions.wooProducts.map(productKey => (
+                            <button
+                              type="button"
+                              key={productKey}
+                              onClick={() => updateSelectedAutoSendRule(rule => ({
+                                ...rule,
+                                conditions: {
+                                  ...rule.conditions,
+                                  wooProducts: rule.conditions.wooProducts.filter(id => id !== productKey),
+                                },
+                              }))}
+                              className="px-2 py-1 text-[11px] font-medium text-purple-700 bg-white border border-purple-300 rounded-full hover:bg-purple-100"
+                            >
+                              {wooProductNames[productKey] ? `${wooProductNames[productKey]} (#${productKey})` : productKey} ✕
                             </button>
                           ))}
                         </div>

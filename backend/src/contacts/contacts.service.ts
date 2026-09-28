@@ -163,6 +163,7 @@ export class ContactsService {
     ContactSource.INSTAGRAM,
     ContactSource.KAJABI,
     ContactSource.MANYCHAT,
+    ContactSource.WOOCOMMERCE,
   ]);
 
   private normalizeTag(tag: unknown): string {

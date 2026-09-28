@@ -118,6 +118,9 @@ interface AutoSendConditions {
   sources?: string[];
   statuses?: string[];
   typeformFormIds?: string[];
+  // WooCommerce product IDs / SKUs / names — rule only fires when the
+  // contact's latest WooCommerce order contains at least one of them.
+  wooProducts?: string[];
   requirePhone?: boolean;
 }
 
@@ -903,6 +906,7 @@ export class WhatsAppService {
         sources: this.sanitizeStringArray(config?.conditions?.sources),
         statuses: this.sanitizeStringArray(config?.conditions?.statuses),
         typeformFormIds: this.sanitizeStringArray(config?.conditions?.typeformFormIds),
+        wooProducts: this.sanitizeStringArray(config?.conditions?.wooProducts),
         requirePhone: config?.conditions?.requirePhone !== false,
       },
     };
@@ -967,6 +971,17 @@ export class WhatsAppService {
       if (!contactFormId || !allowedFormIds.has(contactFormId)) {
         return false;
       }
+    }
+
+    if (conditions.wooProducts?.length) {
+      const wanted = new Set(conditions.wooProducts.map((p) => String(p || '').trim().toLowerCase()).filter(Boolean));
+      const lineItems = Array.isArray(contact?.customFields?.wooOrder?.lineItems) ? contact.customFields.wooOrder.lineItems : [];
+      const hit = lineItems.some((item: any) =>
+        [item?.productId, item?.variationId, item?.sku, item?.name]
+          .map((v) => String(v || '').trim().toLowerCase())
+          .some((v) => v && wanted.has(v)),
+      );
+      if (!hit) return false;
     }
 
     return true;

@@ -21,6 +21,7 @@ import { WhatsAppFollowupModule } from './integrations/whatsapp/whatsapp-followu
 import { MetaMessagingModule } from './integrations/meta-messaging/meta-messaging.module';
 import { AudioLibraryModule } from './integrations/audio-library/audio-library.module';
 import { GoogleSheetsModule } from './integrations/google-sheets/google-sheets.module';
+import { WooCommerceModule } from './integrations/woocommerce/woocommerce.module';
 import { SmartBillModule } from './smartbill/smartbill.module';
 import { QueueModule } from './queues/queue.module';
 import { AnalyticsModule } from './analytics/analytics.module';
@@ -180,6 +181,8 @@ import { validationSchema } from './config/env.validation';
     // /integrations/google-sheets/* routes are matched ahead of the generic
     // /integrations/:id patterns ("google-sheets" is not a UUID).
     GoogleSheetsModule,
+    // Same reason as above: static /integrations/woocommerce/* routes.
+    WooCommerceModule,
     IntegrationsModule,
     WhatsAppModule,
     WhatsAppFollowupModule,
