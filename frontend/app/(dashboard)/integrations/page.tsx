@@ -1455,12 +1455,28 @@ export default function IntegrationsPage() {
         const webhookUrl = `${apiUrl}/api/v1/documents/webhooks/payfunnel/${createdIntegrationId}`;
         alert(`${selectedIntegration.name} connected!\n\nWebhook URL:\n${webhookUrl}\n\nConfigure this URL in ${selectedIntegration.name} for payment status callbacks.`);
       } else if (selectedIntegration.id === 'woocommerce' && createdIntegrationId) {
-        const webhookUrl = `${apiUrl}/api/v1/integrations/woocommerce/webhook/${createdIntegrationId}`;
-        alert(
-          `WooCommerce connected!\n\nLast step — in WordPress go to WooCommerce → Settings → Advanced → Webhooks → Add webhook, and create TWO webhooks:\n\n` +
-          `1) Topic: Order created\n2) Topic: Order updated\n\nFor both:\n• Status: Active\n• Delivery URL:\n${webhookUrl}\n• Secret: the same Webhook Secret you just entered here\n• API version: WP REST API Integration v3\n\n` +
-          `Then set up WhatsApp messages per product on the WhatsApp page → Auto-send → source "woocommerce".`,
-        );
+        // Create the order webhooks in the store automatically — the manual
+        // WordPress step was the one most likely to be skipped.
+        let setup: any = null;
+        try {
+          setup = (await api.post(`/integrations/woocommerce/${createdIntegrationId}/setup-webhooks`)).data;
+        } catch (e: any) {
+          setup = { ok: false, error: e?.response?.data?.message || 'Could not reach the store' };
+        }
+        const webhookUrl = setup?.webhookUrl || `${apiUrl}/api/v1/integrations/woocommerce/webhook/${createdIntegrationId}`;
+        await refreshIntegrationCatalog();
+        if (setup?.ok) {
+          alert(
+            `WooCommerce connected ✅\n\nThe "Order created" and "Order updated" webhooks were created in your store automatically — new orders will now appear as leads.\n\n` +
+            `Next: WhatsApp page → Auto-send → make sure your WooCommerce rule is ENABLED.`,
+          );
+        } else {
+          alert(
+            `WooCommerce saved, but the webhooks could not be created automatically:\n${setup?.error || 'unknown error'}\n\n` +
+            `To finish manually: WordPress → WooCommerce → Settings → Advanced → Webhooks → Add webhook, create TWO (Topic "Order created" and "Order updated"):\n` +
+            `• Status: Active\n• Delivery URL:\n${webhookUrl}\n• Secret: the same Webhook Secret you entered here\n• API version: WP REST API Integration v3`,
+          );
+        }
       } else if (createdIntegrationId && needsWebhook) {
         const webhookUrl = `${apiUrl}/api/v1/integrations/webhooks/${createdIntegrationId}`;
         alert(`Integration connected!\n\nYour unique webhook URL:\n${webhookUrl}\n\nPaste this URL in ${selectedIntegration.name}'s webhook settings.`);

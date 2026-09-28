@@ -11,7 +11,7 @@ export class ApiIntegrationHandler implements IntegrationHandler {
     try {
       const baseUrl = integration.config?.baseUrl;
       const providerKey = String(integration.config?.provider || integration.externalId || '').trim().toLowerCase();
-      const webhookFirstProviders = new Set(['esemneaza', 'payfunnels', 'payfunnel', 'gopayflow']);
+      const webhookFirstProviders = new Set(['esemneaza', 'payfunnels', 'payfunnel', 'gopayflow', 'woocommerce']);
       const isWebhookFirstProvider = webhookFirstProviders.has(providerKey);
       const isSocialOAuthProvider = ['facebook', 'instagram', 'tiktok'].includes(providerKey);
 

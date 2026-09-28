@@ -45,6 +45,16 @@ export class WooCommerceController {
 
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
+  @Post(':integrationId/setup-webhooks')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Create/repair the order webhooks in the WooCommerce store automatically' })
+  async setupWebhooks(@Param('integrationId') integrationId: string, @Req() req: any) {
+    const integration = await this.wooCommerceService.getIntegration(integrationId, req.user.workspaceId);
+    return this.wooCommerceService.setupWebhooks(integration);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
   @Get(':integrationId/products')
   @ApiOperation({ summary: 'Search products in the connected WooCommerce store' })
   async products(

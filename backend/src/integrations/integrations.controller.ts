@@ -181,7 +181,7 @@ export class IntegrationsController {
     // Webhook-only integrations (ManyChat, Calendly, etc.) should always be activated
     // because the webhook receiver works independently of an API key connection test.
     const webhookOnlyTypes: string[] = [IntegrationType.MANYCHAT, IntegrationType.CALENDLY];
-    const webhookFirstApiProviders = new Set(['esemneaza', 'payfunnels', 'payfunnel', 'gopayflow']);
+    const webhookFirstApiProviders = new Set(['esemneaza', 'payfunnels', 'payfunnel', 'gopayflow', 'woocommerce']);
     const providerKey = String(integration.config?.provider || integration.externalId || '').trim().toLowerCase();
     const isWebhookFirstApiProvider =
       integration.type === IntegrationType.API && webhookFirstApiProviders.has(providerKey);

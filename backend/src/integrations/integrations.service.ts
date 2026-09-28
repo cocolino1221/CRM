@@ -999,7 +999,7 @@ export class IntegrationsService implements OnModuleInit {
       integration.config?.apiToken
     );
     const providerKey = String(integration.config?.provider || integration.externalId || '').toLowerCase().trim();
-    const webhookFirstProviders = new Set(['esemneaza', 'payfunnels', 'payfunnel', 'gopayflow']);
+    const webhookFirstProviders = new Set(['esemneaza', 'payfunnels', 'payfunnel', 'gopayflow', 'woocommerce']);
     const isWebhookFirstProvider = integration.type === IntegrationType.API && webhookFirstProviders.has(providerKey);
 
     // OAuth integrations require access token; API/Webhook style integrations can sync with API key/webhook-only mode.

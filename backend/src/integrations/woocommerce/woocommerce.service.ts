@@ -4,7 +4,7 @@ import { Repository } from 'typeorm';
 import { HttpService } from '@nestjs/axios';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { createHmac, timingSafeEqual } from 'crypto';
-import { Integration, IntegrationType } from '../../database/entities/integration.entity';
+import { Integration, IntegrationStatus, IntegrationType } from '../../database/entities/integration.entity';
 import { Contact, ContactSource, ContactStatus } from '../../database/entities/contact.entity';
 import { ContactsService } from '../../contacts/contacts.service';
 import { normalizePhoneE164 } from '../../common/utils/phone.util';
@@ -228,6 +228,82 @@ export class WooCommerceService {
       return this.contactRepository.findOne({ where: { workspaceId, email } });
     }
     return null;
+  }
+
+  // ── store API helpers ──
+
+  private storeApi(integration: Integration) {
+    const storeUrl = String(integration.config?.storeUrl || '').trim().replace(/\/+$/, '');
+    const username = String(integration.credentials?.consumerKey || '').trim();
+    const password = String(integration.credentials?.consumerSecret || '').trim();
+    if (!storeUrl || !username || !password) {
+      throw new BadRequestException('Store URL, Consumer Key and Consumer Secret are required');
+    }
+    const base = `${storeUrl}/wp-json/wc/v3`;
+    const request = (method: 'get' | 'post' | 'put', path: string, data?: any) =>
+      this.httpService.axiosRef.request({ method, url: `${base}/${path}`, data, auth: { username, password }, timeout: 15000 });
+    return { request };
+  }
+
+  webhookUrl(integration: Integration): string {
+    // APP_URL is set with the /api/v1 suffix in production — normalize so it isn't doubled.
+    const appUrl = String(process.env.APP_URL || 'https://slackcrm-backend.fly.dev').replace(/\/+$/, '').replace(/\/api\/v1$/, '');
+    return `${appUrl}/api/v1/integrations/woocommerce/webhook/${integration.id}`;
+  }
+
+  /**
+   * Creates (or repairs) the order.created + order.updated webhooks in the
+   * store itself, so users don't have to do the WordPress step by hand —
+   * the step most likely to be skipped (seen in production: integration
+   * connected, zero webhooks in the store, zero orders ever received).
+   * Idempotent: an existing webhook with our URL + topic is re-enabled and
+   * its secret re-synced instead of duplicated. Needs a Read/Write API key.
+   */
+  async setupWebhooks(integration: Integration): Promise<{ ok: boolean; webhookUrl: string; webhooks: any[]; error?: string }> {
+    const secret = String(integration.credentials?.webhookSecret || integration.config?.webhookSecret || '').trim();
+    const deliveryUrl = this.webhookUrl(integration);
+    const result: { ok: boolean; webhookUrl: string; webhooks: any[]; error?: string } = { ok: false, webhookUrl: deliveryUrl, webhooks: [] };
+
+    try {
+      if (!secret) throw new BadRequestException('Set a Webhook Secret on the integration first');
+      const { request } = this.storeApi(integration);
+      const existing = (await request('get', 'webhooks?per_page=100')).data;
+      const hooks: any[] = Array.isArray(existing) ? existing : [];
+
+      for (const topic of ['order.created', 'order.updated']) {
+        const match = hooks.find((h) => h.topic === topic && String(h.delivery_url || '').replace(/\/+$/, '') === deliveryUrl);
+        const payload = {
+          name: `EasyTeam CRM – ${topic === 'order.created' ? 'Order created' : 'Order updated'}`,
+          topic,
+          delivery_url: deliveryUrl,
+          secret,
+          status: 'active',
+          api_version: 'wp_api_v3',
+        };
+        const saved = match
+          ? (await request('put', `webhooks/${match.id}`, payload)).data
+          : (await request('post', 'webhooks', payload)).data;
+        result.webhooks.push({ id: saved?.id, topic: saved?.topic, status: saved?.status });
+      }
+      result.ok = true;
+    } catch (error: any) {
+      const status = error?.response?.status;
+      result.error =
+        status === 401 || status === 403
+          ? 'Your WooCommerce API key can read but not create webhooks. Edit the key in WooCommerce → Settings → Advanced → REST API and set Permissions to "Read/Write", then click Connect again — or create the two webhooks manually.'
+          : status === 404
+            ? 'WooCommerce REST API not found at this Store URL — check the address (no /wp-admin) and that permalinks are not set to "Plain".'
+            : error?.response?.data?.message || error?.message || 'Could not reach the store';
+    }
+
+    integration.config = {
+      ...(integration.config as any),
+      webhookSetup: { ok: result.ok, at: new Date().toISOString(), webhooks: result.webhooks, error: result.error },
+    };
+    if (result.ok) integration.status = IntegrationStatus.ACTIVE;
+    await this.integrationRepository.save(integration);
+    this.logger.log(`[woocommerce] webhook setup for ${integration.id}: ${result.ok ? 'ok' : result.error}`);
+    return result;
   }
 
   // ── product picker (for auto-send product rules) ──
