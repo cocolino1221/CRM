@@ -874,8 +874,8 @@ export default function LeadsPage() {
   return (
     <div className="space-y-6 h-full flex flex-col">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
+      <div className="flex flex-wrap items-start sm:items-center justify-between gap-3">
+        <div className="min-w-0">
           <h1 className="text-2xl font-bold text-gray-900">Pipeline</h1>
           <p className="mt-1 text-sm text-gray-500">
             Manage your leads through the sales pipeline
@@ -888,7 +888,7 @@ export default function LeadsPage() {
             )}
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
           <button
             onClick={fetchContacts}
             disabled={isLoading}
@@ -933,9 +933,33 @@ export default function LeadsPage() {
         </div>
       </div>
 
+      {/* Mobile pipeline switcher: tap a pipeline to see its leads */}
+      {pipelines.length > 1 && (
+        <div className="md:hidden -mx-4 px-4 overflow-x-auto">
+          <div className="flex gap-2 w-max pb-1">
+            {pipelines.map(pipeline => {
+              const active = selectedPipeline?.id === pipeline.id;
+              return (
+                <button
+                  key={pipeline.id}
+                  onClick={() => setSelectedPipeline(pipeline)}
+                  className={`whitespace-nowrap rounded-full px-4 py-2 text-sm font-medium border transition-all ${
+                    active
+                      ? 'bg-indigo-600 border-indigo-600 text-white shadow'
+                      : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'
+                  }`}
+                >
+                  {pipeline.name}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Pipeline Selector, Date Filter and Search */}
-      <div className="flex items-center gap-4 flex-wrap">
-        <div className="relative w-64">
+      <div className="flex items-center gap-2 sm:gap-4 flex-wrap">
+        <div className="relative w-full sm:w-64">
           <select
             value={selectedPipeline?.id || ''}
             onChange={(e) => {
@@ -1037,7 +1061,7 @@ export default function LeadsPage() {
           <Plus className="h-4 w-4" />
           New Pipeline
         </button>
-        <div className="relative flex-1">
+        <div className="relative flex-1 min-w-[12rem]">
           <Search className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-indigo-400" />
           <input
             type="text"
