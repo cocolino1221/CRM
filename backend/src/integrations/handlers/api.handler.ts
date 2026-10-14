@@ -34,10 +34,19 @@ export class ApiIntegrationHandler implements IntegrationHandler {
         return { success: false, message: 'Base URL not configured' };
       }
 
-      const headers: Record<string, string> = integration.config?.headers || {};
+      const headers: Record<string, string> = { ...(integration.config?.headers || {}) };
+      const isPayfunnelsFamily = ['payfunnels', 'payfunnel', 'gopayflow'].includes(providerKey);
 
       if (integration.credentials?.apiKey) {
-        headers['Authorization'] = `Bearer ${integration.credentials.apiKey}`;
+        // PayFunnels-family APIs authenticate API keys via their own header, not Bearer.
+        if (isPayfunnelsFamily) {
+          headers['x-pf-api-key'] = integration.credentials.apiKey;
+        } else {
+          headers['Authorization'] = `Bearer ${integration.credentials.apiKey}`;
+        }
+      }
+      if (isPayfunnelsFamily && integration.credentials?.accessToken) {
+        headers['Authorization'] = `Bearer ${integration.credentials.accessToken}`;
       }
 
       const response = await this.httpService.axiosRef.get(baseUrl, { headers, timeout: 10000 });

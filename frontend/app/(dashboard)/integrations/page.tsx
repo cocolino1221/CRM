@@ -22,6 +22,7 @@ interface Integration {
   configFields?: ConfigField[];
   oauth?: boolean; // True for OAuth integrations (no API keys needed)
   oauthProvider?: string; // OAuth provider name for backend route (e.g., 'google', 'slack')
+  setupGuide?: { title: string; steps: string[]; link?: { label: string; url: string } };
 }
 
 interface ConfigField {
@@ -32,6 +33,7 @@ interface ConfigField {
   required?: boolean;
   options?: { label: string; value: string }[];
   helpText?: string;
+  advanced?: boolean; // shown under the collapsed "Advanced settings" section
 }
 
 // Helper function to get emoji for integration type
@@ -647,14 +649,41 @@ export default function IntegrationsPage() {
       color: 'from-purple-500 to-pink-600',
       connected: false,
       features: ['Funnel tracking', 'Payment processing', 'Conversion optimization', 'A/B testing'],
+      setupGuide: {
+        title: 'Where to find your PayFunnels API key',
+        steps: [
+          'Log in to PayFunnels and open the Billing tab.',
+          'Go to the Integration section and find "Payfunnels API Key".',
+          'Click to create a key, give it a name (e.g. "CRM") and save.',
+          'Copy the key that appears and paste it below. Keep it private.',
+        ],
+        link: { label: 'PayFunnels guide: generate an API key', url: 'https://payfunnels.helpscoutdocs.com/article/207-how-to-generate-api-key-and-oauth2-credentials-to-get-start-using-external-api' },
+      },
       configFields: [
         {
+          name: 'apiKey',
+          label: 'API Key',
+          type: 'password',
+          required: false,
+          placeholder: 'Paste your PayFunnels API key',
+          helpText: 'This is the only field you need. See the steps above for where to find it.',
+        },
+        {
+          name: 'accessToken',
+          label: 'Access Token (OAuth2 Bearer)',
+          type: 'password',
+          required: false,
+          placeholder: 'Only if you use OAuth2 instead of an API key',
+          advanced: true,
+        },
+        {
           name: 'apiUrl',
-          label: 'API URL (optional)',
+          label: 'API URL',
           type: 'url',
           required: false,
           placeholder: 'https://api.payfunnels.com',
-          helpText: 'Optional doar daca folosesti exclusiv webhook-uri. Pentru import si creare linkuri din CRM, completeaza API URL.',
+          helpText: 'Needed only to import payments or create payment links from the CRM.',
+          advanced: true,
         },
         {
           name: 'checkoutBaseUrl',
@@ -662,37 +691,15 @@ export default function IntegrationsPage() {
           type: 'url',
           required: false,
           placeholder: 'https://app.payfunnels.com',
-          helpText: 'Necesar daca nu folosesti API URL, ca fallback pentru generarea linkurilor de plata din CRM.',
+          helpText: 'Fallback for building payment links when no API URL is set.',
+          advanced: true,
         },
-        {
-          name: 'apiKey',
-          label: 'API Key (x-pf-api-key)',
-          type: 'password',
-          required: false,
-          placeholder: 'Your PayFunnels API key',
-          helpText: 'Optional if you use Bearer access token authentication.',
-        },
-        {
-          name: 'accessToken',
-          label: 'Access Token (Bearer)',
-          type: 'password',
-          required: false,
-          placeholder: 'Bearer token',
-          helpText: 'Optional if you authenticate only with API key header.',
-        },
-        {
-          name: 'accountId',
-          label: 'Account ID (optional)',
-          type: 'text',
-          required: false,
-          placeholder: 'Your account ID',
-          helpText: 'Optional. Leave empty if your API key/token is already scoped to one account.',
-        },
-        { name: 'createPaymentPath', label: 'Create Payment Path', type: 'text', required: false, placeholder: '/payments/links' },
-        { name: 'listPaymentsPath', label: 'List Payments Path', type: 'text', required: false, placeholder: '/payments' },
-        { name: 'listSubscriptionsPath', label: 'List Subscriptions Path', type: 'text', required: false, placeholder: '/subscriptions' },
-        { name: 'listPaymentLinksPath', label: 'List Payment Links Path', type: 'text', required: false, placeholder: '/payments/links' },
-        { name: 'webhookSecret', label: 'Webhook Secret', type: 'password', required: false, placeholder: 'Secret pentru verificare webhook' },
+        { name: 'accountId', label: 'Account ID', type: 'text', required: false, placeholder: 'Leave empty if your key is scoped to one account', advanced: true },
+        { name: 'webhookSecret', label: 'Webhook Secret', type: 'password', required: false, placeholder: 'Secret used to verify webhooks', advanced: true },
+        { name: 'createPaymentPath', label: 'Create Payment Path', type: 'text', required: false, placeholder: '/payments/links', advanced: true },
+        { name: 'listPaymentsPath', label: 'List Payments Path', type: 'text', required: false, placeholder: 'auto-detected', advanced: true },
+        { name: 'listSubscriptionsPath', label: 'List Subscriptions Path', type: 'text', required: false, placeholder: 'auto-detected', advanced: true },
+        { name: 'listPaymentLinksPath', label: 'List Payment Links Path', type: 'text', required: false, placeholder: 'auto-detected', advanced: true },
       ],
     },
     {
@@ -705,14 +712,40 @@ export default function IntegrationsPage() {
       color: 'from-emerald-500 to-teal-600',
       connected: false,
       features: ['Funnel tracking', 'Payment processing', 'Conversion optimization', 'A/B testing'],
+      setupGuide: {
+        title: 'Where to find your GoPayFlow API key',
+        steps: [
+          'Log in to your GoPayFlow account.',
+          'Open Billing → Integration (or Settings → API / Integrations).',
+          'Create a new API key, name it (e.g. "CRM") and save.',
+          'Copy the key and paste it below. Keep it private.',
+        ],
+      },
       configFields: [
         {
+          name: 'apiKey',
+          label: 'API Key',
+          type: 'password',
+          required: false,
+          placeholder: 'Paste your GoPayFlow API key',
+          helpText: 'This is the only field you need. See the steps above for where to find it.',
+        },
+        {
+          name: 'accessToken',
+          label: 'Access Token (OAuth2 Bearer)',
+          type: 'password',
+          required: false,
+          placeholder: 'Only if you use OAuth2 instead of an API key',
+          advanced: true,
+        },
+        {
           name: 'apiUrl',
-          label: 'API URL (optional)',
+          label: 'API URL',
           type: 'url',
           required: false,
           placeholder: 'https://api.gopayflow.io',
-          helpText: 'Optional doar daca folosesti exclusiv webhook-uri. Pentru import si creare linkuri din CRM, completeaza API URL.',
+          helpText: 'Needed only to import payments or create payment links from the CRM.',
+          advanced: true,
         },
         {
           name: 'checkoutBaseUrl',
@@ -720,37 +753,15 @@ export default function IntegrationsPage() {
           type: 'url',
           required: false,
           placeholder: 'https://app.gopayflow.io',
-          helpText: 'Necesar daca nu folosesti API URL, ca fallback pentru generarea linkurilor de plata din CRM.',
+          helpText: 'Fallback for building payment links when no API URL is set.',
+          advanced: true,
         },
-        {
-          name: 'apiKey',
-          label: 'API Key (x-pf-api-key)',
-          type: 'password',
-          required: false,
-          placeholder: 'Your GoPayFlow API key',
-          helpText: 'Optional if you use Bearer access token authentication.',
-        },
-        {
-          name: 'accessToken',
-          label: 'Access Token (Bearer)',
-          type: 'password',
-          required: false,
-          placeholder: 'Bearer token',
-          helpText: 'Optional if you authenticate only with API key header.',
-        },
-        {
-          name: 'accountId',
-          label: 'Account ID (optional)',
-          type: 'text',
-          required: false,
-          placeholder: 'Your account ID',
-          helpText: 'Optional. Leave empty if your API key/token is already scoped to one account.',
-        },
-        { name: 'createPaymentPath', label: 'Create Payment Path', type: 'text', required: false, placeholder: '/payments/links' },
-        { name: 'listPaymentsPath', label: 'List Payments Path', type: 'text', required: false, placeholder: '/payments' },
-        { name: 'listSubscriptionsPath', label: 'List Subscriptions Path', type: 'text', required: false, placeholder: '/subscriptions' },
-        { name: 'listPaymentLinksPath', label: 'List Payment Links Path', type: 'text', required: false, placeholder: '/payments/links' },
-        { name: 'webhookSecret', label: 'Webhook Secret', type: 'password', required: false, placeholder: 'Secret pentru verificare webhook' },
+        { name: 'accountId', label: 'Account ID', type: 'text', required: false, placeholder: 'Leave empty if your key is scoped to one account', advanced: true },
+        { name: 'webhookSecret', label: 'Webhook Secret', type: 'password', required: false, placeholder: 'Secret used to verify webhooks', advanced: true },
+        { name: 'createPaymentPath', label: 'Create Payment Path', type: 'text', required: false, placeholder: '/payments/links', advanced: true },
+        { name: 'listPaymentsPath', label: 'List Payments Path', type: 'text', required: false, placeholder: 'auto-detected', advanced: true },
+        { name: 'listSubscriptionsPath', label: 'List Subscriptions Path', type: 'text', required: false, placeholder: 'auto-detected', advanced: true },
+        { name: 'listPaymentLinksPath', label: 'List Payment Links Path', type: 'text', required: false, placeholder: 'auto-detected', advanced: true },
       ],
     },
 
@@ -1374,7 +1385,7 @@ export default function IntegrationsPage() {
       const apiKey = String(configData.apiKey || '').trim();
       const accessToken = String(configData.accessToken || '').trim();
       if (!apiKey && !accessToken) {
-        setModalError(`Pentru ${selectedIntegration.name} trebuie sa completezi API Key sau Access Token.`);
+        setModalError(`Paste your ${selectedIntegration.name} API key to connect (see the steps at the top).`);
         return;
       }
     }
@@ -2184,7 +2195,32 @@ export default function IntegrationsPage() {
             {/* Configuration Form */}
             {showManualConfigForm && (
               <form onSubmit={handleSubmitConfig} className="space-y-6 mt-5">
-                {selectedIntegration.configFields?.map((field) => (
+                {selectedIntegration.setupGuide && (
+                  <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-4">
+                    <p className="text-sm font-semibold text-indigo-900 mb-2">{selectedIntegration.setupGuide.title}</p>
+                    <ol className="list-decimal list-inside space-y-1 text-sm text-indigo-900">
+                      {selectedIntegration.setupGuide.steps.map((step, i) => (
+                        <li key={i}>{step}</li>
+                      ))}
+                    </ol>
+                    {selectedIntegration.setupGuide.link && (
+                      <a
+                        href={selectedIntegration.setupGuide.link.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-indigo-700 hover:text-indigo-900 underline"
+                      >
+                        {selectedIntegration.setupGuide.link.label}
+                        <ExternalLink className="h-3 w-3" />
+                      </a>
+                    )}
+                  </div>
+                )}
+
+                {[false, true].map((advancedGroup) => {
+                  const groupFields = (selectedIntegration.configFields || []).filter((f) => !!f.advanced === advancedGroup);
+                  if (!groupFields.length) return null;
+                  const renderedFields = groupFields.map((field) => (
                   <div key={field.name}>
                     <label htmlFor={field.name} className="block text-sm font-semibold text-gray-700 mb-2">
                       {field.label}
@@ -2241,7 +2277,19 @@ export default function IntegrationsPage() {
                       <p className="mt-2 text-xs text-gray-500">{field.helpText}</p>
                     )}
                   </div>
-                ))}
+                  ));
+                  if (!advancedGroup) return <div key="basic" className="space-y-6">{renderedFields}</div>;
+                  return (
+                    <details
+                      key="advanced"
+                      open={groupFields.some((f) => !!String(configData[f.name] || '').trim())}
+                      className="rounded-xl border border-gray-200 p-4"
+                    >
+                      <summary className="cursor-pointer text-sm font-semibold text-gray-600">Advanced settings (optional)</summary>
+                      <div className="space-y-6 mt-4">{renderedFields}</div>
+                    </details>
+                  );
+                })}
 
                 {/* WhatsApp webhook setup info */}
                 {selectedIntegration.id === 'whatsapp' && (
