@@ -444,8 +444,10 @@ export class ContactsService {
     });
     this.logger.log(`Contact created event emitted for contact ${savedContact.id}`);
 
-    // Fire-and-forget lead notification; a notify failure must never break contact creation
-    if (savedContact.ownerId) {
+    // Fire-and-forget lead notification; a notify failure must never break contact creation.
+    // WooCommerce orders are notified by the WhatsApp auto-send handler, which
+    // filters them by the products selected in auto-send rules.
+    if (savedContact.ownerId && savedContact.source !== ContactSource.WOOCOMMERCE) {
       const leadName = `${savedContact.firstName ?? ''} ${savedContact.lastName ?? ''}`.trim();
       this.notificationsService
         .notifyLead(

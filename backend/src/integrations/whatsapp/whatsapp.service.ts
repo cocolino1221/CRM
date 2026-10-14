@@ -974,17 +974,38 @@ export class WhatsAppService {
     }
 
     if (conditions.wooProducts?.length) {
-      const wanted = new Set(conditions.wooProducts.map((p) => String(p || '').trim().toLowerCase()).filter(Boolean));
-      const lineItems = Array.isArray(contact?.customFields?.wooOrder?.lineItems) ? contact.customFields.wooOrder.lineItems : [];
-      const hit = lineItems.some((item: any) =>
-        [item?.productId, item?.variationId, item?.sku, item?.name]
-          .map((v) => String(v || '').trim().toLowerCase())
-          .some((v) => v && wanted.has(v)),
-      );
-      if (!hit) return false;
+      if (!this.wooOrderContainsAny(contact, conditions.wooProducts)) return false;
+    } else if (contactSource === ContactSource.WOOCOMMERCE && !conditions.sources?.includes(ContactSource.WOOCOMMERCE)) {
+      // A WooCommerce order only triggers rules that target WooCommerce
+      // explicitly (by source or by product) — a catch-all rule must not
+      // message every buyer of every product.
+      return false;
     }
 
     return true;
+  }
+
+  private wooOrderContainsAny(contact: any, products: string[]): boolean {
+    const wanted = new Set(products.map((p) => String(p || '').trim().toLowerCase()).filter(Boolean));
+    const lineItems = Array.isArray(contact?.customFields?.wooOrder?.lineItems) ? contact.customFields.wooOrder.lineItems : [];
+    return lineItems.some((item: any) =>
+      [item?.productId, item?.variationId, item?.sku, item?.name]
+        .map((v) => String(v || '').trim().toLowerCase())
+        .some((v) => v && wanted.has(v)),
+    );
+  }
+
+  /**
+   * Whether a WooCommerce order should raise a "new lead" notification.
+   * Once any enabled rule selects WooCommerce products, only orders containing
+   * one of those products notify; with no product rules, every order does.
+   */
+  private shouldNotifyWooOrder(contact: any, config: any): boolean {
+    const watchedProducts = this.getAutoSendRulesFromConfig(config)
+      .filter((rule) => rule.enabled)
+      .flatMap((rule) => rule.conditions?.wooProducts || []);
+    if (!watchedProducts.length) return true;
+    return this.wooOrderContainsAny(contact, watchedProducts);
   }
 
   private selectAutoSendRule(contact: any, config: any): AutoSendRule | null {
@@ -3048,18 +3069,25 @@ export class WhatsAppService {
     const { contact, workspaceId } = payload;
     this.logger.log(`handleContactCreated: contact=${contact.id} phone="${contact.phone}" source=${contact.source} workspace=${workspaceId}`);
     try {
-      // Always notify workspace users about the new contact/lead
-      const fullName = `${contact.firstName || ''} ${contact.lastName || ''}`.trim() || 'New contact';
-      await this.notifyWorkspace(workspaceId, {
-        type: NotificationType.LEAD,
-        title: 'New lead added',
-        message: `${fullName} was added${contact.source ? ` via ${contact.source}` : ''}`,
-        link: '/contacts',
-        metadata: { contactId: contact.id },
-      });
-
       const integrations = await this.listWorkspaceWhatsAppIntegrations(workspaceId);
       const configIntegration = this.chooseAutoSendConfigIntegration(integrations);
+
+      // Notify workspace users about the new contact/lead — for WooCommerce,
+      // only when the order has a product selected in an auto-send rule.
+      const isWooOrder = contact.source === ContactSource.WOOCOMMERCE;
+      if (!isWooOrder || this.shouldNotifyWooOrder(contact, configIntegration?.config || {})) {
+        const fullName = `${contact.firstName || ''} ${contact.lastName || ''}`.trim() || 'New contact';
+        await this.notifyWorkspace(workspaceId, {
+          type: NotificationType.LEAD,
+          title: 'New lead added',
+          message: `${fullName} was added${contact.source ? ` via ${contact.source}` : ''}`,
+          link: '/contacts',
+          metadata: { contactId: contact.id },
+        });
+      } else {
+        this.logger.log(`Lead notification skipped for WooCommerce contact ${contact.id}: order has no watched product`);
+      }
+
       if (!configIntegration) {
         this.logger.log(`Auto-send skipped: no WhatsApp integration in workspace ${workspaceId}`);
         return;
