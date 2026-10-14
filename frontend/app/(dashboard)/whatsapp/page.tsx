@@ -414,7 +414,7 @@ function buildDemoConversations(now = new Date()): Conversation[] {
   ];
 }
 
-const AUTO_SEND_SOURCES = ['typeform', 'manychat', 'woocommerce', 'manual', 'form', 'import', 'webhook'];
+const AUTO_SEND_SOURCES = ['typeform', 'manychat', 'woocommerce', 'payflow', 'manual', 'form', 'import', 'webhook'];
 const AUTO_SEND_STATUSES = ['lead', 'prospect', 'customer', 'active'];
 const INBOX_ACTIVITY_LIMIT = 600;
 const INBOX_POLL_INTERVAL_MS = 12000;

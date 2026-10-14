@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Search, Check, ExternalLink, Zap, Settings, Webhook, X, Copy, Key, Lock, Link as LinkIcon, AlertCircle, Loader2, Plus, Trash2, FileText, Edit, ChevronDown, Wrench, RefreshCw } from 'lucide-react';
+import PayflowConnect from '@/components/integrations/PayflowConnect';
 import api from '@/lib/api';
 import { integrationIcons } from '@/lib/integration-icons';
 import GoogleSheetsSync from '@/components/integrations/GoogleSheetsSync';
@@ -68,6 +69,7 @@ export default function IntegrationsPage() {
   const [selectedIntegration, setSelectedIntegration] = useState<Integration | null>(null);
   const [showSheetsModal, setShowSheetsModal] = useState(false);
   const [showMetaCapiModal, setShowMetaCapiModal] = useState(false);
+  const [showPayflowModal, setShowPayflowModal] = useState(false);
   const [showMcpModal, setShowMcpModal] = useState(false);
   const [mcpGrants, setMcpGrants] = useState<any[]>([]);
   const [mcpGrantsLoading, setMcpGrantsLoading] = useState(false);
@@ -704,65 +706,14 @@ export default function IntegrationsPage() {
     },
     {
       id: 'gopayflow',
-      name: 'GoPayFlow',
-      description: 'Payment and funnel management platform for online businesses and sales funnels.',
+      name: 'Payflow',
+      description: 'Our payments app. Paying customers become contacts and every payment becomes a deal, automatically.',
       category: 'payments',
       icon: '💸',
       logoUrl: integrationIcons.gopayflow,
       color: 'from-emerald-500 to-teal-600',
       connected: false,
-      features: ['Funnel tracking', 'Payment processing', 'Conversion optimization', 'A/B testing'],
-      setupGuide: {
-        title: 'Where to find your GoPayFlow API key',
-        steps: [
-          'Log in to your GoPayFlow account.',
-          'Open Billing → Integration (or Settings → API / Integrations).',
-          'Create a new API key, name it (e.g. "CRM") and save.',
-          'Copy the key and paste it below. Keep it private.',
-        ],
-      },
-      configFields: [
-        {
-          name: 'apiKey',
-          label: 'API Key',
-          type: 'password',
-          required: false,
-          placeholder: 'Paste your GoPayFlow API key',
-          helpText: 'This is the only field you need. See the steps above for where to find it.',
-        },
-        {
-          name: 'accessToken',
-          label: 'Access Token (OAuth2 Bearer)',
-          type: 'password',
-          required: false,
-          placeholder: 'Only if you use OAuth2 instead of an API key',
-          advanced: true,
-        },
-        {
-          name: 'apiUrl',
-          label: 'API URL',
-          type: 'url',
-          required: false,
-          placeholder: 'https://api.gopayflow.io',
-          helpText: 'Needed only to import payments or create payment links from the CRM.',
-          advanced: true,
-        },
-        {
-          name: 'checkoutBaseUrl',
-          label: 'Checkout Base URL',
-          type: 'url',
-          required: false,
-          placeholder: 'https://app.gopayflow.io',
-          helpText: 'Fallback for building payment links when no API URL is set.',
-          advanced: true,
-        },
-        { name: 'accountId', label: 'Account ID', type: 'text', required: false, placeholder: 'Leave empty if your key is scoped to one account', advanced: true },
-        { name: 'webhookSecret', label: 'Webhook Secret', type: 'password', required: false, placeholder: 'Secret used to verify webhooks', advanced: true },
-        { name: 'createPaymentPath', label: 'Create Payment Path', type: 'text', required: false, placeholder: '/payments/links', advanced: true },
-        { name: 'listPaymentsPath', label: 'List Payments Path', type: 'text', required: false, placeholder: 'auto-detected', advanced: true },
-        { name: 'listSubscriptionsPath', label: 'List Subscriptions Path', type: 'text', required: false, placeholder: 'auto-detected', advanced: true },
-        { name: 'listPaymentLinksPath', label: 'List Payment Links Path', type: 'text', required: false, placeholder: 'auto-detected', advanced: true },
-      ],
+      features: ['Customers → contacts', 'Payments → won deals', 'Failed / cancelled → lost deals', 'Pipeline stage of your choice'],
     },
 
     // Social Media
@@ -1178,6 +1129,13 @@ export default function IntegrationsPage() {
     // not an outbound OAuth-client integration — open the management modal.
     if (integration.id === 'mcp-ai-connect') {
       openMcpModal();
+      return;
+    }
+
+    // Payflow (our own payments app) pushes data into the CRM: connecting it
+    // means creating a connection key to paste into Payflow, not filling a form.
+    if (integration.id === 'gopayflow') {
+      setShowPayflowModal(true);
       return;
     }
 
@@ -1652,6 +1610,18 @@ export default function IntegrationsPage() {
               </div>
               <MetaConversionsSettings autoOpen />
             </div>
+          </div>
+        </div>
+      )}
+
+      {showPayflowModal && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 p-4 pt-16" onClick={() => setShowPayflowModal(false)}>
+          <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-lg font-bold text-gray-900">Connect Payflow</h2>
+              <button onClick={() => setShowPayflowModal(false)} className="rounded-full px-2 py-1 text-sm text-gray-400 hover:bg-gray-100 hover:text-gray-700">✕ Close</button>
+            </div>
+            <PayflowConnect onChanged={refreshIntegrationCatalog} />
           </div>
         </div>
       )}

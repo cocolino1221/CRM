@@ -47,6 +47,7 @@ export enum ContactSource {
   MANYCHAT = 'manychat',
   LANDING_PAGE = 'landing_page',
   WOOCOMMERCE = 'woocommerce',
+  PAYFLOW = 'payflow',
   OTHER = 'other',
 }
 
