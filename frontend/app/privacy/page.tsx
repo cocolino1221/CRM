@@ -8,44 +8,69 @@ export const metadata: Metadata = {
 
 const sections = [
   {
+    title: 'Who We Are',
+    body: [
+      'EasyTeam CRM (web app at etcrm.primafisoft.com and the EasyTeam CRM mobile apps) is operated by Primafisoft.',
+      'Companies ("workspaces") use EasyTeam CRM to manage their leads, customers and conversations. For the customer data a company stores in its workspace, that company is the data controller and we process the data on its behalf.',
+    ],
+  },
+  {
     title: 'Information We Collect',
     body: [
-      'Account details (name, email, workspace info) to create and secure your account.',
-      'CRM data you add (contacts, companies, deals, notes, files) to operate the platform.',
-      'Usage and device data (log events, performance metrics, approximate location) to improve reliability and support.',
+      'Account information: your name, email address, phone number (optional), role and workspace, used to create and secure your account.',
+      'Customer data you or your team add or receive: contacts, leads, companies, deals, notes, tasks, documents and pipeline information.',
+      'Messages: WhatsApp, Facebook Messenger, Instagram and email conversations sent or received through integrations your workspace connects, including text, photos, videos, documents and voice messages.',
+      'Calls: when WhatsApp calling or call recording is enabled by your workspace, call details (time, duration, participants) and recordings.',
+      'Photos, videos and audio you choose to send: the mobile app accesses your camera, photo library or microphone only when you attach media, record a voice message or make a call.',
+      'Device information: a push notification token and basic device type, used only to deliver notifications you have enabled.',
+      'Technical logs: server logs (such as IP address, request time and errors) kept for security and troubleshooting.',
+    ],
+  },
+  {
+    title: 'What We Do Not Collect',
+    body: [
+      'We do not collect your precise or approximate location.',
+      'We do not read your phone\'s address book or contacts.',
+      'We do not use advertising identifiers, show ads, track you across other companies\' apps or websites, or sell personal data.',
     ],
   },
   {
     title: 'How We Use Information',
     body: [
-      'Provide and maintain the CRM features you request.',
-      'Deliver onboarding, product updates, and important service notifications.',
-      'Improve performance, security, and user experience through analytics and debugging.',
-      'Meet legal, compliance, and security obligations.',
+      'To provide the CRM features you and your workspace use: inbox, leads, pipeline, calendar, documents, payments and automations.',
+      'To send and receive messages through the channels your workspace has connected (for example the official WhatsApp Business Platform).',
+      'To send notifications about new leads, messages, calls and tasks, according to your notification settings.',
+      'To keep the service secure, prevent abuse, fix problems and meet legal obligations.',
     ],
   },
   {
     title: 'Sharing & Third Parties',
     body: [
-      'Infrastructure, analytics, and communications providers who process data under contract.',
-      'Integrations you authorize (e.g., email, calendars, storage) — data flows only as configured by you.',
-      'Legal disclosures when required to protect rights, safety, or comply with law.',
+      'Service providers that host and run the platform for us (cloud hosting, database, email delivery and push notification services such as Apple Push Notification service and Firebase Cloud Messaging), under contract and only to provide the service.',
+      'Integrations your workspace connects, such as Meta (WhatsApp, Messenger, Instagram), Google, Typeform, WooCommerce or payment providers. Data is exchanged with them only as configured by your workspace.',
+      'Authorities, when required by law or to protect rights and safety.',
+      'We never sell personal data and never share it for advertising.',
     ],
   },
   {
     title: 'Security & Retention',
     body: [
-      'Encryption in transit, access controls, backups, and monitoring to safeguard data.',
-      'Data is retained while your account is active and for limited periods afterwards to meet legal or operational needs.',
+      'Data is encrypted in transit (HTTPS), integration credentials are encrypted at rest, and access is limited by user roles.',
+      'Workspace data is kept while the workspace is active. When an account or workspace is deleted, its data is removed within 30 days, except where we must keep it longer by law. Backups are overwritten on a rolling basis.',
     ],
   },
   {
     title: 'Your Rights',
     body: [
-      'Access, correct, export, or delete your personal data subject to applicable law.',
-      'Control marketing communications and connected integrations from your account settings.',
-      'Contact us to exercise data rights or ask privacy questions.',
+      'You can access, correct, export or delete your personal data, and object to or restrict its processing, under applicable law (including the GDPR).',
+      'To delete your account, ask your workspace administrator or email us — see the Data Deletion page. If your data is held by a company using EasyTeam CRM, we will forward your request to that company.',
+      'You can turn off push notifications at any time in the app settings or your phone settings.',
+      'You may also lodge a complaint with your local data protection authority.',
     ],
+  },
+  {
+    title: 'Children',
+    body: ['EasyTeam CRM is a business tool and is not intended for children under 16.'],
   },
 ];
 
@@ -59,7 +84,7 @@ export default function Privacy() {
             Privacy-first by design
           </span>
           <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">Privacy Policy</h1>
-          <p className="text-sm text-slate-600">Last updated: June 2026</p>
+          <p className="text-sm text-slate-600">Last updated: October 2026</p>
           <p className="text-slate-600 sm:text-lg">
             We built EasyTeam CRM to keep your customer data safe and under your control. This page explains what we
             collect, why we collect it, and the choices you have.
@@ -90,6 +115,12 @@ export default function Privacy() {
             <div className="flex flex-wrap gap-3 text-sm">
               <Link href="/terms" className="text-indigo-600 hover:text-indigo-700 font-semibold">
                 View Terms of Service
+              </Link>
+              <Link href="/data-deletion" className="text-indigo-600 hover:text-indigo-700 font-semibold">
+                Data deletion
+              </Link>
+              <Link href="/support" className="text-indigo-600 hover:text-indigo-700 font-semibold">
+                Support
               </Link>
               <Link href="/login" className="text-slate-600 hover:text-slate-800">
                 Back to login
