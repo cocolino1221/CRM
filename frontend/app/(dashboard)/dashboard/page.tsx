@@ -94,7 +94,7 @@ export default function DashboardPage() {
       try {
         const [dashboardRes, activitiesRes, insightsRes, distributionRes] = await Promise.allSettled([
           api.get<DashboardData>('/analytics/dashboard'),
-          api.get<RecentActivity[]>('/activities?limit=5'),
+          api.get<{ data: RecentActivity[]; total: number }>('/activities?limit=5'),
           generateAIInsights(),
           api.get<LeadScoreDistribution>('/ai/lead-score/distribution'),
         ]);
@@ -104,7 +104,7 @@ export default function DashboardPage() {
         }
 
         if (activitiesRes.status === 'fulfilled') {
-          setRecentActivities(activitiesRes.value.data);
+          setRecentActivities(activitiesRes.value.data.data ?? []);
         }
 
         if (insightsRes.status === 'fulfilled') {
