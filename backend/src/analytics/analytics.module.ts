@@ -1,4 +1,3 @@
-import { Workspace } from '../database/entities/workspace.entity';
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AnalyticsController } from './analytics.controller';
@@ -20,7 +19,7 @@ import { IntegrationLog } from '../database/entities/integration.entity';
       Company,
       Activity,
       Notification,
-      IntegrationLog,, Workspace]),
+      IntegrationLog,]),
   ],
   controllers: [AnalyticsController],
   providers: [AnalyticsService],

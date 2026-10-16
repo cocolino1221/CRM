@@ -25,6 +25,11 @@ function buildService(options: { activities?: any[]; timezone?: string } = {}) {
       captured.contacts = opts;
       return Promise.resolve(0);
     }),
+    // The timezone is read as raw SQL through the shared EntityManager, so the
+    // Workspace entity stays out of this module's dependency graph.
+    manager: {
+      query: jest.fn().mockResolvedValue(options.timezone ? [{ tz: options.timezone }] : []),
+    },
   };
 
   const dealRepository = {
@@ -40,12 +45,6 @@ function buildService(options: { activities?: any[]; timezone?: string } = {}) {
 
   const taskRepository = { find: jest.fn().mockResolvedValue([]) };
 
-  const workspaceRepository = {
-    findOne: jest.fn().mockResolvedValue(
-      options.timezone ? { id: WORKSPACE, settings: { timezone: options.timezone } } : null,
-    ),
-  };
-
   const service = new AnalyticsService(
     contactRepository as any,
     dealRepository as any,
@@ -54,10 +53,9 @@ function buildService(options: { activities?: any[]; timezone?: string } = {}) {
     activityRepository as any,
     {} as any,
     {} as any,
-    workspaceRepository as any,
   );
 
-  return { service, captured, workspaceRepository };
+  return { service, captured };
 }
 
 describe('AnalyticsService.getDailyKPIs', () => {

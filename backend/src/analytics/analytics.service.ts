@@ -8,7 +8,6 @@ import { Company } from '../database/entities/company.entity';
 import { Activity } from '../database/entities/activity.entity';
 import { Notification } from '../database/entities/notification.entity';
 import { IntegrationLog } from '../database/entities/integration.entity';
-import { Workspace } from '../database/entities/workspace.entity';
 import { dayRangeInTimeZone } from '../common/utils/day-range.util';
 import { TimeRange } from './dto/date-range.dto';
 
@@ -46,8 +45,6 @@ export class AnalyticsService {
     private readonly notificationRepository: Repository<Notification>,
     @InjectRepository(IntegrationLog)
     private readonly integrationLogRepository: Repository<IntegrationLog>,
-    @InjectRepository(Workspace)
-    private readonly workspaceRepository: Repository<Workspace>,
   ) {}
 
   async getDashboardOverview(workspaceId: string) {
@@ -507,13 +504,29 @@ export class AnalyticsService {
   /**
    * Get Daily KPIs
    */
+  /**
+   * Read as raw SQL on purpose: importing the Workspace entity here puts it
+   * ahead of the other entities in the module's load order and TypeORM then
+   * reports a circular dependency at boot.
+   */
+  private async getWorkspaceTimeZone(workspaceId: string): Promise<string> {
+    try {
+      const rows = await this.contactRepository.manager.query(
+        `SELECT settings->>'timezone' AS tz FROM workspaces WHERE id = $1 LIMIT 1`,
+        [workspaceId],
+      );
+      return rows?.[0]?.tz || 'UTC';
+    } catch {
+      return 'UTC';
+    }
+  }
+
   async getDailyKPIs(workspaceId: string, date?: Date, userId?: string) {
     const targetDate = date || new Date();
 
     // The server clock is UTC; the people reading this are not. A call at 23:30
     // in Bucharest belongs to that local day, not the next UTC one.
-    const workspace = await this.workspaceRepository.findOne({ where: { id: workspaceId } });
-    const timeZone = (workspace?.settings as any)?.timezone || 'UTC';
+    const timeZone = await this.getWorkspaceTimeZone(workspaceId);
     const { start: startOfDay, end: endOfDay } = dayRangeInTimeZone(targetDate, timeZone);
 
     const [
