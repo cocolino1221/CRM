@@ -61,6 +61,7 @@ const allNavigation: NavigationItem[] = [
   { name: 'Campaigns', href: '/email-campaigns', icon: Mail, color: 'from-sky-500 to-indigo-500' },
   { name: 'Integrations', href: '/integrations', icon: Zap, color: 'from-pink-500 to-rose-500' },
   { name: 'Settings', href: '/settings', icon: Settings, color: 'from-slate-500 to-gray-500' },
+  { name: 'Billing', href: '/billing', icon: CreditCard, color: 'from-indigo-500 to-violet-500', adminOnly: true },
   { name: 'Admin', href: '/admin', icon: Shield, color: 'from-red-500 to-rose-600', superAdminOnly: true },
 ] ;
 
@@ -109,6 +110,7 @@ const campaignsNavigation: NavigationItem[] = [
 const teamNavigation: NavigationItem[] = [
   { name: 'Team', href: '/users', icon: Shield, color: 'from-teal-500 to-cyan-500' },
   { name: 'Settings', href: '/settings', icon: Settings, color: 'from-slate-500 to-gray-500' },
+  { name: 'Billing', href: '/billing', icon: CreditCard, color: 'from-indigo-500 to-violet-500', adminOnly: true },
   { name: 'Integrations', href: '/integrations', icon: Zap, color: 'from-pink-500 to-rose-500' },
   { name: 'Admin', href: '/admin', icon: Shield, color: 'from-red-500 to-rose-600', superAdminOnly: true },
 ] ;
@@ -128,6 +130,7 @@ const groupedNavigationHrefs = new Set([
   '/landing-pages',
   '/users',
   '/settings',
+  '/billing',
   '/integrations',
   '/admin',
 ]);
@@ -172,7 +175,7 @@ export default function Sidebar({ isOpen = true, onClose, isCollapsed = false, o
     pathname.startsWith('/email-campaigns') || pathname.startsWith('/automation') || pathname.startsWith('/forms') || pathname.startsWith('/landing-pages'),
   );
   const [isTeamOpen, setIsTeamOpen] = useState(
-    pathname.startsWith('/users') || pathname.startsWith('/settings') || pathname.startsWith('/integrations') || pathname.startsWith('/admin'),
+    pathname.startsWith('/users') || pathname.startsWith('/settings') || pathname.startsWith('/billing') || pathname.startsWith('/integrations') || pathname.startsWith('/admin'),
   );
 
   useEffect(() => {
@@ -221,7 +224,7 @@ export default function Sidebar({ isOpen = true, onClose, isCollapsed = false, o
     if (pathname.startsWith('/email-campaigns') || pathname.startsWith('/automation') || pathname.startsWith('/forms') || pathname.startsWith('/landing-pages')) {
       setIsCampaignsOpen(true);
     }
-    if (pathname.startsWith('/users') || pathname.startsWith('/settings') || pathname.startsWith('/integrations') || pathname.startsWith('/admin')) {
+    if (pathname.startsWith('/users') || pathname.startsWith('/settings') || pathname.startsWith('/billing') || pathname.startsWith('/integrations') || pathname.startsWith('/admin')) {
       setIsTeamOpen(true);
     }
   }, [pathname]);

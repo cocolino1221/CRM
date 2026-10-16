@@ -155,7 +155,9 @@ export class AuthService implements OnModuleInit {
         grandfathered: false,
         package: packageId,
         billingProvider: 'stripe' as const,
-        billingStatus: 'trialing' as const,
+        // No access to paid features until a plan is chosen in Billing (Stripe Checkout).
+        billingStatus: 'inactive' as const,
+        requiresPlan: true,
       },
       limits: this.getWorkspaceLimitsForPackage(packageId),
     };

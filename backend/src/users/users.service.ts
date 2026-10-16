@@ -3,8 +3,7 @@ import {
   NotFoundException,
   ConflictException,
   BadRequestException,
-  ForbiddenException,
-} from '@nestjs/common';
+  ForbiddenException, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
@@ -17,6 +16,7 @@ import { InviteUserDto } from './dto/invite-user.dto';
 import { plainToClass } from 'class-transformer';
 import { UserResponseDto } from './dto/user-response.dto';
 import { EmailService } from '../email/email.service';
+import { BillingService } from '../billing/billing.service';
 
 @Injectable()
 export class UsersService {
@@ -27,6 +27,7 @@ export class UsersService {
     private readonly workspaceRepository: Repository<Workspace>,
     private readonly emailService: EmailService,
     private readonly configService: ConfigService,
+    @Optional() private readonly billingService?: BillingService,
   ) {}
 
   /**
@@ -41,6 +42,8 @@ export class UsersService {
     if (![UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.MANAGER].includes(creatorRole)) {
       throw new ForbiddenException('You do not have permission to create users');
     }
+
+    await this.billingService?.assertCanAddUser(workspaceId);
 
     if (createUserDto.role === UserRole.SUPER_ADMIN && creatorRole !== UserRole.SUPER_ADMIN) {
       throw new ForbiddenException('Only platform super admins can assign SUPER_ADMIN role');
@@ -300,6 +303,8 @@ export class UsersService {
     workspaceId: string,
     inviterName: string,
   ): Promise<{ message: string; invitationId: string }> {
+    await this.billingService?.assertCanAddUser(workspaceId);
+
     // Check if user already exists
     const existingUser = await this.userRepository.findOne({
       where: {

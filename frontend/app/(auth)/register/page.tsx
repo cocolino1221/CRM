@@ -56,6 +56,9 @@ export default function RegisterPage() {
         const response = await authService.register(payload);
         if (response.pendingApproval) {
           setPendingApproval(true);
+        } else if (!formData.inviteCode) {
+          // New workspace owner: choose a plan (free trial) before using integrations.
+          router.push('/billing?welcome=1');
         } else {
           router.push('/dashboard');
         }

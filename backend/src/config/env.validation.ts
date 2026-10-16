@@ -91,6 +91,10 @@ export const validationSchema = Joi.object({
     otherwise: Joi.optional(),
   }),
 
+  // Stripe (workspace subscriptions — Billing page)
+  STRIPE_SECRET_KEY: Joi.string().optional(),
+  STRIPE_WEBHOOK_SECRET: Joi.string().optional(),
+
   // SendGrid
   SENDGRID_API_KEY: Joi.string().when('EMAIL_PROVIDER', {
     is: 'sendgrid',

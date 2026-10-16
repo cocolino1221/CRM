@@ -2,7 +2,9 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { Search, Check, ExternalLink, Zap, Settings, Webhook, X, Copy, Key, Lock, Link as LinkIcon, AlertCircle, Loader2, Plus, Trash2, FileText, Edit, ChevronDown, Wrench, RefreshCw } from 'lucide-react';
+import { BillingAccess, PLAN_NAMES, fetchBillingOverview, integrationLock } from '@/lib/billing';
 import PayflowConnect from '@/components/integrations/PayflowConnect';
 import api from '@/lib/api';
 import { integrationIcons } from '@/lib/integration-icons';
@@ -70,6 +72,7 @@ export default function IntegrationsPage() {
   const [showSheetsModal, setShowSheetsModal] = useState(false);
   const [showMetaCapiModal, setShowMetaCapiModal] = useState(false);
   const [showPayflowModal, setShowPayflowModal] = useState(false);
+  const [billingAccess, setBillingAccess] = useState<BillingAccess | null>(null);
   const [showMcpModal, setShowMcpModal] = useState(false);
   const [mcpGrants, setMcpGrants] = useState<any[]>([]);
   const [mcpGrantsLoading, setMcpGrantsLoading] = useState(false);
@@ -976,6 +979,7 @@ export default function IntegrationsPage() {
 
   useEffect(() => {
     void refreshIntegrationCatalog();
+    fetchBillingOverview().then((o) => setBillingAccess(o.access)).catch(() => setBillingAccess(null));
   }, []);
 
   const filteredIntegrations = integrations.filter((integration) => {
@@ -1110,6 +1114,12 @@ export default function IntegrationsPage() {
   };
 
   const handleConnect = async (integration: Integration) => {
+    // Plan gate (also enforced by the API): new connections need a plan that includes them.
+    if (!integration.connected && integrationLock(billingAccess, integration.id)) {
+      router.push('/billing');
+      return;
+    }
+
     // Google Sheets is a configuration of the Google integration, not a
     // separate connectable app — its card opens the sync setup directly.
     if (integration.id === 'google-sheets') {
@@ -1584,6 +1594,18 @@ export default function IntegrationsPage() {
         </p>
       </div>
 
+      {billingAccess?.requiresPlan && !billingAccess.active && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-indigo-200 bg-indigo-50 p-5">
+          <div>
+            <p className="font-semibold text-indigo-900">Choose a plan to unlock integrations</p>
+            <p className="text-sm text-indigo-800">Start a free trial — WhatsApp is included in every plan, other integrations from Growth.</p>
+          </div>
+          <Link href="/billing" className="rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700">
+            See plans
+          </Link>
+        </div>
+      )}
+
       {/* Google Sheets sync setup — opened from its card in the grid */}
       {showSheetsModal && (
         <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 p-4 pt-16" onClick={() => setShowSheetsModal(false)}>
@@ -1900,16 +1922,29 @@ export default function IntegrationsPage() {
 
               {/* Actions */}
               <div className="flex gap-2">
-                <button
-                  onClick={() => handleConnect(integration)}
-                  className={`flex-1 rounded-xl py-2.5 text-sm font-semibold transition-all ${
-                    integration.connected
-                      ? 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                      : 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-lg hover:shadow-xl'
-                  }`}
-                >
-                  {integration.connected ? 'Manage' : 'Connect'}
-                </button>
+                {(() => {
+                  const lock = integration.connected ? null : integrationLock(billingAccess, integration.id);
+                  return (
+                    <button
+                      onClick={() => handleConnect(integration)}
+                      className={`flex-1 rounded-xl py-2.5 text-sm font-semibold transition-all ${
+                        integration.connected
+                          ? 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                          : lock
+                            ? 'bg-white text-indigo-700 border border-indigo-200 hover:bg-indigo-50'
+                            : 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-lg hover:shadow-xl'
+                      }`}
+                    >
+                      {integration.connected
+                        ? 'Manage'
+                        : lock === 'none'
+                          ? '🔒 Choose a plan'
+                          : lock
+                            ? `🔒 ${PLAN_NAMES[lock]} plan`
+                            : 'Connect'}
+                    </button>
+                  );
+                })()}
                 <button
                   onClick={() => handleConnect(integration)}
                   className="rounded-xl bg-white/50 p-2.5 hover:bg-white transition-all"

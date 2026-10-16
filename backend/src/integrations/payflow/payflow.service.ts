@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException, Optional, UnauthorizedException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { createHash, randomBytes, timingSafeEqual } from 'crypto';
@@ -9,6 +9,7 @@ import { Pipeline } from '../../database/entities/pipeline.entity';
 import { ContactsService } from '../../contacts/contacts.service';
 import { DealsService } from '../../deals/deals.service';
 import { PayflowSyncDto } from './payflow-sync.dto';
+import { BillingService } from '../../billing/billing.service';
 
 // Payflow is our own payments app. It pushes customers and payments into the
 // CRM; the CRM issues one connection key the user pastes into Payflow.
@@ -29,6 +30,7 @@ export class PayflowService {
     @InjectRepository(Pipeline) private readonly pipelineRepository: Repository<Pipeline>,
     private readonly contactsService: ContactsService,
     private readonly dealsService: DealsService,
+    @Optional() private readonly billingService?: BillingService,
   ) {}
 
   private findWorkspaceIntegration(workspaceId: string): Promise<Integration | null> {
@@ -40,6 +42,7 @@ export class PayflowService {
 
   /** Create (or rotate) the workspace's Payflow connection key. The key is shown once. */
   async connect(workspaceId: string, userId: string): Promise<{ key: string; integrationId: string }> {
+    await this.billingService?.assertIntegrationAllowed(workspaceId, PAYFLOW_PROVIDER);
     let integration = await this.findWorkspaceIntegration(workspaceId);
     if (!integration) {
       integration = this.integrationRepository.create({
