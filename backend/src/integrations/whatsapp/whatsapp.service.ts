@@ -1,4 +1,5 @@
 import { Injectable, Logger, BadRequestException, NotFoundException } from '@nestjs/common';
+import { buildLeadNotification } from '../../contacts/lead-notification.util';
 import { OnEvent, EventEmitter2 } from '@nestjs/event-emitter';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
@@ -1222,6 +1223,24 @@ export class WhatsAppService {
       || fullName === 'whatsapp';
   }
 
+  /**
+   * Place an inbound message on the timeline at the moment the person actually
+   * sent it, using Meta's own timestamp. Meta test payloads can carry stale
+   * timestamps (e.g. Sep 2023), so it is only trusted when close to now —
+   * otherwise we fall back to server receive time.
+   */
+  private resolveInboundOccurredAt(metaTimestamp?: string | number): Date {
+    const now = Date.now();
+    const seconds = Number(metaTimestamp);
+    if (!Number.isFinite(seconds) || seconds <= 0) return new Date(now);
+    const ms = seconds * 1000;
+    const FIVE_MINUTES = 5 * 60 * 1000;
+    const TWO_DAYS = 48 * 60 * 60 * 1000;
+    if (ms > now + FIVE_MINUTES) return new Date(now);
+    if (now - ms > TWO_DAYS) return new Date(now);
+    return new Date(ms);
+  }
+
   private async saveMessageActivity(
     contact: Contact,
     message: any,
@@ -1229,6 +1248,26 @@ export class WhatsAppService {
     ownerId: string,
     integration?: Integration,
   ): Promise<void> {
+    // Meta redelivers the same webhook when it does not receive a fast 200.
+    // Without this check every redelivery inserted another row, so a single
+    // message from the contact appeared as several bubbles at different times.
+    const incomingMessageId = message?.id ? String(message.id) : '';
+    if (incomingMessageId) {
+      const existing = await this.activityRepository
+        .createQueryBuilder('activity')
+        .where('activity.workspaceId = :workspaceId', { workspaceId })
+        .andWhere('activity.type = :type', { type: ActivityType.WHATSAPP_MESSAGE })
+        .andWhere('activity.direction = :direction', { direction: ActivityDirection.INBOUND })
+        .andWhere("activity.metadata->>'whatsappMessageId' = :messageId", { messageId: incomingMessageId })
+        .getOne();
+      if (existing) {
+        this.logger.debug(
+          `Skipping duplicate inbound WhatsApp message ${incomingMessageId} (already stored as activity ${existing.id})`,
+        );
+        return;
+      }
+    }
+
     const mediaMetadata: Record<string, any> = {};
     let messageBody = '';
     if (message.type === 'text' && message.text) {
@@ -1277,8 +1316,7 @@ export class WhatsAppService {
       description: messageBody,
       direction: ActivityDirection.INBOUND,
       outcome: ActivityOutcome.SUCCESSFUL,
-      // Use server receive time — Meta test messages often carry stale timestamps (e.g. Sep 2023)
-      occurredAt: new Date(),
+      occurredAt: this.resolveInboundOccurredAt(message.timestamp),
       metadata: {
         whatsappMessageId: message.id,
         waId: message.from,
@@ -1394,7 +1432,7 @@ export class WhatsAppService {
       senderIntegrationId?: string;
       senderPhoneDisplay?: string;
     },
-  ): Promise<void> {
+  ): Promise<Activity | null> {
     try {
       const phone = normalizePhoneE164(waId) || `+${waId}`;
       const contact = await this.findContactByPhone(workspaceId, phone) || await this.findContactByPhone(workspaceId, waId);
@@ -1423,9 +1461,10 @@ export class WhatsAppService {
         },
       });
 
-      await this.activityRepository.save(activity);
+      return await this.activityRepository.save(activity);
     } catch (error: any) {
       this.logger.warn(`Failed to log call activity: ${error.message}`);
+      return null;
     }
   }
 
@@ -3041,19 +3080,19 @@ export class WhatsAppService {
     // who later places a WooCommerce order) must be matched against rules for
     // the channel that triggered this event, not the contact's original source.
     const contact = payload.source ? { ...payload.contact, source: payload.source } : payload.contact;
-    return this.handleContactCreatedEvent({ ...payload, contact });
+    return this.handleContactCreatedEvent({ ...payload, contact, returning: true });
   }
 
-  private async handleContactCreatedEvent(payload: { contact: any; workspaceId: string }): Promise<void> {
+  private async handleContactCreatedEvent(payload: { contact: any; workspaceId: string; returning?: boolean }): Promise<void> {
     const { contact, workspaceId } = payload;
     this.logger.log(`handleContactCreated: contact=${contact.id} phone="${contact.phone}" source=${contact.source} workspace=${workspaceId}`);
     try {
       // Always notify workspace users about the new contact/lead
-      const fullName = `${contact.firstName || ''} ${contact.lastName || ''}`.trim() || 'New contact';
+      const { title, message } = buildLeadNotification(contact, { returning: payload.returning });
       await this.notifyWorkspace(workspaceId, {
         type: NotificationType.LEAD,
-        title: 'New lead added',
-        message: `${fullName} was added${contact.source ? ` via ${contact.source}` : ''}`,
+        title,
+        message,
         link: '/contacts',
         metadata: { contactId: contact.id },
       });

@@ -108,14 +108,16 @@ export class WhatsAppCallingController {
     const workspaceId = req.user?.workspaceId;
     if (!workspaceId) throw new BadRequestException('Workspace ID required');
     if (!body?.waId || !body?.status) throw new BadRequestException('waId and status are required');
-    await this.whatsappService.logCallActivity(workspaceId, body.waId, {
+    const activity = await this.whatsappService.logCallActivity(workspaceId, body.waId, {
       callId,
       status: body.status,
       durationSeconds: body.durationSeconds,
       recordingUrl: body.recordingUrl,
       ownerId: req.user.id,
     });
-    return { success: true };
+    // The client opens the disposition dialog against this id and keys its
+    // offline draft on it.
+    return { success: true, activityId: activity?.id ?? null };
   }
 
   // Live call events (SDP answers, ringing/rejected/terminated status) as
