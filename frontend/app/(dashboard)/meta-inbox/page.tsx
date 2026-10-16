@@ -2279,7 +2279,7 @@ export default function MessagesPage() {
                     <summary className="cursor-pointer text-sm font-medium text-slate-600">
                       Trimite din URL sau fișier (avansat)
                     </summary>
-                    <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1fr)_200px_120px]">
+                    <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1fr)_200px_140px_120px]">
                       <input
                         value={outboundAudioUrl}
                         onChange={(event) => setOutboundAudioUrl(event.target.value)}
@@ -2309,6 +2309,20 @@ export default function MessagesPage() {
                           }}
                         />
                       </label>
+                      <AudioLibraryPicker
+                        channel={activeChannel}
+                        to={selectedConversation?.externalUserId}
+                        integrationId={activeIntegration?.integrationId}
+                        label="Librărie"
+                        title="Mesaje vocale salvate"
+                        onSent={() =>
+                          void refreshAll(false, {
+                            channel: activeChannel,
+                            externalUserId: selectedConversation?.externalUserId || '',
+                            integrationId: activeIntegration?.integrationId,
+                          })
+                        }
+                      />
                       <button
                         onClick={sendAudio}
                         disabled={actionBusy}

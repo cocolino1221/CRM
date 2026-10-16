@@ -19,6 +19,10 @@ interface AudioTemplate {
 const AUDIO_LIBRARY_MAX = 10;
 
 interface AudioLibraryPickerProps {
+  /** Trigger label. Defaults to 'Audio'; pass 'Librărie' where an Audio tab already exists. */
+  label?: string;
+  /** Trigger tooltip. */
+  title?: string;
   channel: AudioSendChannel;
   to?: string;
   integrationId?: string;
@@ -32,6 +36,8 @@ export default function AudioLibraryPicker({
   integrationId,
   disabled,
   onSent,
+  label = 'Audio',
+  title = 'Audio templates',
 }: AudioLibraryPickerProps) {
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<AudioTemplate[]>([]);
@@ -127,14 +133,14 @@ export default function AudioLibraryPicker({
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        title="Audio templates"
+        title={title}
         className={cn(
           'inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-50',
           open && 'border-slate-400 bg-slate-50',
         )}
       >
         <Mic className="h-4 w-4" />
-        Audio
+        {label}
       </button>
 
       {open && (
