@@ -106,6 +106,7 @@ describe('ContactsController', () => {
           [ContactStatus.LEAD]: 50,
           [ContactStatus.QUALIFIED]: 30,
           [ContactStatus.CUSTOMER]: 20,
+          [ContactStatus.ACTIVE]: 0,
           [ContactStatus.PROSPECT]: 0,
           [ContactStatus.INACTIVE]: 0,
           [ContactStatus.CHURNED]: 0,

@@ -41,7 +41,10 @@ describe('MetaMessagingService — inbound push notification wiring (Task 6)', (
     };
 
     contactRepository = {
-      createQueryBuilder: jest.fn(() => createQueryBuilderMock({ getOne: null })),
+      // The service looks up an existing social contact and deliberately does
+      // NOT auto-create one on inbound, so this lookup is what supplies the
+      // contactId carried on the push notification.
+      createQueryBuilder: jest.fn(() => createQueryBuilderMock({ getOne: { id: 'contact-1' } })),
       findOne: jest.fn().mockResolvedValue(null),
       create: jest.fn((data: any) => ({ id: 'contact-1', firstName: 'John', lastName: '', ...data })),
       save: jest.fn((entity: any) => Promise.resolve({ ...entity, id: entity.id || 'contact-1' })),

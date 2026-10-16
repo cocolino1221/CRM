@@ -4,6 +4,12 @@ import { Repository } from 'typeorm';
 import { ConflictException, NotFoundException, BadRequestException } from '@nestjs/common';
 import { ContactsService } from './contacts.service';
 import { Contact, ContactStatus } from '../database/entities/contact.entity';
+import { Activity } from '../database/entities/activity.entity';
+import { Deal } from '../database/entities/deal.entity';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import { NotificationsService } from '../notifications/notifications.service';
+import { GoogleSheetsService } from '../integrations/google-sheets/google-sheets.service';
+import { MetaConversionsService } from '../integrations/meta-conversions/meta-conversions.service';
 import { User } from '../database/entities/user.entity';
 import { Company } from '../database/entities/company.entity';
 import { CreateContactDto } from './dto/create-contact.dto';
@@ -17,6 +23,38 @@ import {
   generateUniqueEmail,
   expectContactToMatch,
 } from '../../test/utils/test-utils';
+
+// Each test below builds its own query-builder literal. ContactsService has
+// since grown to call more chainable methods than those literals declared, so
+// every literal spreads this complete base and overrides only what it asserts on.
+const qbBase = () => ({
+  where: jest.fn().mockReturnThis(),
+  andWhere: jest.fn().mockReturnThis(),
+  orWhere: jest.fn().mockReturnThis(),
+  leftJoin: jest.fn().mockReturnThis(),
+  leftJoinAndSelect: jest.fn().mockReturnThis(),
+  innerJoin: jest.fn().mockReturnThis(),
+  orderBy: jest.fn().mockReturnThis(),
+  addOrderBy: jest.fn().mockReturnThis(),
+  groupBy: jest.fn().mockReturnThis(),
+  addGroupBy: jest.fn().mockReturnThis(),
+  select: jest.fn().mockReturnThis(),
+  addSelect: jest.fn().mockReturnThis(),
+  skip: jest.fn().mockReturnThis(),
+  take: jest.fn().mockReturnThis(),
+  limit: jest.fn().mockReturnThis(),
+  offset: jest.fn().mockReturnThis(),
+  setParameter: jest.fn().mockReturnThis(),
+  setParameters: jest.fn().mockReturnThis(),
+  withDeleted: jest.fn().mockReturnThis(),
+  getMany: jest.fn().mockResolvedValue([]),
+  getOne: jest.fn().mockResolvedValue(null),
+  getManyAndCount: jest.fn().mockResolvedValue([[], 0]),
+  getRawMany: jest.fn().mockResolvedValue([]),
+  getRawOne: jest.fn().mockResolvedValue({}),
+  getCount: jest.fn().mockResolvedValue(0),
+  getExists: jest.fn().mockResolvedValue(false),
+});
 
 describe('ContactsService', () => {
   let service: ContactsService;
@@ -44,6 +82,35 @@ describe('ContactsService', () => {
           provide: getRepositoryToken(Company),
           useValue: createMockRepository<Company>(),
         },
+        {
+          provide: getRepositoryToken(Activity),
+          useValue: createMockRepository<Activity>(),
+        },
+        {
+          provide: getRepositoryToken(Deal),
+          useValue: createMockRepository<Deal>(),
+        },
+        // These collaborators are called fire-and-forget with .catch(), so the
+        // stubs must return promises rather than undefined.
+        { provide: EventEmitter2, useValue: { emit: jest.fn() } },
+        {
+          provide: NotificationsService,
+          useValue: { notifyLead: jest.fn().mockResolvedValue(undefined) },
+        },
+        {
+          provide: GoogleSheetsService,
+          useValue: {
+            appendContact: jest.fn().mockResolvedValue(undefined),
+            syncContact: jest.fn().mockResolvedValue(undefined),
+          },
+        },
+        {
+          provide: MetaConversionsService,
+          useValue: {
+            trackLead: jest.fn().mockResolvedValue(undefined),
+            sendLeadEvent: jest.fn().mockResolvedValue(undefined),
+          },
+        },
       ],
     }).compile();
 
@@ -66,6 +133,7 @@ describe('ContactsService', () => {
       const total = 25;
 
       const mockQueryBuilder = {
+        ...qbBase(),
         where: jest.fn().mockReturnThis(),
         andWhere: jest.fn().mockReturnThis(),
         leftJoinAndSelect: jest.fn().mockReturnThis(),
@@ -101,6 +169,7 @@ describe('ContactsService', () => {
 
     it('should apply search filter correctly', async () => {
       const mockQueryBuilder = {
+        ...qbBase(),
         where: jest.fn().mockReturnThis(),
         andWhere: jest.fn().mockReturnThis(),
         leftJoinAndSelect: jest.fn().mockReturnThis(),
@@ -126,6 +195,7 @@ describe('ContactsService', () => {
     it('should return a contact by id with relations', async () => {
       const mockContact = createMockContact();
       const mockQueryBuilder = {
+        ...qbBase(),
         where: jest.fn().mockReturnThis(),
         leftJoinAndSelect: jest.fn().mockReturnThis(),
         getOne: jest.fn().mockResolvedValue(mockContact),
@@ -143,6 +213,7 @@ describe('ContactsService', () => {
 
     it('should throw NotFoundException when contact not found', async () => {
       const mockQueryBuilder = {
+        ...qbBase(),
         where: jest.fn().mockReturnThis(),
         leftJoinAndSelect: jest.fn().mockReturnThis(),
         getOne: jest.fn().mockResolvedValue(null),
@@ -182,6 +253,7 @@ describe('ContactsService', () => {
 
       // Mock findOne for returning created contact with relations
       const mockQueryBuilder = {
+        ...qbBase(),
         where: jest.fn().mockReturnThis(),
         leftJoinAndSelect: jest.fn().mockReturnThis(),
         getOne: jest.fn().mockResolvedValue({ ...mockCreatedContact, owner: mockUser, company: mockCompany }),
@@ -273,6 +345,7 @@ describe('ContactsService', () => {
       contactRepository.save.mockResolvedValue(mockCreatedContact);
 
       const mockQueryBuilder = {
+        ...qbBase(),
         where: jest.fn().mockReturnThis(),
         leftJoinAndSelect: jest.fn().mockReturnThis(),
         getOne: jest.fn().mockResolvedValue(mockCreatedContact),
@@ -301,6 +374,7 @@ describe('ContactsService', () => {
 
       // Mock findOne for initial contact fetch
       const mockQueryBuilder = {
+        ...qbBase(),
         where: jest.fn().mockReturnThis(),
         leftJoinAndSelect: jest.fn().mockReturnThis(),
         getOne: jest.fn().mockResolvedValueOnce(existingContact).mockResolvedValueOnce(updatedContact),
@@ -319,6 +393,7 @@ describe('ContactsService', () => {
 
     it('should throw NotFoundException when contact not found', async () => {
       const mockQueryBuilder = {
+        ...qbBase(),
         where: jest.fn().mockReturnThis(),
         leftJoinAndSelect: jest.fn().mockReturnThis(),
         getOne: jest.fn().mockResolvedValue(null),
@@ -334,6 +409,7 @@ describe('ContactsService', () => {
       const anotherContact = createMockContact({ id: 'another-contact', email: 'existing@example.com' });
 
       const mockQueryBuilder = {
+        ...qbBase(),
         where: jest.fn().mockReturnThis(),
         leftJoinAndSelect: jest.fn().mockReturnThis(),
         getOne: jest.fn().mockResolvedValue(existingContact),
@@ -351,6 +427,7 @@ describe('ContactsService', () => {
     it('should soft delete contact successfully', async () => {
       const mockContact = createMockContact();
       const mockQueryBuilder = {
+        ...qbBase(),
         where: jest.fn().mockReturnThis(),
         leftJoinAndSelect: jest.fn().mockReturnThis(),
         getOne: jest.fn().mockResolvedValue(mockContact),
@@ -365,6 +442,7 @@ describe('ContactsService', () => {
 
     it('should throw NotFoundException when contact not found', async () => {
       const mockQueryBuilder = {
+        ...qbBase(),
         where: jest.fn().mockReturnThis(),
         leftJoinAndSelect: jest.fn().mockReturnThis(),
         getOne: jest.fn().mockResolvedValue(null),
@@ -407,6 +485,7 @@ describe('ContactsService', () => {
     it('should update contact status successfully', async () => {
       const mockContact = createMockContact({ status: ContactStatus.LEAD });
       const mockQueryBuilder = {
+        ...qbBase(),
         where: jest.fn().mockReturnThis(),
         leftJoinAndSelect: jest.fn().mockReturnThis(),
         getOne: jest.fn().mockResolvedValue(mockContact),
@@ -447,6 +526,7 @@ describe('ContactsService', () => {
   describe('getContactStats', () => {
     it('should return contact statistics', async () => {
       const mockQueryBuilder = {
+        ...qbBase(),
         where: jest.fn().mockReturnThis(),
         select: jest.fn().mockReturnThis(),
         addSelect: jest.fn().mockReturnThis(),
