@@ -15,7 +15,9 @@ describe('ActivitiesService', () => {
 
   beforeEach(() => {
     repository = createMockRepository();
-    service = new ActivitiesService(repository as any);
+    // findAll/findOne never open a transaction; the DataSource is only needed
+    // to satisfy the constructor.
+    service = new ActivitiesService(repository as any, {} as any);
   });
 
   describe('findAll', () => {

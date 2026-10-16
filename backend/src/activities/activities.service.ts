@@ -1,8 +1,16 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { FindOptionsWhere, Repository } from 'typeorm';
-import { Activity } from '../database/entities/activity.entity';
+import { DataSource, EntityManager, FindOptionsWhere, Repository } from 'typeorm';
+import {
+  Activity,
+  ActivityDirection,
+  ActivityType,
+} from '../database/entities/activity.entity';
+import { Contact } from '../database/entities/contact.entity';
+import { Deal } from '../database/entities/deal.entity';
+import { Task, TaskPriority, TaskStatus, TaskType } from '../database/entities/task.entity';
 import { QueryActivitiesDto } from './dto/query-activities.dto';
+import { CreateAndDispositionDto, DispositionDto } from './dto/disposition.dto';
 
 const DEFAULT_LIMIT = 50;
 
@@ -11,6 +19,7 @@ export class ActivitiesService {
   constructor(
     @InjectRepository(Activity)
     private readonly activityRepository: Repository<Activity>,
+    private readonly dataSource: DataSource,
   ) {}
 
   async findAll(
@@ -46,5 +55,130 @@ export class ActivitiesService {
     });
     if (!activity) throw new NotFoundException('Activity not found');
     return activity;
+  }
+
+  /**
+   * Record the outcome of a call and everything that follows from it.
+   *
+   * Runs inside one transaction through the manager's repositories rather than
+   * TasksService/DealsService: those write through their own repositories and
+   * would not enrol here, so a failed deal would leave an orphan task behind.
+   */
+  async applyDisposition(
+    workspaceId: string,
+    userId: string,
+    activityId: string,
+    dto: DispositionDto,
+  ): Promise<Activity> {
+    return this.dataSource.transaction(async (manager) => {
+      const activityRepository = manager.getRepository(Activity);
+      const activity = await activityRepository.findOne({
+        where: { workspaceId, id: activityId },
+      });
+      if (!activity) throw new NotFoundException('Activity not found');
+
+      return this.writeDisposition(manager, workspaceId, userId, activity, dto);
+    });
+  }
+
+  /**
+   * For calls placed outside the app — an ordinary phone call — where no
+   * activity exists yet.
+   */
+  async createAndDisposition(
+    workspaceId: string,
+    userId: string,
+    contactId: string,
+    dto: CreateAndDispositionDto | (DispositionDto & { occurredAt?: string; durationSeconds?: number }),
+  ): Promise<Activity> {
+    return this.dataSource.transaction(async (manager) => {
+      const activityRepository = manager.getRepository(Activity);
+      const activity = activityRepository.create({
+        workspaceId,
+        contactId,
+        userId,
+        type: ActivityType.CALL,
+        direction: ActivityDirection.OUTBOUND,
+        title: 'Call',
+        occurredAt: dto.occurredAt ? new Date(dto.occurredAt) : new Date(),
+        duration: dto.durationSeconds ? Math.round(dto.durationSeconds / 60) : undefined,
+        metadata: {},
+      });
+
+      return this.writeDisposition(manager, workspaceId, userId, activity as Activity, dto);
+    });
+  }
+
+  private async writeDisposition(
+    manager: EntityManager,
+    workspaceId: string,
+    userId: string,
+    activity: Activity,
+    dto: DispositionDto,
+  ): Promise<Activity> {
+    const metadata: Record<string, any> = { ...(activity.metadata ?? {}) };
+
+    // A retry carries the same clientRequestId. Returning early is what stops
+    // a flaky connection from producing two reminders and two deals.
+    if (metadata.dispositionRequestId === dto.clientRequestId) {
+      return activity;
+    }
+
+    activity.outcome = dto.outcome;
+    if (dto.notes !== undefined) activity.followUpNotes = dto.notes;
+
+    if (dto.followUp) {
+      activity.followUpRequired = true;
+      activity.followUpDate = new Date(dto.followUp.at);
+
+      const task = manager.getRepository(Task).create({
+        workspaceId,
+        title: dto.followUp.title || 'Revenire apel',
+        type: TaskType.CALL,
+        status: TaskStatus.PENDING,
+        priority: TaskPriority.MEDIUM,
+        dueDate: new Date(dto.followUp.at),
+        assigneeId: userId,
+        contactId: activity.contactId,
+      });
+      await manager.getRepository(Task).save(task);
+    }
+
+    // Only ever one deal per call: a correction re-states the outcome, it does
+    // not sell the same thing twice.
+    if (dto.deal && !activity.dealId) {
+      const deal = manager.getRepository(Deal).create({
+        workspaceId,
+        title: 'Vanzare din apel',
+        value: dto.deal.value,
+        currency: dto.deal.currency,
+        contactId: activity.contactId,
+        ownerId: userId,
+      });
+      const savedDeal = await manager.getRepository(Deal).save(deal);
+      activity.dealId = (savedDeal as any).id;
+    }
+
+    if (dto.bookingSent !== undefined) metadata.bookingSent = dto.bookingSent;
+    metadata.dispositionRequestId = dto.clientRequestId;
+    metadata.dispositionedBy = userId;
+    metadata.dispositionedAt = new Date().toISOString();
+    activity.metadata = metadata;
+
+    const saved = await manager.getRepository(Activity).save(activity);
+
+    // The end-of-day report derives followUpsNeeded from lastContactedAt.
+    if (activity.contactId) {
+      const contactRepository = manager.getRepository(Contact);
+      const contact = await contactRepository.findOne({
+        where: { workspaceId, id: activity.contactId },
+      });
+      if (contact) {
+        contact.lastContactedAt = new Date();
+        await contactRepository.save(contact);
+      }
+    }
+
+    return saved as Activity;
   }
 }
