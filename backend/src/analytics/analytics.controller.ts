@@ -19,6 +19,7 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { WorkspaceGuard } from '../auth/guards/workspace.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { CurrentWorkspace } from '../auth/decorators/current-workspace.decorator';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { DateRangeDto, TimeRange } from './dto/date-range.dto';
 
 @ApiTags('Analytics')
@@ -243,12 +244,20 @@ export class AnalyticsController {
   @ApiOperation({ summary: 'Generate End of Day report' })
   @ApiQuery({ name: 'date', required: false, type: String, description: 'Date in YYYY-MM-DD format' })
   @ApiResponse({ status: 200, description: 'EOD report generated' })
-  @Roles('admin', 'manager')
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'caller')
   async getEODReport(
     @CurrentWorkspace('id') workspaceId: string,
+    @CurrentUser() user: any,
     @Query('date') date?: string,
   ) {
     const targetDate = date ? new Date(date) : undefined;
-    return this.analyticsService.generateEODReport(workspaceId, targetDate);
+    // Managers and admins see the whole workspace; everyone else sees their own
+    // day. Without this the report would leak the team's numbers to a caller.
+    const isManager = ['admin', 'manager'].includes(user?.role);
+    return this.analyticsService.generateEODReport(
+      workspaceId,
+      targetDate,
+      isManager ? undefined : user?.id,
+    );
   }
 }

@@ -6,7 +6,26 @@ import { Deal, DealStage } from '../database/entities/deal.entity';
 import { Task } from '../database/entities/task.entity';
 import { Company } from '../database/entities/company.entity';
 import { Activity } from '../database/entities/activity.entity';
+import { Notification } from '../database/entities/notification.entity';
+import { IntegrationLog } from '../database/entities/integration.entity';
+import { Workspace } from '../database/entities/workspace.entity';
+import { dayRangeInTimeZone } from '../common/utils/day-range.util';
 import { TimeRange } from './dto/date-range.dto';
+
+export type SystemLogSource = 'activity' | 'notification' | 'integration';
+export type SystemLogLevel = 'info' | 'warn' | 'error';
+
+export interface SystemLogEntry {
+  id: string;
+  source: SystemLogSource;
+  level: SystemLogLevel;
+  category: string;
+  message: string;
+  createdAt: Date;
+  actor?: string;
+  referenceId?: string;
+  metadata?: Record<string, any>;
+}
 
 @Injectable()
 export class AnalyticsService {
@@ -23,6 +42,12 @@ export class AnalyticsService {
     private readonly companyRepository: Repository<Company>,
     @InjectRepository(Activity)
     private readonly activityRepository: Repository<Activity>,
+    @InjectRepository(Notification)
+    private readonly notificationRepository: Repository<Notification>,
+    @InjectRepository(IntegrationLog)
+    private readonly integrationLogRepository: Repository<IntegrationLog>,
+    @InjectRepository(Workspace)
+    private readonly workspaceRepository: Repository<Workspace>,
   ) {}
 
   async getDashboardOverview(workspaceId: string) {
@@ -482,12 +507,14 @@ export class AnalyticsService {
   /**
    * Get Daily KPIs
    */
-  async getDailyKPIs(workspaceId: string, date?: Date) {
+  async getDailyKPIs(workspaceId: string, date?: Date, userId?: string) {
     const targetDate = date || new Date();
-    const startOfDay = new Date(targetDate);
-    startOfDay.setHours(0, 0, 0, 0);
-    const endOfDay = new Date(targetDate);
-    endOfDay.setHours(23, 59, 59, 999);
+
+    // The server clock is UTC; the people reading this are not. A call at 23:30
+    // in Bucharest belongs to that local day, not the next UTC one.
+    const workspace = await this.workspaceRepository.findOne({ where: { id: workspaceId } });
+    const timeZone = (workspace?.settings as any)?.timezone || 'UTC';
+    const { start: startOfDay, end: endOfDay } = dayRangeInTimeZone(targetDate, timeZone);
 
     const [
       newContacts,
@@ -507,7 +534,13 @@ export class AnalyticsService {
         where: { workspaceId, createdAt: Between(startOfDay, endOfDay), deletedAt: null as any },
       }),
       this.activityRepository.find({
-        where: { workspaceId, createdAt: Between(startOfDay, endOfDay) },
+        // occurredAt, not createdAt: a call logged the morning after still
+        // belongs to the day it happened.
+        where: {
+          workspaceId,
+          occurredAt: Between(startOfDay, endOfDay),
+          ...(userId ? { userId } : {}),
+        },
       }),
       this.taskRepository.find({
         where: { workspaceId, completedAt: Between(startOfDay, endOfDay), deletedAt: null as any },
@@ -527,7 +560,13 @@ export class AnalyticsService {
       .filter(d => d.stage === DealStage.CLOSED_WON)
       .reduce((sum, d) => sum + d.value, 0);
 
-    const callsMade = activities.filter(a => a.type === 'call').length;
+    // WhatsApp calls are deliberately stored as whatsapp_message with
+    // metadata.messageType === 'call' so the chat UI renders them inline.
+    // Counting only type === 'call' left this permanently at zero, because
+    // nothing in the backend creates an ActivityType.CALL on its own.
+    const callsMade = activities.filter(
+      a => a.type === 'call' || (a.type === 'whatsapp_message' && (a.metadata as any)?.messageType === 'call'),
+    ).length;
     const emailsSent = activities.filter(a => a.type === 'email').length;
     const meetingsHeld = activities.filter(a => a.type === 'meeting').length;
 
@@ -551,7 +590,11 @@ export class AnalyticsService {
   /**
    * Generate End of Day Report
    */
-  async generateEODReport(workspaceId: string, date?: Date) {
+  /**
+   * @param userId when given, the report covers only that person's numbers —
+   * this is what lets a caller read their own end of day without seeing the team's.
+   */
+  async generateEODReport(workspaceId: string, date?: Date, userId?: string) {
     this.logger.log(`Generating EOD report for workspace ${workspaceId}`);
 
     const targetDate = date || new Date();
@@ -560,7 +603,7 @@ export class AnalyticsService {
     const endOfDay = new Date(targetDate);
     endOfDay.setHours(23, 59, 59, 999);
 
-    const kpis = await this.getDailyKPIs(workspaceId, targetDate);
+    const kpis = await this.getDailyKPIs(workspaceId, targetDate, userId);
 
     // Get team performance
     const deals = await this.dealRepository
@@ -707,6 +750,124 @@ export class AnalyticsService {
         overdueTasks,
         followUpsNeeded,
         dealsRequiringAttention,
+      },
+      generatedAt: new Date(),
+    };
+  }
+
+  /**
+   * Get merged system logs across activity, notifications, and integrations
+   */
+  async getSystemLogs(workspaceId: string, limit: number = 200) {
+    this.logger.log(`Getting system logs for workspace ${workspaceId}`);
+
+    const safeLimit = Math.min(Math.max(limit || 200, 20), 500);
+
+    const [activities, notifications, integrationLogs] = await Promise.all([
+      this.activityRepository.find({
+        where: { workspaceId },
+        relations: ['user'],
+        order: { createdAt: 'DESC' },
+        take: safeLimit,
+      }),
+      this.notificationRepository.find({
+        where: { workspaceId },
+        relations: ['user'],
+        order: { createdAt: 'DESC' },
+        take: safeLimit,
+      }),
+      this.integrationLogRepository.find({
+        where: { workspaceId },
+        relations: ['integration'],
+        order: { createdAt: 'DESC' },
+        take: safeLimit,
+      }),
+    ]);
+
+    const activityLogs: SystemLogEntry[] = activities.map((activity) => {
+      const actorName = activity.user
+        ? `${activity.user.firstName} ${activity.user.lastName}`.trim()
+        : undefined;
+      const level: SystemLogLevel =
+        activity.outcome === 'failed' ? 'error' :
+        activity.type === 'system_event' || activity.type === 'api_call' ? 'warn' :
+        'info';
+
+      return {
+        id: activity.id,
+        source: 'activity',
+        level,
+        category: activity.type || 'activity',
+        message: activity.title || activity.description || 'Activity event',
+        createdAt: activity.createdAt,
+        actor: actorName,
+        referenceId: activity.contactId || activity.dealId || activity.taskId,
+        metadata: activity.metadata,
+      };
+    });
+
+    const notificationLogs: SystemLogEntry[] = notifications.map((notification) => {
+      const actorName = notification.user
+        ? `${notification.user.firstName} ${notification.user.lastName}`.trim()
+        : undefined;
+      const content = `${notification.title || 'Notification'}${notification.message ? ` - ${notification.message}` : ''}`;
+      const lowerContent = content.toLowerCase();
+      const level: SystemLogLevel =
+        lowerContent.includes('error') || lowerContent.includes('failed')
+          ? 'error'
+          : notification.type === 'system'
+            ? 'warn'
+            : 'info';
+
+      return {
+        id: notification.id,
+        source: 'notification',
+        level,
+        category: notification.type || 'notification',
+        message: content,
+        createdAt: notification.createdAt,
+        actor: actorName,
+        referenceId: notification.userId,
+        metadata: notification.metadata,
+      };
+    });
+
+    const integrationSystemLogs: SystemLogEntry[] = integrationLogs.map((log) => {
+      const level: SystemLogLevel =
+        log.level === 'error' ? 'error' :
+        log.level === 'warn' ? 'warn' :
+        'info';
+
+      return {
+        id: log.id,
+        source: 'integration',
+        level,
+        category: log.integration?.type || 'integration',
+        message: log.integration?.name
+          ? `${log.integration.name}: ${log.message}`
+          : log.message,
+        createdAt: log.createdAt,
+        actor: log.integration?.name,
+        referenceId: log.integrationId,
+        metadata: {
+          action: log.action,
+          duration: log.duration,
+          ...(log.data || {}),
+        },
+      };
+    });
+
+    const mergedLogs = [...activityLogs, ...notificationLogs, ...integrationSystemLogs]
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+      .slice(0, safeLimit);
+
+    return {
+      logs: mergedLogs,
+      total: mergedLogs.length,
+      sources: {
+        activity: activityLogs.length,
+        notification: notificationLogs.length,
+        integration: integrationSystemLogs.length,
       },
       generatedAt: new Date(),
     };

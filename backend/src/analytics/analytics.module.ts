@@ -1,3 +1,4 @@
+import { Workspace } from '../database/entities/workspace.entity';
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AnalyticsController } from './analytics.controller';
@@ -7,10 +8,19 @@ import { Deal } from '../database/entities/deal.entity';
 import { Task } from '../database/entities/task.entity';
 import { Company } from '../database/entities/company.entity';
 import { Activity } from '../database/entities/activity.entity';
+import { Notification } from '../database/entities/notification.entity';
+import { IntegrationLog } from '../database/entities/integration.entity';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Contact, Deal, Task, Company, Activity]),
+    TypeOrmModule.forFeature([
+      Contact,
+      Deal,
+      Task,
+      Company,
+      Activity,
+      Notification,
+      IntegrationLog,, Workspace]),
   ],
   controllers: [AnalyticsController],
   providers: [AnalyticsService],
