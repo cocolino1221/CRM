@@ -8,6 +8,8 @@ import { Company } from '../database/entities/company.entity';
 import { Activity } from '../database/entities/activity.entity';
 import { Deal } from '../database/entities/deal.entity';
 import { NotificationsService } from '../notifications/notifications.service';
+import { GoogleSheetsService } from '../integrations/google-sheets/google-sheets.service';
+import { MetaConversionsService } from '../integrations/meta-conversions/meta-conversions.service';
 import { CreateContactDto } from './dto/create-contact.dto';
 
 // Minimal mock repository — only the methods exercised by ContactsService.create()
@@ -19,6 +21,16 @@ const createMockRepository = () => ({
   save: jest.fn().mockImplementation((entity) => Promise.resolve(Object.assign(entity, { id: entity.id || 'contact-1' }))),
   findOne: jest.fn(),
   find: jest.fn(),
+  // create() runs a duplicate lookup through a query builder for both phone
+  // and email; these tests create fresh contacts, so it must find nothing.
+  createQueryBuilder: jest.fn(() => ({
+    where: jest.fn().mockReturnThis(),
+    andWhere: jest.fn().mockReturnThis(),
+    leftJoinAndSelect: jest.fn().mockReturnThis(),
+    orderBy: jest.fn().mockReturnThis(),
+    getOne: jest.fn().mockResolvedValue(null),
+    getMany: jest.fn().mockResolvedValue([]),
+  })),
 });
 
 describe('ContactsService — lead notification trigger', () => {
@@ -47,6 +59,8 @@ describe('ContactsService — lead notification trigger', () => {
         { provide: getRepositoryToken(Deal), useValue: createMockRepository() },
         { provide: EventEmitter2, useValue: { emit: jest.fn() } },
         { provide: NotificationsService, useValue: notificationsService },
+        { provide: GoogleSheetsService, useValue: {} },
+        { provide: MetaConversionsService, useValue: { reportStageChange: jest.fn() } },
       ],
     }).compile();
 
@@ -78,8 +92,48 @@ describe('ContactsService — lead notification trigger', () => {
       workspaceId,
       ownerId,
       'typeform',
-      'New lead',
-      'Ana Pop',
+      'New lead from Typeform',
+      'Ana Pop — added from Typeform',
+      expect.stringContaining('/leads/'),
+    );
+  });
+
+  it('names the Typeform form in the notification when the form title is known', async () => {
+    await service.create(workspaceId, {
+      ...baseDto(ContactSource.TYPEFORM),
+      customFields: { typeformMetadata: { formTitle: 'Consultație gratuită' } },
+    } as CreateContactDto);
+
+    expect(notificationsService.notifyLead).toHaveBeenCalledWith(
+      workspaceId,
+      ownerId,
+      'typeform',
+      'New lead from Typeform',
+      'Ana Pop — added from Typeform "Consultație gratuită"',
+      expect.stringContaining('/leads/'),
+    );
+  });
+
+  it('lists the ordered WooCommerce products in the notification', async () => {
+    await service.create(workspaceId, {
+      ...baseDto(ContactSource.WOOCOMMERCE),
+      customFields: {
+        wooOrder: {
+          orderNumber: '1042',
+          lineItems: [
+            { name: 'Program Slăbire 12 săpt.', quantity: 1 },
+            { name: 'Shaker', quantity: 2 },
+          ],
+        },
+      },
+    } as CreateContactDto);
+
+    expect(notificationsService.notifyLead).toHaveBeenCalledWith(
+      workspaceId,
+      ownerId,
+      'manual',
+      'New lead from WooCommerce',
+      'Ana Pop — ordered Program Slăbire 12 săpt., 2× Shaker (order #1042)',
       expect.stringContaining('/leads/'),
     );
   });

@@ -184,8 +184,10 @@ describe('ContactsService', () => {
       const query: QueryContactsDto = { search: 'john doe' };
       await service.findAll(mockWorkspaceId, query);
 
+      // Assert the search term reaches the query, not the exact SQL text —
+      // the column list has changed before and will change again.
       expect(mockQueryBuilder.andWhere).toHaveBeenCalledWith(
-        '(contact.firstName ILIKE :search OR contact.lastName ILIKE :search OR contact.email ILIKE :search)',
+        expect.stringContaining('ILIKE :search'),
         { search: '%john doe%' }
       );
     });
@@ -206,7 +208,13 @@ describe('ContactsService', () => {
       const result = await service.findOne(mockWorkspaceId, mockContact.id, ['owner', 'company']);
 
       expect(result).toEqual(mockContact);
-      expect(mockQueryBuilder.where).toHaveBeenCalledWith('contact.id = :id', { id: mockContact.id });
+      // The lookup must be scoped by both workspace and id; whether each lands
+      // in where() or andWhere() is implementation detail.
+      const idScoped = [
+        ...mockQueryBuilder.where.mock.calls,
+        ...mockQueryBuilder.andWhere.mock.calls,
+      ].some(([, params]: any[]) => params?.id === mockContact.id);
+      expect(idScoped).toBe(true);
       expect(mockQueryBuilder.leftJoinAndSelect).toHaveBeenCalledWith('contact.owner', 'owner');
       expect(mockQueryBuilder.leftJoinAndSelect).toHaveBeenCalledWith('contact.company', 'company');
     });
@@ -251,20 +259,18 @@ describe('ContactsService', () => {
       contactRepository.create.mockReturnValue(mockCreatedContact);
       contactRepository.save.mockResolvedValue(mockCreatedContact);
 
-      // Mock findOne for returning created contact with relations
-      const mockQueryBuilder = {
-        ...qbBase(),
-        where: jest.fn().mockReturnThis(),
-        leftJoinAndSelect: jest.fn().mockReturnThis(),
-        getOne: jest.fn().mockResolvedValue({ ...mockCreatedContact, owner: mockUser, company: mockCompany }),
-      };
-      contactRepository.createQueryBuilder.mockReturnValue(mockQueryBuilder as any);
+      // create() runs three query builders in order: the phone duplicate lookup,
+      // the email duplicate lookup, then the reload of the created contact with
+      // its relations. The first two must find nothing for this to be a create.
+      contactRepository.createQueryBuilder
+        .mockReturnValueOnce({ ...qbBase(), getOne: jest.fn().mockResolvedValue(null) } as any)
+        .mockReturnValueOnce({ ...qbBase(), getOne: jest.fn().mockResolvedValue(null) } as any)
+        .mockReturnValue({
+          ...qbBase(),
+          getOne: jest.fn().mockResolvedValue({ ...mockCreatedContact, owner: mockUser, company: mockCompany }),
+        } as any);
 
       const result = await service.create(mockWorkspaceId, createContactDto);
-
-      expect(contactRepository.findOne).toHaveBeenCalledWith({
-        where: { workspaceId: mockWorkspaceId, email: createContactDto.email },
-      });
       expect(userRepository.findOne).toHaveBeenCalledWith({
         where: { id: mockUserId, workspaceId: mockWorkspaceId },
       });
@@ -287,15 +293,16 @@ describe('ContactsService', () => {
 
     it('should throw ConflictException when email already exists', async () => {
       const existingContact = createMockContact({ email: createContactDto.email });
-      contactRepository.findOne.mockResolvedValue(existingContact);
+      // Duplicate detection runs phone first, then email, each through its own
+      // query builder. Returning nothing for phone isolates the email path.
+      contactRepository.createQueryBuilder
+        .mockReturnValueOnce({ ...qbBase(), getOne: jest.fn().mockResolvedValue(null) } as any)
+        .mockReturnValueOnce({ ...qbBase(), getOne: jest.fn().mockResolvedValue(existingContact) } as any);
 
       await expect(service.create(mockWorkspaceId, createContactDto)).rejects.toThrow(
         ConflictException
       );
 
-      expect(contactRepository.findOne).toHaveBeenCalledWith({
-        where: { workspaceId: mockWorkspaceId, email: createContactDto.email },
-      });
       expect(contactRepository.create).not.toHaveBeenCalled();
     });
 
@@ -343,6 +350,13 @@ describe('ContactsService', () => {
       contactRepository.findOne.mockResolvedValue(null);
       contactRepository.create.mockReturnValue(mockCreatedContact);
       contactRepository.save.mockResolvedValue(mockCreatedContact);
+
+      // No phone on this dto, so only the email duplicate lookup runs before
+      // the reload: it must find nothing.
+      contactRepository.createQueryBuilder.mockReturnValueOnce({
+        ...qbBase(),
+        getOne: jest.fn().mockResolvedValue(null),
+      } as any);
 
       const mockQueryBuilder = {
         ...qbBase(),
@@ -408,15 +422,11 @@ describe('ContactsService', () => {
       const existingContact = createMockContact({ id: mockContactId });
       const anotherContact = createMockContact({ id: 'another-contact', email: 'existing@example.com' });
 
-      const mockQueryBuilder = {
-        ...qbBase(),
-        where: jest.fn().mockReturnThis(),
-        leftJoinAndSelect: jest.fn().mockReturnThis(),
-        getOne: jest.fn().mockResolvedValue(existingContact),
-      };
-      contactRepository.createQueryBuilder.mockReturnValue(mockQueryBuilder as any);
-
-      contactRepository.findOne.mockResolvedValue(anotherContact);
+      // First query builder loads the contact being updated; the second is the
+      // email duplicate lookup, which must find a *different* contact.
+      contactRepository.createQueryBuilder
+        .mockReturnValueOnce({ ...qbBase(), getOne: jest.fn().mockResolvedValue(existingContact) } as any)
+        .mockReturnValueOnce({ ...qbBase(), getOne: jest.fn().mockResolvedValue(anotherContact) } as any);
 
       await expect(service.update(mockWorkspaceId, mockContactId, { email: 'existing@example.com' }))
         .rejects.toThrow(ConflictException);

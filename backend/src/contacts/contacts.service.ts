@@ -13,7 +13,9 @@ import { CreateContactDto } from './dto/create-contact.dto';
 import { UpdateContactDto } from './dto/update-contact.dto';
 import { QueryContactsDto, SortField } from './dto/query-contacts.dto';
 import { normalizePhoneDigits, normalizePhoneE164 } from '../common/utils/phone.util';
+import { normalizeIdentityEmail } from '../common/utils/email.util';
 import { NotificationsService } from '../notifications/notifications.service';
+import { buildLeadNotification } from './lead-notification.util';
 import { GoogleSheetsService } from '../integrations/google-sheets/google-sheets.service';
 import { MetaConversionsService } from '../integrations/meta-conversions/meta-conversions.service';
 
@@ -270,6 +272,41 @@ export class ContactsService {
     return queryBuilder.getOne();
   }
 
+  private async findDuplicateByEmail(
+    workspaceId: string,
+    rawEmail?: string,
+    excludeContactId?: string,
+  ): Promise<Contact | null> {
+    // Placeholder addresses and unrendered merge tags are shared by hundreds of
+    // contacts here, so they are not identities and must never match.
+    const normalizedEmail = normalizeIdentityEmail(rawEmail);
+    if (!normalizedEmail) return null;
+
+    const queryBuilder = this.contactRepository
+      .createQueryBuilder('contact')
+      .where('contact.workspaceId = :workspaceId', { workspaceId })
+      .andWhere('LOWER(TRIM(COALESCE(contact.email, \'\'))) = :normalizedEmail', { normalizedEmail })
+      .orderBy('contact.createdAt', 'DESC');
+
+    if (excludeContactId) {
+      queryBuilder.andWhere('contact.id != :excludeContactId', { excludeContactId });
+    }
+
+    return queryBuilder.getOne();
+  }
+
+  /** A contact is a duplicate when either its phone or its email already exists. */
+  private async findDuplicate(
+    workspaceId: string,
+    rawPhone?: string,
+    rawEmail?: string,
+    excludeContactId?: string,
+  ): Promise<Contact | null> {
+    const byPhone = await this.findDuplicateByPhone(workspaceId, rawPhone, excludeContactId);
+    if (byPhone) return byPhone;
+    return this.findDuplicateByEmail(workspaceId, rawEmail, excludeContactId);
+  }
+
   private applyExternalDuplicateUpdates(contact: Contact, dto: CreateContactDto, normalizedPhone?: string): Contact {
     const next = contact;
     const hasValue = (value: unknown) => value !== undefined && value !== null && String(value).trim().length > 0;
@@ -308,9 +345,9 @@ export class ContactsService {
     const isExternal = dto.source && this.externalSources.has(dto.source);
     const normalizedPhone = normalizePhoneE164(dto.phone);
 
-    // Check duplicates only by phone (email duplicates are allowed)
-    if (normalizedPhone) {
-      const existingByPhone = await this.findDuplicateByPhone(workspaceId, dto.phone);
+    // Duplicates are detected on phone OR email.
+    {
+      const existingByPhone = await this.findDuplicate(workspaceId, dto.phone, dto.email);
 
       if (existingByPhone) {
         if (isExternal) {
@@ -337,7 +374,13 @@ export class ContactsService {
           this.logger.log(`Duplicate contact (phoneNormalized=${normalizedPhone}) updated + external_duplicate emitted for source=${dto.source}`);
           return this.findOne(workspaceId, savedExisting.id, ['owner', 'company']);
         }
-        throw new ConflictException(`A contact with phone "${dto.phone}" already exists`);
+        const matchedPhone =
+          !!normalizedPhone && existingByPhone.phoneNormalized === normalizedPhone;
+        throw new ConflictException(
+          matchedPhone
+            ? `A contact with phone "${dto.phone}" already exists`
+            : `A contact with email "${dto.email}" already exists`,
+        );
       }
     }
 
@@ -447,13 +490,20 @@ export class ContactsService {
     // Fire-and-forget lead notification; a notify failure must never break contact creation
     if (savedContact.ownerId) {
       const leadName = `${savedContact.firstName ?? ''} ${savedContact.lastName ?? ''}`.trim();
+      const displayName = leadName || savedContact.email || 'New lead';
+      const source = leadSource(savedContact.source);
+      // Typeform / WooCommerce get a specific line (form name, products ordered).
+      const isWoo = String(savedContact.source || '').toLowerCase() === 'woocommerce';
+      const specific = source === 'typeform' || isWoo ? buildLeadNotification(savedContact) : null;
+      const title = specific?.title || 'New lead';
+      const message = specific?.message || displayName;
       this.notificationsService
         .notifyLead(
           workspaceId,
           savedContact.ownerId,
-          leadSource(savedContact.source),
-          'New lead',
-          leadName || savedContact.email || 'New lead',
+          source,
+          title,
+          message,
           `/leads/${savedContact.id}`,
         )
         .catch((err) => this.logger.error(`Lead notification failed for contact ${savedContact.id}: ${err.message}`));
@@ -467,11 +517,18 @@ export class ContactsService {
     const contact = await this.findOne(workspaceId, id);
     const previousStageId = contact.pipelineStageId;
 
-    // Check duplicates only by phone (email duplicates are allowed)
+    // Duplicates are detected on phone OR email.
     if (dto.phone && dto.phone !== contact.phone) {
       const existingContact = await this.findDuplicateByPhone(workspaceId, dto.phone, id);
       if (existingContact && existingContact.id !== id) {
         throw new ConflictException(`Contact with phone ${dto.phone} already exists`);
+      }
+    }
+
+    if (dto.email && dto.email !== contact.email) {
+      const existingContact = await this.findDuplicateByEmail(workspaceId, dto.email, id);
+      if (existingContact && existingContact.id !== id) {
+        throw new ConflictException(`Contact with email ${dto.email} already exists`);
       }
     }
 
