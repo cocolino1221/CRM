@@ -1,0 +1,11 @@
+node_modules
+.expo
+dist
+*.log
+
+# Native build artifacts
+android/.gradle
+android/app/build
+android/build
+ios/Pods
+ios/build

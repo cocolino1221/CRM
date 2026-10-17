@@ -1,13 +1,15 @@
-import { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, FlatList,
-  KeyboardAvoidingView, Platform, ActivityIndicator, Image, Linking, Modal, Alert,
+  KeyboardAvoidingView, Platform, ActivityIndicator, Image, Linking, Modal, Alert, ScrollView,
 } from 'react-native';
 import {
   ArrowLeft, Send, Paperclip, X, Image as ImageIcon, FileText, Mic, Video,
   Check, CheckCheck, AlertTriangle, Clock, Users, Smile, Search, Zap, CornerUpLeft, Square, AudioLines,
-  PhoneCall, Ban, GitBranch, CheckCircle2, Circle,
+  PhoneCall, Ban, GitBranch, CheckCircle2, Circle, MoreVertical, Phone, Copy, Pin, PinOff,
+  BellOff, Bell, Archive, ArchiveRestore, Info, ExternalLink,
 } from 'lucide-react-native';
+import * as Clipboard from 'expo-clipboard';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import * as DocumentPicker from 'expo-document-picker';
@@ -268,6 +270,9 @@ export default function ChatScreen() {
     markRead,
     openConversation,
     blockConversation,
+    pinConversation,
+    muteConversation,
+    archiveConversation,
   } = useWhatsAppStore();
   const showToast = useToastStore(s => s.show);
   const [text, setText] = useState('');
@@ -287,6 +292,10 @@ export default function ChatScreen() {
   const [isLoadingPipelineInfo, setIsLoadingPipelineInfo] = useState(false);
   const [isSavingPipeline, setIsSavingPipeline] = useState(false);
   const [contactPreluat, setContactPreluat] = useState(false);
+  const [contactDetail, setContactDetail] = useState<any | null>(null);
+  const [isLoadingContactDetail, setIsLoadingContactDetail] = useState(false);
+  const [showActionsMenu, setShowActionsMenu] = useState(false);
+  const [showContactSheet, setShowContactSheet] = useState(false);
   const [templates, setTemplates] = useState<TemplateItem[]>([]);
   const [isLoadingTemplates, setIsLoadingTemplates] = useState(false);
   const [isSendingTemplate, setIsSendingTemplate] = useState(false);
@@ -615,11 +624,26 @@ export default function ChatScreen() {
   useEffect(() => {
     if (!activeContactId) {
       setContactPreluat(false);
+      setContactDetail(null);
       return;
     }
-    api.get(`/contacts/${activeContactId}`)
-      .then((res) => setContactPreluat(!!res.data?.preluat))
-      .catch(() => setContactPreluat(false));
+    let cancelled = false;
+    setIsLoadingContactDetail(true);
+    api.get(`/contacts/${activeContactId}?relations=company,owner`)
+      .then((res) => {
+        if (cancelled) return;
+        setContactDetail(res.data || null);
+        setContactPreluat(!!res.data?.preluat);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setContactDetail(null);
+        setContactPreluat(false);
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoadingContactDetail(false);
+      });
+    return () => { cancelled = true; };
   }, [activeContactId]);
 
   const conv = selectedConv && selectedConv.waId === route.params.waId
@@ -737,6 +761,89 @@ export default function ChatScreen() {
 
   const assigned = conv.assignment;
   const sourceLabel = formatSourceLabel(conv.contactSource);
+  const displayPhone = conv.phone || route.params.phone;
+  const isMuted = !!conv.mutedUntil && new Date(conv.mutedUntil).getTime() > Date.now();
+  const campaignName = (() => {
+    for (let i = conv.messages.length - 1; i >= 0; i -= 1) {
+      const name = asText((conv.messages[i]?.metadata as any)?.campaignName).trim();
+      if (name) return name;
+    }
+    return '';
+  })();
+  const detailPipeline = contactDetail?.pipelineId
+    ? pipelines.find((p) => p.id === contactDetail.pipelineId) || null
+    : null;
+  const detailStage = detailPipeline && contactDetail?.pipelineStageId
+    ? detailPipeline.stages.find((st) => st.id === contactDetail.pipelineStageId) || null
+    : null;
+  const detailEmail = asText(contactDetail?.email);
+  const contactFields: Array<{ label: string; value: string }> = conv.contactId && contactDetail
+    ? [
+        { label: 'Email', value: detailEmail && !/placeholder|\.invalid$/i.test(detailEmail) ? detailEmail : '' },
+        { label: 'Company', value: asText(contactDetail.company?.name) },
+        { label: 'Job title', value: asText(contactDetail.jobTitle) },
+        { label: 'Status', value: formatSourceLabel(asText(contactDetail.status)) },
+        { label: 'Pipeline', value: detailPipeline ? `${detailPipeline.name}${detailStage ? ` · ${detailStage.name}` : ''}` : '' },
+      ].filter((field) => !!field.value)
+    : [];
+
+  const startWhatsAppCall = () => {
+    const result = useCallStore.getState().open(route.params.waId, conv.contactName || route.params.contactName);
+    if (result === 'busy') {
+      showToast('You have an active call with someone else — end it first', 'error');
+    }
+  };
+
+  const startPhoneCall = () => {
+    const dialable = String(displayPhone || '').replace(/[^\d+]/g, '');
+    if (!dialable) {
+      showToast('No phone number for this contact', 'error');
+      return;
+    }
+    Linking.openURL(`tel:${dialable}`).catch(() => showToast('Cannot open the phone dialer', 'error'));
+  };
+
+  const copyPhone = async () => {
+    try {
+      await Clipboard.setStringAsync(String(displayPhone || ''));
+      showToast('Number copied', 'success');
+    } catch {
+      showToast('Could not copy the number', 'error');
+    }
+  };
+
+  const toggleBlock = () => {
+    const nextBlocked = !conv.blocked;
+    if (nextBlocked) {
+      Alert.alert(
+        'Block this contact?',
+        'They will no longer be able to message this WhatsApp number, and auto-send will stop targeting them.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Block', style: 'destructive', onPress: () => void blockConversation(route.params.waId, true) },
+        ],
+      );
+    } else {
+      void blockConversation(route.params.waId, false);
+    }
+  };
+
+  const openContactPage = () => {
+    if (!conv.contactId) return;
+    setShowContactSheet(false);
+    (navigation as any).getParent()?.navigate('Leads', {
+      screen: 'LeadDetail',
+      params: { contactId: conv.contactId },
+      initial: false,
+    });
+  };
+
+  // Close the current sheet first, then run the action on the next tick so
+  // two RN Modals never animate at the same time (iOS drops the second one).
+  const runAfterSheet = (close: () => void, action: () => void) => {
+    close();
+    setTimeout(action, 350);
+  };
 
   const handleAssign = async (userId: string | null) => {
     if (isAssigning) return;
@@ -784,6 +891,7 @@ export default function ChatScreen() {
         ...(contactPipelineId ? { pipelineId: contactPipelineId } : {}),
         ...(contactStageId ? { pipelineStageId: contactStageId } : {}),
       });
+      setContactDetail((prev: any) => (prev ? { ...prev, pipelineId: contactPipelineId, pipelineStageId: contactStageId } : prev));
       setShowPipelineModal(false);
       showToast('Pipeline updated', 'success');
     } catch {
@@ -863,7 +971,7 @@ export default function ChatScreen() {
       className="flex-1 bg-slate-50"
       keyboardVerticalOffset={0}
     >
-      {/* Header */}
+      {/* Header — Call + ⋮ only; everything else lives in the menu / contact sheet */}
       <View
         className="px-3 pb-3 bg-sky-800 flex-row items-center gap-2"
         style={{ paddingTop: insets.top + 8 }}
@@ -871,95 +979,41 @@ export default function ChatScreen() {
         <TouchableOpacity onPress={() => navigation.goBack()} className="p-1.5 rounded-xl bg-white/15">
           <ArrowLeft size={20} color="#fff" />
         </TouchableOpacity>
-        <Avatar name={route.params.contactName} size="sm" />
-        <View className="flex-1 min-w-0">
-          <Text className="text-sm font-semibold text-white" numberOfLines={1}>{conv.contactName || route.params.contactName}</Text>
-          {!!sourceLabel && (
-            <Text className="text-[11px] text-sky-200" numberOfLines={1}>{sourceLabel}</Text>
-          )}
-          <View className="flex-row items-center gap-1.5">
-            <Text className="text-[11px] text-sky-100" numberOfLines={1}>{route.params.phone}</Text>
-            {!!conv.blocked && (
-              <View className="px-1.5 py-0.5 rounded-full bg-red-500/30 border border-red-300/40">
-                <Text className="text-[9px] font-bold text-red-50">BLOCKED</Text>
+        <TouchableOpacity
+          onPress={() => setShowContactSheet(true)}
+          activeOpacity={0.7}
+          className="flex-1 min-w-0 flex-row items-center gap-2"
+        >
+          <Avatar name={route.params.contactName} size="sm" />
+          <View className="flex-1 min-w-0">
+            <Text className="text-sm font-semibold text-white" numberOfLines={1}>{conv.contactName || route.params.contactName}</Text>
+            <View className="flex-row items-center gap-1.5">
+              <Text className="text-[11px] text-sky-100 flex-shrink" numberOfLines={1}>{displayPhone}</Text>
+              <View className={`${sessionBadge.bg} px-1.5 py-0.5 rounded-full`}>
+                <Text className={`text-[9px] font-bold ${sessionBadge.text}`}>{sessionBadge.label}</Text>
               </View>
-            )}
+              {!!conv.blocked && (
+                <View className="px-1.5 py-0.5 rounded-full bg-red-500/30 border border-red-300/40">
+                  <Text className="text-[9px] font-bold text-red-50">BLOCKED</Text>
+                </View>
+              )}
+            </View>
           </View>
-          {!!conv.preferredSenderPhoneDisplay && (
-            <Text className="text-[10px] text-sky-200" numberOfLines={1}>
-              Sending from {conv.preferredSenderPhoneDisplay}
-            </Text>
-          )}
-        </View>
-        <TouchableOpacity
-          onPress={() => {
-            const result = useCallStore.getState().open(route.params.waId, conv.contactName || route.params.contactName);
-            if (result === 'busy') {
-              showToast('You have an active call with someone else — end it first', 'error');
-            }
-          }}
-          className="h-8 w-8 rounded-full items-center justify-center border bg-white/15 border-white/30"
-        >
-          <PhoneCall size={14} color="#fff" />
         </TouchableOpacity>
         <TouchableOpacity
-          onPress={() => {
-            const nextBlocked = !conv.blocked;
-            if (nextBlocked) {
-              Alert.alert(
-                'Block this contact?',
-                'They will no longer be able to message this WhatsApp number, and auto-send will stop targeting them.',
-                [
-                  { text: 'Cancel', style: 'cancel' },
-                  { text: 'Block', style: 'destructive', onPress: () => void blockConversation(route.params.waId, true) },
-                ],
-              );
-            } else {
-              void blockConversation(route.params.waId, false);
-            }
-          }}
-          className={`h-8 w-8 rounded-full items-center justify-center border ${conv.blocked ? 'bg-red-500/40 border-red-300/50' : 'bg-white/15 border-white/30'}`}
+          onPress={startWhatsAppCall}
+          className="h-9 w-9 rounded-full items-center justify-center bg-emerald-500"
+          accessibilityLabel="Call on WhatsApp"
         >
-          <Ban size={14} color="#fff" />
+          <PhoneCall size={16} color="#fff" />
         </TouchableOpacity>
         <TouchableOpacity
-          onPress={() => {
-            setShowMessageSearch((prev) => {
-              const next = !prev;
-              if (!next) setMessageSearch('');
-              return next;
-            });
-          }}
-          className={`h-8 w-8 rounded-full items-center justify-center border ${showMessageSearch ? 'bg-white/30 border-white/40' : 'bg-white/15 border-white/30'}`}
+          onPress={() => setShowActionsMenu(true)}
+          className="h-9 w-9 rounded-full items-center justify-center bg-white/15 border border-white/30"
+          accessibilityLabel="More actions"
         >
-          <Search size={14} color="#fff" />
+          <MoreVertical size={18} color="#fff" />
         </TouchableOpacity>
-        <TouchableOpacity
-          onPress={() => setShowAssignModal(true)}
-          className="mr-1 h-8 w-8 rounded-full items-center justify-center border border-white/30"
-          style={{ backgroundColor: assigned?.color || 'rgba(255,255,255,0.15)' }}
-        >
-          {assigned ? (
-            <Text className="text-[11px] font-bold text-white">{getNameInitials(assigned.userName)}</Text>
-          ) : (
-            <Users size={15} color="#fff" />
-          )}
-        </TouchableOpacity>
-        <TouchableOpacity
-          onPress={() => void openPipelineModal()}
-          className="mr-1 h-8 w-8 rounded-full items-center justify-center border bg-white/15 border-white/30"
-        >
-          <GitBranch size={14} color="#fff" />
-        </TouchableOpacity>
-        <TouchableOpacity
-          onPress={() => void handleTogglePreluat()}
-          className={`mr-1 h-8 w-8 rounded-full items-center justify-center border ${contactPreluat ? 'bg-emerald-500/80 border-emerald-300' : 'bg-white/15 border-white/30'}`}
-        >
-          {contactPreluat ? <CheckCircle2 size={15} color="#fff" /> : <Circle size={14} color="#fff" />}
-        </TouchableOpacity>
-        <View className={`${sessionBadge.bg} px-2 py-1 rounded-full`}>
-          <Text className={`text-[10px] font-bold ${sessionBadge.text}`}>{sessionBadge.label}</Text>
-        </View>
       </View>
 
       {showMessageSearch && (
@@ -1586,6 +1640,130 @@ export default function ChatScreen() {
                 shouldPlay={mediaPreview.type === 'audio'}
               />
             )}
+          </View>
+        </View>
+      </Modal>
+      {/* ⋮ actions menu */}
+      <Modal visible={showActionsMenu} animationType="fade" transparent onRequestClose={() => setShowActionsMenu(false)}>
+        <TouchableOpacity activeOpacity={1} onPress={() => setShowActionsMenu(false)} className="flex-1 bg-black/30">
+          <View
+            className="absolute right-3 bg-white rounded-2xl py-1.5 shadow-lg"
+            style={{ top: insets.top + 52, minWidth: 220, elevation: 8 }}
+          >
+            {([
+              { key: 'info', label: 'Contact info', icon: <Info size={16} color="#334155" />, onPress: () => runAfterSheet(() => setShowActionsMenu(false), () => setShowContactSheet(true)) },
+              { key: 'search', label: showMessageSearch ? 'Close search' : 'Search messages', icon: <Search size={16} color="#334155" />, onPress: () => {
+                setShowActionsMenu(false);
+                setShowMessageSearch((prev) => {
+                  if (prev) setMessageSearch('');
+                  return !prev;
+                });
+              } },
+              { key: 'assign', label: assigned ? `Assigned: ${assigned.userName}` : 'Assign', icon: <Users size={16} color="#334155" />, onPress: () => runAfterSheet(() => setShowActionsMenu(false), () => setShowAssignModal(true)) },
+              ...(conv.contactId ? [
+                { key: 'pipeline', label: 'Pipeline & stage', icon: <GitBranch size={16} color="#334155" />, onPress: () => runAfterSheet(() => setShowActionsMenu(false), () => void openPipelineModal()) },
+                { key: 'preluat', label: contactPreluat ? 'Preluat ✓' : 'Mark as preluat', icon: contactPreluat ? <CheckCircle2 size={16} color="#059669" /> : <Circle size={16} color="#334155" />, onPress: () => { setShowActionsMenu(false); void handleTogglePreluat(); } },
+              ] : []),
+              { key: 'pin', label: conv.pinned ? 'Unpin' : 'Pin', icon: conv.pinned ? <PinOff size={16} color="#334155" /> : <Pin size={16} color="#334155" />, onPress: () => { setShowActionsMenu(false); void pinConversation(conv.waId, !conv.pinned); } },
+              { key: 'mute', label: isMuted ? 'Unmute' : 'Mute for 8h', icon: isMuted ? <Bell size={16} color="#334155" /> : <BellOff size={16} color="#334155" />, onPress: () => {
+                setShowActionsMenu(false);
+                void muteConversation(conv.waId, isMuted ? null : new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString());
+              } },
+              { key: 'archive', label: conv.archived ? 'Unarchive' : 'Archive', icon: conv.archived ? <ArchiveRestore size={16} color="#334155" /> : <Archive size={16} color="#334155" />, onPress: () => { setShowActionsMenu(false); void archiveConversation(conv.waId, !conv.archived); } },
+              { key: 'block', label: conv.blocked ? 'Unblock' : 'Block', icon: <Ban size={16} color="#dc2626" />, danger: true, onPress: () => runAfterSheet(() => setShowActionsMenu(false), toggleBlock) },
+            ] as Array<{ key: string; label: string; icon: React.ReactNode; danger?: boolean; onPress: () => void }>).map((item) => (
+              <TouchableOpacity key={item.key} onPress={item.onPress} className="flex-row items-center gap-3 px-4 py-2.5">
+                {item.icon}
+                <Text className={`text-sm ${item.danger ? 'text-red-600 font-semibold' : 'text-slate-800'}`} numberOfLines={1}>{item.label}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Contact bottom sheet */}
+      <Modal visible={showContactSheet} animationType="slide" transparent onRequestClose={() => setShowContactSheet(false)}>
+        <View className="flex-1 bg-black/40 justify-end">
+          <TouchableOpacity activeOpacity={1} onPress={() => setShowContactSheet(false)} className="flex-1" />
+          <View className="bg-white rounded-t-3xl max-h-[85%]" style={{ paddingBottom: insets.bottom > 0 ? insets.bottom : 16 }}>
+            <View className="items-center pt-2">
+              <View className="h-1 w-10 rounded-full bg-slate-200" />
+            </View>
+            <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 12, paddingBottom: 8 }}>
+              <View className="items-center">
+                <Avatar name={conv.contactName || route.params.contactName} />
+                <Text className="text-lg font-bold text-slate-900 mt-2 text-center" numberOfLines={2}>
+                  {conv.contactName || route.params.contactName}
+                </Text>
+                <Text selectable className="text-2xl font-semibold text-slate-800 mt-1 tracking-wide">{displayPhone}</Text>
+              </View>
+
+              <View className="flex-row gap-2 mt-4">
+                <TouchableOpacity
+                  onPress={() => runAfterSheet(() => setShowContactSheet(false), startWhatsAppCall)}
+                  className="flex-1 items-center py-3 rounded-2xl bg-emerald-50 border border-emerald-100"
+                >
+                  <PhoneCall size={18} color="#059669" />
+                  <Text className="text-[11px] font-semibold text-emerald-700 mt-1">WhatsApp</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={startPhoneCall} className="flex-1 items-center py-3 rounded-2xl bg-sky-50 border border-sky-100">
+                  <Phone size={18} color="#0369a1" />
+                  <Text className="text-[11px] font-semibold text-sky-700 mt-1">Phone</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => void copyPhone()} className="flex-1 items-center py-3 rounded-2xl bg-slate-50 border border-slate-200">
+                  <Copy size={18} color="#334155" />
+                  <Text className="text-[11px] font-semibold text-slate-700 mt-1">Copy</Text>
+                </TouchableOpacity>
+              </View>
+
+              <View className="mt-4 rounded-2xl border border-slate-100 bg-slate-50 px-4 py-1">
+                {[
+                  { label: 'Sending from', value: conv.preferredSenderPhoneDisplay || 'Default number' },
+                  { label: 'Source', value: sourceLabel },
+                  { label: 'Campaign', value: campaignName },
+                  { label: 'Assigned to', value: assigned?.userName || 'Unassigned' },
+                ].filter((row) => !!row.value).map((row) => (
+                  <View key={row.label} className="flex-row justify-between items-center py-2.5 border-b border-slate-100 gap-3">
+                    <Text className="text-xs text-slate-500">{row.label}</Text>
+                    <Text className="text-sm font-medium text-slate-800 flex-shrink text-right" numberOfLines={1}>{row.value}</Text>
+                  </View>
+                ))}
+              </View>
+
+              {!!conv.contactId && (
+                <View className="mt-3 rounded-2xl border border-slate-100 bg-white px-4 py-1">
+                  {isLoadingContactDetail && !contactDetail ? (
+                    <View className="py-4 items-center"><ActivityIndicator size="small" color="#0369a1" /></View>
+                  ) : contactFields.length ? contactFields.map((row) => (
+                    <View key={row.label} className="flex-row justify-between items-center py-2.5 border-b border-slate-100 gap-3">
+                      <Text className="text-xs text-slate-500">{row.label}</Text>
+                      <Text selectable className="text-sm font-medium text-slate-800 flex-shrink text-right" numberOfLines={1}>{row.value}</Text>
+                    </View>
+                  )) : (
+                    <Text className="text-xs text-slate-400 py-3">No extra CRM details yet</Text>
+                  )}
+                </View>
+              )}
+
+              {!!conv.contactId && (
+                <View className="mt-4 gap-2">
+                  <TouchableOpacity
+                    onPress={() => runAfterSheet(() => setShowContactSheet(false), () => void openPipelineModal())}
+                    className="flex-row items-center justify-center gap-2 py-3 rounded-2xl bg-sky-700"
+                  >
+                    <GitBranch size={16} color="#fff" />
+                    <Text className="text-sm font-semibold text-white">Full details & pipeline</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={openContactPage}
+                    className="flex-row items-center justify-center gap-2 py-3 rounded-2xl border border-slate-200 bg-white"
+                  >
+                    <ExternalLink size={16} color="#334155" />
+                    <Text className="text-sm font-semibold text-slate-700">Open contact page</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+            </ScrollView>
           </View>
         </View>
       </Modal>

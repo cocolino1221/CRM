@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
-import { View, Text, TextInput, TouchableOpacity, FlatList, RefreshControl, Modal, ScrollView, Alert } from 'react-native';
-import { Search, Plus, X, WifiOff, RefreshCw, Users, Check, Archive, ArchiveRestore, Trash2, MailOpen } from 'lucide-react-native';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import { View, Text, TextInput, TouchableOpacity, FlatList, RefreshControl, Modal, ScrollView, Alert, KeyboardAvoidingView, Platform } from 'react-native';
+import { Search, Plus, X, WifiOff, RefreshCw, Users, Check, Archive, ArchiveRestore, Trash2, MailOpen, Pin, BellOff, Bell } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -10,8 +10,46 @@ import { useAuthStore } from '../stores/auth-store';
 import Avatar from '../components/Avatar';
 import type { WhatsAppStackParams } from '../navigation/WhatsAppStack';
 import type { Conversation } from '../types';
+import { useToastStore } from '../stores/toast-store';
 
-type Nav = NativeStackNavigationProp<WhatsAppStackParams, 'Inbox'>;
+type Nav = NativeStackNavigationProp<WhatsAppStackParams, 'WhatsAppInbox'>;
+type TemplateItem = {
+  name: string;
+  language: string;
+  status?: string;
+  category?: string;
+  requiresMediaHeader?: boolean;
+  requiresDynamicParams?: boolean;
+  headerMediaType?: 'image' | 'video' | 'document';
+  headerMediaId?: string;
+  headerMediaUrl?: string;
+  hasReusableHeaderMedia?: boolean;
+  components?: any[];
+};
+
+function buildTemplateParameters(template: TemplateItem, fallbackName?: string): any[] {
+  const components = Array.isArray(template.components) ? template.components : [];
+  if (!components.length) return [];
+  const baseName = String(fallbackName || '').trim() || 'there';
+  const built: any[] = [];
+
+  for (const component of components) {
+    const type = String(component?.type || '').toUpperCase();
+    if (!['HEADER', 'BODY'].includes(type)) continue;
+    const text = String(component?.text || '');
+    const placeholders = Array.from(text.matchAll(/\{\{\d+\}\}/g));
+    if (!placeholders.length) continue;
+    built.push({
+      type: type.toLowerCase(),
+      parameters: placeholders.map((_, index) => ({
+        type: 'text',
+        text: index === 0 ? baseName : '-',
+      })),
+    });
+  }
+
+  return built;
+}
 
 function timeAgo(dateStr: string): string {
   const diff = Date.now() - new Date(dateStr).getTime();
@@ -50,12 +88,24 @@ function formatSourceLabel(source?: string | null): string {
     .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
-type InboxFilter = 'all' | 'unassigned' | 'mine' | 'unread' | 'today' | 'archived';
+function normalizeSourceValue(source?: string | null): string {
+  return String(source || '').trim().toLowerCase();
+}
+
+type InboxFilter = 'all' | 'unassigned' | 'mine' | 'unread' | 'today' | 'pinned' | 'archived' | 'no_reply';
 
 function isSameDay(dateStr: string): boolean {
   const source = new Date(dateStr);
   const today = new Date();
   return source.toDateString() === today.toDateString();
+}
+
+function isMuted(conv: Conversation): boolean {
+  const mutedUntil = String(conv.mutedUntil || '').trim();
+  if (!mutedUntil) return false;
+  const parsed = new Date(mutedUntil);
+  if (Number.isNaN(parsed.getTime())) return false;
+  return parsed.getTime() > Date.now();
 }
 
 export default function WhatsAppInboxScreen() {
@@ -70,16 +120,20 @@ export default function WhatsAppInboxScreen() {
     assignConversation,
     markUnread,
     archiveConversation,
+    pinConversation,
+    muteConversation,
     deleteConversation,
     pendingOutboxCount,
     syncOutbox,
     openConversation,
   } = useWhatsAppStore();
+  const showToast = useToastStore(s => s.show);
   const currentUser = useAuthStore(s => s.user);
   const [search, setSearch] = useState('');
   const [showSearch, setShowSearch] = useState(false);
   const [showNewModal, setShowNewModal] = useState(false);
   const [inboxFilter, setInboxFilter] = useState<InboxFilter>('all');
+  const [sourceFilter, setSourceFilter] = useState('all');
   const [assignTarget, setAssignTarget] = useState<Conversation | null>(null);
   const [actionTarget, setActionTarget] = useState<Conversation | null>(null);
   const [isAssigning, setIsAssigning] = useState(false);
@@ -88,6 +142,11 @@ export default function WhatsAppInboxScreen() {
   const [contactResults, setContactResults] = useState<any[]>([]);
   const [manualPhone, setManualPhone] = useState('');
   const [isSearchingContacts, setIsSearchingContacts] = useState(false);
+  const [templates, setTemplates] = useState<TemplateItem[]>([]);
+  const [isLoadingTemplates, setIsLoadingTemplates] = useState(false);
+  const [isSendingTemplate, setIsSendingTemplate] = useState(false);
+  const [showTemplatePicker, setShowTemplatePicker] = useState(false);
+  const [selectedTemplate, setSelectedTemplate] = useState<TemplateItem | null>(null);
   const navigation = useNavigation<Nav>();
   const insets = useSafeAreaInsets();
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -104,21 +163,48 @@ export default function WhatsAppInboxScreen() {
   const matchesFilter = useCallback((conv: Conversation, filter: InboxFilter) => {
     if (filter === 'archived') return !!conv.archived;
     if (conv.archived) return false;
+    if (filter === 'pinned') return !!conv.pinned;
     if (filter === 'unassigned') return !conv.assignment;
     if (filter === 'mine') return !!currentUser?.id && conv.assignment?.userId === currentUser.id;
     if (filter === 'unread') return conv.unreadCount > 0;
     if (filter === 'today') return isSameDay(conv.lastMessageTime);
+    if (filter === 'no_reply') return !conv.lastInboundTime && conv.messageCount > 0;
     return true;
   }, [currentUser?.id]);
 
   const byFilter = conversations.filter(conv => matchesFilter(conv, inboxFilter));
+  const sourceOptions = useMemo(() => {
+    const items = new Map<string, string>();
+    for (const conv of byFilter) {
+      const normalized = normalizeSourceValue(conv.contactSource);
+      if (!normalized || items.has(normalized)) continue;
+      items.set(normalized, formatSourceLabel(conv.contactSource));
+    }
+    return [
+      { value: 'all', label: 'All sources' },
+      ...Array.from(items.entries())
+        .sort((a, b) => a[1].localeCompare(b[1]))
+        .map(([value, label]) => ({ value, label })),
+    ];
+  }, [byFilter]);
+
+  useEffect(() => {
+    if (sourceFilter === 'all') return;
+    if (!sourceOptions.some(option => option.value === sourceFilter)) {
+      setSourceFilter('all');
+    }
+  }, [sourceFilter, sourceOptions]);
+
+  const bySource = sourceFilter === 'all'
+    ? byFilter
+    : byFilter.filter(conv => normalizeSourceValue(conv.contactSource) === sourceFilter);
 
   const filtered = search
-    ? byFilter.filter(c =>
+    ? bySource.filter(c =>
         c.contactName.toLowerCase().includes(search.toLowerCase()) ||
         c.phone.includes(search)
       )
-    : byFilter;
+    : bySource;
 
   const totalUnread = conversations.reduce((sum, c) => sum + c.unreadCount, 0);
   const activeSessions = conversations.filter(sessionOpen).length;
@@ -128,7 +214,9 @@ export default function WhatsAppInboxScreen() {
     mine: conversations.filter(conv => matchesFilter(conv, 'mine')).length,
     unread: conversations.filter(conv => matchesFilter(conv, 'unread')).length,
     today: conversations.filter(conv => matchesFilter(conv, 'today')).length,
+    pinned: conversations.filter(conv => matchesFilter(conv, 'pinned')).length,
     archived: conversations.filter(conv => matchesFilter(conv, 'archived')).length,
+    no_reply: conversations.filter(conv => matchesFilter(conv, 'no_reply')).length,
   };
 
   const onRefresh = useCallback(() => {
@@ -172,6 +260,24 @@ export default function WhatsAppInboxScreen() {
     if (!actionTarget || isApplyingAction) return;
     setIsApplyingAction(true);
     await archiveConversation(actionTarget.waId, !actionTarget.archived);
+    setIsApplyingAction(false);
+    setActionTarget(null);
+  };
+
+  const handlePinToggle = async () => {
+    if (!actionTarget || isApplyingAction) return;
+    setIsApplyingAction(true);
+    await pinConversation(actionTarget.waId, !actionTarget.pinned);
+    setIsApplyingAction(false);
+    setActionTarget(null);
+  };
+
+  const handleMuteToggle = async () => {
+    if (!actionTarget || isApplyingAction) return;
+    setIsApplyingAction(true);
+    const currentlyMuted = isMuted(actionTarget);
+    const mutedUntil = currentlyMuted ? null : new Date(Date.now() + (8 * 60 * 60 * 1000)).toISOString();
+    await muteConversation(actionTarget.waId, mutedUntil);
     setIsApplyingAction(false);
     setActionTarget(null);
   };
@@ -223,6 +329,64 @@ export default function WhatsAppInboxScreen() {
     return () => clearTimeout(t);
   }, [contactQuery, showNewModal, searchContacts]);
 
+  const loadTemplates = useCallback(async () => {
+    setIsLoadingTemplates(true);
+    try {
+      const res = await api.get('/integrations/whatsapp/templates');
+      const rows = Array.isArray(res.data?.data) ? res.data.data : [];
+      const mapped: TemplateItem[] = rows
+        .map((tpl: any) => {
+          const components = Array.isArray(tpl?.components) ? tpl.components : [];
+          const headerComponent = components.find((component: any) => {
+            const componentType = String(component?.type || '').toUpperCase();
+            const headerFormat = String(component?.format || '').toUpperCase();
+            return componentType === 'HEADER' && ['IMAGE', 'VIDEO', 'DOCUMENT'].includes(headerFormat);
+          });
+          const headerMediaType = headerComponent
+            ? String(headerComponent?.format || '').trim().toLowerCase() as TemplateItem['headerMediaType']
+            : undefined;
+          const headerMediaId = String(tpl?.headerMediaId || '').trim() || undefined;
+          const headerMediaUrl = String(tpl?.headerMediaUrl || '').trim() || undefined;
+          const requiresMediaHeader = Boolean(headerMediaType);
+          const requiresDynamicParams = components.some((component: any) => {
+            const text = String(component?.text || '');
+            return /\{\{\d+\}\}/.test(text);
+          });
+          return {
+            name: String(tpl?.name || '').trim(),
+            language: String(tpl?.language || '').trim() || 'en',
+            status: String(tpl?.status || '').trim(),
+            category: String(tpl?.category || '').trim(),
+            requiresMediaHeader,
+            requiresDynamicParams,
+            headerMediaType,
+            headerMediaId,
+            headerMediaUrl,
+            hasReusableHeaderMedia: requiresMediaHeader && Boolean(headerMediaId || headerMediaUrl),
+            components,
+          };
+        })
+        .filter((tpl: TemplateItem) => tpl.name && String(tpl.status || '').toUpperCase() === 'APPROVED')
+        .sort((a: TemplateItem, b: TemplateItem) => `${a.name}_${a.language}`.localeCompare(`${b.name}_${b.language}`));
+
+      setTemplates(mapped);
+      setSelectedTemplate((current) => {
+        if (!current) return mapped[0] || null;
+        const stillExists = mapped.some((tpl) => tpl.name === current.name && tpl.language === current.language);
+        return stillExists ? current : (mapped[0] || null);
+      });
+    } catch (err: any) {
+      showToast(err?.response?.data?.message || 'Failed to load templates', 'error');
+    } finally {
+      setIsLoadingTemplates(false);
+    }
+  }, [showToast]);
+
+  useEffect(() => {
+    if (!showNewModal) return;
+    loadTemplates();
+  }, [showNewModal, loadTemplates]);
+
   const startConversation = async (input: { phone?: string; contactName?: string; contactId?: string | null }) => {
     const waId = String(input.phone || '').replace(/[^0-9]/g, '');
     if (!waId) return;
@@ -244,10 +408,47 @@ export default function WhatsAppInboxScreen() {
     });
   };
 
+  const sendTemplateToNewNumber = async () => {
+    const waId = String(manualPhone || '').replace(/[^0-9]/g, '');
+    if (!waId) {
+      showToast('Add a phone number first', 'error');
+      return;
+    }
+    if (!selectedTemplate) {
+      showToast('Select a template first', 'error');
+      return;
+    }
+    if (selectedTemplate.requiresMediaHeader && !selectedTemplate.hasReusableHeaderMedia) {
+      showToast('This template needs saved header media. Send it once from web first, then mobile can reuse it.', 'error');
+      return;
+    }
+
+    setIsSendingTemplate(true);
+    try {
+      const parameters = buildTemplateParameters(selectedTemplate, '');
+      await api.post('/integrations/whatsapp/send/template', {
+        to: waId,
+        templateName: selectedTemplate.name,
+        language: selectedTemplate.language || 'en',
+        ...(parameters.length ? { parameters } : {}),
+        ...(selectedTemplate.headerMediaType ? { headerMediaType: selectedTemplate.headerMediaType } : {}),
+        ...(selectedTemplate.headerMediaId ? { headerMediaId: selectedTemplate.headerMediaId } : {}),
+        ...(selectedTemplate.headerMediaUrl ? { headerMediaUrl: selectedTemplate.headerMediaUrl } : {}),
+      });
+      showToast(`Template sent: ${selectedTemplate.name}`, 'success');
+      await startConversation({ phone: manualPhone });
+    } catch (err: any) {
+      showToast(err?.response?.data?.message || 'Template send failed', 'error');
+    } finally {
+      setIsSendingTemplate(false);
+    }
+  };
+
   const renderItem = ({ item: conv }: { item: Conversation }) => {
     const isActive = sessionOpen(conv);
     const assigned = conv.assignment;
     const sourceLabel = formatSourceLabel(conv.contactSource);
+    const muted = isMuted(conv);
     return (
       <TouchableOpacity
         onPress={() => openChat(conv)}
@@ -278,6 +479,10 @@ export default function WhatsAppInboxScreen() {
           </Text>
         </View>
         <View className="items-end gap-1.5">
+          <View className="flex-row items-center gap-1">
+            {conv.pinned ? <Pin size={12} color="#0369a1" /> : null}
+            {muted ? <BellOff size={12} color="#64748b" /> : null}
+          </View>
           <TouchableOpacity
             onPress={() => setAssignTarget(conv)}
             className="h-8 w-8 rounded-full items-center justify-center border border-slate-200"
@@ -349,6 +554,8 @@ export default function WhatsAppInboxScreen() {
             ['mine', 'My leads'],
             ['unread', 'Unread'],
             ['today', 'Today'],
+            ['no_reply', 'No Reply'],
+            ['pinned', 'Pinned'],
             ['archived', 'Archived'],
           ] as Array<[InboxFilter, string]>).map(([key, label]) => {
             const active = inboxFilter === key;
@@ -360,6 +567,25 @@ export default function WhatsAppInboxScreen() {
               >
                 <Text className={`text-[11px] font-semibold ${active ? 'text-sky-800' : 'text-white'}`}>
                   {label} ({filterCounts[key]})
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingTop: 8 }}>
+          {sourceOptions.map((option) => {
+            const active = sourceFilter === option.value;
+            const count = option.value === 'all'
+              ? byFilter.length
+              : byFilter.filter(conv => normalizeSourceValue(conv.contactSource) === option.value).length;
+            return (
+              <TouchableOpacity
+                key={option.value}
+                onPress={() => setSourceFilter(option.value)}
+                className={`px-3 py-1.5 rounded-full border ${active ? 'bg-white border-white' : 'bg-white/10 border-white/25'}`}
+              >
+                <Text className={`text-[11px] font-semibold ${active ? 'text-sky-800' : 'text-white'}`}>
+                  {option.label} ({count})
                 </Text>
               </TouchableOpacity>
             );
@@ -414,6 +640,10 @@ export default function WhatsAppInboxScreen() {
       />
 
       <Modal visible={showNewModal} animationType="slide" transparent>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          className="flex-1 justify-end"
+        >
         <View className="flex-1 bg-black/40 justify-end">
           <View className="bg-white rounded-t-3xl max-h-[78%]" style={{ paddingBottom: insets.bottom > 0 ? insets.bottom : 16 }}>
             <View className="flex-row items-center justify-between px-4 py-3 border-b border-slate-100">
@@ -489,6 +719,89 @@ export default function WhatsAppInboxScreen() {
                 </TouchableOpacity>
               </View>
             </View>
+
+            <View className="px-4 pt-4 pb-2">
+              <Text className="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-2">Send template to new number</Text>
+              <TouchableOpacity
+                onPress={() => setShowTemplatePicker(true)}
+                className="px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200"
+              >
+                <Text className="text-sm text-slate-800" numberOfLines={1}>
+                  {selectedTemplate ? `${selectedTemplate.name} (${selectedTemplate.language})` : (isLoadingTemplates ? 'Loading templates...' : 'Select template')}
+                </Text>
+              </TouchableOpacity>
+              {selectedTemplate?.requiresMediaHeader ? (
+                <Text className="text-[11px] text-amber-600 mt-1.5">
+                  {selectedTemplate.hasReusableHeaderMedia
+                    ? `Saved ${selectedTemplate.headerMediaType || 'header'} media will be reused from your web setup.`
+                    : 'This template needs header media. Send it once from web first so mobile can reuse it.'}
+                </Text>
+              ) : null}
+              <TouchableOpacity
+                onPress={sendTemplateToNewNumber}
+                disabled={!manualPhone.trim() || !selectedTemplate || isSendingTemplate || Boolean(selectedTemplate?.requiresMediaHeader && !selectedTemplate?.hasReusableHeaderMedia)}
+                className={`mt-2 px-4 py-2.5 rounded-xl ${
+                  manualPhone.trim()
+                    && selectedTemplate
+                    && !isSendingTemplate
+                    && !(selectedTemplate.requiresMediaHeader && !selectedTemplate.hasReusableHeaderMedia)
+                    ? 'bg-sky-700'
+                    : 'bg-slate-300'
+                }`}
+              >
+                <Text className="text-xs font-semibold text-white text-center">
+                  {isSendingTemplate ? 'Sending...' : 'Send Template'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      <Modal visible={showTemplatePicker} animationType="slide" transparent onRequestClose={() => setShowTemplatePicker(false)}>
+        <View className="flex-1 bg-black/40 justify-end">
+          <View className="bg-white rounded-t-3xl max-h-[72%]" style={{ paddingBottom: insets.bottom > 0 ? insets.bottom : 16 }}>
+            <View className="px-4 py-3 border-b border-slate-100 flex-row items-center justify-between">
+              <Text className="text-base font-bold text-slate-900">Select template</Text>
+              <TouchableOpacity onPress={() => setShowTemplatePicker(false)} className="h-8 w-8 rounded-full bg-slate-100 items-center justify-center">
+                <X size={14} color="#64748b" />
+              </TouchableOpacity>
+            </View>
+            <FlatList
+              data={templates}
+              keyExtractor={(item) => `${item.name}_${item.language}`}
+              contentContainerStyle={{ paddingHorizontal: 16, paddingVertical: 10 }}
+              renderItem={({ item }) => {
+                const isSelected = selectedTemplate?.name === item.name && selectedTemplate?.language === item.language;
+                return (
+                  <TouchableOpacity
+                    onPress={() => {
+                      setSelectedTemplate(item);
+                      setShowTemplatePicker(false);
+                    }}
+                    className={`py-2.5 px-1 rounded-xl flex-row items-center gap-2 mb-1 ${isSelected ? 'bg-sky-50' : ''}`}
+                  >
+                    <View className="flex-1 min-w-0">
+                      <Text className="text-sm font-medium text-slate-800" numberOfLines={1}>
+                        {item.name}
+                      </Text>
+                      <Text className="text-xs text-slate-500" numberOfLines={1}>
+                        {item.language} • {item.category || 'template'}
+                      </Text>
+                    </View>
+                    {isSelected && <Check size={16} color="#0284c7" />}
+                  </TouchableOpacity>
+                );
+              }}
+              ListEmptyComponent={
+                <View className="py-4">
+                  <Text className="text-xs text-slate-400">
+                    {isLoadingTemplates ? 'Loading templates...' : 'No approved templates found'}
+                  </Text>
+                </View>
+              }
+            />
           </View>
         </View>
       </Modal>
@@ -568,6 +881,28 @@ export default function WhatsAppInboxScreen() {
               >
                 <MailOpen size={16} color="#334155" />
                 <Text className="text-sm font-medium text-slate-700">Mark as unread</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={handlePinToggle}
+                disabled={isApplyingAction}
+                className="px-4 py-3 rounded-xl border border-slate-200 bg-slate-50 flex-row items-center gap-2"
+              >
+                <Pin size={16} color="#334155" />
+                <Text className="text-sm font-medium text-slate-700">
+                  {actionTarget?.pinned ? 'Unpin' : 'Pin'}
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={handleMuteToggle}
+                disabled={isApplyingAction}
+                className="px-4 py-3 rounded-xl border border-slate-200 bg-slate-50 flex-row items-center gap-2"
+              >
+                {actionTarget && isMuted(actionTarget) ? <Bell size={16} color="#334155" /> : <BellOff size={16} color="#334155" />}
+                <Text className="text-sm font-medium text-slate-700">
+                  {actionTarget && isMuted(actionTarget) ? 'Unmute' : 'Mute 8h'}
+                </Text>
               </TouchableOpacity>
 
               <TouchableOpacity

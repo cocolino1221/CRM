@@ -12,9 +12,10 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
+  Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { FileText, ExternalLink, WifiOff, RefreshCw, Plus, X, Check } from 'lucide-react-native';
+import { FileText, ExternalLink, WifiOff, RefreshCw, Plus, X, Check, ChevronDown, ChevronRight, Trash2 } from 'lucide-react-native';
 import api from '../lib/api';
 import { useDocumentsStore } from '../stores/documents-store';
 import { useToastStore } from '../stores/toast-store';
@@ -34,6 +35,7 @@ interface PayfunnelLinkOption {
 
 type PaymentLinkMode = 'generate' | 'manual' | 'payfunnel';
 type PickerType = 'documentType' | 'template' | 'payfunnelLink' | null;
+type PickerName = Exclude<PickerType, null>;
 
 const documentTypeOptions = [
   { value: 'contract', label: 'Contract' },
@@ -98,8 +100,18 @@ function getPaymentChip(status?: string): { bg: string; text: string } {
   if (key === 'paid') return { bg: '#dcfce7', text: '#166534' };
   if (key === 'failed') return { bg: '#fee2e2', text: '#b91c1c' };
   if (key === 'pending') return { bg: '#fef3c7', text: '#92400e' };
+  if (key === 'awaiting_payment') return { bg: '#fef3c7', text: '#92400e' };
   if (key === 'awaiting_signature') return { bg: '#dbeafe', text: '#1d4ed8' };
   return { bg: '#e2e8f0', text: '#475569' };
+}
+
+function normalizeDocumentPaymentStatus(documentStatus?: string, paymentStatus?: string): string | undefined {
+  const paymentKey = String(paymentStatus || '').toLowerCase();
+  const documentKey = String(documentStatus || '').toLowerCase();
+  if (paymentKey === 'awaiting_signature' && (documentKey === 'signed' || documentKey === 'completed')) {
+    return 'awaiting_payment';
+  }
+  return paymentStatus;
 }
 
 async function openExternalUrl(url: string) {
@@ -126,6 +138,25 @@ export default function DocumentsScreen() {
   const [payfunnelLinks, setPayfunnelLinks] = useState<PayfunnelLinkOption[]>([]);
   const [form, setForm] = useState<CreateDocumentForm>(initialCreateForm);
   const [activePicker, setActivePicker] = useState<PickerType>(null);
+  const [expandedDocuments, setExpandedDocuments] = useState<Record<string, boolean>>({});
+  const [deletingDocumentId, setDeletingDocumentId] = useState('');
+
+  const closeCreateModal = useCallback(() => {
+    setActivePicker(null);
+    setShowCreateModal(false);
+  }, []);
+  const togglePicker = useCallback((picker: PickerName) => {
+    setActivePicker((prev) => (prev === picker ? null : picker));
+  }, []);
+  const closePicker = useCallback(() => {
+    setActivePicker(null);
+  }, []);
+  const toggleDocumentRow = useCallback((documentId: string) => {
+    setExpandedDocuments((prev) => ({
+      ...prev,
+      [documentId]: !prev[documentId],
+    }));
+  }, []);
 
   const selectedTemplate = useMemo(
     () => templates.find((template) => template.id === form.templateId) || null,
@@ -224,6 +255,7 @@ export default function DocumentsScreen() {
   const onPressCreate = useCallback((template?: EsemneazaTemplate) => {
     const fallbackTemplate = template || templates[0] || null;
     setCreateError('');
+    setActivePicker(null);
     setForm({
       ...initialCreateForm,
       templateId: fallbackTemplate?.id || '',
@@ -312,6 +344,12 @@ export default function DocumentsScreen() {
           : form.paymentLinkMode === 'payfunnel'
             ? (selectedPayfunnelLink?.name || form.selectedPayfunnelLinkName || undefined)
             : undefined;
+      const paymentLinkId =
+        !form.autoSendPaymentLink
+          ? undefined
+          : form.paymentLinkMode === 'payfunnel'
+            ? (selectedPayfunnelLink?.id || undefined)
+            : undefined;
 
       await api.post('/documents/esemneaza', {
         name,
@@ -328,9 +366,10 @@ export default function DocumentsScreen() {
         sendPaymentWhatsApp: form.sendPaymentWhatsApp,
         paymentLinkUrl,
         paymentLinkName,
+        paymentLinkId,
       });
 
-      setShowCreateModal(false);
+      closeCreateModal();
       showToast('Document trimis la semnat.', 'success');
       await fetchDocuments();
     } catch (err: any) {
@@ -340,18 +379,59 @@ export default function DocumentsScreen() {
     } finally {
       setIsSubmitting(false);
     }
-  }, [fetchDocuments, form, payfunnelLinks, selectedTemplate?.name, showToast]);
+  }, [closeCreateModal, fetchDocuments, form, payfunnelLinks, selectedTemplate?.name, showToast]);
+
+  const handleDeleteDocument = useCallback((item: Document) => {
+    const recipientInfo = item.recipients?.[0]?.email || '';
+    Alert.alert(
+      'Sterge documentul',
+      [
+        `Document: ${item.name}`,
+        recipientInfo ? `Destinatar: ${recipientInfo}` : '',
+        'Se sterge si tranzactia asociata din Payments.',
+      ]
+        .filter(Boolean)
+        .join('\n'),
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => {
+            void (async () => {
+              try {
+                setDeletingDocumentId(item.id);
+                await api.delete(`/documents/${item.id}`);
+                await fetchDocuments();
+                showToast('Document sters. Tranzactia asociata a fost eliminata din Payments.', 'success');
+              } catch (err: any) {
+                const message = err?.response?.data?.message || 'Nu am putut sterge documentul.';
+                showToast(message, 'error');
+              } finally {
+                setDeletingDocumentId('');
+              }
+            })();
+          },
+        },
+      ],
+    );
+  }, [fetchDocuments, showToast]);
 
   const renderItem = ({ item }: { item: Document }) => {
+    const isExpanded = expandedDocuments[item.id] === true;
     const statusChip = getStatusChip(item.status);
-    const paymentStatus = item.metadata?.payment?.status;
+    const paymentStatus = normalizeDocumentPaymentStatus(item.status, item.metadata?.payment?.status);
     const paymentChip = getPaymentChip(paymentStatus);
     const recipient = item.recipients?.[0]?.email || '-';
     const signUrl = String(item.signingUrl || '').trim();
     const paymentUrl = String(item.metadata?.payment?.paymentLink || '').trim();
 
     return (
-      <View className="bg-white/90 border border-slate-100 rounded-2xl p-3.5 mb-2.5">
+      <TouchableOpacity
+        onPress={() => toggleDocumentRow(item.id)}
+        activeOpacity={0.85}
+        className="bg-white/90 border border-slate-100 rounded-2xl p-3.5 mb-2.5"
+      >
         <Text className="text-sm font-semibold text-slate-900" numberOfLines={1}>{item.name}</Text>
         <Text className="text-xs text-slate-500 mt-0.5" numberOfLines={1}>{recipient}</Text>
 
@@ -362,36 +442,58 @@ export default function DocumentsScreen() {
           <View className="px-2 py-1 rounded-full" style={{ backgroundColor: paymentChip.bg }}>
             <Text className="text-[10px] font-semibold" style={{ color: paymentChip.text }}>{paymentStatus || 'n/a'}</Text>
           </View>
-          <Text className="text-[11px] text-slate-400 ml-auto">{formatDate(item.createdAt)}</Text>
+          <Text className="text-[11px] text-slate-500 ml-auto mr-1">Start: {formatDate(item.createdAt)}</Text>
+          {isExpanded ? <ChevronDown size={14} color="#94a3b8" /> : <ChevronRight size={14} color="#94a3b8" />}
         </View>
 
-        {item.metadata?.payment?.failureReason && (
-          <Text className="text-xs text-rose-600 mt-2" numberOfLines={2}>{item.metadata.payment.failureReason}</Text>
-        )}
+        <Text className="text-[11px] text-slate-500 mt-1">End: {formatDate(item.signedAt || item.sentAt)}</Text>
 
-        {(signUrl || paymentUrl) && (
-          <View className="flex-row gap-2 mt-3">
-            {signUrl ? (
-              <TouchableOpacity
-                onPress={() => openExternalUrl(signUrl)}
-                className="flex-row items-center gap-1.5 px-3 py-2 rounded-xl border border-emerald-200 bg-emerald-50"
-              >
-                <ExternalLink size={14} color="#047857" />
-                <Text className="text-xs font-semibold text-emerald-700">Sign Link</Text>
-              </TouchableOpacity>
+        {isExpanded ? (
+          <View className="mt-2">
+            <Text className="text-[11px] text-slate-500">Sent: {formatDate(item.sentAt)}</Text>
+            <Text className="text-[11px] text-slate-500">Signed: {formatDate(item.signedAt)}</Text>
+
+            {item.metadata?.payment?.failureReason ? (
+              <Text className="text-xs text-rose-600 mt-2" numberOfLines={2}>{item.metadata.payment.failureReason}</Text>
             ) : null}
-            {paymentUrl ? (
-              <TouchableOpacity
-                onPress={() => openExternalUrl(paymentUrl)}
-                className="flex-row items-center gap-1.5 px-3 py-2 rounded-xl border border-indigo-200 bg-indigo-50"
-              >
-                <ExternalLink size={14} color="#4338ca" />
-                <Text className="text-xs font-semibold text-indigo-700">Payment Link</Text>
-              </TouchableOpacity>
+
+            {(signUrl || paymentUrl) ? (
+              <View className="flex-row gap-2 mt-3">
+                {signUrl ? (
+                  <TouchableOpacity
+                    onPress={() => openExternalUrl(signUrl)}
+                    className="flex-row items-center gap-1.5 px-3 py-2 rounded-xl border border-emerald-200 bg-emerald-50"
+                  >
+                    <ExternalLink size={14} color="#047857" />
+                    <Text className="text-xs font-semibold text-emerald-700">Sign Link</Text>
+                  </TouchableOpacity>
+                ) : null}
+                {paymentUrl ? (
+                  <TouchableOpacity
+                    onPress={() => openExternalUrl(paymentUrl)}
+                    className="flex-row items-center gap-1.5 px-3 py-2 rounded-xl border border-indigo-200 bg-indigo-50"
+                  >
+                    <ExternalLink size={14} color="#4338ca" />
+                    <Text className="text-xs font-semibold text-indigo-700">Payment Link</Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
             ) : null}
+
+            <TouchableOpacity
+              onPress={() => handleDeleteDocument(item)}
+              disabled={deletingDocumentId === item.id}
+              className="mt-3 flex-row items-center justify-center gap-2 px-3 py-2 rounded-xl border border-rose-200 bg-rose-50"
+              style={{ opacity: deletingDocumentId === item.id ? 0.6 : 1 }}
+            >
+              <Trash2 size={14} color="#b91c1c" />
+              <Text className="text-xs font-semibold text-rose-700">
+                {deletingDocumentId === item.id ? 'Deleting...' : 'Delete Document'}
+              </Text>
+            </TouchableOpacity>
           </View>
-        )}
-      </View>
+        ) : null}
+      </TouchableOpacity>
     );
   };
 
@@ -506,16 +608,16 @@ export default function DocumentsScreen() {
         }
       />
 
-      <Modal visible={showCreateModal} animationType="slide" transparent onRequestClose={() => setShowCreateModal(false)}>
+      <Modal visible={showCreateModal} animationType="slide" transparent onRequestClose={closeCreateModal}>
         <View className="flex-1 bg-black/40 justify-end">
-          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
             <View className="bg-white rounded-t-3xl max-h-[88%]" style={{ paddingBottom: insets.bottom > 0 ? insets.bottom : 14 }}>
               <View className="px-4 py-3 border-b border-slate-100 flex-row items-center justify-between">
                 <View>
                   <Text className="text-base font-bold text-slate-900">Trimite Contract</Text>
                   <Text className="text-xs text-slate-500 mt-0.5">eSemneaza template send</Text>
                 </View>
-                <TouchableOpacity onPress={() => setShowCreateModal(false)} className="h-8 w-8 rounded-full bg-slate-100 items-center justify-center">
+                <TouchableOpacity onPress={closeCreateModal} className="h-8 w-8 rounded-full bg-slate-100 items-center justify-center">
                   <X size={14} color="#64748b" />
                 </TouchableOpacity>
               </View>
@@ -523,23 +625,74 @@ export default function DocumentsScreen() {
               <ScrollView contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 10 }}>
                 <Text className="text-xs font-semibold text-slate-500 mb-2">Template</Text>
                 <TouchableOpacity
-                  onPress={() => setActivePicker('template')}
+                  onPress={() => togglePicker('template')}
                   className="h-11 rounded-xl border border-slate-200 px-3 bg-slate-50 flex-row items-center justify-between"
                 >
                   <Text className={`text-sm flex-1 ${selectedTemplate ? 'text-slate-900' : 'text-slate-400'}`} numberOfLines={1}>
                     {selectedTemplate?.name || (isLoadingTemplates ? 'Loading templates...' : 'Select template')}
                   </Text>
-                  <Text className="text-slate-400">▼</Text>
+                  <Text className="text-slate-400">{activePicker === 'template' ? '▲' : '▼'}</Text>
                 </TouchableOpacity>
+                {activePicker === 'template' ? (
+                  <View className="mt-2 rounded-xl border border-slate-200 bg-white p-2">
+                    {templates.length === 0 ? (
+                      <Text className="text-xs text-slate-500 px-2 py-2">Nu exista template-uri disponibile.</Text>
+                    ) : (
+                      <ScrollView nestedScrollEnabled className="max-h-44">
+                        {templates.map((template) => {
+                          const isSelected = template.id === form.templateId;
+                          return (
+                            <TouchableOpacity
+                              key={template.id}
+                              onPress={() => {
+                                setForm((prev) => ({
+                                  ...prev,
+                                  templateId: template.id,
+                                  name: prev.name.trim() ? prev.name : template.name,
+                                }));
+                                closePicker();
+                              }}
+                              className={`py-2.5 px-2.5 rounded-xl mb-1.5 border ${isSelected ? 'bg-sky-50 border-sky-300' : 'bg-white border-slate-200'}`}
+                            >
+                              <Text className={`text-sm font-semibold ${isSelected ? 'text-sky-700' : 'text-slate-900'}`} numberOfLines={1}>{template.name}</Text>
+                              <Text className="text-[11px] text-slate-500 mt-0.5" numberOfLines={1}>{template.id}</Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </ScrollView>
+                    )}
+                  </View>
+                ) : null}
 
                 <Text className="text-xs text-slate-500 mt-3 mb-1.5">Document Type</Text>
                 <TouchableOpacity
-                  onPress={() => setActivePicker('documentType')}
+                  onPress={() => togglePicker('documentType')}
                   className="h-11 rounded-xl border border-slate-200 px-3 bg-slate-50 flex-row items-center justify-between"
                 >
                   <Text className="text-sm text-slate-900">{selectedDocumentTypeLabel}</Text>
-                  <Text className="text-slate-400">▼</Text>
+                  <Text className="text-slate-400">{activePicker === 'documentType' ? '▲' : '▼'}</Text>
                 </TouchableOpacity>
+                {activePicker === 'documentType' ? (
+                  <View className="mt-2 rounded-xl border border-slate-200 bg-white p-2">
+                    <ScrollView nestedScrollEnabled className="max-h-40">
+                      {documentTypeOptions.map((option) => {
+                        const isSelected = option.value === form.type;
+                        return (
+                          <TouchableOpacity
+                            key={option.value}
+                            onPress={() => {
+                              setForm((prev) => ({ ...prev, type: option.value }));
+                              closePicker();
+                            }}
+                            className={`py-2.5 px-2.5 rounded-xl mb-1.5 border ${isSelected ? 'bg-sky-50 border-sky-300' : 'bg-white border-slate-200'}`}
+                          >
+                            <Text className={`text-sm font-semibold ${isSelected ? 'text-sky-700' : 'text-slate-900'}`}>{option.label}</Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </ScrollView>
+                  </View>
+                ) : null}
 
                 <Text className="text-xs text-slate-500 mt-3 mb-1.5">Document Name</Text>
                 <TextInput
@@ -620,7 +773,12 @@ export default function DocumentsScreen() {
                         return (
                           <TouchableOpacity
                             key={mode}
-                            onPress={() => setForm((prev) => ({ ...prev, paymentLinkMode: mode }))}
+                            onPress={() => {
+                              setForm((prev) => ({ ...prev, paymentLinkMode: mode }));
+                              if (mode !== 'payfunnel') {
+                                closePicker();
+                              }
+                            }}
                             className={`px-3 py-2 rounded-xl border ${isSelected ? 'bg-sky-50 border-sky-300' : 'bg-white border-slate-200'}`}
                           >
                             <Text className={`text-xs font-semibold ${isSelected ? 'text-sky-700' : 'text-slate-600'}`}>{label}</Text>
@@ -653,15 +811,43 @@ export default function DocumentsScreen() {
                             {payfunnelLinksError || 'Nu exista link-uri PayFunnels disponibile.'}
                           </Text>
                         ) : (
-                          <TouchableOpacity
-                            onPress={() => setActivePicker('payfunnelLink')}
-                            className="h-11 rounded-xl border border-slate-200 px-3 bg-white flex-row items-center justify-between"
-                          >
-                            <Text className={`text-sm flex-1 ${selectedPayfunnelLink ? 'text-slate-900' : 'text-slate-400'}`} numberOfLines={1}>
-                              {selectedPayfunnelLink?.name || 'Select PayFunnels link'}
-                            </Text>
-                            <Text className="text-slate-400">▼</Text>
-                          </TouchableOpacity>
+                          <View>
+                            <TouchableOpacity
+                              onPress={() => togglePicker('payfunnelLink')}
+                              className="h-11 rounded-xl border border-slate-200 px-3 bg-white flex-row items-center justify-between"
+                            >
+                              <Text className={`text-sm flex-1 ${selectedPayfunnelLink ? 'text-slate-900' : 'text-slate-400'}`} numberOfLines={1}>
+                                {selectedPayfunnelLink?.name || 'Select PayFunnels link'}
+                              </Text>
+                              <Text className="text-slate-400">{activePicker === 'payfunnelLink' ? '▲' : '▼'}</Text>
+                            </TouchableOpacity>
+                            {activePicker === 'payfunnelLink' ? (
+                              <View className="mt-2 rounded-xl border border-slate-200 bg-white p-2">
+                                <ScrollView nestedScrollEnabled className="max-h-44">
+                                  {payfunnelLinks.map((link) => {
+                                    const isSelected = form.selectedPayfunnelLinkUrl === link.url;
+                                    return (
+                                      <TouchableOpacity
+                                        key={link.id}
+                                        onPress={() => {
+                                          setForm((prev) => ({
+                                            ...prev,
+                                            selectedPayfunnelLinkUrl: link.url,
+                                            selectedPayfunnelLinkName: link.name,
+                                          }));
+                                          closePicker();
+                                        }}
+                                        className={`py-2.5 px-2.5 rounded-xl mb-1.5 border ${isSelected ? 'bg-sky-50 border-sky-300' : 'bg-white border-slate-200'}`}
+                                      >
+                                        <Text className={`text-sm font-semibold ${isSelected ? 'text-sky-700' : 'text-slate-900'}`} numberOfLines={1}>{link.name}</Text>
+                                        <Text className="text-[11px] text-slate-500 mt-0.5" numberOfLines={1}>{link.url}</Text>
+                                      </TouchableOpacity>
+                                    );
+                                  })}
+                                </ScrollView>
+                              </View>
+                            ) : null}
+                          </View>
                         )}
                       </View>
                     ) : null}
@@ -693,84 +879,6 @@ export default function DocumentsScreen() {
         </View>
       </Modal>
 
-      <Modal visible={activePicker !== null} animationType="slide" transparent onRequestClose={() => setActivePicker(null)}>
-        <View className="flex-1 bg-black/40 justify-end">
-          <View className="bg-white rounded-t-3xl max-h-[70%]" style={{ paddingBottom: insets.bottom > 0 ? insets.bottom : 14 }}>
-            <View className="px-4 py-3 border-b border-slate-100 flex-row items-center justify-between">
-              <Text className="text-base font-bold text-slate-900">
-                {activePicker === 'template'
-                  ? 'Select template'
-                  : activePicker === 'documentType'
-                    ? 'Select document type'
-                    : 'Select PayFunnels link'}
-              </Text>
-              <TouchableOpacity onPress={() => setActivePicker(null)} className="h-8 w-8 rounded-full bg-slate-100 items-center justify-center">
-                <X size={14} color="#64748b" />
-              </TouchableOpacity>
-            </View>
-
-            <ScrollView contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 10 }}>
-              {activePicker === 'template' && templates.map((template) => {
-                const isSelected = template.id === form.templateId;
-                return (
-                  <TouchableOpacity
-                    key={template.id}
-                    onPress={() => {
-                      setForm((prev) => ({
-                        ...prev,
-                        templateId: template.id,
-                        name: prev.name.trim() ? prev.name : template.name,
-                      }));
-                      setActivePicker(null);
-                    }}
-                    className={`py-3 px-3 rounded-xl mb-2 border ${isSelected ? 'bg-sky-50 border-sky-300' : 'bg-white border-slate-200'}`}
-                  >
-                    <Text className={`text-sm font-semibold ${isSelected ? 'text-sky-700' : 'text-slate-900'}`}>{template.name}</Text>
-                    <Text className="text-[11px] text-slate-500 mt-1">{template.id}</Text>
-                  </TouchableOpacity>
-                );
-              })}
-
-              {activePicker === 'documentType' && documentTypeOptions.map((option) => {
-                const isSelected = option.value === form.type;
-                return (
-                  <TouchableOpacity
-                    key={option.value}
-                    onPress={() => {
-                      setForm((prev) => ({ ...prev, type: option.value }));
-                      setActivePicker(null);
-                    }}
-                    className={`py-3 px-3 rounded-xl mb-2 border ${isSelected ? 'bg-sky-50 border-sky-300' : 'bg-white border-slate-200'}`}
-                  >
-                    <Text className={`text-sm font-semibold ${isSelected ? 'text-sky-700' : 'text-slate-900'}`}>{option.label}</Text>
-                  </TouchableOpacity>
-                );
-              })}
-
-              {activePicker === 'payfunnelLink' && payfunnelLinks.map((link) => {
-                const isSelected = form.selectedPayfunnelLinkUrl === link.url;
-                return (
-                  <TouchableOpacity
-                    key={link.id}
-                    onPress={() => {
-                      setForm((prev) => ({
-                        ...prev,
-                        selectedPayfunnelLinkUrl: link.url,
-                        selectedPayfunnelLinkName: link.name,
-                      }));
-                      setActivePicker(null);
-                    }}
-                    className={`py-3 px-3 rounded-xl mb-2 border ${isSelected ? 'bg-sky-50 border-sky-300' : 'bg-white border-slate-200'}`}
-                  >
-                    <Text className={`text-sm font-semibold ${isSelected ? 'text-sky-700' : 'text-slate-900'}`} numberOfLines={1}>{link.name}</Text>
-                    <Text className="text-[11px] text-slate-500 mt-1" numberOfLines={1}>{link.url}</Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
     </View>
   );
 }

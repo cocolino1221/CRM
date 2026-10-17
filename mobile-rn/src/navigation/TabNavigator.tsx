@@ -1,13 +1,13 @@
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { View, Text } from 'react-native';
-import { MessageCircle, Users, Calendar, Bell, Settings, FileText } from 'lucide-react-native';
+import { MessageSquare, Users, Bell, Settings, LayoutDashboard, Briefcase } from 'lucide-react-native';
 import { useNotificationsStore } from '../stores/notifications-store';
+import DashboardScreen from '../screens/DashboardScreen';
 import WhatsAppStack from './WhatsAppStack';
 import LeadsStack from './LeadsStack';
-import CalendarScreen from '../screens/CalendarScreen';
 import NotificationsScreen from '../screens/NotificationsScreen';
 import SettingsScreen from '../screens/SettingsScreen';
-import DocumentsScreen from '../screens/DocumentsScreen';
+import WorkspaceStack from './WorkspaceStack';
 
 const Tab = createBottomTabNavigator();
 
@@ -35,20 +35,20 @@ export default function TabNavigator() {
       }}
     >
       <Tab.Screen
-        name="WhatsApp"
-        component={WhatsAppStack}
+        name="Home"
+        component={DashboardScreen}
         options={{
           tabBarIcon: ({ color, size }) => (
-            <MessageCircle size={size} color={color} />
+            <LayoutDashboard size={size} color={color} />
           ),
         }}
       />
       <Tab.Screen
-        name="Documents"
-        component={DocumentsScreen}
+        name="Messages"
+        component={WhatsAppStack}
         options={{
           tabBarIcon: ({ color, size }) => (
-            <FileText size={size} color={color} />
+            <MessageSquare size={size} color={color} />
           ),
         }}
       />
@@ -62,11 +62,11 @@ export default function TabNavigator() {
         }}
       />
       <Tab.Screen
-        name="Calendar"
-        component={CalendarScreen}
+        name="Workspace"
+        component={WorkspaceStack}
         options={{
           tabBarIcon: ({ color, size }) => (
-            <Calendar size={size} color={color} />
+            <Briefcase size={size} color={color} />
           ),
         }}
       />

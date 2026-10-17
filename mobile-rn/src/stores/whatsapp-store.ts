@@ -12,6 +12,7 @@ export interface WhatsAppAttachmentPayload {
   mimeType: string;
   type: WhatsAppAttachmentType;
   caption?: string;
+  isVoiceNote?: boolean;
 }
 
 interface PendingOutboxItem {
@@ -67,10 +68,27 @@ const ARCHIVED_STORAGE_KEY = 'wa_archived_conversations';
 const PINNED_STORAGE_KEY = 'wa_pinned_conversations';
 const MUTED_STORAGE_KEY = 'wa_muted_until_conversations';
 const OUTBOX_STORAGE_KEY = 'wa_pending_outbox';
+const INVALID_WHATSAPP_CONTACT_NAMES = new Set([
+  'online',
+  'online contact',
+  'offline',
+  'unknown',
+  'customer',
+  'whatsapp',
+  'whatsapp contact',
+]);
 
 function getUserColor(userId: string): string {
   const hash = userId.split('').reduce((sum, char) => sum + char.charCodeAt(0), 0);
   return USER_COLORS[Math.abs(hash) % USER_COLORS.length];
+}
+
+function getWhatsAppContactDisplayName(firstName: string, lastName: string, phone: string): string {
+  const fullName = `${firstName} ${lastName}`.replace(/\s+/g, ' ').trim();
+  if (!fullName || INVALID_WHATSAPP_CONTACT_NAMES.has(fullName.toLowerCase())) {
+    return phone;
+  }
+  return fullName;
 }
 
 function shouldQueueRetry(err: any): boolean {
@@ -226,8 +244,11 @@ async function uploadMediaFile(payload: WhatsAppAttachmentPayload, integrationId
     type: payload.mimeType || 'application/octet-stream',
     name: payload.name || `upload-${Date.now()}`,
   } as any);
+  const params: Record<string, string> = {};
+  if (integrationId) params.integrationId = integrationId;
+  if (payload.isVoiceNote || payload.type === 'audio') params.voiceNote = '1';
   const res = await api.post('/integrations/whatsapp/media/upload', formData, {
-    ...(integrationId ? { params: { integrationId } } : {}),
+    ...(Object.keys(params).length ? { params } : {}),
   });
   const mediaId = String(res.data?.id || '').trim();
   if (!mediaId) {
@@ -259,7 +280,11 @@ function buildMediaSendRequest(
     case 'audio':
       return {
         endpoint: '/integrations/whatsapp/send/audio',
-        body: withIntegration({ to, audioId: mediaId }),
+        body: withIntegration({
+          to,
+          audioId: mediaId,
+          isVoiceMessage: true,
+        }),
       };
     default:
       return {
@@ -448,8 +473,7 @@ export const useWhatsAppStore = create<WhatsAppState>((set, get) => ({
         const phone = normalizePhone(contactPhoneRaw, waId) || `+${waId}`;
         const firstName = asText(activity.contact?.firstName);
         const lastName = asText(activity.contact?.lastName);
-        const fullName = `${firstName} ${lastName}`.trim();
-        const contactName = fullName || phone;
+        const contactName = getWhatsAppContactDisplayName(firstName, lastName, phone);
         const description = asText(activity.description);
 
         if (!convMap.has(waId)) {

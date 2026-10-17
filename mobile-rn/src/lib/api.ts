@@ -8,6 +8,20 @@ export const api = axios.create({
   headers: { 'Content-Type': 'application/json' },
 });
 
+function isFormDataPayload(value: unknown): boolean {
+  if (typeof FormData !== 'undefined' && value instanceof FormData) {
+    return true;
+  }
+
+  // React Native FormData can behave slightly differently across runtimes.
+  return Boolean(
+    value
+    && typeof value === 'object'
+    && typeof (value as { append?: unknown }).append === 'function'
+    && Array.isArray((value as { _parts?: unknown })._parts),
+  );
+}
+
 let isRefreshing = false;
 let failedQueue: Array<{ resolve: (v: unknown) => void; reject: (r: unknown) => void }> = [];
 
@@ -17,6 +31,17 @@ const processQueue = (error: AxiosError | null, token: string | null = null) => 
 };
 
 api.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
+  if (isFormDataPayload(config.data)) {
+    const headers = config.headers as any;
+    if (headers?.delete) {
+      headers.delete('Content-Type');
+      headers.delete('content-type');
+    } else if (headers) {
+      delete headers['Content-Type'];
+      delete headers['content-type'];
+    }
+  }
+
   const token = await AsyncStorage.getItem('accessToken');
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
@@ -33,7 +58,12 @@ api.interceptors.response.use(
   },
   async (error: AxiosError) => {
     const orig = error.config as InternalAxiosRequestConfig & { _retry?: boolean };
-    if (error.response?.status === 401 && !orig._retry) {
+    const requestUrl = String(orig?.url || '');
+    const isAuthEndpoint = /^\/?auth\/(login|register|refresh|logout)(\/|$)/i.test(requestUrl);
+    const hasAccessToken = Boolean(await AsyncStorage.getItem('accessToken'));
+
+    // Don't try token refresh for auth endpoints or anonymous requests.
+    if (error.response?.status === 401 && !orig._retry && !isAuthEndpoint && hasAccessToken) {
       if (isRefreshing) {
         return new Promise((resolve, reject) => {
           failedQueue.push({ resolve, reject });
