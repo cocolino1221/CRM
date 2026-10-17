@@ -136,6 +136,27 @@ export default function LeadsPage() {
 
   // Modal states
   const [showAddModal, setShowAddModal] = useState(false);
+
+  // The header's "New Lead" button and the dashboard's Quick Actions both link
+  // to /leads?action=new. Read it on the client rather than with
+  // useSearchParams, which would need a Suspense boundary around this page.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const openNew = () => {
+      if (new URLSearchParams(window.location.search).get('action') === 'new') {
+        setShowAddModal(true);
+      }
+    };
+    openNew();
+    // Clicking the header button while already on /leads changes the query
+    // without remounting, so listen for that too.
+    window.addEventListener('popstate', openNew);
+    window.addEventListener('leads:new', openNew);
+    return () => {
+      window.removeEventListener('popstate', openNew);
+      window.removeEventListener('leads:new', openNew);
+    };
+  }, []);
   const [showMoreFields, setShowMoreFields] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showDetailModal, setShowDetailModal] = useState(false);

@@ -130,7 +130,13 @@ export default function Header({ onMenuClick }: HeaderProps) {
       <div className="flex items-center gap-2 lg:gap-3 shrink-0">
         {/* New Lead Button - hidden on mobile */}
         <button
-          onClick={() => router.push('/leads')}
+          onClick={() => {
+            // Navigating to /leads alone did nothing when already on the page.
+            // Carry the intent in the query, and nudge the page when the route
+            // does not change.
+            router.push('/leads?action=new');
+            window.dispatchEvent(new Event('leads:new'));
+          }}
           className="hidden sm:flex group relative overflow-hidden items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 px-4 lg:px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-indigo-500/30 hover:shadow-xl hover:shadow-indigo-500/40 transition-all duration-300 hover:scale-[1.02]"
         >
           <div className="absolute inset-0 bg-gradient-to-r from-blue-600 via-purple-600 to-pink-600 opacity-0 group-hover:opacity-100 transition-opacity"></div>
@@ -141,7 +147,10 @@ export default function Header({ onMenuClick }: HeaderProps) {
 
         {/* Mobile New Lead Button */}
         <button
-          onClick={() => router.push('/leads')}
+          onClick={() => {
+            router.push('/leads?action=new');
+            window.dispatchEvent(new Event('leads:new'));
+          }}
           className="sm:hidden flex items-center justify-center h-10 w-10 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-lg"
           aria-label="New Lead"
         >
