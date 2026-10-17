@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { isPublicPath } from '@/lib/public-routes';
 import { useRouter, usePathname } from 'next/navigation';
 import { authService } from '@/lib/auth';
 import { buildOauthReturnUrl } from '@/lib/oauth-return';
@@ -16,27 +17,9 @@ export default function AuthGuard({ children }: AuthGuardProps) {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
   const [isPending, setIsPending] = useState(false);
 
-  // Public routes that don't require authentication
-  const publicRoutes = new Set([
-    '/',
-    '/login',
-    '/signin',
-    '/register',
-    '/signup',
-    '/forgot-password',
-    '/reset-password',
-    '/platform-admin',
-    '/privacy',
-    '/terms',
-    '/help',
-    '/support',
-    '/data-deletion',
-    '/forms/public',
-    '/auth/callback', // OAuth callback must stay public so tokens can be exchanged
-  ]);
-  const isPublicRoute =
-    publicRoutes.has(pathname) ||
-    Array.from(publicRoutes).some(route => route !== '/' && pathname.startsWith(`${route}/`));
+  // The list lives in lib/public-routes.ts, with tests: it was missing /p,
+  // which put every landing page behind a login screen.
+  const isPublicRoute = isPublicPath(pathname);
 
   useEffect(() => {
     const checkAuth = async () => {
