@@ -91,3 +91,29 @@ frontend/out/
 **/google-services.json
 **/GoogleService-Info.plist
 .superpowers/
+
+# Next.js build output
+frontend/.next/
+
+# Generated native projects (expo prebuild / capacitor add)
+/android/
+/ios/
+mobile/android/
+mobile/ios/
+
+# Mobile build artifacts
+*.apk
+*.aab
+*.ipa
+
+# Clang module cache
+.clang-module-cache/
+
+# Local test credentials
+.env.test
+
+# Backend runtime uploads
+backend/uploads/
+
+# Deploy snapshots
+deploy-backups/

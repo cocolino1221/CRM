@@ -2,6 +2,7 @@
 
 import { useSyncExternalStore } from 'react';
 import api from '@/lib/api';
+import { latchEndedCall } from './ended-call-latch';
 
 // Global, app-wide WhatsApp call session — lives outside any single page's
 // component tree so closing the call UI (minimize) doesn't tear down the
@@ -390,17 +391,34 @@ class CallManager {
     this.cleanup();
 
     const id = this.callId;
+    const contactName = this.state.contactName;
+    let activityId: string | undefined;
     if (id && waId) {
       try {
-        await api.post(`/integrations/whatsapp/calls/${id}/log`, {
+        const res = await api.post(`/integrations/whatsapp/calls/${id}/log`, {
           waId,
           status,
           durationSeconds: status === 'completed' ? finalDuration : undefined,
           recordingUrl,
         });
+        activityId = res.data?.activityId ?? undefined;
       } catch {
-        // best-effort
+        // best-effort — the disposition dialog will create the activity itself.
       }
+    }
+
+    // Hand the context to the latch before the reset below wipes it. A caller
+    // takes longer than 2.5s to pick an outcome, so the dialog cannot read it
+    // from the live state.
+    if (waId) {
+      latchEndedCall({
+        activityId,
+        waId,
+        contactName,
+        durationSeconds: finalDuration,
+        recordingUrl,
+        status,
+      });
     }
 
     // Leave the "ended" state visible briefly, then clear the active call

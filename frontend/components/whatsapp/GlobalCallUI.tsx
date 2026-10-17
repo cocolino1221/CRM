@@ -4,6 +4,7 @@ import { useEffect, useRef } from 'react';
 import { callManager } from '@/lib/call-manager';
 import CallModal from './CallModal';
 import MiniCallBar from './MiniCallBar';
+import CallDispositionGate from '../calls/CallDispositionGate';
 
 /**
  * Mounted once at the dashboard layout level (not per-page) so an active
@@ -23,6 +24,7 @@ export default function GlobalCallUI() {
       <audio ref={audioRef} autoPlay className="hidden" />
       <CallModal />
       <MiniCallBar />
+      <CallDispositionGate />
     </>
   );
 }
