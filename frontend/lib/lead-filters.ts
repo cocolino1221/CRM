@@ -26,6 +26,7 @@ export interface ContactQuery {
   sortOrder: string;
   search?: string;
   source?: string;
+  excludeSource?: string;
   createdFrom?: string;
   createdTo?: string;
 }
@@ -42,7 +43,6 @@ export const SOURCE_OPTIONS: Array<{ value: string; label: string }> = [
   { value: 'manychat', label: 'ManyChat' },
   { value: 'google-ads', label: 'Google Ads' },
   { value: 'woocommerce', label: 'WooCommerce' },
-  { value: 'payflow', label: 'Payflow' },
   { value: 'kajabi', label: 'Kajabi' },
   { value: 'landing_page', label: 'Landing page' },
   { value: 'website', label: 'Site' },
@@ -75,6 +75,9 @@ export function buildContactQuery(state: LeadFilterState): ContactQuery {
     // A lead that just arrived is the one a caller wants first.
     sortBy: 'createdAt',
     sortOrder: 'DESC',
+    // Payflow only creates a contact when someone pays; that's a customer,
+    // not a lead someone should call.
+    excludeSource: 'payflow',
   };
 
   const search = state.search?.trim();

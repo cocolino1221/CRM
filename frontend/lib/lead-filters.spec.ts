@@ -101,3 +101,14 @@ describe('SOURCE_OPTIONS', () => {
     }
   });
 });
+
+describe('Payflow in the leads list', () => {
+  it('always asks the server to leave Payflow customers out', () => {
+    expect(buildContactQuery({}).excludeSource).toBe('payflow');
+    expect(buildContactQuery({ source: 'typeform', search: 'ana' }).excludeSource).toBe('payflow');
+  });
+
+  it('does not offer Payflow as a source filter', () => {
+    expect(SOURCE_OPTIONS.map((o) => o.value)).not.toContain('payflow');
+  });
+});

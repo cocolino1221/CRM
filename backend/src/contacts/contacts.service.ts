@@ -78,6 +78,7 @@ export class ContactsService {
       search,
       status,
       source,
+      excludeSource,
       ownerId,
       companyId,
       pipelineId,
@@ -128,6 +129,7 @@ export class ContactsService {
       search,
       status,
       source,
+      excludeSource,
       ownerId,
       companyId,
       pipelineId,
@@ -825,11 +827,13 @@ export class ContactsService {
     emailOptIn?: boolean;
     createdFrom?: Date | null;
     createdTo?: Date | null;
+    excludeSource?: string;
   }): void {
     const {
       search,
       status,
       source,
+      excludeSource,
       ownerId,
       companyId,
       pipelineId,
@@ -886,6 +890,11 @@ export class ContactsService {
 
     if (source) {
       queryBuilder.andWhere('contact.source = :source', { source });
+    }
+
+    if (excludeSource) {
+      // A NULL source is not "the excluded source", so keep those rows.
+      queryBuilder.andWhere('(contact.source IS NULL OR contact.source != :excludeSource)', { excludeSource });
     }
 
     if (ownerId) {

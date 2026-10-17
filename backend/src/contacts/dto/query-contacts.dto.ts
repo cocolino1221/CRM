@@ -43,6 +43,11 @@ export class QueryContactsDto {
   @IsEnum(ContactSource)
   source?: ContactSource;
 
+  /** Leave out contacts from this source (e.g. Payflow customers in the leads list). */
+  @IsOptional()
+  @IsEnum(ContactSource)
+  excludeSource?: ContactSource;
+
   /** ISO 8601. Only contacts created at or after this instant. */
   @IsOptional()
   @IsDateString()
