@@ -21,6 +21,7 @@ import {
   type LandingSection,
   type SectionType,
 } from '@/lib/landing-sections';
+import ImageUploadField from '@/components/landing/ImageUploadField';
 import {
   addSection,
   addSectionItem,
@@ -108,8 +109,8 @@ function SectionFields({
         <div className="space-y-3">
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Nume" value={section.name} onChange={(v) => onPatch({ name: v })} />
-            <Field
-              label="Poză (adresă)"
+            <ImageUploadField
+              label="Poză"
               value={section.photo}
               onChange={(v) => onPatch({ photo: v })}
             />
@@ -176,7 +177,7 @@ function ItemFields({
             />
           </div>
           <Field label="Ce spune" value={item.text} textarea onChange={(v) => onPatch({ text: v })} />
-          <Field label="Poză (adresă)" value={item.photo} onChange={(v) => onPatch({ photo: v })} />
+          <ImageUploadField label="Poză" value={item.photo} onChange={(v) => onPatch({ photo: v })} />
         </div>
       );
 
@@ -184,8 +185,16 @@ function ItemFields({
       return (
         <div className="space-y-3">
           <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="Poza „înainte”" value={item.beforeImage} onChange={(v) => onPatch({ beforeImage: v })} />
-            <Field label="Poza „după”" value={item.afterImage} onChange={(v) => onPatch({ afterImage: v })} />
+            <ImageUploadField
+              label="Poza „înainte”"
+              value={item.beforeImage}
+              onChange={(v) => onPatch({ beforeImage: v })}
+            />
+            <ImageUploadField
+              label="Poza „după”"
+              value={item.afterImage}
+              onChange={(v) => onPatch({ afterImage: v })}
+            />
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Durata" value={item.label} placeholder="4 luni" onChange={(v) => onPatch({ label: v })} />
