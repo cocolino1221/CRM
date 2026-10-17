@@ -98,4 +98,34 @@ describe('MetaMessagingService — sender names', () => {
       );
     });
   });
+
+  describe('fetchSenderProfile fallback', () => {
+    const integration = { id: 'int-fb', config: { provider: 'facebook', pageId: 'page-1' }, credentials: {} };
+
+    beforeEach(() => {
+      service.ensureFacebookPageCredentials = jest
+        .fn()
+        .mockResolvedValue({ pageId: 'page-1', pageAccessToken: 'tok' });
+    });
+
+    it('reads the name from the thread when the profile endpoint refuses (#100)', async () => {
+      httpGet
+        .mockRejectedValueOnce({ response: { data: { error: { message: 'No matching user found', code: 100 } } } })
+        .mockResolvedValueOnce({
+          data: { data: [{ participants: { data: [{ id: 'page-1', name: 'Page' }, { id: 'psid-9', name: 'Ana Pop' }] } }] },
+        });
+
+      await expect(service.fetchSenderProfile('facebook', integration, 'psid-9')).resolves.toEqual({ name: 'Ana Pop' });
+      expect(httpGet.mock.calls[1][0]).toBe('https://graph.facebook.com/v23.0/page-1/conversations');
+      expect(httpGet.mock.calls[1][1].params).toMatchObject({ user_id: 'psid-9', fields: 'participants' });
+    });
+
+    it('returns no name when the thread lookup fails too', async () => {
+      httpGet
+        .mockRejectedValueOnce({ response: { data: { error: { message: 'No matching user found', code: 100 } } } })
+        .mockRejectedValueOnce({ response: { data: { error: { message: 'nope', code: 10 } } } });
+
+      await expect(service.fetchSenderProfile('facebook', integration, 'psid-9')).resolves.toEqual({});
+    });
+  });
 });

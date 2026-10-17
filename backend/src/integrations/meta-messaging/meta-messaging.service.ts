@@ -121,6 +121,8 @@ interface MetaActivityMetadata {
 export class MetaMessagingService {
   private readonly logger = new Logger(MetaMessagingService.name);
   private readonly facebookApiUrl = 'https://graph.facebook.com/v23.0';
+  private static readonly NAME_BACKFILL_INTERVAL_MS = 3 * 60 * 60 * 1000;
+  private readonly nameBackfillRuns = new Map<string, number>();
   // In-memory dedup for webhook deliveries. Meta retries/echoes the same
   // message id, sometimes near-simultaneously — the async DB check can't catch
   // that race. A synchronous check+mark (before any await) closes it on a
@@ -453,7 +455,7 @@ export class MetaMessagingService {
 
     const remaining = [...bySender.values()].filter((entry) => !entry.alreadyResolved).length;
     this.logger.log(
-      `[inbox] backfillMissingProfileNames ws=${workspaceId} swept=${sweptNames.size} checked=${checked} resolved=${resolved}`,
+      `[inbox] backfillMissingProfileNames ws=${workspaceId} swept=${sweptNames.size} checked=${checked} resolved=${resolved} remaining=${remaining}`,
     );
     return { checked, resolved, remaining };
   }
@@ -485,6 +487,58 @@ export class MetaMessagingService {
     }
   }
 
+  private async buildConversationsRequest(
+    provider: MetaProvider,
+    integration: Integration,
+  ): Promise<{ url: string; params: Record<string, string>; ownIds: string[] }> {
+    if (provider === 'facebook') {
+      const { pageId, pageAccessToken } = await this.ensureFacebookPageCredentials(integration);
+      return {
+        url: `${this.facebookApiUrl}/${pageId}/conversations`,
+        params: { fields: 'participants', access_token: pageAccessToken },
+        ownIds: [pageId],
+      };
+    }
+    const { pageId, pageAccessToken, igUserId } = await this.ensureInstagramMessagingCredentials(integration);
+    return {
+      url: this.isInstagramLoginIntegration(integration)
+        ? 'https://graph.instagram.com/v23.0/me/conversations'
+        : `${this.facebookApiUrl}/${pageId}/conversations`,
+      params: { platform: 'instagram', fields: 'participants', access_token: pageAccessToken },
+      ownIds: [pageId, igUserId].filter(Boolean),
+    };
+  }
+
+  /** Name of one sender, read from their conversation thread with the account. */
+  private async fetchThreadParticipantName(
+    provider: MetaProvider,
+    integration: Integration,
+    senderId: string,
+  ): Promise<string | undefined> {
+    try {
+      const { url, params, ownIds } = await this.buildConversationsRequest(provider, integration);
+      const response = await this.httpService.axiosRef.get(url, {
+        params: { ...params, user_id: senderId },
+        timeout: 10000,
+      });
+      for (const conversation of response.data?.data || []) {
+        for (const participant of conversation?.participants?.data || []) {
+          const id = String(participant?.id || '').trim();
+          const name = String(participant?.name || participant?.username || '').trim();
+          if (name && id === senderId && !ownIds.includes(id)) return name;
+        }
+      }
+    } catch (error: any) {
+      const metaError = error?.response?.data?.error;
+      this.logger.warn(
+        `[inbox] thread participant lookup failed provider=${provider}: ${
+          metaError ? `${metaError.message} (code ${metaError.code})` : error?.message || 'unknown error'
+        }`,
+      );
+    }
+    return undefined;
+  }
+
   /**
    * id -> display name for everyone the account has a conversation with,
    * read from the conversations edge (Messenger gives `name`, Instagram gives
@@ -496,22 +550,10 @@ export class MetaMessagingService {
     if (!provider || !this.integrationHasUsableToken(integration)) return names;
 
     try {
-      let url: string;
-      let params: Record<string, string>;
-      let ownIds: string[];
-      if (provider === 'facebook') {
-        const { pageId, pageAccessToken } = await this.ensureFacebookPageCredentials(integration);
-        url = `${this.facebookApiUrl}/${pageId}/conversations`;
-        params = { fields: 'participants', limit: '100', access_token: pageAccessToken };
-        ownIds = [pageId];
-      } else {
-        const { pageId, pageAccessToken, igUserId } = await this.ensureInstagramMessagingCredentials(integration);
-        url = this.isInstagramLoginIntegration(integration)
-          ? 'https://graph.instagram.com/v23.0/me/conversations'
-          : `${this.facebookApiUrl}/${pageId}/conversations`;
-        params = { platform: 'instagram', fields: 'participants', limit: '100', access_token: pageAccessToken };
-        ownIds = [pageId, igUserId];
-      }
+      const request = await this.buildConversationsRequest(provider, integration);
+      let url = request.url;
+      const params = { ...request.params, limit: '100' };
+      const ownIds = request.ownIds;
 
       // ~100 conversations per page; cap the walk so one huge inbox can't
       // burn the whole Graph quota in a single run.
@@ -537,7 +579,23 @@ export class MetaMessagingService {
     return names;
   }
 
+  /**
+   * Fill in missing sender names in the background whenever someone opens
+   * the inbox — at most once per workspace every few hours, so there's no
+   * scheduled job keeping the database awake.
+   */
+  private scheduleNameBackfill(workspaceId: string): void {
+    const now = Date.now();
+    const last = this.nameBackfillRuns.get(workspaceId) || 0;
+    if (now - last < MetaMessagingService.NAME_BACKFILL_INTERVAL_MS) return;
+    this.nameBackfillRuns.set(workspaceId, now);
+    void this.backfillMissingProfileNames(workspaceId).catch((error) =>
+      this.logger.warn(`[inbox] automatic name backfill failed ws=${workspaceId}: ${error?.message || error}`),
+    );
+  }
+
   async getInbox(workspaceId: string, channel?: MetaChannel): Promise<any> {
+    this.scheduleNameBackfill(workspaceId);
     const integrations = await this.findMetaIntegrations(workspaceId);
     const integrationsById = new Map(integrations.map((integration) => [integration.id, integration]));
     const reads = await this.getInboxReads(workspaceId);
@@ -2323,7 +2381,12 @@ export class MetaMessagingService {
     for (let attempt = 1; attempt <= 5; attempt++) {
       const result = await this.fetchSenderProfileOnce(provider, integration, senderId);
       if (result.name) return result;
-      if (result.permanent) return {};
+      if (result.permanent) {
+        // The profile endpoint refuses some senders outright (#100), but the
+        // thread itself still names its participants.
+        const name = await this.fetchThreadParticipantName(provider, integration, senderId);
+        return name ? { name } : {};
+      }
       if (result.rateLimited) {
         if (attempt >= 2) return { rateLimited: true };
         await new Promise((resolve) => setTimeout(resolve, 3000));
