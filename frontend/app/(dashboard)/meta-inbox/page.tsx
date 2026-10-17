@@ -195,7 +195,7 @@ const channelTheme: Record<
     outboundBubble: 'bg-[#0078ff] text-white',
     listAccent: 'text-[#0078ff]',
     avatarRing: 'ring-2 ring-white shadow-[0_0_0_1px_rgba(0,120,255,0.18)]',
-    rowActive: 'bg-[#0078ff]/[0.07]',
+    rowActive: 'bg-[#0078ff]/[0.12] ring-1 ring-[#0078ff]/20',
     focusRing: 'focus-within:ring-[#0078ff]/25',
   },
   instagram: {
@@ -206,7 +206,7 @@ const channelTheme: Record<
     outboundBubble: 'bg-[linear-gradient(135deg,#7c3aed_0%,#d946ef_100%)] text-white',
     listAccent: 'text-fuchsia-600',
     avatarRing: 'ring-2 ring-white shadow-[0_0_0_1px_rgba(217,70,239,0.2)]',
-    rowActive: 'bg-fuchsia-500/[0.07]',
+    rowActive: 'bg-fuchsia-500/[0.12] ring-1 ring-fuchsia-500/20',
     focusRing: 'focus-within:ring-fuchsia-500/25',
   },
 };
@@ -570,6 +570,8 @@ export default function MessagesPage() {
   const [profileSuccess, setProfileSuccess] = useState('');
   const [composerMode, setComposerMode] = useState<ComposerMode>('text');
   const [showTools, setShowTools] = useState(false);
+  const [syncingNames, setSyncingNames] = useState(false);
+  const [nameSyncResult, setNameSyncResult] = useState<string | null>(null);
   const [showDetails, setShowDetails] = useState(false);
 
   const rawMessengerAccess = hasChannelAccess(currentUser, 'messenger');
@@ -1134,6 +1136,25 @@ export default function MessagesPage() {
     }
   };
 
+  const syncContactNames = async () => {
+    setSyncingNames(true);
+    setNameSyncResult(null);
+    try {
+      const { data } = await api.post('/integrations/meta-messaging/backfill-profile-names', {}, { timeout: 300000 });
+      const resolved = Number(data?.resolved || 0);
+      const remaining = Number(data?.remaining || 0);
+      setNameSyncResult(
+        `${resolved} nume actualizate.` +
+          (remaining > 0 ? ` ${remaining} rămân fără nume (Meta nu le oferă încă; reîncearcă mai târziu).` : ''),
+      );
+      await refreshAll(false);
+    } catch (error: any) {
+      setNameSyncResult(error?.response?.data?.message || 'Actualizarea numelor a eșuat.');
+    } finally {
+      setSyncingNames(false);
+    }
+  };
+
   const refreshAll = async (
     refreshAccounts = false,
     preferredSelection?: ConversationSelection,
@@ -1625,7 +1646,7 @@ export default function MessagesPage() {
 
   return (
     <>
-      <div className="flex flex-col gap-2.5 overflow-hidden rounded-[22px] bg-slate-200/70 p-2 ring-1 ring-slate-300/40 sm:gap-3 sm:rounded-[28px] sm:p-3 xl:h-[calc(100dvh-6.5rem)]">
+      <div className="flex flex-col gap-2.5 overflow-hidden rounded-[22px] bg-slate-200 p-2 ring-1 ring-slate-300/70 sm:gap-3 sm:rounded-[28px] sm:p-3 xl:h-[calc(100dvh-6.5rem)]">
         <div className="px-2 pt-1">
           <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
             <div>
@@ -1753,7 +1774,7 @@ export default function MessagesPage() {
             showDetails ? 'xl:grid-cols-[300px_minmax(0,1fr)_280px]' : 'xl:grid-cols-[300px_minmax(0,1fr)]',
           )}
         >
-          <aside className="flex min-h-0 flex-col overflow-hidden rounded-[20px] bg-white shadow-[0_1px_2px_rgba(15,23,42,0.06),0_10px_28px_-14px_rgba(15,23,42,0.18)] ring-1 ring-slate-900/[0.06] sm:rounded-3xl">
+          <aside className="flex min-h-0 flex-col overflow-hidden rounded-[20px] bg-white shadow-[0_1px_2px_rgba(15,23,42,0.08),0_12px_32px_-14px_rgba(15,23,42,0.25)] ring-1 ring-slate-900/[0.08] sm:rounded-3xl">
             <div className="px-4 pb-2 pt-4">
               <div className="flex items-center justify-between gap-3">
                 <div>
@@ -1788,7 +1809,7 @@ export default function MessagesPage() {
                       onClick={() => selectConversation(conversation.id)}
                       className={cn(
                         'flex w-full items-start gap-3 rounded-2xl px-3 py-2.5 text-left transition-colors duration-150',
-                        active ? theme.rowActive : 'hover:bg-slate-50',
+                        active ? theme.rowActive : 'hover:bg-slate-100',
                       )}
                     >
                       <ContactAvatar
@@ -1804,7 +1825,7 @@ export default function MessagesPage() {
                               <p className={cn('truncate text-[13px] text-slate-950', conversation.unreadCount > 0 ? 'font-semibold' : 'font-medium')}>{conversation.contactName}</p>
                               {conversation.unreadCount > 0 && <span className="h-2 w-2 rounded-full bg-[#0a66ff]" />}
                             </div>
-                            <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-slate-400">
+                            <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-slate-500">
                               <Icon className={cn('h-3 w-3', theme.listAccent)} />
                               <span className={cn('font-medium', theme.listAccent)}>{theme.label}</span>
                               {conversation.messageProfileName && (
@@ -1821,10 +1842,10 @@ export default function MessagesPage() {
                               )}
                             </div>
                           </div>
-                          <span className="shrink-0 text-[11px] text-slate-400">{formatRelative(conversation.lastMessageTime)}</span>
+                          <span className="shrink-0 text-[11px] text-slate-500">{formatRelative(conversation.lastMessageTime)}</span>
                         </div>
 
-                        <p className="mt-0.5 line-clamp-1 text-xs leading-5 text-slate-500">{conversation.lastMessage}</p>
+                        <p className="mt-0.5 line-clamp-1 text-xs leading-5 text-slate-600">{conversation.lastMessage}</p>
                       </div>
                     </button>
                   );
@@ -1835,7 +1856,7 @@ export default function MessagesPage() {
 
           <main
             className={cn(
-              'flex min-h-0 flex-col overflow-hidden rounded-[20px] bg-white shadow-[0_1px_2px_rgba(15,23,42,0.06),0_10px_28px_-14px_rgba(15,23,42,0.18)] ring-1 ring-slate-900/[0.06] sm:rounded-3xl',
+              'flex min-h-0 flex-col overflow-hidden rounded-[20px] bg-white shadow-[0_1px_2px_rgba(15,23,42,0.08),0_12px_32px_-14px_rgba(15,23,42,0.25)] ring-1 ring-slate-900/[0.08] sm:rounded-3xl',
             )}
           >
             <div className="px-5 py-4 shadow-[0_1px_0_rgba(15,23,42,0.04)]">
@@ -1959,7 +1980,7 @@ export default function MessagesPage() {
                             className={cn(
                               'rounded-[20px] px-4 py-2.5 text-[14.5px] leading-relaxed',
                               inbound
-                                ? 'rounded-bl-md bg-slate-100 text-slate-900'
+                                ? 'rounded-bl-md bg-slate-200/70 text-slate-900'
                                 : cn('rounded-br-md', theme.outboundBubble),
                             )}
                           >
@@ -2083,10 +2104,10 @@ export default function MessagesPage() {
                 'bg-white px-5 pb-4 pt-3',
               )}
             >
-              <div className="flex items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center gap-2">
                 <div
                   className={cn(
-                    'inline-flex rounded-full bg-slate-100 p-0.5',
+                    'inline-flex rounded-full bg-slate-200/70 p-0.5',
                   )}
                 >
                   <button
@@ -2113,7 +2134,22 @@ export default function MessagesPage() {
                   </button>
                 </div>
 
-                <div className="text-xs text-slate-400">
+                <AudioLibraryPicker
+                  label="Mesaje audio"
+                  title="Mesaje audio salvate"
+                  channel={activeChannel}
+                  to={selectedConversation?.externalUserId}
+                  integrationId={activeIntegration?.integrationId}
+                  onSent={() =>
+                    void refreshAll(false, {
+                      channel: activeChannel,
+                      externalUserId: selectedConversation?.externalUserId || '',
+                      integrationId: activeIntegration?.integrationId,
+                    })
+                  }
+                />
+
+                <div className="ml-auto hidden text-xs text-slate-500 sm:block">
                   {outboundWillSimulate
                     ? 'Salvare locală în inbox'
                     : `Trimite live via ${activeProfileName || activeAccountName}`}
@@ -2122,23 +2158,9 @@ export default function MessagesPage() {
 
               {composerMode === 'text' ? (
                 <div className="mt-3 space-y-2">
-                  <div className="flex items-center gap-2">
-                    <AudioLibraryPicker
-                      channel={activeChannel}
-                      to={selectedConversation?.externalUserId}
-                      integrationId={activeIntegration?.integrationId}
-                      onSent={() =>
-                        void refreshAll(false, {
-                          channel: activeChannel,
-                          externalUserId: selectedConversation?.externalUserId || '',
-                          integrationId: activeIntegration?.integrationId,
-                        })
-                      }
-                    />
-                  </div>
                   <div
                     className={cn(
-                      'flex items-end gap-2 rounded-[22px] bg-slate-100/80 p-1.5 pl-4 ring-4 ring-transparent transition focus-within:bg-white focus-within:shadow-[0_0_0_1px_rgba(15,23,42,0.08)]',
+                      'flex items-end gap-2 rounded-[22px] bg-slate-100 p-1.5 pl-4 ring-1 ring-slate-200 transition focus-within:bg-white focus-within:ring-4 focus-within:shadow-[0_0_0_1px_rgba(15,23,42,0.08)]',
                       channelTheme[selectedConversation?.channel || activeChannel].focusRing,
                     )}
                   >
@@ -2332,7 +2354,7 @@ export default function MessagesPage() {
           </main>
 
           {showDetails && (
-            <aside className="overflow-y-auto rounded-[20px] bg-white shadow-[0_1px_2px_rgba(15,23,42,0.06),0_10px_28px_-14px_rgba(15,23,42,0.18)] ring-1 ring-slate-900/[0.06] sm:rounded-3xl">
+            <aside className="overflow-y-auto rounded-[20px] bg-white shadow-[0_1px_2px_rgba(15,23,42,0.08),0_12px_32px_-14px_rgba(15,23,42,0.25)] ring-1 ring-slate-900/[0.08] sm:rounded-3xl">
               <div className="px-5 py-5">
                 <div className="text-sm font-semibold text-slate-950">Details</div>
               </div>
@@ -2562,6 +2584,25 @@ export default function MessagesPage() {
             </div>
 
             <div className="space-y-6 p-5">
+              <section className="space-y-3 rounded-2xl border border-slate-200 p-4">
+                <div className="flex items-center gap-2">
+                  <RefreshCw className="h-4 w-4 text-slate-500" />
+                  <h3 className="text-sm font-semibold text-slate-950">Nume contacte</h3>
+                </div>
+                <p className="text-sm leading-6 text-slate-500">
+                  Reia de la Meta numele reale pentru conversațiile afișate ca „Contact Messenger” sau „Messenger Contact”.
+                </p>
+                <button
+                  onClick={() => void syncContactNames()}
+                  disabled={syncingNames}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {syncingNames ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                  {syncingNames ? 'Se actualizează…' : 'Actualizează numele'}
+                </button>
+                {nameSyncResult && <div className="rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-600">{nameSyncResult}</div>}
+              </section>
+
               <section className="space-y-3 rounded-2xl border border-slate-200 p-4">
                 <div className="flex items-center gap-2">
                   <UserCircle2 className="h-4 w-4 text-slate-500" />

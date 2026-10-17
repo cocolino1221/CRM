@@ -341,7 +341,9 @@ export class MetaMessagingService {
    * same person ever came in to retry it). Manually triggered — not a
    * scheduled job, to avoid adding another recurring DB-polling cost.
    */
-  async backfillMissingProfileNames(workspaceId: string): Promise<{ checked: number; resolved: number }> {
+  async backfillMissingProfileNames(
+    workspaceId: string,
+  ): Promise<{ checked: number; resolved: number; remaining: number }> {
     const integrations = await this.findMetaIntegrations(workspaceId);
     const integrationsById = new Map(integrations.map((i) => [i.id, i]));
 
@@ -387,9 +389,28 @@ export class MetaMessagingService {
     // only thing that works is doing much less work per run (batch cap),
     // spacing further apart, and giving up early once the limit is hit
     // instead of burning through hundreds of guaranteed-to-fail retries.
+    // First pass: the page's conversation list carries every participant's
+    // name in a handful of paged calls. It also covers senders the per-user
+    // profile endpoint refuses with "(#100) No matching user found" (e.g.
+    // people who first wrote from a shared post), which would otherwise stay
+    // "Contact Messenger ·1234" forever.
+    let resolved = 0;
+    const sweptNames = new Map<string, string>();
+    for (const integration of integrations) {
+      const names = await this.fetchConversationParticipantNames(integration);
+      names.forEach((name, id) => sweptNames.set(id, name));
+    }
+    for (const entry of bySender.values()) {
+      if (entry.alreadyResolved) continue;
+      const name = sweptNames.get(entry.externalUserId);
+      if (!name) continue;
+      await this.applyResolvedProfileName(workspaceId, entry, name);
+      entry.alreadyResolved = true;
+      resolved++;
+    }
+
     const maxSenders = 60;
     let checked = 0;
-    let resolved = 0;
     let consecutiveRateLimits = 0;
     for (const entry of bySender.values()) {
       if (entry.alreadyResolved) continue;
@@ -425,18 +446,95 @@ export class MetaMessagingService {
       consecutiveRateLimits = 0;
       if (!profile.name) continue;
 
-      await this.activityRepository
-        .createQueryBuilder()
-        .update(Activity)
-        .set({ metadata: () => `jsonb_set(metadata, '{contactProfileName}', to_jsonb(:profileName::text))` })
-        .where('id IN (:...ids)', { ids: entry.activityIds })
-        .setParameter('profileName', profile.name)
-        .execute();
+      await this.applyResolvedProfileName(workspaceId, entry, profile.name);
+      entry.alreadyResolved = true;
       resolved++;
     }
 
-    this.logger.log(`[inbox] backfillMissingProfileNames ws=${workspaceId} checked=${checked} resolved=${resolved}`);
-    return { checked, resolved };
+    const remaining = [...bySender.values()].filter((entry) => !entry.alreadyResolved).length;
+    this.logger.log(
+      `[inbox] backfillMissingProfileNames ws=${workspaceId} swept=${sweptNames.size} checked=${checked} resolved=${resolved}`,
+    );
+    return { checked, resolved, remaining };
+  }
+
+  /**
+   * Store a resolved sender name on all of their messages, and rename their
+   * CRM contact if it still carries a placeholder like "Messenger Contact".
+   */
+  private async applyResolvedProfileName(
+    workspaceId: string,
+    entry: { externalUserId: string; provider: MetaProvider; activityIds: string[] },
+    name: string,
+  ): Promise<void> {
+    await this.activityRepository
+      .createQueryBuilder()
+      .update(Activity)
+      .set({ metadata: () => `jsonb_set(metadata, '{contactProfileName}', to_jsonb(:profileName::text))` })
+      .where('id IN (:...ids)', { ids: entry.activityIds })
+      .setParameter('profileName', name)
+      .execute();
+
+    const channel: MetaChannel = entry.provider === 'instagram' ? 'instagram' : 'messenger';
+    const contact = await this.findExistingSocialContact(workspaceId, channel, entry.externalUserId);
+    if (contact && this.isPlaceholderSocialName(contact, channel, entry.externalUserId)) {
+      const [firstName, ...rest] = name.split(/\s+/);
+      contact.firstName = firstName;
+      contact.lastName = rest.join(' ');
+      await this.contactRepository.save(contact);
+    }
+  }
+
+  /**
+   * id -> display name for everyone the account has a conversation with,
+   * read from the conversations edge (Messenger gives `name`, Instagram gives
+   * `username`). Best effort: any failure just yields what was read so far.
+   */
+  private async fetchConversationParticipantNames(integration: Integration): Promise<Map<string, string>> {
+    const names = new Map<string, string>();
+    const provider = this.getIntegrationProvider(integration);
+    if (!provider || !this.integrationHasUsableToken(integration)) return names;
+
+    try {
+      let url: string;
+      let params: Record<string, string>;
+      let ownIds: string[];
+      if (provider === 'facebook') {
+        const { pageId, pageAccessToken } = await this.ensureFacebookPageCredentials(integration);
+        url = `${this.facebookApiUrl}/${pageId}/conversations`;
+        params = { fields: 'participants', limit: '100', access_token: pageAccessToken };
+        ownIds = [pageId];
+      } else {
+        const { pageId, pageAccessToken, igUserId } = await this.ensureInstagramMessagingCredentials(integration);
+        url = this.isInstagramLoginIntegration(integration)
+          ? 'https://graph.instagram.com/v23.0/me/conversations'
+          : `${this.facebookApiUrl}/${pageId}/conversations`;
+        params = { platform: 'instagram', fields: 'participants', limit: '100', access_token: pageAccessToken };
+        ownIds = [pageId, igUserId];
+      }
+
+      // ~100 conversations per page; cap the walk so one huge inbox can't
+      // burn the whole Graph quota in a single run.
+      for (let page = 0; page < 60 && url; page++) {
+        const response = await this.httpService.axiosRef.get(url, { params: page === 0 ? params : undefined, timeout: 20000 });
+        for (const conversation of response.data?.data || []) {
+          for (const participant of conversation?.participants?.data || []) {
+            const id = String(participant?.id || '').trim();
+            const name = String(participant?.name || participant?.username || '').trim();
+            if (id && name && !ownIds.includes(id)) names.set(id, name);
+          }
+        }
+        url = response.data?.paging?.next || '';
+      }
+    } catch (error: any) {
+      const metaError = error?.response?.data?.error;
+      this.logger.warn(
+        `[inbox] conversation participant sweep failed integration=${integration.id}: ${
+          metaError ? `${metaError.message} (code ${metaError.code})` : error?.message || 'unknown error'
+        }`,
+      );
+    }
+    return names;
   }
 
   async getInbox(workspaceId: string, channel?: MetaChannel): Promise<any> {
@@ -511,7 +609,10 @@ export class MetaMessagingService {
       // with a resolved name should still upgrade the display name away
       // from the raw "Messenger {id}" fallback (but never override an
       // actual linked CRM contact's name).
-      if (metadata.contactProfileName && !conversation.contactId) {
+      if (
+        metadata.contactProfileName
+        && (!activity.contact || this.isPlaceholderSocialName(activity.contact, activityChannel, externalUserId))
+      ) {
         conversation.contactName = metadata.contactProfileName;
       }
       const messageType = String(metadata.messageType || 'text');
@@ -2318,9 +2419,11 @@ export class MetaMessagingService {
     fetchedProfileName?: string,
   ): string {
     const fullName = `${contact?.firstName || ''} ${contact?.lastName || ''}`.trim();
-    if (fullName) return fullName;
     const profileName = String(fetchedProfileName || '').trim();
+    const contactIsPlaceholder = !contact || this.isPlaceholderSocialName(contact, channel, externalUserId);
+    if (fullName && !contactIsPlaceholder) return fullName;
     if (profileName) return profileName;
+    if (fullName && fullName !== 'Messenger Contact' && fullName !== 'Instagram Contact') return fullName;
     // Meta refuses the profile for some senders — notably messages arriving
     // from a shared post — with "(#100) No matching user found", which is
     // permanent. A 16-digit page-scoped id tells a human nothing, so show a
