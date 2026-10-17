@@ -6,8 +6,26 @@ import SmartBillInvoiceModal from '@/components/SmartBillInvoiceModal';
 
 type PaymentStatus = 'paid' | 'failed' | 'pending';
 
+interface UnifiedPaymentRow {
+  id: string;
+  source: 'payfunnel' | 'payflow';
+  status: string;
+  amount?: number;
+  currency?: string;
+  occurredAt: string;
+  reference?: string;
+  title?: string;
+  contact?: { id?: string; name?: string; email?: string };
+  deal?: { id: string; title: string; stage?: string };
+  document?: { id: string; name?: string; status?: string };
+}
+
 interface PaymentItem {
+  /** For a Payflow transaction this is a synthetic id, not a document. */
   documentId: string;
+  source?: 'payfunnel' | 'payflow';
+  /** False for a provider's own record, which this screen must not delete. */
+  removable?: boolean;
   documentName: string;
   documentStatus: string;
   createdAt: string;
@@ -215,27 +233,51 @@ export default function PaymentsPage() {
     }
     setError('');
     try {
-      const response = await api.get<PaymentsResponse>('/documents/payments', {
+      // /payments serves both providers. PayFunnels payments belong to a
+      // document; Payflow transactions do not, so the document fields are
+      // filled with what the transaction has and the table keeps working
+      // without being rewritten around a second shape.
+      const response = await api.get<{ data: UnifiedPaymentRow[]; summary: any }>('/payments', {
         params: {
-          page,
-          limit: 25,
           search: search || undefined,
           status: queryStatus,
         },
       });
 
-      const data = response.data;
-      setRows(Array.isArray(data.payments) ? data.payments : []);
-      setSummary(
-        data.summary || {
-          total: 0,
-          paid: 0,
-          failed: 0,
-          pending: 0,
+      const unified = Array.isArray(response.data?.data) ? response.data.data : [];
+      const mapped: PaymentItem[] = unified.map((row) => ({
+        documentId: row.document?.id || row.id,
+        documentName: row.document?.name || row.title || 'Tranzacție',
+        documentStatus: row.document?.status || (row.source === 'payflow' ? 'Payflow' : '—'),
+        createdAt: row.occurredAt,
+        contact: row.contact
+          ? { id: row.contact.id || '', name: row.contact.name || '', email: row.contact.email }
+          : undefined,
+        deal: row.deal,
+        source: row.source,
+        // Only a document-backed payment can be removed from this screen; a
+        // Payflow transaction is the provider's record, not ours.
+        removable: Boolean(row.document?.id),
+        payment: {
+          status: row.status as PaymentStatus,
+          amount: row.amount,
+          currency: row.currency,
+          paidAt: row.status === 'paid' ? row.occurredAt : undefined,
+          paymentReference: row.reference,
         },
-      );
-      setTotal(Number(data.total || 0));
-      setTotalPages(Math.max(Number(data.totalPages || 1), 1));
+      }));
+
+      setRows(mapped);
+      const summary = response.data?.summary;
+      setSummary({
+        total: summary?.total ?? mapped.length,
+        paid: summary?.paid ?? 0,
+        failed: summary?.failed ?? 0,
+        pending: summary?.pending ?? 0,
+        paidByCurrency: summary?.paidByCurrency,
+      } as any);
+      setTotal(Number(summary?.total ?? mapped.length));
+      setTotalPages(1);
     } catch (err: any) {
       setRows([]);
       setSummary({ total: 0, paid: 0, failed: 0, pending: 0 });
@@ -670,7 +712,18 @@ export default function PaymentsPage() {
                     </td>
                     <td className="px-4 py-3 align-top">
                       <div className="text-sm font-semibold text-gray-900">{row.documentName}</div>
-                      <div className="text-xs text-gray-500 mt-1">Doc status: {row.documentStatus}</div>
+                      <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                            row.source === 'payflow'
+                              ? 'bg-violet-50 text-violet-700'
+                              : 'bg-sky-50 text-sky-700'
+                          }`}
+                        >
+                          {row.source === 'payflow' ? 'Payflow' : 'PayFunnels'}
+                        </span>
+                        <span className="text-xs text-gray-500">{row.documentStatus}</span>
+                      </div>
                       {row.payment.paymentReference && (
                         <div className="text-xs text-gray-500 mt-1">Ref: {row.payment.paymentReference}</div>
                       )}
@@ -712,7 +765,7 @@ export default function PaymentsPage() {
                         )}
                         <button
                           type="button"
-                          disabled={deletingPaymentDocumentId === row.documentId}
+                          disabled={row.removable === false || deletingPaymentDocumentId === row.documentId}
                           onClick={() => deletePaymentEntry(row, false)}
                           className="text-left text-xs text-amber-700 hover:text-amber-900 disabled:opacity-50"
                         >
@@ -720,7 +773,7 @@ export default function PaymentsPage() {
                         </button>
                         <button
                           type="button"
-                          disabled={deletingPaymentDocumentId === row.documentId}
+                          disabled={row.removable === false || deletingPaymentDocumentId === row.documentId}
                           onClick={() => deletePaymentEntry(row, true)}
                           className="text-left text-xs text-rose-600 hover:text-rose-800 disabled:opacity-50"
                         >

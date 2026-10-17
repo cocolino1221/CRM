@@ -66,12 +66,12 @@ const leadNavigation: NavigationItem[] = [
 const insightNavigation: NavigationItem[] = [
   { name: 'Analytics', href: '/analytics', icon: BarChart3, color: 'from-indigo-500 to-purple-500' },
   { name: 'Rapoarte', href: '/rapoarte', icon: Target, color: 'from-fuchsia-500 to-purple-500' },
+  { name: 'Plăți', href: '/payments', icon: CreditCard, color: 'from-emerald-500 to-teal-500' },
   { name: 'Logs', href: '/logs', icon: ScrollText, color: 'from-rose-500 to-pink-500', adminOnly: true },
 ] ;
 
 const documentsNavigation: NavigationItem[] = [
   { name: 'Documents', href: '/documents', icon: FolderOpen, color: 'from-amber-500 to-orange-500' },
-  { name: 'Payments', href: '/payments', icon: CreditCard, color: 'from-emerald-500 to-teal-500' },
 ] ;
 
 const campaignsNavigation: NavigationItem[] = [

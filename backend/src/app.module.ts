@@ -36,6 +36,7 @@ import { MeetingReminderModule } from './events/meeting-reminder.module';
 import { AvailabilityModule } from './availability/availability.module';
 import { BookingsModule } from './bookings/bookings.module';
 import { DocumentsModule } from './documents/documents.module';
+import { PaymentsModule } from './payments/payments.module';
 import { FormsModule } from './forms/forms.module';
 import { LandingPagesModule } from './landing-pages/landing-pages.module';
 import { FunnelsModule } from './funnels/funnels.module';
@@ -153,18 +154,24 @@ import { validationSchema } from './config/env.validation';
     // Queue management (requires Redis)
     BullModule.forRootAsync({
       imports: [ConfigModule],
-      useFactory: (configService: ConfigService) => ({
-        redis: {
-          host: configService.get('redis.host'),
-          port: configService.get('redis.port'),
-          password: configService.get('redis.password'),
-          db: configService.get('redis.db', 0),
-        },
-        defaultJobOptions: {
-          removeOnComplete: 100,
-          removeOnFail: 50,
-        },
-      }),
+      useFactory: (configService: ConfigService) => {
+        const host = configService.get<string>('redis.host');
+        // Upstash (and most managed Redis) require TLS; local dev Redis doesn't.
+        const useTls = !!host && host !== 'localhost' && host !== '127.0.0.1';
+        return {
+          redis: {
+            host,
+            port: configService.get('redis.port'),
+            password: configService.get('redis.password'),
+            db: configService.get('redis.db', 0),
+            ...(useTls ? { tls: {} } : {}),
+          },
+          defaultJobOptions: {
+            removeOnComplete: 100,
+            removeOnFail: 50,
+          },
+        };
+      },
       inject: [ConfigService],
     }),
 
@@ -200,6 +207,7 @@ import { validationSchema } from './config/env.validation';
     AvailabilityModule,
     BookingsModule,
     DocumentsModule,
+    PaymentsModule,
     FormsModule,
     LandingPagesModule,
     FunnelsModule,
