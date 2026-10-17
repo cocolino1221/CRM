@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { Plus, Search, Phone, Video, Trophy, TrendingUp, TrendingDown, UserCheck, Loader2, Mail, Building, Calendar, DollarSign, MoreVertical, Edit, Trash2, X, AlertCircle, Settings, Users, Tag, FileText, Star, Clock, Briefcase, Eye, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, MessageSquare, Send, ExternalLink, RefreshCw, Upload, CheckCircle2, Circle } from 'lucide-react';
 import { getInitials } from '@/lib/utils';
 import api from '@/lib/api';
+import { DispositionDialog } from '@/components/calls/DispositionDialog';
 
 const PHONE_PREFIXES = [
   { code: '+40', country: 'RO', flag: '🇷🇴' },
@@ -164,6 +165,8 @@ export default function LeadsPage() {
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [editingContact, setEditingContact] = useState<Contact | null>(null);
   const [detailContact, setDetailContact] = useState<Contact | null>(null);
+  // A call placed outside the app — the caller still records the outcome.
+  const [logCallFor, setLogCallFor] = useState<Contact | null>(null);
   const [isLoadingDetail, setIsLoadingDetail] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [modalError, setModalError] = useState('');
@@ -1336,6 +1339,20 @@ export default function LeadsPage() {
       )}
 
       {/* Lead Detail Modal */}
+      {logCallFor && (
+        <DispositionDialog
+          contactId={logCallFor.id}
+          contactName={
+            `${logCallFor.firstName ?? ''} ${logCallFor.lastName ?? ''}`.trim() ||
+            logCallFor.phone ||
+            logCallFor.email ||
+            'Contact'
+          }
+          onClose={() => setLogCallFor(null)}
+          onSaved={() => fetchContacts()}
+        />
+      )}
+
       {showDetailModal && detailContact && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm animate-fade-in">
           <div className="relative w-full max-w-3xl mx-4 bg-white rounded-2xl shadow-2xl animate-scale-in max-h-[90vh] overflow-y-auto">
@@ -1645,6 +1662,16 @@ export default function LeadsPage() {
                     </div>
                   </div>
                 )}
+
+                {/* A call placed from a handset still needs its outcome recorded. */}
+                <div className="mb-5">
+                  <button
+                    onClick={() => setLogCallFor(detailContact)}
+                    className="inline-flex items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-700 transition hover:bg-indigo-100 dark:border-indigo-900 dark:bg-indigo-950 dark:text-indigo-300"
+                  >
+                    <Phone className="h-4 w-4" /> Rezultat apel
+                  </button>
+                </div>
 
                 {/* Recordings — WhatsApp call recordings + manually-added Zoom/Meet links */}
                 <div>
