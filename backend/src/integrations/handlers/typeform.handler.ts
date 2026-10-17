@@ -210,24 +210,11 @@ export class TypeformIntegrationHandler {
       const pipelineConfig = formConfig?.pipelineId
         ? formConfig
         : integration.config?.typeformPipeline;
-      let pipelineId = pipelineConfig?.pipelineId;
-      let pipelineStageId = pipelineConfig?.pipelineStageId;
-
-      // If no pipeline configured, use default pipeline
-      if (!pipelineId) {
-        const defaultPipeline = await this.pipelineRepository.findOne({
-          where: { workspaceId, isDefault: true },
-          relations: ['stages'],
-        });
-
-        if (defaultPipeline) {
-          pipelineId = defaultPipeline.id;
-          // Use first stage if no stage specified
-          if (!pipelineStageId && defaultPipeline.stages && defaultPipeline.stages.length > 0) {
-            pipelineStageId = defaultPipeline.stages[0].id;
-          }
-        }
-      }
+      const { pipelineId, pipelineStageId } = await this.resolvePipelineTarget(
+        workspaceId,
+        pipelineConfig?.pipelineId,
+        pipelineConfig?.pipelineStageId,
+      );
 
       // Create contact with all extracted data
       const contact = await this.contactsService.create(workspaceId, {
@@ -559,6 +546,62 @@ export class TypeformIntegrationHandler {
   /**
    * Update form-specific config
    */
+  /**
+   * Pick the pipeline + stage a new Typeform lead lands in. A configured
+   * pipeline that was since deleted falls back to the workspace default, and
+   * a missing or stale stage falls back to the pipeline's first stage.
+   */
+  async resolvePipelineTarget(
+    workspaceId: string,
+    pipelineId?: string | null,
+    pipelineStageId?: string | null,
+  ): Promise<{ pipelineId?: string; pipelineStageId?: string }> {
+    let pipeline = pipelineId
+      ? await this.pipelineRepository.findOne({ where: { id: pipelineId, workspaceId } })
+      : null;
+    if (!pipeline) {
+      pipeline = await this.pipelineRepository.findOne({ where: { workspaceId, isDefault: true } });
+    }
+    if (!pipeline) {
+      return {};
+    }
+
+    const stages = await this.pipelineStageRepository.find({
+      where: { pipelineId: pipeline.id, workspaceId },
+      order: { displayOrder: 'ASC' },
+    });
+    const stage = stages.find((s) => s.id === pipelineStageId) || stages[0];
+    return { pipelineId: pipeline.id, pipelineStageId: stage?.id };
+  }
+
+  /**
+   * Reject a pipeline/stage pair that isn't in this workspace or doesn't match.
+   */
+  async validatePipelineSelection(
+    workspaceId: string,
+    pipelineId?: string | null,
+    pipelineStageId?: string | null,
+  ): Promise<void> {
+    if (!pipelineId) {
+      if (pipelineStageId) {
+        throw new BadRequestException('Select a pipeline before choosing a stage');
+      }
+      return;
+    }
+    const pipeline = await this.pipelineRepository.findOne({ where: { id: pipelineId, workspaceId } });
+    if (!pipeline) {
+      throw new BadRequestException('Pipeline not found');
+    }
+    if (pipelineStageId) {
+      const stage = await this.pipelineStageRepository.findOne({
+        where: { id: pipelineStageId, pipelineId, workspaceId },
+      });
+      if (!stage) {
+        throw new BadRequestException('Stage does not belong to the selected pipeline');
+      }
+    }
+  }
+
   updateFormConfig(integration: any, formId: string, config: any): any[] {
     const forms = integration.config?.typeformForms || [];
     const form = forms.find((f: any) => f.formId === formId);

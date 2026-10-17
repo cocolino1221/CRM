@@ -1163,7 +1163,7 @@ export class IntegrationsController {
     @Param('id') id: string,
     @Param('formId') formId: string,
     @Req() req: AuthenticatedRequest,
-    @Body() body: { name?: string; pipelineId?: string; pipelineStageId?: string; whatsApp?: any; enabled?: boolean },
+    @Body() body: { name?: string; pipelineId?: string | null; pipelineStageId?: string | null; whatsApp?: any; enabled?: boolean },
   ) {
     const integration = await this.integrationRepository.findOne({
       where: { id, workspaceId: req.user.workspaceId },
@@ -1172,7 +1172,19 @@ export class IntegrationsController {
       return { success: false, message: 'Integration not found' };
     }
 
-    const forms = this.typeformHandler.updateFormConfig(integration, formId, body);
+    const update: Record<string, any> = { ...body };
+    if ('pipelineId' in body || 'pipelineStageId' in body) {
+      // Empty selection clears the override so leads use the default pipeline.
+      update.pipelineId = body.pipelineId || null;
+      update.pipelineStageId = update.pipelineId ? body.pipelineStageId || null : null;
+      await this.typeformHandler.validatePipelineSelection(
+        req.user.workspaceId,
+        update.pipelineId,
+        update.pipelineStageId,
+      );
+    }
+
+    const forms = this.typeformHandler.updateFormConfig(integration, formId, update);
 
     integration.config = {
       ...integration.config,

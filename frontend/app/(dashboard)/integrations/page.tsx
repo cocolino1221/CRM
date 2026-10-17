@@ -106,6 +106,10 @@ export default function IntegrationsPage() {
 
   // Typeform multi-form management
   const [typeformForms, setTypeformForms] = useState<any[]>([]);
+  const [typeformPipelines, setTypeformPipelines] = useState<
+    { id: string; name: string; isDefault?: boolean; stages?: { id: string; name: string; displayOrder: number }[] }[]
+  >([]);
+  const [savingFormPipelineId, setSavingFormPipelineId] = useState<string | null>(null);
   const [showAddFormModal, setShowAddFormModal] = useState(false);
   const [newFormId, setNewFormId] = useState('');
   const [newFormName, setNewFormName] = useState('');
@@ -1160,6 +1164,9 @@ export default function IntegrationsPage() {
           .then(res => setTypeformForms(res.data.forms || []))
           .catch(() => setTypeformForms([]))
           .finally(() => setIsLoadingForms(false));
+        api.get('/pipelines')
+          .then(res => setTypeformPipelines(Array.isArray(res.data) ? res.data : []))
+          .catch(() => setTypeformPipelines([]));
       }
       if (integration.id === 'facebook' && existing.id) {
         setIsLoadingMetaLeadForms(true);
@@ -2598,13 +2605,67 @@ export default function IntegrationsPage() {
                 ) : (
                   <div className="space-y-2">
                     {typeformForms.map((form: any) => (
-                      <div key={form.formId} className="flex items-center justify-between bg-white rounded-lg border border-purple-100 p-3">
+                      <div key={form.formId} className="flex items-start justify-between bg-white rounded-lg border border-purple-100 p-3">
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium text-gray-900 truncate">{form.name || form.formId}</p>
                           <p className="text-xs text-gray-500">ID: {form.formId}</p>
-                          {form.pipelineId && (
-                            <p className="text-xs text-purple-600 mt-0.5">Pipeline configured</p>
-                          )}
+                          {(() => {
+                            const selectedPipeline = typeformPipelines.find(p => p.id === form.pipelineId);
+                            const defaultPipeline = typeformPipelines.find(p => p.isDefault);
+                            const stages = [...(selectedPipeline?.stages || [])].sort((a, b) => a.displayOrder - b.displayOrder);
+                            const saving = savingFormPipelineId === form.formId;
+                            const savePipeline = async (pipelineId: string, pipelineStageId: string) => {
+                              const previous = { pipelineId: form.pipelineId, pipelineStageId: form.pipelineStageId };
+                              const next = { pipelineId: pipelineId || null, pipelineStageId: pipelineStageId || null };
+                              setTypeformForms(prev => prev.map(f => f.formId === form.formId ? { ...f, ...next } : f));
+                              setSavingFormPipelineId(form.formId);
+                              try {
+                                await api.patch(`/integrations/${connectedIntegrations[managingIntegration.id].id}/typeform/forms/${form.formId}`, next);
+                              } catch (err: any) {
+                                setTypeformForms(prev => prev.map(f => f.formId === form.formId ? { ...f, ...previous } : f));
+                                alert(err.response?.data?.message || 'Failed to save pipeline');
+                              } finally {
+                                setSavingFormPipelineId(null);
+                              }
+                            };
+                            return (
+                              <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                                <label className="block">
+                                  <span className="mb-1 block text-[11px] font-medium text-gray-500">Pipeline</span>
+                                  <select
+                                    value={selectedPipeline ? form.pipelineId : ''}
+                                    disabled={saving}
+                                    onChange={(e) => {
+                                      const next = typeformPipelines.find(p => p.id === e.target.value);
+                                      const firstStage = [...(next?.stages || [])].sort((a, b) => a.displayOrder - b.displayOrder)[0];
+                                      void savePipeline(e.target.value, firstStage?.id || '');
+                                    }}
+                                    className="w-full rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-xs focus:border-transparent focus:ring-2 focus:ring-purple-500 disabled:opacity-60"
+                                  >
+                                    <option value="">Default{defaultPipeline ? ` (${defaultPipeline.name})` : ''}</option>
+                                    {typeformPipelines.map(p => (
+                                      <option key={p.id} value={p.id}>{p.name}</option>
+                                    ))}
+                                  </select>
+                                </label>
+                                <label className="block">
+                                  <span className="mb-1 block text-[11px] font-medium text-gray-500">Stage</span>
+                                  <select
+                                    value={stages.some(st => st.id === form.pipelineStageId) ? form.pipelineStageId : ''}
+                                    disabled={saving || !selectedPipeline}
+                                    onChange={(e) => void savePipeline(form.pipelineId, e.target.value)}
+                                    className="w-full rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-xs focus:border-transparent focus:ring-2 focus:ring-purple-500 disabled:opacity-60"
+                                  >
+                                    {!selectedPipeline && <option value="">First stage</option>}
+                                    {selectedPipeline && !stages.some(st => st.id === form.pipelineStageId) && <option value="">First stage</option>}
+                                    {stages.map(st => (
+                                      <option key={st.id} value={st.id}>{st.name}</option>
+                                    ))}
+                                  </select>
+                                </label>
+                              </div>
+                            );
+                          })()}
                           {form.whatsApp?.enabled && (
                             <p className="text-xs text-green-600 mt-0.5">WhatsApp auto-send enabled</p>
                           )}
