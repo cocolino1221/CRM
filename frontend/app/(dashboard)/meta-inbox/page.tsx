@@ -183,37 +183,31 @@ const channelTheme: Record<
     outboundBubble: string;
     listAccent: string;
     avatarRing: string;
-    rowAccent: string;
-    panelBorder: string;
-    composerDivider: string;
-    composerPill: string;
+    rowActive: string;
+    focusRing: string;
   }
 > = {
   messenger: {
     label: 'Messenger',
     icon: MessageCircle,
-    badge: 'border-[#0078ff]/40 bg-[#e8f1ff] text-[#0057d9]',
+    badge: 'bg-[#0078ff]/10 text-[#0057d9]',
     subtleIcon: 'bg-[#e8f1ff] text-[#0057d9]',
     outboundBubble: 'bg-[#0078ff] text-white',
     listAccent: 'text-[#0078ff]',
-    avatarRing: 'ring-2 ring-[#0078ff]/60',
-    rowAccent: 'border-l-[3px] border-l-[#0078ff]',
-    panelBorder: 'border-2 border-[#0078ff]/45',
-    composerDivider: 'border-t-2 border-t-[#0078ff]/50',
-    composerPill: 'border-[#0078ff]/40',
+    avatarRing: 'ring-2 ring-white shadow-[0_0_0_1px_rgba(0,120,255,0.18)]',
+    rowActive: 'bg-[#0078ff]/[0.07]',
+    focusRing: 'focus-within:ring-[#0078ff]/25',
   },
   instagram: {
     label: 'Instagram',
     icon: Instagram,
-    badge: 'border-fuchsia-400/50 bg-fuchsia-50 text-fuchsia-700',
+    badge: 'bg-fuchsia-500/10 text-fuchsia-700',
     subtleIcon: 'bg-[linear-gradient(135deg,#fdf2f8_0%,#faf5ff_100%)] text-fuchsia-700',
     outboundBubble: 'bg-[linear-gradient(135deg,#7c3aed_0%,#d946ef_100%)] text-white',
     listAccent: 'text-fuchsia-600',
-    avatarRing: 'ring-2 ring-fuchsia-500/60',
-    rowAccent: 'border-l-[3px] border-l-fuchsia-500',
-    panelBorder: 'border-2 border-fuchsia-500/45',
-    composerDivider: 'border-t-2 border-t-fuchsia-500/50',
-    composerPill: 'border-fuchsia-500/40',
+    avatarRing: 'ring-2 ring-white shadow-[0_0_0_1px_rgba(217,70,239,0.2)]',
+    rowActive: 'bg-fuchsia-500/[0.07]',
+    focusRing: 'focus-within:ring-fuchsia-500/25',
   },
 };
 
@@ -402,7 +396,7 @@ function ChannelBadge({ channel }: { channel: MetaChannel }) {
   const Icon = theme.icon;
 
   return (
-    <span className={cn('inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[11px] font-medium', theme.badge)}>
+    <span className={cn('inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium', theme.badge)}>
       <Icon className="h-3.5 w-3.5" />
       {theme.label}
     </span>
@@ -413,7 +407,7 @@ function StatusBadge({ liveReady }: { liveReady: boolean }) {
   return (
     <span
       className={cn(
-        'inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11px] font-medium',
+        'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium',
         liveReady ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500',
       )}
     >
@@ -431,9 +425,9 @@ function AssignmentPill({
   user?: Partial<TeamUser> | null;
 }) {
   return (
-    <span className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-600">
-      <span className="font-medium text-slate-500">{label}</span>
-      <span className="text-slate-900">{getUserDisplayName(user) || 'Unassigned'}</span>
+    <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100/80 px-2.5 py-1 text-[11px] text-slate-600">
+      <span className="text-slate-400">{label}</span>
+      <span className="font-medium text-slate-800">{getUserDisplayName(user) || 'Unassigned'}</span>
     </span>
   );
 }
@@ -1631,11 +1625,11 @@ export default function MessagesPage() {
 
   return (
     <>
-      <div className="flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm xl:h-[calc(100dvh-6.5rem)]">
-        <div className="border-b border-slate-200 px-4 py-2.5">
+      <div className="flex flex-col gap-3 overflow-hidden rounded-[28px] bg-slate-100/70 p-3 xl:h-[calc(100dvh-6.5rem)]">
+        <div className="px-2 pt-1">
           <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
             <div>
-              <h1 className="text-lg font-semibold tracking-tight text-slate-950">Messages</h1>
+              <h1 className="text-xl font-semibold tracking-tight text-slate-950">Messages</h1>
             </div>
 
             <div className="flex flex-1 items-center justify-end gap-2 xl:max-w-3xl">
@@ -1645,13 +1639,13 @@ export default function MessagesPage() {
                   value={searchTerm}
                   onChange={(event) => setSearchTerm(event.target.value)}
                   placeholder="Search conversations"
-                  className="w-full rounded-lg border border-slate-200 bg-slate-50/60 py-1.5 pl-9 pr-3 text-[13px] outline-none transition-colors duration-150 focus:border-slate-400 focus:bg-white"
+                  className="w-full rounded-full bg-white py-2 pl-9 pr-4 text-[13px] shadow-[0_1px_2px_rgba(15,23,42,0.05)] outline-none ring-1 ring-transparent transition placeholder:text-slate-400 focus:ring-slate-300"
                 />
               </div>
 
               <button
                 onClick={() => refreshAll(false)}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-600 transition-colors duration-150 hover:bg-slate-50"
+                className="inline-flex items-center gap-1.5 rounded-full bg-white px-3 py-2 text-xs font-medium text-slate-600 shadow-[0_1px_2px_rgba(15,23,42,0.05)] transition hover:text-slate-900"
               >
                 <RefreshCw className={cn('h-3.5 w-3.5', refreshing && 'animate-spin')} />
                 Refresh
@@ -1659,7 +1653,7 @@ export default function MessagesPage() {
 
               <button
                 onClick={() => setShowTools(true)}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-600 transition-colors duration-150 hover:bg-slate-50"
+                className="inline-flex items-center gap-1.5 rounded-full bg-white px-3 py-2 text-xs font-medium text-slate-600 shadow-[0_1px_2px_rgba(15,23,42,0.05)] transition hover:text-slate-900"
               >
                 <Settings2 className="h-3.5 w-3.5" />
                 Tools
@@ -1669,7 +1663,7 @@ export default function MessagesPage() {
         </div>
 
         {accounts.filter((a) => a.warning).map((account) => (
-          <div key={account.integrationId} className="flex flex-wrap items-center gap-2 border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-800">
+          <div key={account.integrationId} className="flex flex-wrap items-center gap-2 rounded-2xl bg-amber-50 px-4 py-2 text-xs text-amber-800">
             <AlertTriangle className="h-3.5 w-3.5 flex-shrink-0" />
             <span className="flex-1">
               <span className="font-semibold">{account.name}</span>: {account.warning}
@@ -1677,7 +1671,7 @@ export default function MessagesPage() {
             <button
               onClick={() => void reconnectAccount(account)}
               disabled={reconnectingId === account.integrationId}
-              className="inline-flex items-center gap-1 rounded-lg border border-amber-300 bg-white px-2.5 py-1 font-semibold text-amber-800 hover:bg-amber-100 disabled:opacity-60"
+              className="inline-flex items-center gap-1 rounded-full bg-white px-3 py-1 font-semibold text-amber-800 shadow-sm hover:bg-amber-100 disabled:opacity-60"
             >
               {reconnectingId === account.integrationId ? <LoaderCircle className="h-3 w-3 animate-spin" /> : null}
               Reconnect
@@ -1688,16 +1682,16 @@ export default function MessagesPage() {
         {(sendError || sendSuccess) && (
           <div
             className={cn(
-              'border-b px-5 py-3 text-sm',
-              sendError ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700',
+              'rounded-2xl px-4 py-2.5 text-sm',
+              sendError ? 'bg-rose-50 text-rose-700' : 'bg-emerald-50 text-emerald-700',
             )}
           >
             {sendError || sendSuccess}
           </div>
         )}
 
-        <div className="border-b border-slate-200 px-4 py-2">
-          <div className="flex flex-wrap items-center gap-1.5">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-1">
+          <div className="inline-flex flex-wrap items-center gap-0.5 rounded-full bg-white p-1 shadow-[0_1px_2px_rgba(15,23,42,0.05)]">
             {(
               [
                 { key: 'all', count: inboxStats.all },
@@ -1712,23 +1706,22 @@ export default function MessagesPage() {
                   key={item.key}
                   onClick={() => setActiveFilter(item.key)}
                   className={cn(
-                    'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium transition-colors duration-150',
-                    active ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-700',
+                    'inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-colors duration-150',
+                    active ? 'bg-slate-900 text-white' : 'text-slate-500 hover:text-slate-900',
                   )}
                 >
                   <span>{filterLabels[item.key]}</span>
-                  <span className={cn('rounded-full px-1.5 py-0.5 text-[10px]', active ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-500')}>
+                  <span className={cn('text-[10px] tabular-nums', active ? 'text-white/60' : 'text-slate-400')}>
                     {item.count}
                   </span>
                 </button>
               );
             })}
           </div>
-        </div>
 
         {accountFilters.length > 2 && (
-          <div className="border-b border-slate-200 px-4 py-2">
-            <div className="flex flex-wrap items-center gap-2">
+          <div className="flex min-w-0 flex-1 items-center">
+            <div className="flex flex-wrap items-center gap-1.5">
               {accountFilters.map((item) => {
                 const active = activeAccountFilter === item.key;
                 return (
@@ -1736,14 +1729,14 @@ export default function MessagesPage() {
                     key={item.key}
                     onClick={() => setActiveAccountFilter(item.key)}
                     className={cn(
-                      'inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium transition',
+                      'inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition',
                       active
-                        ? 'border-slate-900 bg-slate-900 text-white'
-                        : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50 hover:text-slate-700',
+                        ? 'bg-white text-slate-900 shadow-[0_1px_2px_rgba(15,23,42,0.08)]'
+                        : 'text-slate-500 hover:bg-white/60 hover:text-slate-800',
                     )}
                   >
                     <span>{item.label}</span>
-                    <span className={cn('rounded-full px-1.5 py-0.5 text-[10px]', active ? 'bg-white/15 text-white' : 'bg-slate-100 text-slate-500')}>
+                    <span className={cn('text-[10px] tabular-nums', active ? 'text-slate-400' : 'text-slate-400/80')}>
                       {item.count}
                     </span>
                   </button>
@@ -1752,18 +1745,19 @@ export default function MessagesPage() {
             </div>
           </div>
         )}
+        </div>
 
         <div
           className={cn(
-            'grid min-h-[600px] xl:min-h-0 xl:flex-1 xl:overflow-hidden',
-            showDetails ? 'xl:grid-cols-[280px_minmax(0,1fr)_260px]' : 'xl:grid-cols-[280px_minmax(0,1fr)]',
+            'grid min-h-[600px] gap-3 xl:min-h-0 xl:flex-1 xl:overflow-hidden',
+            showDetails ? 'xl:grid-cols-[300px_minmax(0,1fr)_280px]' : 'xl:grid-cols-[300px_minmax(0,1fr)]',
           )}
         >
-          <aside className="flex min-h-0 flex-col border-r border-slate-200 bg-white">
-            <div className="border-b border-slate-200 px-3 py-2">
+          <aside className="flex min-h-0 flex-col overflow-hidden rounded-3xl bg-white shadow-[0_1px_3px_rgba(15,23,42,0.04),0_8px_24px_-16px_rgba(15,23,42,0.12)]">
+            <div className="px-4 pb-2 pt-4">
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <div className="text-[13px] font-semibold text-slate-950">Open chats</div>
+                  <div className="text-sm font-semibold text-slate-950">Open chats</div>
                   <div className="text-[11px] text-slate-400">{visibleConversations.length} conversations</div>
                 </div>
                 <button
@@ -1771,7 +1765,7 @@ export default function MessagesPage() {
                     setSelectedId('');
                     setManualRecipient('');
                   }}
-                  className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-50"
+                  className="inline-flex items-center gap-1 rounded-full bg-slate-900 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-slate-700"
                 >
                   <Plus className="h-3.5 w-3.5" />
                   New
@@ -1779,7 +1773,7 @@ export default function MessagesPage() {
               </div>
             </div>
 
-            <div className="max-h-[600px] overflow-y-auto xl:max-h-none xl:flex-1">
+            <div className="max-h-[600px] space-y-0.5 overflow-y-auto px-2 pb-2 xl:max-h-none xl:flex-1">
               {visibleConversations.length === 0 ? (
                 <div className="p-6 text-sm text-slate-500">Nu există conversații pe filtrul curent.</div>
               ) : (
@@ -1793,27 +1787,26 @@ export default function MessagesPage() {
                       key={conversation.id}
                       onClick={() => selectConversation(conversation.id)}
                       className={cn(
-                        'flex w-full items-start gap-2.5 border-b border-slate-100 px-3 py-2.5 text-left transition-colors duration-150',
-                        theme.rowAccent,
-                        active ? 'bg-slate-50' : 'bg-white hover:bg-slate-50/70',
+                        'flex w-full items-start gap-3 rounded-2xl px-3 py-2.5 text-left transition-colors duration-150',
+                        active ? theme.rowActive : 'hover:bg-slate-50',
                       )}
                     >
                       <ContactAvatar
                         name={conversation.contactName}
                         avatarUrl={conversation.avatarUrl}
-                        className={cn('mt-0.5 h-9 w-9 text-[11px] font-semibold', theme.subtleIcon, theme.avatarRing)}
+                        className={cn('mt-0.5 h-10 w-10 text-[11px] font-semibold', theme.subtleIcon, theme.avatarRing)}
                       />
 
                       <div className="min-w-0 flex-1">
                         <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0">
                             <div className="flex items-center gap-2">
-                              <p className="truncate text-[13px] font-medium text-slate-950">{conversation.contactName}</p>
+                              <p className={cn('truncate text-[13px] text-slate-950', conversation.unreadCount > 0 ? 'font-semibold' : 'font-medium')}>{conversation.contactName}</p>
                               {conversation.unreadCount > 0 && <span className="h-2 w-2 rounded-full bg-[#0a66ff]" />}
                             </div>
-                            <div className="mt-0.5 flex items-center gap-2 text-[11px] text-slate-400">
-                              <Icon className={cn('h-3.5 w-3.5', theme.listAccent)} />
-                              <span className={cn('font-semibold', theme.listAccent)}>{theme.label}</span>
+                            <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-slate-400">
+                              <Icon className={cn('h-3 w-3', theme.listAccent)} />
+                              <span className={cn('font-medium', theme.listAccent)}>{theme.label}</span>
                               {conversation.messageProfileName && (
                                 <>
                                   <span>•</span>
@@ -1842,22 +1835,19 @@ export default function MessagesPage() {
 
           <main
             className={cn(
-              'flex min-h-0 flex-col bg-white',
-              selectedConversation
-                ? channelTheme[selectedConversation.channel].panelBorder
-                : 'border-2 border-transparent',
+              'flex min-h-0 flex-col overflow-hidden rounded-3xl bg-white shadow-[0_1px_3px_rgba(15,23,42,0.04),0_8px_24px_-16px_rgba(15,23,42,0.12)]',
             )}
           >
-            <div className="border-b border-slate-200 px-4 py-2.5">
+            <div className="px-5 py-4 shadow-[0_1px_0_rgba(15,23,42,0.04)]">
               <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
                 <div>
                   {selectedConversation ? (
-                    <div className="flex items-center gap-2.5">
+                    <div className="flex items-center gap-3">
                       <ContactAvatar
                         name={selectedConversation.contactName}
                         avatarUrl={selectedConversation.avatarUrl}
                         className={cn(
-                          'h-9 w-9 text-[11px] font-semibold',
+                          'h-11 w-11 text-xs font-semibold',
                           channelTheme[selectedConversation.channel].subtleIcon,
                           channelTheme[selectedConversation.channel].avatarRing,
                         )}
@@ -1868,18 +1858,18 @@ export default function MessagesPage() {
                           <ChannelBadge channel={selectedConversation.channel} />
                           <StatusBadge liveReady={!!activeIntegration?.liveReady} />
                           {selectedConversation.messageProfileName && (
-                            <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[11px] font-medium text-emerald-700">
+                            <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600">
                               {selectedConversation.messageProfileName}
                             </span>
                           )}
                           {selectedConversation.accountName && (
-                            <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-medium text-slate-600">
+                            <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600">
                               {selectedConversation.accountName}
                             </span>
                           )}
                         </div>
-                        <p className="mt-1 text-sm text-slate-500">{selectedConversation.externalUserId}</p>
-                        <div className="mt-3 flex flex-wrap gap-2">
+                        <p className="mt-0.5 text-xs text-slate-400">{selectedConversation.externalUserId}</p>
+                        <div className="mt-2 flex flex-wrap gap-1.5">
                           <AssignmentPill label="Setter" user={currentSetterUser} />
                           <AssignmentPill label="Closer" user={currentCloserUser} />
                         </div>
@@ -1896,7 +1886,7 @@ export default function MessagesPage() {
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => setShowDetails((value) => !value)}
-                    className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-50"
+                    className="rounded-full px-3 py-2 text-[13px] font-medium text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
                   >
                     {showDetails ? 'Hide details' : 'Show details'}
                   </button>
@@ -1904,7 +1894,7 @@ export default function MessagesPage() {
                     <button
                       onClick={markSelectedUnread}
                       title="Marchează ca necitit"
-                      className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-50"
+                      className="inline-flex items-center gap-1.5 rounded-full px-3 py-2 text-[13px] font-medium text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
                     >
                       <CircleDot className="h-4 w-4" />
                       Necitit
@@ -1915,7 +1905,7 @@ export default function MessagesPage() {
                       onClick={deleteSelectedConversation}
                       disabled={actionBusy}
                       title="Șterge conversația"
-                      className="inline-flex items-center gap-2 rounded-xl border border-rose-200 px-3 py-2 text-sm font-medium text-rose-600 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
+                      className="inline-flex items-center gap-1.5 rounded-full px-3 py-2 text-[13px] font-medium text-rose-500 transition hover:bg-rose-50 hover:text-rose-600 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       <Trash2 className="h-4 w-4" />
                       Șterge
@@ -1929,7 +1919,7 @@ export default function MessagesPage() {
                   <select
                     value={manualChannel}
                     onChange={(event) => setManualChannel(event.target.value as MetaChannel)}
-                    className="rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none transition focus:border-slate-400"
+                    className="rounded-xl bg-slate-100/80 px-3 py-2.5 text-sm outline-none ring-1 ring-transparent transition focus:bg-white focus:ring-slate-300"
                   >
                     {canAccessMessenger && <option value="messenger">Messenger</option>}
                     {canAccessInstagram && <option value="instagram">Instagram</option>}
@@ -1937,7 +1927,7 @@ export default function MessagesPage() {
                   <select
                     value={manualIntegrationId}
                     onChange={(event) => setManualIntegrationId(event.target.value)}
-                    className="rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none transition focus:border-slate-400"
+                    className="rounded-xl bg-slate-100/80 px-3 py-2.5 text-sm outline-none ring-1 ring-transparent transition focus:bg-white focus:ring-slate-300"
                   >
                     {(manualChannel === 'messenger' ? messengerAccounts : instagramAccounts).map((account) => (
                       <option key={account.integrationId} value={account.integrationId}>
@@ -1949,13 +1939,13 @@ export default function MessagesPage() {
                     value={manualRecipient}
                     onChange={(event) => setManualRecipient(event.target.value)}
                     placeholder="Recipient ID manual"
-                    className="rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none transition focus:border-slate-400"
+                    className="rounded-xl bg-slate-100/80 px-3 py-2.5 text-sm outline-none ring-1 ring-transparent transition focus:bg-white focus:ring-slate-300"
                   />
                 </div>
               )}
             </div>
 
-            <div className="flex-1 overflow-y-auto bg-gray-50 px-4 py-5">
+            <div className="flex-1 overflow-y-auto bg-[radial-gradient(ellipse_at_top,rgba(241,245,249,0.6),transparent_70%)] px-5 py-6">
               {selectedMessages.length > 0 ? (
                 <div className="mx-auto flex max-w-3xl flex-col gap-3">
                   {selectedMessages.map((message) => {
@@ -1967,9 +1957,9 @@ export default function MessagesPage() {
                         <div className="max-w-[78%]">
                           <div
                             className={cn(
-                              'rounded-2xl px-4 py-2.5 text-[15px] leading-relaxed shadow-sm',
+                              'rounded-[20px] px-4 py-2.5 text-[14.5px] leading-relaxed',
                               inbound
-                                ? 'rounded-bl-md border border-slate-100 bg-white text-slate-900'
+                                ? 'rounded-bl-md bg-slate-100 text-slate-900'
                                 : cn('rounded-br-md', theme.outboundBubble),
                             )}
                           >
@@ -2015,8 +2005,8 @@ export default function MessagesPage() {
                                       target="_blank"
                                       rel="noreferrer"
                                       className={cn(
-                                        'mt-1 flex items-center gap-3 rounded-2xl border p-3 no-underline',
-                                        inbound ? 'border-slate-200 bg-slate-50 text-slate-800' : 'border-white/25 bg-white/10 text-white',
+                                        'mt-1 flex items-center gap-3 rounded-2xl p-3 no-underline transition',
+                                        inbound ? 'bg-white text-slate-800 hover:bg-white/80' : 'bg-white/15 text-white hover:bg-white/20',
                                       )}
                                     >
                                       {url ? (
@@ -2090,15 +2080,13 @@ export default function MessagesPage() {
 
             <div
               className={cn(
-                'bg-white px-4 py-3',
-                channelTheme[selectedConversation?.channel || activeChannel].composerDivider,
+                'bg-white px-5 pb-4 pt-3',
               )}
             >
               <div className="flex items-center justify-between gap-3">
                 <div
                   className={cn(
-                    'inline-flex rounded-full border bg-slate-50 p-1',
-                    channelTheme[selectedConversation?.channel || activeChannel].composerPill,
+                    'inline-flex rounded-full bg-slate-100 p-0.5',
                   )}
                 >
                   <button
@@ -2133,7 +2121,7 @@ export default function MessagesPage() {
               </div>
 
               {composerMode === 'text' ? (
-                <div className="mt-4 space-y-2">
+                <div className="mt-3 space-y-2">
                   <div className="flex items-center gap-2">
                     <AudioLibraryPicker
                       channel={activeChannel}
@@ -2148,19 +2136,24 @@ export default function MessagesPage() {
                       }
                     />
                   </div>
-                  <div className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_110px]">
+                  <div
+                    className={cn(
+                      'flex items-end gap-2 rounded-[22px] bg-slate-100/80 p-1.5 pl-4 ring-4 ring-transparent transition focus-within:bg-white focus-within:shadow-[0_0_0_1px_rgba(15,23,42,0.08)]',
+                      channelTheme[selectedConversation?.channel || activeChannel].focusRing,
+                    )}
+                  >
                     <textarea
                       value={outboundText}
                       onChange={(event) => setOutboundText(event.target.value)}
                       placeholder="Write a reply..."
                       rows={2}
-                      className="w-full resize-none rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition-colors duration-150 focus:border-slate-400 focus:bg-white"
+                      className="min-w-0 flex-1 resize-none bg-transparent py-2 text-sm outline-none placeholder:text-slate-400"
                     />
                     <button
                       onClick={sendText}
                       disabled={actionBusy}
                       className={cn(
-                        'inline-flex items-center justify-center gap-1.5 rounded-2xl px-3 py-2 text-[13px] font-semibold shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60',
+                        'inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-full px-4 text-[13px] font-semibold shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60',
                         channelTheme[selectedConversation?.channel || activeChannel].outboundBubble,
                       )}
                     >
@@ -2339,8 +2332,8 @@ export default function MessagesPage() {
           </main>
 
           {showDetails && (
-            <aside className="border-l border-slate-200 bg-slate-50/40">
-              <div className="border-b border-slate-200 px-4 py-4">
+            <aside className="overflow-y-auto rounded-3xl bg-white shadow-[0_1px_3px_rgba(15,23,42,0.04),0_8px_24px_-16px_rgba(15,23,42,0.12)]">
+              <div className="px-5 py-5">
                 <div className="text-sm font-semibold text-slate-950">Details</div>
               </div>
 
@@ -2365,7 +2358,7 @@ export default function MessagesPage() {
                       </div>
                     </div>
 
-                    <div className="space-y-3 border-t border-slate-200 pt-4">
+                    <div className="space-y-3 pt-4">
                       <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Team</div>
                       <div className="space-y-3">
                         <div>
@@ -2374,7 +2367,7 @@ export default function MessagesPage() {
                             value={currentSetterId}
                             disabled={teamLoading || contactLoading || assignmentBusy === 'setterId' || assignmentMode === 'unavailable'}
                             onChange={(event) => void updateAssignment('setterId', event.target.value)}
-                            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-slate-400 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
+                            className="w-full rounded-xl bg-slate-100/80 px-3 py-2.5 text-sm text-slate-900 outline-none ring-1 ring-transparent transition focus:bg-white focus:ring-slate-300 disabled:cursor-not-allowed disabled:text-slate-400"
                           >
                             <option value="">{teamLoading ? 'Loading team...' : 'Unassigned'}</option>
                             {setterOptions.map((user) => (
@@ -2391,7 +2384,7 @@ export default function MessagesPage() {
                             value={currentCloserId}
                             disabled={teamLoading || contactLoading || assignmentBusy === 'closerId' || assignmentMode === 'unavailable'}
                             onChange={(event) => void updateAssignment('closerId', event.target.value)}
-                            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-slate-400 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
+                            className="w-full rounded-xl bg-slate-100/80 px-3 py-2.5 text-sm text-slate-900 outline-none ring-1 ring-transparent transition focus:bg-white focus:ring-slate-300 disabled:cursor-not-allowed disabled:text-slate-400"
                           >
                             <option value="">{teamLoading ? 'Loading team...' : 'Unassigned'}</option>
                             {closerOptions.map((user) => (
@@ -2402,7 +2395,7 @@ export default function MessagesPage() {
                           </select>
                         </div>
 
-                        <div className="rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-xs leading-5 text-slate-500">
+                        <div className="rounded-2xl bg-slate-50 px-3 py-2.5 text-xs leading-5 text-slate-500">
                           {assignmentMode === 'crm' && 'Assignment-ul se salvează direct pe contactul din CRM, exact pentru thread-ul curent.'}
                           {assignmentMode === 'unavailable' && 'Conversația nu este încă legată de un contact CRM, deci assignment-ul nu poate fi salvat.'}
                         </div>
@@ -2420,11 +2413,11 @@ export default function MessagesPage() {
                       </div>
                     </div>
 
-                    <div className="space-y-3 border-t border-slate-200 pt-4">
+                    <div className="space-y-3 pt-4">
                       <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Contact</div>
                       <div className="space-y-3 text-slate-600">
                         {!selectedConversation.contactId && (
-                          <div className="rounded-2xl border border-slate-200 bg-white p-3">
+                          <div className="rounded-2xl bg-slate-50 p-3">
                             <div className="flex items-start justify-between gap-3">
                               <div>
                                 <div className="text-sm font-medium text-slate-900">Not added as lead yet</div>
@@ -2517,7 +2510,7 @@ export default function MessagesPage() {
                       </div>
                     </div>
 
-                    <div className="space-y-3 border-t border-slate-200 pt-4">
+                    <div className="space-y-3 pt-4">
                       <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Routing</div>
                       <div className="space-y-3 text-slate-600">
                         <div className="flex items-center justify-between">
