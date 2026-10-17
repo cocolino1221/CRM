@@ -1,12 +1,32 @@
 import { Metadata } from 'next';
+import { headers } from 'next/headers';
 import LandingPageRender from './LandingPageRender';
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_URL || 'https://slackcrm-backend.fly.dev/api/v1';
 
+/**
+ * The host the visitor actually typed.
+ *
+ * The backend only ever sees its own hostname, so the one that decides which
+ * workspace a request belongs to has to be forwarded. Behind a proxy the
+ * original is in x-forwarded-host; `host` is the fallback.
+ */
+async function visitorHost(): Promise<string> {
+  try {
+    const h = await headers();
+    return h.get('x-forwarded-host') || h.get('host') || '';
+  } catch {
+    return '';
+  }
+}
+
 async function fetchView(slug: string) {
   try {
-    const res = await fetch(`${API_BASE}/landing-pages/public/${slug}?track=false`, {
+    const host = await visitorHost();
+    const qs = new URLSearchParams({ track: 'false' });
+    if (host) qs.set('host', host);
+    const res = await fetch(`${API_BASE}/landing-pages/public/${slug}?${qs}`, {
       cache: 'no-store',
     });
     if (!res.ok) return null;

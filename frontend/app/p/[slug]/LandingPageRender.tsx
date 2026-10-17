@@ -80,9 +80,13 @@ export default function LandingPageRender({ slug, initialPage, initialForm }: Pr
 
   const utms = useMemo(() => readUtms(), []);
 
-  // Fire a tracked view (raw + unique cookie dedup) once on mount.
+  // Fire a tracked view (raw + unique cookie dedup) once on mount. The host
+  // goes along so the view is counted against the right workspace's page.
   useEffect(() => {
-    fetch(`${API_BASE}/landing-pages/public/${slug}`, { credentials: 'include' }).catch(() => {});
+    const qs = new URLSearchParams({ host: window.location.host });
+    fetch(`${API_BASE}/landing-pages/public/${slug}?${qs}`, { credentials: 'include' }).catch(
+      () => {},
+    );
   }, [slug]);
 
   useEffect(() => {
@@ -107,7 +111,8 @@ export default function LandingPageRender({ slug, initialPage, initialForm }: Pr
     setError(null);
     setSubmitting(true);
     try {
-      const res = await fetch(`${API_BASE}/landing-pages/public/${slug}/submit`, {
+      const qs = new URLSearchParams({ host: window.location.host });
+      const res = await fetch(`${API_BASE}/landing-pages/public/${slug}/submit?${qs}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ data: values, trackingData: utms }),

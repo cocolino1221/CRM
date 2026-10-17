@@ -14,6 +14,7 @@ import {
   Headers,
 } from '@nestjs/common';
 import { Request, Response } from 'express';
+import { LandingDomainsService } from './landing-domains.service';
 import { LandingPagesService } from './landing-pages.service';
 import { CreateLandingPageDto } from './dto/create-landing-page.dto';
 import { UpdateLandingPageDto } from './dto/update-landing-page.dto';
@@ -26,7 +27,10 @@ const BOT_UA = /bot|crawl|spider|slurp|bingpreview|facebookexternalhit|whatsapp|
 
 @Controller('landing-pages')
 export class LandingPagesController {
-  constructor(private readonly landingPagesService: LandingPagesService) {}
+  constructor(
+    private readonly landingPagesService: LandingPagesService,
+    private readonly landingDomains: LandingDomainsService,
+  ) {}
 
   @Get('theme-presets')
   @UseGuards(JwtAuthGuard)
@@ -53,6 +57,7 @@ export class LandingPagesController {
     @Res({ passthrough: true }) res: Response,
     @Headers('user-agent') userAgent: string,
     @Query('track') track?: string,
+    @Query('host') host?: string,
   ) {
     const skipView = track === 'false';
     const cookieName = `lp_v_${slug}`;
@@ -68,22 +73,58 @@ export class LandingPagesController {
       });
     }
 
-    return this.landingPagesService.getPublicView(slug, { countUnique, skipView });
+    const workspaceId = await this.landingDomains.resolveWorkspaceByHost(host);
+    return this.landingPagesService.getPublicView(slug, { countUnique, skipView, workspaceId });
   }
 
   @Post('public/:slug/submit')
-  submit(
+  async submit(
     @Param('slug') slug: string,
     @Body() dto: SubmitLandingPageDto,
     @Ip() ip: string,
     @Headers('user-agent') userAgent: string,
     @Headers('referer') referrer: string,
+    @Query('host') host?: string,
   ) {
+    const workspaceId = await this.landingDomains.resolveWorkspaceByHost(host);
     return this.landingPagesService.submitPublic(slug, dto, {
       ipAddress: ip,
       userAgent,
       referrer,
+      workspaceId,
     });
+  }
+
+  // --- Custom domains -------------------------------------------------
+
+  @Get('domains')
+  @UseGuards(JwtAuthGuard)
+  async listDomains(@Req() req: any) {
+    const domains = await this.landingDomains.list(req.user.workspaceId);
+    // The DNS records travel with each row, so the screen never has to
+    // reconstruct them and get a name subtly wrong.
+    return domains.map((d) => ({ ...d, dns: this.landingDomains.instructionsFor(d) }));
+  }
+
+  @Post('domains')
+  @UseGuards(JwtAuthGuard)
+  async addDomain(@Req() req: any, @Body() body: { hostname: string }) {
+    const domain = await this.landingDomains.addDomain(req.user.workspaceId, body?.hostname);
+    return { ...domain, dns: this.landingDomains.instructionsFor(domain) };
+  }
+
+  @Post('domains/:id/verify')
+  @UseGuards(JwtAuthGuard)
+  async verifyDomain(@Req() req: any, @Param('id') id: string) {
+    const domain = await this.landingDomains.verify(req.user.workspaceId, id);
+    return { ...domain, dns: this.landingDomains.instructionsFor(domain) };
+  }
+
+  @Delete('domains/:id')
+  @UseGuards(JwtAuthGuard)
+  async removeDomain(@Req() req: any, @Param('id') id: string) {
+    await this.landingDomains.remove(req.user.workspaceId, id);
+    return { success: true };
   }
 
   @Get(':id')

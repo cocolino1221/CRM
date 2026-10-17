@@ -144,10 +144,15 @@ export class LandingPagesService {
 
   async findPublicBySlug(
     slug: string,
-    opts: { countUnique: boolean; skipView?: boolean },
+    opts: { countUnique: boolean; skipView?: boolean; workspaceId?: string | null },
   ): Promise<LandingPage> {
+    // A request that arrived on a workspace's own domain is scoped to it, so
+    // two customers can both publish "oferta". A request on the platform host
+    // has no workspace and falls back to a plain slug lookup.
     const page = await this.landingPageRepository.findOne({
-      where: { slug, status: LandingPageStatus.ACTIVE },
+      where: opts.workspaceId
+        ? { slug, status: LandingPageStatus.ACTIVE, workspaceId: opts.workspaceId }
+        : { slug, status: LandingPageStatus.ACTIVE },
     });
     if (!page) {
       throw new NotFoundException('Landing page not found');
@@ -166,7 +171,7 @@ export class LandingPagesService {
 
   async getPublicView(
     slug: string,
-    opts: { countUnique: boolean; skipView?: boolean },
+    opts: { countUnique: boolean; skipView?: boolean; workspaceId?: string | null },
   ): Promise<{
     page: LandingPage;
     form: { id: string; name: string; fields: any; settings: any } | null;
@@ -185,10 +190,19 @@ export class LandingPagesService {
   async submitPublic(
     slug: string,
     dto: SubmitLandingPageDto,
-    metadata: { ipAddress?: string; userAgent?: string; referrer?: string },
+    metadata: {
+      ipAddress?: string;
+      userAgent?: string;
+      referrer?: string;
+      workspaceId?: string | null;
+    },
   ): Promise<LandingPageSubmitResult> {
+    // Scoped the same way the view is, so a submission cannot land in another
+    // workspace that happens to share the slug.
     const page = await this.landingPageRepository.findOne({
-      where: { slug, status: LandingPageStatus.ACTIVE },
+      where: metadata.workspaceId
+        ? { slug, status: LandingPageStatus.ACTIVE, workspaceId: metadata.workspaceId }
+        : { slug, status: LandingPageStatus.ACTIVE },
     });
     if (!page) {
       throw new NotFoundException('Landing page not found');
