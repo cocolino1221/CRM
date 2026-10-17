@@ -7,7 +7,7 @@ import {
   ActivityType,
 } from '../database/entities/activity.entity';
 import { Contact } from '../database/entities/contact.entity';
-import { Deal } from '../database/entities/deal.entity';
+import { Deal, DealStage } from '../database/entities/deal.entity';
 import { Task, TaskPriority, TaskStatus, TaskType } from '../database/entities/task.entity';
 import { QueryActivitiesDto } from './dto/query-activities.dto';
 import { CreateAndDispositionDto, DispositionDto } from './dto/disposition.dto';
@@ -154,6 +154,13 @@ export class ActivitiesService {
         currency: dto.deal.currency,
         contactId: activity.contactId,
         ownerId: userId,
+        // Closed on this call, not left open. A deal on the entity's default
+        // stage is invisible to every report: dealsWon and revenue both count
+        // closed-won only, so the amount a caller typed would never have
+        // reached the numbers anyone reads.
+        stage: DealStage.CLOSED_WON,
+        probability: 100,
+        actualCloseDate: new Date(),
       });
       const savedDeal = await manager.getRepository(Deal).save(deal);
       activity.dealId = (savedDeal as any).id;

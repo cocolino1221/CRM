@@ -43,6 +43,8 @@ export interface DispositionDialogProps {
   phone?: string;
   /** Present only when the caller recorded the call; recording is consent-gated. */
   recordingUrl?: string;
+  /** Offered when the dialog opened instead of the contact's record. */
+  onViewDetails?: () => void;
   onClose: () => void;
   onSaved?: () => void;
 }
@@ -54,6 +56,7 @@ export default function DispositionDialog({
   durationSeconds,
   phone,
   recordingUrl,
+  onViewDetails,
   onClose,
   onSaved,
 }: DispositionDialogProps) {
@@ -201,12 +204,19 @@ export default function DispositionDialog({
               Cum a mers apelul cu {contactName}?
             </Text>
             {duration && <Text className="text-sm text-gray-500 mt-0.5">Durată: {duration}</Text>}
-            {phone && (
-              <View className="flex-row items-center gap-1.5 mt-1">
-                <Phone size={13} color="#2563eb" />
-                <Text className="text-sm text-blue-600">{phone}</Text>
-              </View>
-            )}
+            <View className="flex-row items-center gap-4 mt-1">
+              {phone && (
+                <View className="flex-row items-center gap-1.5">
+                  <Phone size={13} color="#2563eb" />
+                  <Text className="text-sm text-blue-600">{phone}</Text>
+                </View>
+              )}
+              {onViewDetails && (
+                <TouchableOpacity onPress={onViewDetails}>
+                  <Text className="text-sm text-slate-500 underline">Vezi detalii</Text>
+                </TouchableOpacity>
+              )}
+            </View>
           </View>
 
           <ScrollView className="px-5" keyboardShouldPersistTaps="handled">

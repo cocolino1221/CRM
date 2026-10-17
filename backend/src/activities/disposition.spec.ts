@@ -3,7 +3,7 @@ import { ActivitiesService } from './activities.service';
 import { Activity, ActivityOutcome } from '../database/entities/activity.entity';
 import { Contact } from '../database/entities/contact.entity';
 import { Task } from '../database/entities/task.entity';
-import { Deal } from '../database/entities/deal.entity';
+import { Deal, DealStage } from '../database/entities/deal.entity';
 
 const WORKSPACE = 'workspace-1';
 const USER = 'user-1';
@@ -107,6 +107,13 @@ describe('ActivitiesService.applyDisposition', () => {
 
     expect(saved.deals).toHaveLength(1);
     expect(saved.deals[0]).toMatchObject({ value: 1200, currency: 'RON', workspaceId: WORKSPACE });
+
+    // A deal left on the default stage never reaches the reports: dealsWon
+    // and revenue both count only closed-won. The caller typing an amount is
+    // telling us the sale happened on this call.
+    expect(saved.deals[0].stage).toBe(DealStage.CLOSED_WON);
+    expect(saved.deals[0].actualCloseDate).toBeInstanceOf(Date);
+    expect(saved.deals[0].probability).toBe(100);
   });
 
   it('updates contact.lastContactedAt', async () => {

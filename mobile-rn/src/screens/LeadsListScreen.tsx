@@ -10,6 +10,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useLeadsStore } from '../stores/leads-store';
 import { SOURCE_OPTIONS } from '../lib/lead-filters';
 import { leadStage } from '../lib/lead-stage';
+import DispositionDialog from '../components/DispositionDialog';
 import Avatar from '../components/Avatar';
 import type { LeadsStackParams } from '../navigation/LeadsStack';
 import type { Contact } from '../types';
@@ -46,6 +47,7 @@ export default function LeadsListScreen() {
     search, setSearch, source, setSource, month, setMonth, year,
     fetchContacts,
   } = useLeadsStore();
+  const [dispositionFor, setDispositionFor] = useState<any | null>(null);
   const [showSearch, setShowSearch] = useState(false);
   const navigation = useNavigation<Nav>();
   const insets = useSafeAreaInsets();
@@ -85,11 +87,12 @@ export default function LeadsListScreen() {
       <TouchableOpacity
         onPress={() => {
           if (!contact.id) return;
-          navigation.navigate('LeadDetail', {
-            contactId: contact.id,
-            contact,
-            contactIds: contacts.map((c) => c.id),
-          });
+          // Tapping a lead asks what happened with it — the same dialog the
+          // web opens, and the same one that fires after a call. Moving
+          // someone to Programat or recording a sale is the thing a caller
+          // does twenty times a shift; the full record is a button away
+          // inside it.
+          setDispositionFor(contact);
         }}
         className="bg-white/90 border border-slate-100 rounded-2xl p-3.5 mb-2.5 flex-row items-center gap-3"
         activeOpacity={0.7}
@@ -311,6 +314,36 @@ export default function LeadsListScreen() {
           ) : null
         }
       />
+
+      {dispositionFor && (
+        <DispositionDialog
+          contactId={dispositionFor.id}
+          contactName={
+            `${dispositionFor.firstName ?? ''} ${dispositionFor.lastName ?? ''}`.trim() ||
+            dispositionFor.phone ||
+            dispositionFor.email ||
+            'Contact'
+          }
+          phone={dispositionFor.phone}
+          onViewDetails={() => {
+            const contact = dispositionFor;
+            setDispositionFor(null);
+            navigation.navigate('LeadDetail', {
+              contactId: contact.id,
+              contact,
+              contactIds: contacts.map((c: any) => c.id),
+            });
+          }}
+          onClose={() => setDispositionFor(null)}
+          onSaved={() => {
+            setDispositionFor(null);
+            // The badge changes the moment someone is booked, so the list is
+            // re-read rather than left showing the state from before.
+            fetchContacts();
+          }}
+        />
+      )}
+
     </View>
   );
 }
