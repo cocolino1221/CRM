@@ -34,6 +34,11 @@ export interface WorkspaceSettings {
     maxUsers?: number | null;
     maxWhatsAppNumbers?: number | null;
   };
+  /** Which KPIs the reports show, and the daily target for each. */
+  kpis?: {
+    enabled: string[];
+    targets: Record<string, number>;
+  };
   features: {
     aiEnabled: boolean;
     slackIntegration: boolean;

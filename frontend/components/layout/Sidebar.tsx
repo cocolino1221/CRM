@@ -3,34 +3,7 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import {
-  LayoutDashboard,
-  Users,
-  Building2,
-  Briefcase,
-  CheckSquare,
-  BarChart3,
-  Settings,
-  MessageSquare,
-  MessageCircle,
-  Zap,
-  ChevronRight,
-  Sparkles,
-  Bot,
-  Calendar,
-  Shield,
-  FileText,
-  Menu,
-  X,
-  ChevronLeft,
-  KanbanSquare,
-  FolderOpen,
-  ScrollText,
-  Mail,
-  CreditCard,
-  Layout,
-  Radio,
-} from 'lucide-react';
+import { LayoutDashboard, Users, Building2, Briefcase, CheckSquare, BarChart3, Settings, MessageSquare, MessageCircle, Zap, ChevronRight, Sparkles, Bot, Calendar, Shield, FileText, Menu, X, ChevronLeft, KanbanSquare, FolderOpen, ScrollText, Mail, CreditCard, Layout, Radio, Target } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { authService, User } from '@/lib/auth';
 import { hasChannelAccess } from '@/lib/channel-access';
@@ -92,6 +65,7 @@ const leadNavigation: NavigationItem[] = [
 
 const insightNavigation: NavigationItem[] = [
   { name: 'Analytics', href: '/analytics', icon: BarChart3, color: 'from-indigo-500 to-purple-500' },
+  { name: 'Rapoarte', href: '/rapoarte', icon: Target, color: 'from-fuchsia-500 to-purple-500' },
   { name: 'Logs', href: '/logs', icon: ScrollText, color: 'from-rose-500 to-pink-500', adminOnly: true },
 ] ;
 

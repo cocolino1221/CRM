@@ -216,10 +216,16 @@ export class AnalyticsController {
   @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'caller', 'support_agent')
   async getDailyKPIs(
     @CurrentWorkspace('id') workspaceId: string,
+    @CurrentUser() user: any,
     @Query('date') date?: string,
+    @Query('userId') userId?: string,
   ) {
     const targetDate = date ? new Date(date) : undefined;
-    return this.analyticsService.getDailyKPIs(workspaceId, targetDate);
+    // A manager may ask about anyone; everyone else gets their own numbers
+    // whatever they ask for, so the report cannot be used to read the team's.
+    const isManager = ['admin', 'manager'].includes(user?.role);
+    const scoped = isManager ? userId || undefined : user?.id;
+    return this.analyticsService.getDailyKPIs(workspaceId, targetDate, scoped);
   }
 
   @Get('kpis/trend')
