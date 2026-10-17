@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { buildContactQuery } from '../lib/lead-filters';
+import { bookedContactIds } from '../lib/lead-stage';
 import api from '../lib/api';
 import type { Contact, Pipeline, User } from '../types';
 
@@ -24,6 +25,8 @@ interface LeadsState {
   page: number;
   total: number;
   hasMore: boolean;
+  /** Contacts with an appointment ahead of them, for the row badge. */
+  bookedIds: Set<string>;
   loadMore: () => Promise<void>;
   fetchPipelines: () => Promise<void>;
   fetchContacts: () => Promise<void>;
@@ -111,6 +114,7 @@ export const useLeadsStore = create<LeadsState>((set, get) => ({
   page: 1,
   total: 0,
   hasMore: false,
+  bookedIds: new Set<string>(),
 
   setSearch: (s) => set({ search: s, page: 1 }),
   setSource: (s) => set({ source: s, page: 1 }),
@@ -152,12 +156,27 @@ export const useLeadsStore = create<LeadsState>((set, get) => ({
       // of several duplicate default pipelines. The screen used to load
       // nothing at all when no pipeline was selected.
       const params = buildContactQuery({ search, source, month, year, page: 1, limit: 100 });
-      const res = await api.get('/contacts', { params });
-      const { contacts, total } = readContacts(res.data);
+      // The bookings queue rides along so each row can say whether the
+      // person is booked. Fetched beside the page rather than added to the
+      // contacts query, which would have meant a new entity in a module
+      // whose metadata is delicate.
+      const [res, bookedRes] = await Promise.allSettled([
+        api.get('/contacts', { params }),
+        api.get('/activities/queues/booked'),
+      ]);
+
+      if (res.status !== 'fulfilled') throw res.reason;
+
+      const { contacts, total } = readContacts(res.value.data);
       set({
         contacts,
         total,
         hasMore: contacts.length < total,
+        // A failed bookings call costs the badges, not the list.
+        bookedIds:
+          bookedRes.status === 'fulfilled'
+            ? bookedContactIds(bookedRes.value.data?.data ?? bookedRes.value.data)
+            : new Set<string>(),
         isLoading: false,
         fetchError: '',
       });

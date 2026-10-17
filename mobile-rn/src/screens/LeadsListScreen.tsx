@@ -9,14 +9,13 @@ import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useLeadsStore } from '../stores/leads-store';
 import { SOURCE_OPTIONS } from '../lib/lead-filters';
+import { leadStage } from '../lib/lead-stage';
 import Avatar from '../components/Avatar';
 import type { LeadsStackParams } from '../navigation/LeadsStack';
 import type { Contact } from '../types';
 
 type Nav = NativeStackNavigationProp<LeadsStackParams, 'LeadsList'>;
 
-const STAGE_COLORS = ['#0284c7', '#0d9488', '#f59e0b', '#f43f5e', '#06b6d4', '#6366f1'];
-const FALLBACK_STAGE_COLOR = '#64748b';
 
 const asText = (value: unknown): string => {
   if (typeof value === 'string') return value;
@@ -24,19 +23,16 @@ const asText = (value: unknown): string => {
   return '';
 };
 
-const asStageName = (value: unknown): string => {
-  if (typeof value === 'string') return value;
-  if (value && typeof value === 'object' && 'name' in value) {
-    return asText((value as { name?: unknown }).name);
-  }
-  return '';
-};
 
-/** A stable colour slot for a stage name, so it does not change between loads. */
-function stageHue(name: string): number {
-  let hash = 0;
-  for (let i = 0; i < name.length; i += 1) hash = (hash * 31 + name.charCodeAt(i)) | 0;
-  return Math.abs(hash) % STAGE_COLORS.length;
+/** "17 oct." — short enough for a row, unambiguous about the month. */
+function formatLeadDate(value: string | Date): string {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  try {
+    return new Intl.DateTimeFormat('ro-RO', { day: 'numeric', month: 'short' }).format(date);
+  } catch {
+    return date.toISOString().slice(0, 10);
+  }
 }
 
 const MONTHS = [
@@ -46,7 +42,7 @@ const MONTHS = [
 
 export default function LeadsListScreen() {
   const {
-    contacts, isLoading, fetchError, total, hasMore, loadMore,
+    contacts, isLoading, fetchError, total, hasMore, loadMore, bookedIds,
     search, setSearch, source, setSource, month, setMonth, year,
     fetchContacts,
   } = useLeadsStore();
@@ -73,11 +69,11 @@ export default function LeadsListScreen() {
     const lastName = asText(contact.lastName);
     const email = asText(contact.email);
     const phone = asText(contact.phone);
-    const stageName = asStageName(contact.pipelineStage);
-    // The colour used to come from the stage's position in the selected
-    // pipeline. The list is no longer scoped to one pipeline, so it comes
-    // from the name itself — stable, and the same stage always looks the same.
-    const stageColor = stageName ? STAGE_COLORS[stageHue(stageName)] : FALLBACK_STAGE_COLOR;
+    // Nou / Programat / Neprogramat — the three words a caller scanning a
+    // list actually uses. The pipeline stage that used to be here ("Contacted")
+    // answered a question nobody was asking, and meant nothing once the list
+    // stopped being scoped to one pipeline.
+    const stage = leadStage(contact as any, bookedIds);
     const ownerName = `${asText(contact.owner?.firstName)} ${asText(contact.owner?.lastName)}`.trim();
     const tags: string[] = Array.isArray(contact.tags)
       ? contact.tags
@@ -117,21 +113,23 @@ export default function LeadsListScreen() {
               </View>
             )}
           </View>
-          {stageName && (
-            <View className="mt-1.5">
-              <View
-                className="self-start px-2 py-0.5 rounded-full"
-                style={{ backgroundColor: `${stageColor}20` }}
-              >
-                <Text
-                  className="text-[10px] font-semibold"
-                  style={{ color: stageColor }}
-                >
-                  {stageName}
-                </Text>
-              </View>
+          <View className="mt-1.5 flex-row items-center gap-2">
+            <View
+              className="px-2 py-0.5 rounded-full"
+              style={{ backgroundColor: `${stage.color}20` }}
+            >
+              <Text className="text-[10px] font-semibold" style={{ color: stage.color }}>
+                {stage.label}
+              </Text>
             </View>
-          )}
+            {/* When the lead arrived — the first thing you want when a list
+                is sorted newest first. */}
+            {contact.createdAt && (
+              <Text className="text-[10px] text-slate-400">
+                {formatLeadDate(contact.createdAt)}
+              </Text>
+            )}
+          </View>
           {ownerName && (
             <View className="flex-row items-center gap-1 mt-1.5">
               <User size={11} color="#0284c7" />
