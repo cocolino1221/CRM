@@ -37,8 +37,12 @@ export interface DispositionDialogProps {
   contactId: string;
   contactName: string;
   durationSeconds?: number;
+  /** Shown so a caller can dial straight from the dialog. */
+  phone?: string;
   /** Present only when the caller recorded the call; recording is consent-gated. */
   recordingUrl?: string;
+  /** Offered when the dialog opened instead of the contact panel. */
+  onViewDetails?: () => void;
   onClose: () => void;
   onSaved?: () => void;
 }
@@ -48,7 +52,9 @@ export function DispositionDialog({
   contactId,
   contactName,
   durationSeconds,
+  phone,
   recordingUrl,
+  onViewDetails,
   onClose,
   onSaved,
 }: DispositionDialogProps) {
@@ -181,6 +187,22 @@ export function DispositionDialog({
               {String(durationSeconds % 60).padStart(2, '0')}
             </p>
           )}
+          <div className="mt-1 flex items-center gap-3 text-sm">
+            {phone && (
+              <a href={`tel:${phone}`} className="font-medium text-blue-600 hover:underline">
+                {phone}
+              </a>
+            )}
+            {onViewDetails && (
+              <button
+                type="button"
+                onClick={onViewDetails}
+                className="text-gray-500 underline hover:text-gray-700 dark:hover:text-gray-300"
+              >
+                Vezi detalii
+              </button>
+            )}
+          </div>
         </div>
 
         {recordingUrl && (

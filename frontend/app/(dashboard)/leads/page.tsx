@@ -1150,7 +1150,7 @@ export default function LeadsPage() {
                       stageLeads.map((contact) => (
                         <div
                           key={contact.id}
-                          onClick={() => openDetailModal(contact)}
+                          onClick={() => setLogCallFor(contact)}
                           className="bg-white rounded-lg border border-gray-200 p-2.5 shadow-sm hover:shadow-md transition-all cursor-pointer group"
                         >
                           {/* Lead Name + delete button */}
@@ -1348,6 +1348,12 @@ export default function LeadsPage() {
             logCallFor.email ||
             'Contact'
           }
+          phone={logCallFor.phone}
+          onViewDetails={() => {
+            const contact = logCallFor;
+            setLogCallFor(null);
+            openDetailModal(contact);
+          }}
           onClose={() => setLogCallFor(null)}
           onSaved={() => fetchContacts()}
         />
