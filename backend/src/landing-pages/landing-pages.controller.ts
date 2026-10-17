@@ -12,6 +12,7 @@ import {
   Query,
   Ip,
   Headers,
+  NotFoundException,
 } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { LandingDomainsService } from './landing-domains.service';
@@ -96,6 +97,26 @@ export class LandingPagesController {
   }
 
   // --- Custom domains -------------------------------------------------
+
+  /**
+   * The gate a reverse proxy asks before issuing a TLS certificate for a
+   * hostname it has never seen (Caddy calls this `on_demand_tls.ask`).
+   *
+   * Deliberately unauthenticated — the proxy has no credentials — and
+   * deliberately mute: it answers yes or no and names nothing. A non-2xx
+   * means "do not issue", which is what stops a stranger pointing any domain
+   * at this server and burning the Let's Encrypt rate limit.
+   */
+  @Get('domains/check')
+  async checkDomain(@Query('domain') domain?: string) {
+    const workspaceId = domain
+      ? await this.landingDomains.resolveWorkspaceByHost(domain)
+      : null;
+    if (!workspaceId) {
+      throw new NotFoundException();
+    }
+    return { ok: true };
+  }
 
   @Get('domains')
   @UseGuards(JwtAuthGuard)
