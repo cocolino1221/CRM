@@ -1,0 +1,29 @@
+🔥 QUICK FIX - Google Sign-Up Error
+
+ERROR: "redirect_uri_mismatch"
+
+FIX IN 3 STEPS:
+
+1. Go to: https://console.cloud.google.com/apis/credentials
+
+2. Click on OAuth client: 883405672837-n4l3h3ngag9fs54vntt419tk7a9rh7sc
+
+3. Add this redirect URI:
+   https://slackcrm-backend.fly.dev/api/v1/auth/google/callback
+
+4. Click SAVE
+
+5. WAIT 10 MINUTES
+
+6. Try again: https://easyteamcrm.netlify.app/register
+
+---
+
+You need TWO redirect URIs (add the first one):
+
+✓ https://slackcrm-backend.fly.dev/api/v1/auth/google/callback (ADD THIS)
+✓ https://slackcrm-backend.fly.dev/api/v1/integrations/oauth/callback (already there)
+
+---
+
+Full guide: ADD_GOOGLE_REDIRECT_NOW.md

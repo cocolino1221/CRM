@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>OAuth Integration Debug Tool</title>
+  <style>
+    body {
+      font-family: monospace;
+      max-width: 800px;
+      margin: 50px auto;
+      padding: 20px;
+      background: #1a1a1a;
+      color: #0f0;
+    }
+    h1 { color: #0ff; }
+    .error { color: #f00; }
+    .success { color: #0f0; }
+    .warning { color: #ff0; }
+    .info { color: #aaa; }
+    button {
+      background: #0f0;
+      color: #000;
+      border: none;
+      padding: 15px 30px;
+      font-size: 16px;
+      font-weight: bold;
+      cursor: pointer;
+      margin: 10px 5px;
+    }
+    button:hover { background: #0ff; }
+    #output {
+      background: #000;
+      padding: 20px;
+      border: 2px solid #0f0;
+      margin: 20px 0;
+      min-height: 300px;
+      white-space: pre-wrap;
+    }
+  </style>
+</head>
+<body>
+  <h1>🔧 OAuth Integration Debug Tool</h1>
+  <p class="info">This will check why your OAuth integrations are failing.</p>
+
+  <button onclick="runDiagnostic()">🔍 Run Diagnostic</button>
+  <button onclick="clearAndLogout()">🗑️ Clear All & Logout</button>
+  <button onclick="testOAuth()">🚀 Test OAuth (after diagnostic)</button>
+
+  <div id="output">Click "Run Diagnostic" to start...</div>
+
+  <script>
+    const API_URL = 'https://slackcrm-backend.fly.dev/api/v1';
+    const output = document.getElementById('output');
+
+    function log(message, type = 'info') {
+      const timestamp = new Date().toLocaleTimeString();
+      const colors = {
+        error: 'error',
+        success: 'success',
+        warning: 'warning',
+        info: 'info'
+      };
+      output.innerHTML += `<span class="${colors[type]}">[${timestamp}] ${message}</span>\n`;
+    }
+
+    function clear() {
+      output.innerHTML = '';
+    }
+
+    async function runDiagnostic() {
+      clear();
+      log('=== OAUTH DIAGNOSTIC STARTING ===', 'success');
+      log('');
+
+      // Check for token
+      const token = localStorage.getItem('accessToken');
+      log('Step 1: Checking for access token...', 'info');
+      if (!token) {
+        log('❌ NO ACCESS TOKEN FOUND', 'error');
+        log('You are not logged in!', 'error');
+        log('', 'info');
+        log('SOLUTION:', 'warning');
+        log('1. Go to https://easyteamcrm.netlify.app/login', 'warning');
+        log('2. Login with your credentials', 'warning');
+        log('3. Come back here and run diagnostic again', 'warning');
+        return;
+      }
+      log('✅ Access token found', 'success');
+      log(`Token preview: ${token.substring(0, 30)}...`, 'info');
+      log('');
+
+      // Test /auth/me endpoint
+      log('Step 2: Testing authentication...', 'info');
+      try {
+        const response = await fetch(`${API_URL}/auth/me`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+
+        log(`Response status: ${response.status}`, 'info');
+
+        if (!response.ok) {
+          log('❌ AUTHENTICATION FAILED', 'error');
+          if (response.status === 401) {
+            log('Your token is expired or invalid', 'error');
+          } else {
+            log(`Server returned error: ${response.status}`, 'error');
+          }
+          log('', 'info');
+          log('SOLUTION:', 'warning');
+          log('Click "Clear All & Logout" button above', 'warning');
+          log('Then login again at https://easyteamcrm.netlify.app/login', 'warning');
+          return;
+        }
+
+        const userData = await response.json();
+        log('✅ Authentication successful', 'success');
+        log('', 'info');
+        log('Step 3: Checking user data...', 'info');
+        log(`User ID: ${userData.id || '❌ MISSING'}`, userData.id ? 'success' : 'error');
+        log(`Email: ${userData.email || '❌ MISSING'}`, userData.email ? 'success' : 'error');
+        log(`Workspace ID: ${userData.workspaceId || '❌ MISSING'}`, userData.workspaceId ? 'success' : 'error');
+        log(`Role: ${userData.role || 'N/A'}`, 'info');
+        log('', 'info');
+
+        if (!userData.id) {
+          log('❌ CRITICAL: No user ID in response', 'error');
+          log('Your account is corrupted.', 'error');
+          log('', 'info');
+          log('SOLUTION:', 'warning');
+          log('Click "Clear All & Logout" and login again', 'warning');
+          return;
+        }
+
+        if (!userData.workspaceId) {
+          log('❌ CRITICAL: No workspace ID', 'error');
+          log('Your account does not have a workspace.', 'error');
+          log('', 'info');
+          log('SOLUTION:', 'warning');
+          log('Click "Clear All & Logout" and login again', 'warning');
+          log('A workspace will be created automatically', 'warning');
+          return;
+        }
+
+        // All checks passed
+        log('═══════════════════════════════════════', 'success');
+        log('✅ ALL CHECKS PASSED!', 'success');
+        log('═══════════════════════════════════════', 'success');
+        log('', 'info');
+        log('Your authentication is working correctly.', 'success');
+        log('', 'info');
+        log('OAuth URLs will be:', 'info');
+        log(`Google:   ${API_URL}/integrations/oauth/google?workspace_id=${userData.workspaceId}&user_id=${userData.id}`, 'info');
+        log(`Slack:    ${API_URL}/integrations/oauth/slack?workspace_id=${userData.workspaceId}&user_id=${userData.id}`, 'info');
+        log(`Calendly: ${API_URL}/integrations/oauth/calendly?workspace_id=${userData.workspaceId}&user_id=${userData.id}`, 'info');
+        log('', 'info');
+        log('Click "Test OAuth" button to test Google OAuth', 'warning');
+
+        // Store for later
+        window.userData = userData;
+
+      } catch (error) {
+        log('❌ ERROR: ' + error.message, 'error');
+        log('', 'info');
+        log('SOLUTION:', 'warning');
+        log('1. Check your internet connection', 'warning');
+        log('2. Clear browser cache and try again', 'warning');
+        log('3. If still failing, click "Clear All & Logout"', 'warning');
+      }
+    }
+
+    function clearAndLogout() {
+      clear();
+      log('Clearing all local storage...', 'warning');
+      localStorage.clear();
+      sessionStorage.clear();
+      log('✅ Cleared!', 'success');
+      log('', 'info');
+      log('Now go to:', 'warning');
+      log('https://easyteamcrm.netlify.app/login', 'warning');
+      log('', 'info');
+      log('After logging in, come back here and run diagnostic again.', 'info');
+    }
+
+    function testOAuth() {
+      if (!window.userData) {
+        log('❌ Run diagnostic first!', 'error');
+        return;
+      }
+
+      clear();
+      log('Testing Google OAuth...', 'info');
+      log('', 'info');
+      log('Opening OAuth URL in new tab...', 'warning');
+      log('If it opens Google login → SUCCESS ✅', 'success');
+      log('If it shows error page → FAILURE ❌', 'error');
+      log('', 'info');
+
+      const url = `${API_URL}/integrations/oauth/google?workspace_id=${window.userData.workspaceId}&user_id=${window.userData.id}`;
+      log(`URL: ${url}`, 'info');
+
+      setTimeout(() => {
+        window.open(url, '_blank');
+      }, 2000);
+    }
+  </script>
+</body>
+</html>
