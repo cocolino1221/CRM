@@ -35,9 +35,25 @@ type PaymentSectionKey =
   | 'payfunnelLinks'
   | 'crmPayments';
 
+interface UnifiedPaymentRow {
+  id: string;
+  source: 'payfunnel' | 'payflow';
+  status: string;
+  amount?: number;
+  currency?: string;
+  occurredAt: string;
+  reference?: string;
+  title?: string;
+  contact?: { id?: string; name?: string; email?: string };
+  document?: { id: string; name?: string; status?: string };
+}
+
 interface PaymentItem {
+  /** A synthetic id for a Payflow transaction, which has no document. */
   documentId: string;
   documentName: string;
+  /** Where the money was taken, shown as a badge on the row. */
+  source?: 'payfunnel' | 'payflow';
   createdAt: string;
   signedAt?: string;
   contact?: {
@@ -318,14 +334,33 @@ export default function PaymentsScreen() {
     setPayfunnelError('');
 
     const [paymentsResult, payfunnelResult] = await Promise.allSettled([
-      api.get<PaymentsResponse>('/documents/payments', { params: { page: 1, limit: 50 } }),
+      // Both providers, same as the web. Payflow transactions land as closed
+      // deals and were missing from this screen entirely.
+      api.get<{ data: UnifiedPaymentRow[]; summary: any }>('/payments'),
       api.get<PayfunnelDashboardResponse>('/documents/payfunnel/dashboard'),
     ]);
 
     if (paymentsResult.status === 'fulfilled') {
-      const rows = Array.isArray(paymentsResult.value.data?.payments)
-        ? paymentsResult.value.data.payments
+      const unified = Array.isArray(paymentsResult.value.data?.data)
+        ? paymentsResult.value.data.data
         : [];
+      // A Payflow transaction has no document, so the document fields carry
+      // what the transaction has and the list keeps its existing shape.
+      const rows: PaymentItem[] = unified.map((row) => ({
+        documentId: row.document?.id || row.id,
+        documentName: row.document?.name || row.title || 'Tranzacție',
+        source: row.source,
+        createdAt: row.occurredAt,
+        contact: row.contact
+          ? { name: row.contact.name, email: row.contact.email }
+          : undefined,
+        payment: {
+          status: row.status as PaymentStatus,
+          amount: row.amount,
+          currency: row.currency,
+          paidAt: row.status === 'paid' ? row.occurredAt : undefined,
+        },
+      }));
       setPayments(rows);
       setSummary(paymentsResult.value.data?.summary || defaultSummary);
     } else {
@@ -621,6 +656,20 @@ export default function PaymentsScreen() {
           <View className="px-2 py-1 rounded-full" style={{ backgroundColor: chip.bg }}>
             <Text className="text-[10px] font-semibold" style={{ color: chip.text }}>
               {item.payment.status}
+            </Text>
+          </View>
+          {/* Which provider took the money — the same badge the web shows. */}
+          <View
+            className={`px-2 py-1 rounded-full ${
+              item.source === 'payflow' ? 'bg-violet-100' : 'bg-sky-100'
+            }`}
+          >
+            <Text
+              className={`text-[10px] font-semibold ${
+                item.source === 'payflow' ? 'text-violet-700' : 'text-sky-700'
+              }`}
+            >
+              {item.source === 'payflow' ? 'Payflow' : 'PayFunnels'}
             </Text>
           </View>
           <Text className="text-xs font-semibold text-slate-700">{formatCurrency(item.payment.amount, item.payment.currency)}</Text>

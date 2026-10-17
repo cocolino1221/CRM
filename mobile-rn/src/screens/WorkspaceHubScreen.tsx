@@ -61,6 +61,16 @@ export default function WorkspaceHubScreen() {
       route: 'Analytics',
     },
     {
+      id: 'payments',
+      title: 'Payments',
+      // Both providers now, which is why it sits with Analytics rather than
+      // after Documents: it is a money report, not a document.
+      subtitle: 'PayFunnels și Payflow, într-un singur loc',
+      icon: CreditCard,
+      accent: '#b45309',
+      route: 'Payments',
+    },
+    {
       id: 'calendar',
       title: 'Calendar',
       subtitle: 'Tasks, due dates and quick planning',
@@ -75,14 +85,6 @@ export default function WorkspaceHubScreen() {
       icon: FileText,
       accent: '#0369a1',
       route: 'Documents',
-    },
-    {
-      id: 'payments',
-      title: 'Payments',
-      subtitle: 'Collections, risk and payment tracking',
-      icon: CreditCard,
-      accent: '#b45309',
-      route: 'Payments',
     },
     {
       id: 'automations',
