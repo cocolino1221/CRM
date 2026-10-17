@@ -1,5 +1,5 @@
 import { Injectable, Logger, BadRequestException, NotFoundException } from '@nestjs/common';
-import { buildLeadNotification } from '../../contacts/lead-notification.util';
+import { buildLeadNotification, shouldNotifyLeadSource } from '../../contacts/lead-notification.util';
 import { OnEvent, EventEmitter2 } from '@nestjs/event-emitter';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
@@ -3114,7 +3114,10 @@ export class WhatsAppService {
       // Notify workspace users about the new contact/lead — for WooCommerce,
       // only when the order has a product selected in an auto-send rule.
       const isWooOrder = contact.source === ContactSource.WOOCOMMERCE;
-      if (!isWooOrder || this.shouldNotifyWooOrder(contact, configIntegration?.config || {})) {
+      const worthNotifying =
+        shouldNotifyLeadSource(contact.source) &&
+        (!isWooOrder || this.shouldNotifyWooOrder(contact, configIntegration?.config || {}));
+      if (worthNotifying) {
         // Keep origin/main's WooCommerce gate, but with buildLeadNotification's
         // richer text (it names the Typeform form, lists ordered products, and
         // marks a returning contact) rather than a generic line.

@@ -15,7 +15,7 @@ import { QueryContactsDto, SortField } from './dto/query-contacts.dto';
 import { normalizePhoneDigits, normalizePhoneE164 } from '../common/utils/phone.util';
 import { normalizeIdentityEmail } from '../common/utils/email.util';
 import { NotificationsService } from '../notifications/notifications.service';
-import { buildLeadNotification } from './lead-notification.util';
+import { buildLeadNotification, shouldNotifyLeadSource } from './lead-notification.util';
 import { GoogleSheetsService } from '../integrations/google-sheets/google-sheets.service';
 import { MetaConversionsService } from '../integrations/meta-conversions/meta-conversions.service';
 
@@ -509,7 +509,11 @@ export class ContactsService {
     // Fire-and-forget lead notification; a notify failure must never break contact creation.
     // WooCommerce orders are notified by the WhatsApp auto-send handler, which
     // filters them by the products selected in auto-send rules.
-    if (savedContact.ownerId && savedContact.source !== ContactSource.WOOCOMMERCE) {
+    if (
+      savedContact.ownerId &&
+      savedContact.source !== ContactSource.WOOCOMMERCE &&
+      shouldNotifyLeadSource(savedContact.source)
+    ) {
       const leadName = `${savedContact.firstName ?? ''} ${savedContact.lastName ?? ''}`.trim();
       const displayName = leadName || savedContact.email || 'New lead';
       const source = leadSource(savedContact.source);

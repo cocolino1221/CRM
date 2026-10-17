@@ -161,6 +161,14 @@ describe('ContactsService — lead notification trigger', () => {
     );
   });
 
+  // Payflow records a payment for someone the team already decided to work;
+  // it is not a lead arriving, and it is not a source anyone filters on.
+  it('does not notify for a Payflow payment', async () => {
+    await service.create(workspaceId, baseDto(ContactSource.PAYFLOW));
+
+    expect(notificationsService.notifyLead).not.toHaveBeenCalled();
+  });
+
   it('does not notify when the contact has no owner', async () => {
     const dto = baseDto(ContactSource.TYPEFORM);
     delete (dto as any).ownerId;

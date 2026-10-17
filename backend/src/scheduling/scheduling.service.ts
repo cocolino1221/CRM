@@ -9,6 +9,8 @@ import { Contact } from '../database/entities/contact.entity';
 import { CreateAvailabilityDto } from './dto/create-availability.dto';
 import { CreateMeetingTypeDto } from './dto/create-meeting-type.dto';
 import { CreateBookingDto } from './dto/create-booking.dto';
+import { NotificationsService } from '../notifications/notifications.service';
+import { NotificationType } from '../database/entities/notification.entity';
 
 @Injectable()
 export class SchedulingService {
@@ -25,6 +27,7 @@ export class SchedulingService {
     private readonly userRepository: Repository<User>,
     @InjectRepository(Contact)
     private readonly contactRepository: Repository<Contact>,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   // ========== Availability Management ==========
@@ -271,7 +274,43 @@ export class SchedulingService {
       status: BookingStatus.CONFIRMED,
     });
 
-    return this.bookingRepository.save(booking);
+    const saved = await this.bookingRepository.save(booking);
+    await this.notifyHostOfBooking(saved, meetingType, dto);
+    return saved;
+  }
+
+  /**
+   * Only the host is told. They are the one who has to take the call, and a
+   * workspace-wide ping for every booking is how three notifications arrive
+   * for one lead. A failed push must never lose a booking the guest has
+   * already completed, so this swallows its own errors.
+   */
+  private async notifyHostOfBooking(
+    booking: Booking,
+    meetingType: MeetingType,
+    dto: CreateBookingDto,
+  ): Promise<void> {
+    if (!booking.hostId) return;
+
+    const guest = String(dto.guestName || '').trim() || dto.guestEmail;
+    const when = new Intl.DateTimeFormat('ro-RO', {
+      dateStyle: 'short',
+      timeStyle: 'short',
+      timeZone: 'Europe/Bucharest',
+    }).format(booking.startTime);
+
+    try {
+      await this.notificationsService.create(meetingType.workspaceId, {
+        type: NotificationType.MEETING,
+        userId: booking.hostId,
+        title: 'Lead programat',
+        message: `${guest} — ${meetingType.name} pe ${when}`,
+        link: booking.contactId ? `/leads/${booking.contactId}` : '/calendar',
+        metadata: { bookingId: booking.id, contactId: booking.contactId },
+      });
+    } catch (err: any) {
+      this.logger.warn(`Booking notification failed for ${booking.id}: ${err?.message}`);
+    }
   }
 
   async getBookings(workspaceId: string, userId?: string, startDate?: Date, endDate?: Date) {

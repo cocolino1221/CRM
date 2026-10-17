@@ -22,6 +22,17 @@ function wooProductsText(wooOrder: any): string {
     .join(', ');
 }
 
+/**
+ * Sources nobody should be interrupted for. Payflow records a payment for
+ * someone the team is already working — the lead itself was announced by
+ * whichever source first brought them in, so a second push says nothing new.
+ */
+const SILENT_SOURCES = new Set(['payflow']);
+
+export function shouldNotifyLeadSource(source?: string | null): boolean {
+  return !SILENT_SOURCES.has(String(source || '').toLowerCase());
+}
+
 export function buildLeadNotification(
   contact: any,
   options: { returning?: boolean } = {},
