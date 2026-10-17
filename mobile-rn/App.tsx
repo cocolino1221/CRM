@@ -18,6 +18,7 @@ import TabNavigator from './src/navigation/TabNavigator';
 import LoginScreen from './src/screens/LoginScreen';
 import ToastContainer from './src/components/Toast';
 import CallModal from './src/components/CallModal';
+import CallDispositionGate from './src/components/CallDispositionGate';
 import MiniCallBar from './src/components/MiniCallBar';
 
 export default function App() {
@@ -54,6 +55,7 @@ export default function App() {
 
     // Listen for incoming notifications (foreground)
     notificationListener.current = Notifications.addNotificationReceivedListener(() => {
+      fetchNotifications();
       fetchUnreadCount();
     });
 
@@ -75,13 +77,13 @@ export default function App() {
         if (waId) {
           const phone = `+${waId}`;
           await openConversation({ waId, phone, contactName: phone });
-          (navigationRef as any).navigate('WhatsApp', {
+          (navigationRef as any).navigate('Messages', {
             screen: 'Chat',
             params: { waId, contactName: phone, phone },
           });
           return;
         }
-        (navigationRef as any).navigate('WhatsApp');
+        (navigationRef as any).navigate('Messages', { screen: 'WhatsAppInbox' });
         return;
       }
 
@@ -98,7 +100,16 @@ export default function App() {
       }
 
       if (link.startsWith('/documents')) {
-        (navigationRef as any).navigate('Documents');
+        (navigationRef as any).navigate('Workspace', {
+          screen: 'Documents',
+        });
+        return;
+      }
+
+      if (link.startsWith('/payments')) {
+        (navigationRef as any).navigate('Workspace', {
+          screen: 'Payments',
+        });
       }
     });
 
@@ -108,6 +119,7 @@ export default function App() {
       if (wasBackground && nextState === 'active') {
         clearDeviceNotifications();
         markAllAsRead();
+        fetchNotifications();
         fetchUnreadCount();
         syncOutbox();
       }
@@ -137,6 +149,7 @@ export default function App() {
             <>
               <MiniCallBar />
               <CallModal />
+              <CallDispositionGate />
             </>
           )}
         </NavigationContainer>

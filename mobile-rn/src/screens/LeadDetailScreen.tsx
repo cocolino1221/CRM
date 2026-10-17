@@ -17,6 +17,7 @@ import { useLeadsStore } from '../stores/leads-store';
 import { useWhatsAppStore } from '../stores/whatsapp-store';
 import { useToastStore } from '../stores/toast-store';
 import Avatar from '../components/Avatar';
+import DispositionDialog from '../components/DispositionDialog';
 import type { LeadsStackParams } from '../navigation/LeadsStack';
 import type { Contact, User } from '../types';
 
@@ -95,6 +96,8 @@ export default function LeadDetailScreen() {
   const [newRecordingUrl, setNewRecordingUrl] = useState('');
   const [newRecordingLabel, setNewRecordingLabel] = useState('');
   const [recordingBusy, setRecordingBusy] = useState(false);
+  // A call placed from the handset still needs its outcome recorded.
+  const [showDisposition, setShowDisposition] = useState(false);
 
   // Next/back navigation
   const contactIds = route.params.contactIds || [];
@@ -596,11 +599,20 @@ export default function LeadDetailScreen() {
       </ScrollView>
 
       {/* Bottom actions */}
-      {phone && (
+      {(
         <View
           className="absolute bottom-0 left-0 right-0 px-4 bg-white/95 border-t border-slate-100"
           style={{ paddingBottom: insets.bottom > 0 ? insets.bottom : 16, paddingTop: 12 }}
         >
+          <TouchableOpacity
+            onPress={() => setShowDisposition(true)}
+            className="flex-row items-center justify-center gap-2 py-3 mb-2 bg-indigo-600 rounded-xl"
+          >
+            <PhoneCall size={16} color="#ffffff" />
+            <Text className="text-sm font-semibold text-white">Rezultat apel</Text>
+          </TouchableOpacity>
+
+          {phone && (
           <View className="flex-row gap-3">
             <TouchableOpacity
               onPress={() => Linking.openURL(`tel:${phone}`)}
@@ -618,7 +630,7 @@ export default function LeadDetailScreen() {
                   contactName: name,
                   contactId: contact.id,
                 });
-                navigation.getParent()?.navigate('WhatsApp', {
+                navigation.getParent()?.navigate('Messages', {
                   screen: 'Chat',
                   params: {
                     waId,
@@ -633,7 +645,18 @@ export default function LeadDetailScreen() {
               <Text className="text-sm font-semibold text-teal-700">WhatsApp</Text>
             </TouchableOpacity>
           </View>
+          )}
         </View>
+      )}
+
+      {showDisposition && (
+        <DispositionDialog
+          contactId={contact.id}
+          contactName={name}
+          phone={phone || undefined}
+          onClose={() => setShowDisposition(false)}
+          onSaved={() => { setShowDisposition(false); fetchActivities(); }}
+        />
       )}
 
       {/* User picker modal */}
@@ -657,7 +680,6 @@ export default function LeadDetailScreen() {
                   <Avatar name={`${user.firstName} ${user.lastName}`} size="sm" />
                   <View className="flex-1">
                     <Text className="text-sm font-medium text-slate-900">{user.firstName} {user.lastName}</Text>
-                    <Text className="text-xs text-slate-400">{user.role}</Text>
                   </View>
                   {contact?.owner?.id === user.id && <Check size={18} color="#0284c7" />}
                 </TouchableOpacity>

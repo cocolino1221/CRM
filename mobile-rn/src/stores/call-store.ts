@@ -5,6 +5,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { RTCPeerConnection, mediaDevices } from 'react-native-webrtc';
 import EventSource from 'react-native-sse';
 import api, { API_BASE_URL } from '../lib/api';
+import { latchEndedCall } from '../lib/ended-call-latch';
 
 // Global, app-wide call session — lives outside any single screen so
 // backgrounding the call UI (closing the modal) doesn't tear down the call.
@@ -148,17 +149,33 @@ async function finalizeCall(status: CallStatus) {
   cleanup();
 
   const id = callId;
+  const contactName = useCallStore.getState().contactName;
+  let activityId: string | undefined;
   if (id && waId) {
     try {
-      await api.post(`/integrations/whatsapp/calls/${id}/log`, {
+      const res = await api.post(`/integrations/whatsapp/calls/${id}/log`, {
         waId,
         status,
         durationSeconds: status === 'completed' ? finalDuration : undefined,
         recordingUrl,
       });
+      activityId = res.data?.activityId ?? undefined;
     } catch {
-      // best-effort
+      // best-effort — the disposition dialog will create the activity itself.
     }
+  }
+
+  // Hand the context to the latch before the reset below clears waId and
+  // contactName. A caller takes longer than 2.5s to pick an outcome.
+  if (waId) {
+    latchEndedCall({
+      activityId,
+      waId,
+      contactName,
+      durationSeconds: finalDuration,
+      recordingUrl,
+      status,
+    });
   }
 
   setTimeout(() => {
