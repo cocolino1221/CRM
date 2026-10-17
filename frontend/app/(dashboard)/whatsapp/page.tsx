@@ -8,7 +8,7 @@ import {
   Building2, Tag, Star, AlertTriangle, Timer, Edit, Trash2,
   Copy, ExternalLink, Mail, Briefcase, ArrowRight, ChevronLeft, Brain,
   GitBranch, Upload, Pin, BellOff, Bell, Archive, ArchiveRestore, CornerUpLeft, AudioLines, Filter,
-  PhoneCall, Ban, CheckCircle2, Circle,
+  PhoneCall, Ban, CheckCircle2, Circle, MoreVertical,
 } from 'lucide-react';
 import Link from 'next/link';
 import api from '@/lib/api';
@@ -414,7 +414,7 @@ function buildDemoConversations(now = new Date()): Conversation[] {
   ];
 }
 
-const AUTO_SEND_SOURCES = ['typeform', 'manychat', 'woocommerce', 'manual', 'form', 'import', 'webhook'];
+const AUTO_SEND_SOURCES = ['typeform', 'manychat', 'woocommerce', 'payflow', 'manual', 'form', 'import', 'webhook'];
 const AUTO_SEND_STATUSES = ['lead', 'prospect', 'customer', 'active'];
 const INBOX_ACTIVITY_LIMIT = 600;
 const INBOX_POLL_INTERVAL_MS = 12000;
@@ -655,7 +655,7 @@ function EmojiPicker({ onSelect, onClose }: { onSelect: (emoji: string) => void;
 function ContactInfoSidebar({ contact, isLoading, onClose, pipelines, onStageChange, onPipelineChange, onTogglePreluat }: { contact: ContactDetail | null; isLoading: boolean; onClose: () => void; pipelines: PipelineOption[]; onStageChange: (contactId: string, stageId: string) => void; onPipelineChange: (contactId: string, pipelineId: string) => void; onTogglePreluat: (contactId: string) => void }) {
   if (isLoading) {
     return (
-      <div className="w-80 flex-shrink-0 border-l border-gray-100 bg-white flex items-center justify-center">
+      <div className="fixed inset-0 z-50 md:static md:z-auto md:w-80 flex-shrink-0 md:border-l border-gray-100 bg-white flex items-center justify-center">
         <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
       </div>
     );
@@ -674,7 +674,7 @@ function ContactInfoSidebar({ contact, isLoading, onClose, pipelines, onStageCha
   };
 
   return (
-    <div className="w-80 flex-shrink-0 border-l border-gray-100 bg-white flex flex-col overflow-hidden">
+    <div className="fixed inset-0 z-50 md:static md:z-auto md:w-80 flex-shrink-0 md:border-l border-gray-100 bg-white flex flex-col overflow-hidden">
       <div className="flex items-center justify-between p-4 border-b border-gray-100">
         <h3 className="text-sm font-semibold text-gray-900">Contact Info</h3>
         <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded-lg"><X className="h-4 w-4 text-gray-400" /></button>
@@ -967,6 +967,9 @@ export default function WhatsAppPage() {
 
   // Contact info sidebar
   const [showContactInfo, setShowContactInfo] = useState(false);
+  const [showContactSheet, setShowContactSheet] = useState(false);
+  const [showMobileMenu, setShowMobileMenu] = useState(false);
+  const [mobileMenuView, setMobileMenuView] = useState<'main' | 'assign'>('main');
   const [contactDetail, setContactDetail] = useState<ContactDetail | null>(null);
   const [isLoadingContact, setIsLoadingContact] = useState(false);
   const [pipelines, setPipelines] = useState<PipelineOption[]>([]);
@@ -2159,6 +2162,8 @@ export default function WhatsAppPage() {
   const selectConversation = (conv: Conversation) => {
     setSelectedConv(conv);
     setMobilePanel('chat');
+    setShowContactSheet(false);
+    setShowMobileMenu(false);
     setReplyingTo(null);
     stopDictation();
     discardVoiceDraft();
@@ -3031,6 +3036,14 @@ export default function WhatsAppPage() {
   const sessionStatus = selectedConv ? getSessionStatus(selectedConv) : 'closed';
   const sessionOpen = sessionStatus === 'open' || sessionStatus === 'closing';
   const selectedConversationMuted = selectedConv ? isConversationMuted(selectedConv) : false;
+
+  const startCallWithSelected = () => {
+    if (!selectedConv) return;
+    const result = callManager.open(selectedConv.waId, selectedConv.contactName);
+    if (result === 'busy') {
+      alert(`You have an active call with someone else — end it before calling ${selectedConv.contactName}.`);
+    }
+  };
   const selectedSourceLabel = selectedConv ? formatSourceLabel(selectedConv.contactSource || contactDetail?.source || null) : '';
 
   // True if this conversation has NEVER received an inbound message
@@ -4218,9 +4231,18 @@ export default function WhatsAppPage() {
             <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-green-400 to-emerald-600 flex-shrink-0">
               <span className="text-white font-bold">{selectedConv.contactName.charAt(0).toUpperCase()}</span>
             </div>
-            <div className="min-w-0">
+            <button
+              type="button"
+              onClick={() => { setShowContactSheet(true); setShowMobileMenu(false); }}
+              className="min-w-0 flex-1 md:flex-none text-left rounded-lg -mx-1 px-1 hover:bg-gray-50"
+              title="View contact details"
+            >
               <h2 className="font-semibold text-gray-900 truncate">{selectedConv.contactName}</h2>
-              <div className="flex items-center gap-2">
+              {/* Mobile: compact line, details live in the contact popup */}
+              <p className="md:hidden text-xs text-gray-500 truncate">
+                {selectedConv.blocked ? 'Blocked · ' : ''}Tap for contact info
+              </p>
+              <div className="hidden md:flex items-center gap-2">
                 <p className="text-xs text-gray-500 flex items-center gap-1"><Phone className="h-3 w-3" />{selectedConv.phone}</p>
                 {selectedConv.blocked && (
                   <span className="text-[11px] px-1.5 py-0.5 rounded-full bg-red-50 text-red-700 border border-red-100">
@@ -4257,15 +4279,97 @@ export default function WhatsAppPage() {
                   </span>
                 )}
               </div>
-            </div>
-            <div className="ml-auto flex items-center gap-1">
+            </button>
+            {/* Mobile actions: call + overflow menu */}
+            <div className="md:hidden ml-auto flex items-center gap-1 flex-shrink-0">
               <button
-                onClick={() => {
-                  const result = callManager.open(selectedConv.waId, selectedConv.contactName);
-                  if (result === 'busy') {
-                    alert(`You have an active call with someone else — end it before calling ${selectedConv.contactName}.`);
-                  }
-                }}
+                onClick={startCallWithSelected}
+                className="p-2 rounded-lg transition-all hover:bg-gray-100 text-green-600"
+                title={`Call ${selectedConv.contactName} via WhatsApp`}
+              >
+                <PhoneCall className="h-5 w-5" />
+              </button>
+              <div className="relative">
+                <button
+                  onClick={() => { setShowMobileMenu(v => !v); setMobileMenuView('main'); }}
+                  className={`p-2 rounded-lg transition-all ${showMobileMenu ? 'bg-gray-100 text-gray-700' : 'hover:bg-gray-100 text-gray-500'}`}
+                  title="More actions"
+                >
+                  <MoreVertical className="h-5 w-5" />
+                </button>
+                {showMobileMenu && (
+                  <>
+                    <div className="fixed inset-0 z-30" onClick={() => setShowMobileMenu(false)} />
+                    <div className="absolute right-0 top-full mt-1 bg-white rounded-xl shadow-xl border border-gray-100 py-1 z-40 w-56 max-h-[70vh] overflow-y-auto">
+                      {mobileMenuView === 'main' ? (
+                        <>
+                          <button onClick={() => { setShowContactSheet(true); setShowMobileMenu(false); }}
+                            className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 text-left">
+                            <Info className="h-4 w-4 text-gray-400" /> Contact info
+                          </button>
+                          <button onClick={() => { setShowMessageSearch(!showMessageSearch); setMessageSearch(''); setShowMobileMenu(false); }}
+                            className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 text-left">
+                            <Search className="h-4 w-4 text-gray-400" /> Search messages
+                          </button>
+                          <button onClick={() => setMobileMenuView('assign')}
+                            className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 text-left">
+                            <User className="h-4 w-4 text-gray-400" />
+                            <span className="flex-1 truncate">
+                              {assignments[selectedConv.waId] ? `Assigned: ${assignments[selectedConv.waId].userName.split(' ')[0]}` : 'Assign'}
+                            </span>
+                            <ArrowRight className="h-3.5 w-3.5 text-gray-300" />
+                          </button>
+                          <button onClick={() => { handleTogglePin(selectedConv.waId, !!selectedConv.pinned); setShowMobileMenu(false); }}
+                            className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 text-left">
+                            <Pin className="h-4 w-4 text-gray-400" /> {selectedConv.pinned ? 'Unpin chat' : 'Pin chat'}
+                          </button>
+                          <button onClick={() => { handleToggleMute(selectedConv.waId, selectedConv.mutedUntil); setShowMobileMenu(false); }}
+                            className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 text-left">
+                            {selectedConversationMuted ? <Bell className="h-4 w-4 text-gray-400" /> : <BellOff className="h-4 w-4 text-gray-400" />}
+                            {selectedConversationMuted ? 'Unmute chat' : 'Mute for 8 hours'}
+                          </button>
+                          <button onClick={() => { handleToggleArchive(selectedConv.waId, !!selectedConv.archived); setShowMobileMenu(false); }}
+                            className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 text-left">
+                            {selectedConv.archived ? <ArchiveRestore className="h-4 w-4 text-gray-400" /> : <Archive className="h-4 w-4 text-gray-400" />}
+                            {selectedConv.archived ? 'Unarchive chat' : 'Archive chat'}
+                          </button>
+                          <button onClick={() => { handleToggleBlock(selectedConv.waId, !!selectedConv.blocked); setShowMobileMenu(false); }}
+                            className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-red-600 hover:bg-red-50 text-left border-t border-gray-100">
+                            <Ban className="h-4 w-4" /> {selectedConv.blocked ? 'Unblock contact' : 'Block contact'}
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <button onClick={() => setMobileMenuView('main')}
+                            className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium text-gray-500 hover:bg-gray-50 border-b border-gray-100">
+                            <ChevronLeft className="h-4 w-4" /> Assign to
+                          </button>
+                          {teamUsers.map(u => (
+                            <button key={u.id} onClick={() => { assignConversation(selectedConv.waId, u); setShowMobileMenu(false); }}
+                              className="w-full flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-gray-50 text-left">
+                              <div className="h-6 w-6 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0"
+                                style={{ backgroundColor: getUserColor(u.id) }}>
+                                {getUserInitials(`${u.firstName} ${u.lastName}`)}
+                              </div>
+                              <span className="truncate">{u.firstName} {u.lastName}</span>
+                            </button>
+                          ))}
+                          {assignments[selectedConv.waId] && (
+                            <button onClick={() => { assignConversation(selectedConv.waId, null); setShowMobileMenu(false); }}
+                              className="w-full flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-red-50 text-red-500 border-t border-gray-100">
+                              <X className="h-4 w-4" /> Unassign
+                            </button>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+            <div className="hidden md:flex ml-auto items-center gap-1">
+              <button
+                onClick={startCallWithSelected}
                 className="p-2 rounded-lg transition-all hover:bg-gray-100 text-gray-500"
                 title={`Call ${selectedConv.contactName} via WhatsApp`}
               >
@@ -4850,6 +4954,123 @@ export default function WhatsAppPage() {
       )}
 
       {/* ═══ MODALS ═══ */}
+
+      {/* Contact quick-view popup (opened by tapping the contact name in the chat header) */}
+      {showContactSheet && selectedConv && (
+        <div className="fixed inset-0 bg-black/40 flex items-end md:items-center justify-center z-50" onClick={() => setShowContactSheet(false)}>
+          <div
+            className="bg-white w-full md:max-w-md rounded-t-2xl md:rounded-2xl shadow-2xl max-h-[85vh] flex flex-col overflow-hidden"
+            style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
+              <h3 className="text-sm font-semibold text-gray-900">Contact</h3>
+              <button onClick={() => setShowContactSheet(false)} className="p-1.5 hover:bg-gray-100 rounded-lg"><X className="h-4 w-4 text-gray-400" /></button>
+            </div>
+            <div className="overflow-y-auto">
+              <div className="p-5 text-center border-b border-gray-100">
+                <div className="flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-br from-green-400 to-emerald-600 mx-auto mb-3">
+                  <span className="text-white text-xl font-bold">{selectedConv.contactName.charAt(0).toUpperCase()}</span>
+                </div>
+                <h4 className="font-semibold text-gray-900 text-lg break-words">{selectedConv.contactName}</h4>
+                <p className="mt-1 text-base text-gray-700 select-all break-all">{selectedConv.phone}</p>
+                <div className="mt-4 flex items-center justify-center gap-2">
+                  <button
+                    onClick={() => { setShowContactSheet(false); startCallWithSelected(); }}
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-green-600 text-white text-sm font-medium hover:bg-green-700"
+                  >
+                    <PhoneCall className="h-4 w-4" /> WhatsApp call
+                  </button>
+                  <a
+                    href={`tel:+${String(selectedConv.phone || selectedConv.waId).replace(/[^0-9]/g, '')}`}
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50"
+                  >
+                    <Phone className="h-4 w-4" /> Phone
+                  </a>
+                  <button
+                    onClick={() => { navigator.clipboard?.writeText(String(selectedConv.phone || selectedConv.waId)).catch(() => {}); }}
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50"
+                    title="Copy number"
+                  >
+                    <Copy className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="p-4 space-y-2 border-b border-gray-100">
+                <div className="flex flex-wrap gap-1.5">
+                  {selectedConv.blocked && (
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-red-50 text-red-700 border border-red-100">Blocked</span>
+                  )}
+                  {selectedSender && (
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-100">
+                      Send from: {selectedSender.phoneDisplay || selectedSender.phoneNumberId || selectedSender.name}
+                    </span>
+                  )}
+                  {selectedSourceLabel && (
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-100">{selectedSourceLabel}</span>
+                  )}
+                  {selectedConv.hasCampaignMessages && (
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100">Campaign</span>
+                  )}
+                  {selectedConv.primaryCampaignName && (
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-sky-50 text-sky-700 border border-sky-100 break-words">{selectedConv.primaryCampaignName}</span>
+                  )}
+                </div>
+                {assignments[selectedConv.waId] && (
+                  <p className="flex items-center gap-2 text-sm text-gray-600">
+                    <User className="h-4 w-4 text-gray-400" /> Assigned to {assignments[selectedConv.waId].userName}
+                  </p>
+                )}
+              </div>
+
+              {selectedConv.contactId && (
+                <div className="p-4 space-y-2.5 text-sm">
+                  {isLoadingContact && !contactDetail ? (
+                    <div className="flex justify-center py-2"><Loader2 className="h-5 w-5 animate-spin text-gray-400" /></div>
+                  ) : contactDetail ? (
+                    <>
+                      {contactDetail.email && (
+                        <a href={`mailto:${contactDetail.email}`} className="flex items-center gap-2 text-gray-700 break-all">
+                          <Mail className="h-4 w-4 text-gray-400 flex-shrink-0" /> {contactDetail.email}
+                        </a>
+                      )}
+                      {contactDetail.company?.name && (
+                        <p className="flex items-center gap-2 text-gray-700"><Building2 className="h-4 w-4 text-gray-400 flex-shrink-0" /> {contactDetail.company.name}</p>
+                      )}
+                      {contactDetail.jobTitle && (
+                        <p className="flex items-center gap-2 text-gray-700"><Briefcase className="h-4 w-4 text-gray-400 flex-shrink-0" /> {contactDetail.jobTitle}</p>
+                      )}
+                      {contactDetail.status && (
+                        <p className="flex items-center gap-2 text-gray-700"><Tag className="h-4 w-4 text-gray-400 flex-shrink-0" /> <span className="capitalize">{contactDetail.status}</span></p>
+                      )}
+                      {(() => {
+                        const pipeline = pipelines.find(p => p.id === contactDetail.pipelineId);
+                        const stage = pipeline?.stages?.find(st => st.id === contactDetail.pipelineStageId);
+                        return pipeline ? (
+                          <p className="flex items-center gap-2 text-gray-700"><Filter className="h-4 w-4 text-gray-400 flex-shrink-0" /> {pipeline.name}{stage ? ` · ${stage.name}` : ''}</p>
+                        ) : null;
+                      })()}
+                    </>
+                  ) : null}
+                  <button
+                    onClick={() => { setShowContactSheet(false); setShowContactInfo(true); }}
+                    className="w-full mt-2 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                  >
+                    <Info className="h-4 w-4" /> Full details &amp; pipeline
+                  </button>
+                  <Link
+                    href={`/contacts?id=${selectedConv.contactId}`}
+                    className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium text-green-700 hover:bg-green-50"
+                  >
+                    <ExternalLink className="h-4 w-4" /> Open contact page
+                  </Link>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* New Conversation Modal */}
       {showNewConversation && (

@@ -22,6 +22,8 @@ import { MetaMessagingModule } from './integrations/meta-messaging/meta-messagin
 import { AudioLibraryModule } from './integrations/audio-library/audio-library.module';
 import { GoogleSheetsModule } from './integrations/google-sheets/google-sheets.module';
 import { WooCommerceModule } from './integrations/woocommerce/woocommerce.module';
+import { PayflowModule } from './integrations/payflow/payflow.module';
+import { BillingModule } from './billing/billing.module';
 import { SmartBillModule } from './smartbill/smartbill.module';
 import { QueueModule } from './queues/queue.module';
 import { AnalyticsModule } from './analytics/analytics.module';
@@ -183,6 +185,8 @@ import { validationSchema } from './config/env.validation';
     GoogleSheetsModule,
     // Same reason as above: static /integrations/woocommerce/* routes.
     WooCommerceModule,
+    PayflowModule,
+    BillingModule,
     IntegrationsModule,
     WhatsAppModule,
     WhatsAppFollowupModule,

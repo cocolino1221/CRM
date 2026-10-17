@@ -2,7 +2,10 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { Search, Check, ExternalLink, Zap, Settings, Webhook, X, Copy, Key, Lock, Link as LinkIcon, AlertCircle, Loader2, Plus, Trash2, FileText, Edit, ChevronDown, Wrench, RefreshCw } from 'lucide-react';
+import { BillingAccess, PLAN_NAMES, fetchBillingOverview, integrationLock } from '@/lib/billing';
+import PayflowConnect from '@/components/integrations/PayflowConnect';
 import api from '@/lib/api';
 import { integrationIcons } from '@/lib/integration-icons';
 import GoogleSheetsSync from '@/components/integrations/GoogleSheetsSync';
@@ -22,6 +25,7 @@ interface Integration {
   configFields?: ConfigField[];
   oauth?: boolean; // True for OAuth integrations (no API keys needed)
   oauthProvider?: string; // OAuth provider name for backend route (e.g., 'google', 'slack')
+  setupGuide?: { title: string; steps: string[]; link?: { label: string; url: string } };
 }
 
 interface ConfigField {
@@ -32,6 +36,7 @@ interface ConfigField {
   required?: boolean;
   options?: { label: string; value: string }[];
   helpText?: string;
+  advanced?: boolean; // shown under the collapsed "Advanced settings" section
 }
 
 // Helper function to get emoji for integration type
@@ -66,6 +71,8 @@ export default function IntegrationsPage() {
   const [selectedIntegration, setSelectedIntegration] = useState<Integration | null>(null);
   const [showSheetsModal, setShowSheetsModal] = useState(false);
   const [showMetaCapiModal, setShowMetaCapiModal] = useState(false);
+  const [showPayflowModal, setShowPayflowModal] = useState(false);
+  const [billingAccess, setBillingAccess] = useState<BillingAccess | null>(null);
   const [showMcpModal, setShowMcpModal] = useState(false);
   const [mcpGrants, setMcpGrants] = useState<any[]>([]);
   const [mcpGrantsLoading, setMcpGrantsLoading] = useState(false);
@@ -647,14 +654,41 @@ export default function IntegrationsPage() {
       color: 'from-purple-500 to-pink-600',
       connected: false,
       features: ['Funnel tracking', 'Payment processing', 'Conversion optimization', 'A/B testing'],
+      setupGuide: {
+        title: 'Where to find your PayFunnels API key',
+        steps: [
+          'Log in to PayFunnels and open the Billing tab.',
+          'Go to the Integration section and find "Payfunnels API Key".',
+          'Click to create a key, give it a name (e.g. "CRM") and save.',
+          'Copy the key that appears and paste it below. Keep it private.',
+        ],
+        link: { label: 'PayFunnels guide: generate an API key', url: 'https://payfunnels.helpscoutdocs.com/article/207-how-to-generate-api-key-and-oauth2-credentials-to-get-start-using-external-api' },
+      },
       configFields: [
         {
+          name: 'apiKey',
+          label: 'API Key',
+          type: 'password',
+          required: false,
+          placeholder: 'Paste your PayFunnels API key',
+          helpText: 'This is the only field you need. See the steps above for where to find it.',
+        },
+        {
+          name: 'accessToken',
+          label: 'Access Token (OAuth2 Bearer)',
+          type: 'password',
+          required: false,
+          placeholder: 'Only if you use OAuth2 instead of an API key',
+          advanced: true,
+        },
+        {
           name: 'apiUrl',
-          label: 'API URL (optional)',
+          label: 'API URL',
           type: 'url',
           required: false,
           placeholder: 'https://api.payfunnels.com',
-          helpText: 'Optional doar daca folosesti exclusiv webhook-uri. Pentru import si creare linkuri din CRM, completeaza API URL.',
+          helpText: 'Needed only to import payments or create payment links from the CRM.',
+          advanced: true,
         },
         {
           name: 'checkoutBaseUrl',
@@ -662,96 +696,27 @@ export default function IntegrationsPage() {
           type: 'url',
           required: false,
           placeholder: 'https://app.payfunnels.com',
-          helpText: 'Necesar daca nu folosesti API URL, ca fallback pentru generarea linkurilor de plata din CRM.',
+          helpText: 'Fallback for building payment links when no API URL is set.',
+          advanced: true,
         },
-        {
-          name: 'apiKey',
-          label: 'API Key (x-pf-api-key)',
-          type: 'password',
-          required: false,
-          placeholder: 'Your PayFunnels API key',
-          helpText: 'Optional if you use Bearer access token authentication.',
-        },
-        {
-          name: 'accessToken',
-          label: 'Access Token (Bearer)',
-          type: 'password',
-          required: false,
-          placeholder: 'Bearer token',
-          helpText: 'Optional if you authenticate only with API key header.',
-        },
-        {
-          name: 'accountId',
-          label: 'Account ID (optional)',
-          type: 'text',
-          required: false,
-          placeholder: 'Your account ID',
-          helpText: 'Optional. Leave empty if your API key/token is already scoped to one account.',
-        },
-        { name: 'createPaymentPath', label: 'Create Payment Path', type: 'text', required: false, placeholder: '/payments/links' },
-        { name: 'listPaymentsPath', label: 'List Payments Path', type: 'text', required: false, placeholder: '/payments' },
-        { name: 'listSubscriptionsPath', label: 'List Subscriptions Path', type: 'text', required: false, placeholder: '/subscriptions' },
-        { name: 'listPaymentLinksPath', label: 'List Payment Links Path', type: 'text', required: false, placeholder: '/payments/links' },
-        { name: 'webhookSecret', label: 'Webhook Secret', type: 'password', required: false, placeholder: 'Secret pentru verificare webhook' },
+        { name: 'accountId', label: 'Account ID', type: 'text', required: false, placeholder: 'Leave empty if your key is scoped to one account', advanced: true },
+        { name: 'webhookSecret', label: 'Webhook Secret', type: 'password', required: false, placeholder: 'Secret used to verify webhooks', advanced: true },
+        { name: 'createPaymentPath', label: 'Create Payment Path', type: 'text', required: false, placeholder: '/payments/links', advanced: true },
+        { name: 'listPaymentsPath', label: 'List Payments Path', type: 'text', required: false, placeholder: 'auto-detected', advanced: true },
+        { name: 'listSubscriptionsPath', label: 'List Subscriptions Path', type: 'text', required: false, placeholder: 'auto-detected', advanced: true },
+        { name: 'listPaymentLinksPath', label: 'List Payment Links Path', type: 'text', required: false, placeholder: 'auto-detected', advanced: true },
       ],
     },
     {
       id: 'gopayflow',
-      name: 'GoPayFlow',
-      description: 'Payment and funnel management platform for online businesses and sales funnels.',
+      name: 'Payflow',
+      description: 'Our payments app. Paying customers become contacts and every payment becomes a deal, automatically.',
       category: 'payments',
       icon: '💸',
       logoUrl: integrationIcons.gopayflow,
       color: 'from-emerald-500 to-teal-600',
       connected: false,
-      features: ['Funnel tracking', 'Payment processing', 'Conversion optimization', 'A/B testing'],
-      configFields: [
-        {
-          name: 'apiUrl',
-          label: 'API URL (optional)',
-          type: 'url',
-          required: false,
-          placeholder: 'https://api.gopayflow.io',
-          helpText: 'Optional doar daca folosesti exclusiv webhook-uri. Pentru import si creare linkuri din CRM, completeaza API URL.',
-        },
-        {
-          name: 'checkoutBaseUrl',
-          label: 'Checkout Base URL',
-          type: 'url',
-          required: false,
-          placeholder: 'https://app.gopayflow.io',
-          helpText: 'Necesar daca nu folosesti API URL, ca fallback pentru generarea linkurilor de plata din CRM.',
-        },
-        {
-          name: 'apiKey',
-          label: 'API Key (x-pf-api-key)',
-          type: 'password',
-          required: false,
-          placeholder: 'Your GoPayFlow API key',
-          helpText: 'Optional if you use Bearer access token authentication.',
-        },
-        {
-          name: 'accessToken',
-          label: 'Access Token (Bearer)',
-          type: 'password',
-          required: false,
-          placeholder: 'Bearer token',
-          helpText: 'Optional if you authenticate only with API key header.',
-        },
-        {
-          name: 'accountId',
-          label: 'Account ID (optional)',
-          type: 'text',
-          required: false,
-          placeholder: 'Your account ID',
-          helpText: 'Optional. Leave empty if your API key/token is already scoped to one account.',
-        },
-        { name: 'createPaymentPath', label: 'Create Payment Path', type: 'text', required: false, placeholder: '/payments/links' },
-        { name: 'listPaymentsPath', label: 'List Payments Path', type: 'text', required: false, placeholder: '/payments' },
-        { name: 'listSubscriptionsPath', label: 'List Subscriptions Path', type: 'text', required: false, placeholder: '/subscriptions' },
-        { name: 'listPaymentLinksPath', label: 'List Payment Links Path', type: 'text', required: false, placeholder: '/payments/links' },
-        { name: 'webhookSecret', label: 'Webhook Secret', type: 'password', required: false, placeholder: 'Secret pentru verificare webhook' },
-      ],
+      features: ['Customers → contacts', 'Payments → won deals', 'Failed / cancelled → lost deals', 'Pipeline stage of your choice'],
     },
 
     // Social Media
@@ -1014,6 +979,7 @@ export default function IntegrationsPage() {
 
   useEffect(() => {
     void refreshIntegrationCatalog();
+    fetchBillingOverview().then((o) => setBillingAccess(o.access)).catch(() => setBillingAccess(null));
   }, []);
 
   const filteredIntegrations = integrations.filter((integration) => {
@@ -1148,6 +1114,12 @@ export default function IntegrationsPage() {
   };
 
   const handleConnect = async (integration: Integration) => {
+    // Plan gate (also enforced by the API): new connections need a plan that includes them.
+    if (!integration.connected && integrationLock(billingAccess, integration.id)) {
+      router.push('/billing');
+      return;
+    }
+
     // Google Sheets is a configuration of the Google integration, not a
     // separate connectable app — its card opens the sync setup directly.
     if (integration.id === 'google-sheets') {
@@ -1167,6 +1139,13 @@ export default function IntegrationsPage() {
     // not an outbound OAuth-client integration — open the management modal.
     if (integration.id === 'mcp-ai-connect') {
       openMcpModal();
+      return;
+    }
+
+    // Payflow (our own payments app) pushes data into the CRM: connecting it
+    // means creating a connection key to paste into Payflow, not filling a form.
+    if (integration.id === 'gopayflow') {
+      setShowPayflowModal(true);
       return;
     }
 
@@ -1374,7 +1353,7 @@ export default function IntegrationsPage() {
       const apiKey = String(configData.apiKey || '').trim();
       const accessToken = String(configData.accessToken || '').trim();
       if (!apiKey && !accessToken) {
-        setModalError(`Pentru ${selectedIntegration.name} trebuie sa completezi API Key sau Access Token.`);
+        setModalError(`Paste your ${selectedIntegration.name} API key to connect (see the steps at the top).`);
         return;
       }
     }
@@ -1615,6 +1594,18 @@ export default function IntegrationsPage() {
         </p>
       </div>
 
+      {billingAccess?.requiresPlan && !billingAccess.active && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-indigo-200 bg-indigo-50 p-5">
+          <div>
+            <p className="font-semibold text-indigo-900">Choose a plan to unlock integrations</p>
+            <p className="text-sm text-indigo-800">Start a free trial — WhatsApp is included in every plan, other integrations from Growth.</p>
+          </div>
+          <Link href="/billing" className="rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700">
+            See plans
+          </Link>
+        </div>
+      )}
+
       {/* Google Sheets sync setup — opened from its card in the grid */}
       {showSheetsModal && (
         <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 p-4 pt-16" onClick={() => setShowSheetsModal(false)}>
@@ -1641,6 +1632,18 @@ export default function IntegrationsPage() {
               </div>
               <MetaConversionsSettings autoOpen />
             </div>
+          </div>
+        </div>
+      )}
+
+      {showPayflowModal && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 p-4 pt-16" onClick={() => setShowPayflowModal(false)}>
+          <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-lg font-bold text-gray-900">Connect Payflow</h2>
+              <button onClick={() => setShowPayflowModal(false)} className="rounded-full px-2 py-1 text-sm text-gray-400 hover:bg-gray-100 hover:text-gray-700">✕ Close</button>
+            </div>
+            <PayflowConnect onChanged={refreshIntegrationCatalog} />
           </div>
         </div>
       )}
@@ -1919,16 +1922,29 @@ export default function IntegrationsPage() {
 
               {/* Actions */}
               <div className="flex gap-2">
-                <button
-                  onClick={() => handleConnect(integration)}
-                  className={`flex-1 rounded-xl py-2.5 text-sm font-semibold transition-all ${
-                    integration.connected
-                      ? 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                      : 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-lg hover:shadow-xl'
-                  }`}
-                >
-                  {integration.connected ? 'Manage' : 'Connect'}
-                </button>
+                {(() => {
+                  const lock = integration.connected ? null : integrationLock(billingAccess, integration.id);
+                  return (
+                    <button
+                      onClick={() => handleConnect(integration)}
+                      className={`flex-1 rounded-xl py-2.5 text-sm font-semibold transition-all ${
+                        integration.connected
+                          ? 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                          : lock
+                            ? 'bg-white text-indigo-700 border border-indigo-200 hover:bg-indigo-50'
+                            : 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-lg hover:shadow-xl'
+                      }`}
+                    >
+                      {integration.connected
+                        ? 'Manage'
+                        : lock === 'none'
+                          ? '🔒 Choose a plan'
+                          : lock
+                            ? `🔒 ${PLAN_NAMES[lock]} plan`
+                            : 'Connect'}
+                    </button>
+                  );
+                })()}
                 <button
                   onClick={() => handleConnect(integration)}
                   className="rounded-xl bg-white/50 p-2.5 hover:bg-white transition-all"
@@ -2184,7 +2200,32 @@ export default function IntegrationsPage() {
             {/* Configuration Form */}
             {showManualConfigForm && (
               <form onSubmit={handleSubmitConfig} className="space-y-6 mt-5">
-                {selectedIntegration.configFields?.map((field) => (
+                {selectedIntegration.setupGuide && (
+                  <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-4">
+                    <p className="text-sm font-semibold text-indigo-900 mb-2">{selectedIntegration.setupGuide.title}</p>
+                    <ol className="list-decimal list-inside space-y-1 text-sm text-indigo-900">
+                      {selectedIntegration.setupGuide.steps.map((step, i) => (
+                        <li key={i}>{step}</li>
+                      ))}
+                    </ol>
+                    {selectedIntegration.setupGuide.link && (
+                      <a
+                        href={selectedIntegration.setupGuide.link.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-indigo-700 hover:text-indigo-900 underline"
+                      >
+                        {selectedIntegration.setupGuide.link.label}
+                        <ExternalLink className="h-3 w-3" />
+                      </a>
+                    )}
+                  </div>
+                )}
+
+                {[false, true].map((advancedGroup) => {
+                  const groupFields = (selectedIntegration.configFields || []).filter((f) => !!f.advanced === advancedGroup);
+                  if (!groupFields.length) return null;
+                  const renderedFields = groupFields.map((field) => (
                   <div key={field.name}>
                     <label htmlFor={field.name} className="block text-sm font-semibold text-gray-700 mb-2">
                       {field.label}
@@ -2241,7 +2282,19 @@ export default function IntegrationsPage() {
                       <p className="mt-2 text-xs text-gray-500">{field.helpText}</p>
                     )}
                   </div>
-                ))}
+                  ));
+                  if (!advancedGroup) return <div key="basic" className="space-y-6">{renderedFields}</div>;
+                  return (
+                    <details
+                      key="advanced"
+                      open={groupFields.some((f) => !!String(configData[f.name] || '').trim())}
+                      className="rounded-xl border border-gray-200 p-4"
+                    >
+                      <summary className="cursor-pointer text-sm font-semibold text-gray-600">Advanced settings (optional)</summary>
+                      <div className="space-y-6 mt-4">{renderedFields}</div>
+                    </details>
+                  );
+                })}
 
                 {/* WhatsApp webhook setup info */}
                 {selectedIntegration.id === 'whatsapp' && (

@@ -23,6 +23,12 @@ export interface WorkspaceSettings {
     stripePriceId?: string;
     trialEndsAt?: string;
     currentPeriodEndAt?: string;
+    // Set for workspaces created after plans launched: they must pick a plan
+    // (Stripe Checkout) before using integrations. Older workspaces keep full access.
+    requiresPlan?: boolean;
+    interval?: 'month' | 'year';
+    cancelAtPeriodEnd?: boolean;
+    trialUsed?: boolean;
   };
   limits?: {
     maxUsers?: number | null;

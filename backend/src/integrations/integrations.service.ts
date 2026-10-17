@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Logger, OnModuleInit, Optional } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, FindOptionsWhere } from 'typeorm';
@@ -12,6 +12,7 @@ import { IntegrationRegistry } from './registry/integration.registry';
 import { OAuthService } from './auth/oauth.service';
 import { WebhookService } from './webhook/webhook.service';
 import { SyncService } from './sync/sync.service';
+import { BillingService } from '../billing/billing.service';
 
 export interface IntegrationEvent {
   type: string;
@@ -40,6 +41,7 @@ export class IntegrationsService implements OnModuleInit {
     private webhookService: WebhookService,
     private syncService: SyncService,
     private httpService: HttpService,
+    @Optional() private billingService?: BillingService,
   ) { }
 
   /**
@@ -148,6 +150,12 @@ export class IntegrationsService implements OnModuleInit {
             externalId: dto.externalId || undefined,
           },
         });
+
+    // Plan check: integrations need an active plan that includes them; a new
+    // WhatsApp number also counts against the plan's number limit.
+    await this.billingService?.assertIntegrationAllowed(workspaceId, providerKey || dto.type, {
+      newConnection: !existing,
+    });
 
     if (existing) {
       // Update existing integration instead of blocking reconnection

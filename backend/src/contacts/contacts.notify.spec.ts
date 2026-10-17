@@ -114,7 +114,7 @@ describe('ContactsService — lead notification trigger', () => {
     );
   });
 
-  it('lists the ordered WooCommerce products in the notification', async () => {
+  it('does not notify from contacts.service for a WooCommerce order', async () => {
     await service.create(workspaceId, {
       ...baseDto(ContactSource.WOOCOMMERCE),
       customFields: {
@@ -128,14 +128,11 @@ describe('ContactsService — lead notification trigger', () => {
       },
     } as CreateContactDto);
 
-    expect(notificationsService.notifyLead).toHaveBeenCalledWith(
-      workspaceId,
-      ownerId,
-      'manual',
-      'New lead from WooCommerce',
-      'Ana Pop — ordered Program Slăbire 12 săpt., 2× Shaker (order #1042)',
-      expect.stringContaining('/leads/'),
-    );
+    // WooCommerce orders deliberately do not notify from here any more:
+    // contacts.service skips them, and WhatsAppService notifies instead, only
+    // when the ordered product appears in an auto-send rule. The product
+    // listing itself is still covered by lead-notification.util.spec.
+    expect(notificationsService.notifyLead).not.toHaveBeenCalled();
   });
 
   it('maps a social source (Facebook) to the "social" notification category', async () => {

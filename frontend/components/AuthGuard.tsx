@@ -29,6 +29,8 @@ export default function AuthGuard({ children }: AuthGuardProps) {
     '/privacy',
     '/terms',
     '/help',
+    '/support',
+    '/data-deletion',
     '/forms/public',
     '/auth/callback', // OAuth callback must stay public so tokens can be exchanged
   ]);

@@ -1,4 +1,5 @@
-import { Body, Controller, Delete, Get, Post, Put, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Post, Put, Req, UseGuards, Optional } from '@nestjs/common';
+import { BillingService } from '../../billing/billing.service';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { MetaConversionsService } from './meta-conversions.service';
@@ -8,7 +9,10 @@ import { MetaConversionsService } from './meta-conversions.service';
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
 export class MetaConversionsController {
-  constructor(private readonly metaConversionsService: MetaConversionsService) {}
+  constructor(
+    private readonly metaConversionsService: MetaConversionsService,
+    @Optional() private readonly billingService?: BillingService,
+  ) {}
 
   @Get('config')
   @ApiOperation({ summary: 'Get this workspace\'s Meta Conversions API connection' })
@@ -22,6 +26,7 @@ export class MetaConversionsController {
     @Req() req: any,
     @Body() dto: { datasetId: string; accessToken?: string; enabled?: boolean },
   ) {
+    await this.billingService?.assertIntegrationAllowed(req.user.workspaceId, 'meta-conversions');
     const config = await this.metaConversionsService.saveConfig(req.user.workspaceId, req.user.id, dto);
     return { config };
   }
