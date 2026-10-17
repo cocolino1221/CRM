@@ -11,6 +11,8 @@ import { User } from '../database/entities/user.entity';
   imports: [TypeOrmModule.forFeature([Notification, DeviceToken, User])],
   controllers: [NotificationsController],
   providers: [NotificationsService, PushNotificationService],
-  exports: [NotificationsService],
+  // PushNotificationService is consumed by ActivitiesModule's reminder job;
+  // it was provided but never exported, so injecting it failed at boot.
+  exports: [NotificationsService, PushNotificationService],
 })
 export class NotificationsModule {}
