@@ -22,10 +22,14 @@ export enum LandingDomainStatus {
 export class LandingDomain extends WorkspaceEntity {
   /**
    * Always stored normalized — lowercase, no protocol, port or trailing dot.
-   * Unique across every workspace: a hostname resolves to exactly one tenant,
-   * and whoever claims it first holds it.
+   *
+   * Unique only among *verified* rows (a partial index, see the
+   * LandingDomainPartialUnique migration): several workspaces may claim the
+   * same hostname, but only the one that can publish the token into DNS owns
+   * it. A table-wide unique would let anyone hold a competitor's domain by
+   * typing it and never proving anything.
    */
-  @Column({ type: 'varchar', length: 253, unique: true })
+  @Column({ type: 'varchar', length: 253 })
   @Index('IDX_landing_domains_hostname')
   hostname: string;
 

@@ -74,10 +74,32 @@ describe('LandingDomainsService.addDomain', () => {
     expect(a.verificationToken).not.toBe(b.verificationToken);
   });
 
-  // Whoever verifies a hostname first holds it. Letting a second workspace
-  // claim it would make a live domain resolve to two tenants.
-  it('refuses a hostname another workspace already holds', async () => {
-    const { service } = build([pendingRow({ workspaceId: OTHER_WORKSPACE })]);
+  // Only a verified domain blocks anyone. A workspace that merely typed a
+  // hostname must not be able to hold a competitor's domain hostage by never
+  // proving ownership of it.
+  it('refuses a hostname another workspace has verified', async () => {
+    const { service } = build([
+      pendingRow({ workspaceId: OTHER_WORKSPACE, status: LandingDomainStatus.ACTIVE }),
+    ]);
+
+    await expect(service.addDomain(WORKSPACE, 'pagini.salax.ro')).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+  });
+
+  it('allows a claim on a hostname another workspace only claimed, never proved', async () => {
+    const { service } = build([pendingRow({ id: 'd-9', workspaceId: OTHER_WORKSPACE })]);
+
+    const row = await service.addDomain(WORKSPACE, 'pagini.salax.ro');
+
+    expect(row.workspaceId).toBe(WORKSPACE);
+    expect(row.status).toBe(LandingDomainStatus.PENDING);
+    // Different token: only whoever actually controls the DNS can publish one.
+    expect(row.verificationToken).not.toBe('etcrm-verify=tok-abc');
+  });
+
+  it('refuses a hostname this workspace has already failed to verify', async () => {
+    const { service } = build([pendingRow({ status: LandingDomainStatus.FAILED })]);
 
     await expect(service.addDomain(WORKSPACE, 'pagini.salax.ro')).rejects.toBeInstanceOf(
       ConflictException,
@@ -187,6 +209,37 @@ describe('LandingDomainsService.verify', () => {
 
     expect(row.status).toBe(LandingDomainStatus.FAILED);
     expect(row.lastError).toBeTruthy();
+  });
+
+  // Two workspaces may both be waiting on the same hostname; only the one
+  // that can publish its token owns it, and the loser's claim must go.
+  it('clears rival pending claims once a hostname is proved', async () => {
+    const { service, rows } = build(
+      [
+        pendingRow(),
+        pendingRow({ id: 'd-2', workspaceId: OTHER_WORKSPACE, verificationToken: 'etcrm-verify=rival' }),
+      ],
+      { txt: [['etcrm-verify=tok-abc']] },
+    );
+
+    await service.verify(WORKSPACE, 'd-1');
+
+    const rival = rows.find((r: any) => r.id === 'd-2');
+    expect(rival).toBeUndefined();
+  });
+
+  it('leaves another workspace\'s claim on a different hostname alone', async () => {
+    const { service, rows } = build(
+      [
+        pendingRow(),
+        pendingRow({ id: 'd-2', workspaceId: OTHER_WORKSPACE, hostname: 'altul.ro' }),
+      ],
+      { txt: [['etcrm-verify=tok-abc']] },
+    );
+
+    await service.verify(WORKSPACE, 'd-1');
+
+    expect(rows.find((r: any) => r.id === 'd-2')).toBeDefined();
   });
 
   it('refuses to verify a domain belonging to another workspace', async () => {

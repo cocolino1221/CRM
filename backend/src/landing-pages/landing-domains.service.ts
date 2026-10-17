@@ -51,15 +51,25 @@ export class LandingDomainsService {
   async addDomain(workspaceId: string, input: string): Promise<LandingDomain> {
     const hostname = assertHostnameAllowed(input);
 
-    // Unique across every workspace: a hostname resolves to one tenant, and
-    // whoever gets there first holds it.
-    const taken = await this.domainRepository.findOne({ where: { hostname } });
-    if (taken) {
+    // Only a *verified* domain blocks anyone else. Blocking on an unverified
+    // claim would let a workspace hold a competitor's hostname hostage simply
+    // by typing it and never proving ownership. Several workspaces may have a
+    // pending claim on the same hostname; only the one that can publish the
+    // token into DNS will ever own it.
+    const owned = await this.domainRepository.findOne({
+      where: { hostname, status: LandingDomainStatus.ACTIVE },
+    });
+    if (owned) {
       throw new ConflictException(
-        taken.workspaceId === workspaceId
+        owned.workspaceId === workspaceId
           ? 'Domeniul este deja adăugat'
-          : 'Domeniul este deja folosit',
+          : 'Domeniul este deja folosit de alt cont',
       );
+    }
+
+    const mine = await this.domainRepository.findOne({ where: { hostname, workspaceId } });
+    if (mine) {
+      throw new ConflictException('Domeniul este deja adăugat');
     }
 
     const existing = await this.list(workspaceId);
@@ -132,8 +142,19 @@ export class LandingDomainsService {
     domain.status = LandingDomainStatus.ACTIVE;
     domain.verifiedAt = new Date();
     domain.lastError = null;
+    const saved = await this.domainRepository.save(domain);
+
+    // The hostname is settled now. Any rival claim on it belonged to someone
+    // who could not prove ownership, and leaving it would both clutter their
+    // screen and collide with the unique index.
+    const rivals = await this.domainRepository.find({ where: { hostname: domain.hostname } });
+    for (const rival of rivals) {
+      if (rival.id === domain.id) continue;
+      await this.domainRepository.softRemove(rival);
+    }
+
     this.logger.log(`Domain verified: ${domain.hostname} (workspace ${workspaceId})`);
-    return this.domainRepository.save(domain);
+    return saved;
   }
 
   async remove(workspaceId: string, id: string): Promise<void> {
