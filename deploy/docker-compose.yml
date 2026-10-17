@@ -1,0 +1,104 @@
+# EasyTeam CRM — self-hosted stack.
+#
+# Replaces Netlify (frontend), Fly.io (backend) and Neon (Postgres) with four
+# containers on one machine. Caddy terminates TLS, including for customer
+# landing-page domains, which it issues certificates for on demand by asking
+# the backend whether a hostname is one we serve.
+#
+# Start:    docker compose --env-file .env up -d
+# Logs:     docker compose logs -f backend
+# Backup:   see backup.sh — nobody else is doing it for you now.
+
+services:
+  postgres:
+    # Match the major version the Neon dump came from. A dump from 17
+    # restores into 17; it does not reliably restore into 16.
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      # The dump carries its own collation expectations.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # Dumps land here so restoring never needs a copy into the container.
+      - ./dumps:/dumps
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    # Not published to the host: only the backend needs it. Exposing 5432 to
+    # the internet is how self-hosted databases get found and encrypted.
+    expose:
+      - "5432"
+
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 8080
+      # Inside the compose network, so no TLS and no public exposure.
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      DB_SSL: "false"
+      # Redis runs inside this container (see its docker-entrypoint.sh),
+      # which is why it needs a volume of its own.
+      REDIS_URL: redis://127.0.0.1:6379
+    env_file:
+      # Every other secret, copied from `fly secrets list` — see MIGRATION.md
+      # for the ones whose values must change rather than be copied.
+      - .env.backend
+    volumes:
+      - redis_data:/data/redis
+    expose:
+      - "8080"
+
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+      args:
+        # Baked in at build time: Next.js inlines NEXT_PUBLIC_* into the
+        # bundle, so changing it later needs a rebuild, not a restart.
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+    expose:
+      - "3001"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - frontend
+      - backend
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN}
+      API_DOMAIN: ${API_DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL}
+
+volumes:
+  postgres_data:
+  redis_data:
+  caddy_data:
+  caddy_config:

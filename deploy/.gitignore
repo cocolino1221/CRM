@@ -1,0 +1,4 @@
+# Filled-in secrets and database dumps never belong in git.
+.env
+.env.backend
+dumps/

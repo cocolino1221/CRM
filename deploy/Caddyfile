@@ -1,0 +1,53 @@
+# TLS for three kinds of hostname:
+#   1. the app itself
+#   2. the API
+#   3. any customer landing-page domain, issued on first request
+#
+# The third is the point. On Netlify each customer domain needed an API call
+# to register it; here Caddy asks the backend whether it serves a hostname and
+# issues the certificate itself. A customer points a CNAME and it works.
+
+{
+	email {$ACME_EMAIL}
+
+	on_demand_tls {
+		# Answers 200 for a verified customer domain, 404 for everything
+		# else. The 404 is what stops a stranger pointing any domain here
+		# and burning the Let's Encrypt rate limit.
+		ask http://backend:8080/api/v1/landing-pages/domains/check
+
+		# Caddy appends ?domain=<host> to the ask URL.
+		interval 2m
+		burst 5
+	}
+}
+
+# The CRM itself.
+{$APP_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy frontend:3001
+}
+
+# The API.
+{$API_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy backend:8080
+}
+
+# Every customer landing-page domain. No hostname is listed here: the
+# certificate is issued on demand, gated by the ask endpoint above.
+https:// {
+	tls {
+		on_demand
+	}
+
+	encode zstd gzip
+
+	# The visitor's hostname has to survive the hop, because it is what
+	# decides which workspace the page belongs to.
+	reverse_proxy frontend:3001 {
+		header_up Host {host}
+		header_up X-Forwarded-Host {host}
+		header_up X-Forwarded-Proto {scheme}
+	}
+}
