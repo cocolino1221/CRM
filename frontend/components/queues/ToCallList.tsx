@@ -10,9 +10,14 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
-import { Loader2, Phone, PhoneOff, RefreshCw } from 'lucide-react';
+import { Loader2, MessageCircle, Phone, PhoneOff, RefreshCw } from 'lucide-react';
 import api from '@/lib/api';
-import { contactDisplayName, formatQueueTime } from '@/lib/queue-rows';
+import {
+  contactDisplayName,
+  formatQueueTime,
+  whatsappDigits,
+  type QueueContactRef,
+} from '@/lib/queue-rows';
 import { DispositionDialog } from '@/components/calls/DispositionDialog';
 
 interface Row {
@@ -26,7 +31,14 @@ interface Row {
   recordingUrl?: string;
 }
 
-export default function ToCallList({ timeZone = 'Europe/Bucharest' }: { timeZone?: string }) {
+export default function ToCallList({
+  timeZone = 'Europe/Bucharest',
+  onOpenContact,
+}: {
+  timeZone?: string;
+  /** Opens the contact's detail popup. Without it the rows stay inert. */
+  onOpenContact?: (contact: QueueContactRef) => void;
+}) {
   const [rows, setRows] = useState<Row[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -95,31 +107,78 @@ export default function ToCallList({ timeZone = 'Europe/Bucharest' }: { timeZone
         </div>
         <ul className="divide-y divide-gray-100 dark:divide-gray-700">
           {rows.map((r) => (
-            <li key={r.id} className="px-4 py-3 text-sm hover:bg-gray-50 dark:hover:bg-gray-700/40">
+            <li
+              key={r.id}
+              role={onOpenContact ? 'button' : undefined}
+              tabIndex={onOpenContact ? 0 : undefined}
+              onClick={onOpenContact ? () => onOpenContact(r) : undefined}
+              onKeyDown={
+                onOpenContact
+                  ? (e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        onOpenContact(r);
+                      }
+                    }
+                  : undefined
+              }
+              className={`px-4 py-3 text-sm hover:bg-gray-50 dark:hover:bg-gray-700/40${
+                onOpenContact ? ' cursor-pointer' : ''
+              }`}
+            >
               <div className="flex flex-wrap items-center gap-3">
                 <span className="min-w-[10rem] flex-1 font-medium text-gray-900 dark:text-white">
                   {contactDisplayName(r)}
                 </span>
+                {r.phone && (
+                  <span className="text-xs tabular-nums text-gray-600 dark:text-gray-300">
+                    {r.phone}
+                  </span>
+                )}
                 <span className="text-xs text-gray-500">
                   Formular: {formatQueueTime(r.createdAt, timeZone)}
                 </span>
+                {/*
+                  Two ways to reach the same person. Each stops the click from
+                  reaching the row, which would open the popup behind the call.
+                */}
                 {r.phone && (
                   <a
                     href={`tel:${r.phone}`}
+                    onClick={(e) => e.stopPropagation()}
                     className="inline-flex items-center gap-1 rounded-lg bg-green-50 px-3 py-1.5 font-medium text-green-700 hover:bg-green-100 dark:bg-green-950 dark:text-green-300"
                   >
                     <Phone className="h-3.5 w-3.5" /> Sună
                   </a>
                 )}
+                {whatsappDigits(r.phone) && (
+                  <a
+                    href={`https://wa.me/${whatsappDigits(r.phone)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                    className="inline-flex items-center gap-1 rounded-lg bg-emerald-50 px-3 py-1.5 font-medium text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-300"
+                  >
+                    <MessageCircle className="h-3.5 w-3.5" /> WhatsApp
+                  </a>
+                )}
                 <button
-                  onClick={() => setDispositionFor(r)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setDispositionFor(r);
+                  }}
                   className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 font-medium text-indigo-700 hover:bg-indigo-100 dark:border-indigo-900 dark:bg-indigo-950 dark:text-indigo-300"
                 >
                   Rezultat apel
                 </button>
               </div>
               {r.recordingUrl && (
-                <audio controls src={r.recordingUrl} className="mt-2 h-8 w-full max-w-sm" />
+                <audio
+                  controls
+                  src={r.recordingUrl}
+                  onClick={(e) => e.stopPropagation()}
+                  className="mt-2 h-8 w-full max-w-sm"
+                />
               )}
             </li>
           ))}

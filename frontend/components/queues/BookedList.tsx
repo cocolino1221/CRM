@@ -8,9 +8,14 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
-import { Calendar, Loader2, Phone, RefreshCw, User } from 'lucide-react';
+import { Calendar, Loader2, MessageCircle, Phone, RefreshCw, User } from 'lucide-react';
 import api from '@/lib/api';
-import { contactDisplayName, formatQueueTime } from '@/lib/queue-rows';
+import {
+  contactDisplayName,
+  formatQueueTime,
+  whatsappDigits,
+  type QueueContactRef,
+} from '@/lib/queue-rows';
 
 interface Booking {
   id: string;
@@ -26,7 +31,14 @@ interface Booking {
   host?: { id: string; firstName?: string; lastName?: string; email?: string } | null;
 }
 
-export default function BookedList({ timeZone = 'Europe/Bucharest' }: { timeZone?: string }) {
+export default function BookedList({
+  timeZone = 'Europe/Bucharest',
+  onOpenContact,
+}: {
+  timeZone?: string;
+  /** Opens the contact's detail popup. Without it the rows stay inert. */
+  onOpenContact?: (contact: QueueContactRef) => void;
+}) {
   const [rows, setRows] = useState<Booking[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -93,7 +105,26 @@ export default function BookedList({ timeZone = 'Europe/Bucharest' }: { timeZone
         {rows.map((b) => (
           <li
             key={b.id}
-            className="flex flex-wrap items-center gap-3 px-4 py-3 text-sm hover:bg-gray-50 dark:hover:bg-gray-700/40"
+            role={onOpenContact && b.contact?.id ? 'button' : undefined}
+            tabIndex={onOpenContact && b.contact?.id ? 0 : undefined}
+            onClick={
+              onOpenContact && b.contact?.id
+                ? () => onOpenContact(b.contact as QueueContactRef)
+                : undefined
+            }
+            onKeyDown={
+              onOpenContact && b.contact?.id
+                ? (e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      onOpenContact(b.contact as QueueContactRef);
+                    }
+                  }
+                : undefined
+            }
+            className={`flex flex-wrap items-center gap-3 px-4 py-3 text-sm hover:bg-gray-50 dark:hover:bg-gray-700/40${
+              onOpenContact && b.contact?.id ? ' cursor-pointer' : ''
+            }`}
           >
             <span className="min-w-[10rem] flex-1 font-medium text-gray-900 dark:text-white">
               {contactDisplayName(b.contact)}
@@ -101,9 +132,21 @@ export default function BookedList({ timeZone = 'Europe/Bucharest' }: { timeZone
             {b.contact?.phone && (
               <a
                 href={`tel:${b.contact.phone}`}
+                onClick={(e) => e.stopPropagation()}
                 className="inline-flex items-center gap-1 text-blue-600 hover:underline"
               >
                 <Phone className="h-3.5 w-3.5" /> {b.contact.phone}
+              </a>
+            )}
+            {whatsappDigits(b.contact?.phone) && (
+              <a
+                href={`https://wa.me/${whatsappDigits(b.contact?.phone)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className="inline-flex items-center gap-1 text-emerald-600 hover:underline"
+              >
+                <MessageCircle className="h-3.5 w-3.5" /> WhatsApp
               </a>
             )}
             <span className="inline-flex items-center gap-1 text-gray-600 dark:text-gray-300">

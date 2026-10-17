@@ -15,6 +15,11 @@ export interface NameParts {
 }
 
 /** Most Meta leads arrive with no name, so every fallback here is load-bearing. */
+/** The slice of a contact a queue row carries: enough to open the detail popup. */
+export interface QueueContactRef extends NameParts {
+  id: string;
+}
+
 export function contactDisplayName(contact: NameParts | null | undefined): string {
   if (!contact) return 'Contact';
   const full = `${contact.firstName ?? ''} ${contact.lastName ?? ''}`.trim();
@@ -53,4 +58,28 @@ export function formatQueueTime(
       minute: '2-digit',
     }).format(date);
   }
+}
+
+/**
+ * Digits for a wa.me link, mirroring the backend's normalizePhoneE164
+ * (common/utils/phone.util.ts) so a contact reached from the queue and the
+ * same contact reached from the backend land on the same WhatsApp thread.
+ * Romanian local numbers ("07...") are the common case here.
+ */
+export function whatsappDigits(
+  value?: string | null,
+  defaultCountryCode = '40',
+): string | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  const digits = trimmed.replace(/\D/g, '');
+  if (!digits) return null;
+
+  if (trimmed.startsWith('+')) return digits;
+  if (digits.startsWith('00') && digits.length > 2) return digits.slice(2);
+  if (digits.startsWith(defaultCountryCode)) return digits;
+  if (digits.startsWith('0')) return `${defaultCountryCode}${digits.slice(1)}`;
+  return digits;
 }
