@@ -8,6 +8,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useLeadsStore } from '../stores/leads-store';
+import { SOURCE_OPTIONS } from '../lib/lead-filters';
 import Avatar from '../components/Avatar';
 import type { LeadsStackParams } from '../navigation/LeadsStack';
 import type { Contact } from '../types';
@@ -31,33 +32,40 @@ const asStageName = (value: unknown): string => {
   return '';
 };
 
+/** A stable colour slot for a stage name, so it does not change between loads. */
+function stageHue(name: string): number {
+  let hash = 0;
+  for (let i = 0; i < name.length; i += 1) hash = (hash * 31 + name.charCodeAt(i)) | 0;
+  return Math.abs(hash) % STAGE_COLORS.length;
+}
+
+const MONTHS = [
+  'Ian', 'Feb', 'Mar', 'Apr', 'Mai', 'Iun',
+  'Iul', 'Aug', 'Sep', 'Oct', 'Noi', 'Dec',
+];
+
 export default function LeadsListScreen() {
   const {
-    contacts, pipelines, selectedPipeline, selectedStage, isLoading, fetchError,
-    search, setSearch, fetchPipelines, fetchContacts, selectPipeline, selectStage,
+    contacts, isLoading, fetchError, total, hasMore, loadMore,
+    search, setSearch, source, setSource, month, setMonth, year,
+    fetchContacts,
   } = useLeadsStore();
   const [showSearch, setShowSearch] = useState(false);
   const navigation = useNavigation<Nav>();
   const insets = useSafeAreaInsets();
 
   useEffect(() => {
-    fetchPipelines().then(() => fetchContacts());
+    fetchContacts();
   }, []);
 
   useEffect(() => {
-    if (selectedPipeline) fetchContacts();
-  }, [selectedPipeline, search]);
-
-  const stageObjects = selectedPipeline?.stages || [];
-  const stageNames = Array.from(
-    new Set(stageObjects.map(stage => asStageName(stage)).filter(Boolean))
-  );
-  const stageContacts = selectedStage === 'All'
-    ? contacts
-    : contacts.filter(c => asStageName(c.pipelineStage) === selectedStage);
+    // Every filter is applied on the server, so the list is the whole
+    // workspace narrowed — not 200 rows narrowed in the phone.
+    fetchContacts();
+  }, [search, source, month, year]);
 
   const onRefresh = useCallback(() => {
-    fetchPipelines().then(() => fetchContacts());
+    fetchContacts();
   }, []);
 
   const renderItem = ({ item: contact }: { item: Contact }) => {
@@ -66,10 +74,10 @@ export default function LeadsListScreen() {
     const email = asText(contact.email);
     const phone = asText(contact.phone);
     const stageName = asStageName(contact.pipelineStage);
-    const stageIndex = stageNames.indexOf(stageName);
-    const stageColor = stageIndex >= 0
-      ? STAGE_COLORS[stageIndex % STAGE_COLORS.length]
-      : FALLBACK_STAGE_COLOR;
+    // The colour used to come from the stage's position in the selected
+    // pipeline. The list is no longer scoped to one pipeline, so it comes
+    // from the name itself — stable, and the same stage always looks the same.
+    const stageColor = stageName ? STAGE_COLORS[stageHue(stageName)] : FALLBACK_STAGE_COLOR;
     const ownerName = `${asText(contact.owner?.firstName)} ${asText(contact.owner?.lastName)}`.trim();
     const tags: string[] = Array.isArray(contact.tags)
       ? contact.tags
@@ -84,7 +92,7 @@ export default function LeadsListScreen() {
           navigation.navigate('LeadDetail', {
             contactId: contact.id,
             contact,
-            contactIds: stageContacts.map(c => c.id),
+            contactIds: contacts.map((c) => c.id),
           });
         }}
         className="bg-white/90 border border-slate-100 rounded-2xl p-3.5 mb-2.5 flex-row items-center gap-3"
@@ -186,7 +194,7 @@ export default function LeadsListScreen() {
             <Text className="text-[11px] font-semibold text-white">{contacts.length} total</Text>
           </View>
           <View className="bg-white/15 border border-white/20 px-2.5 py-1 rounded-full">
-            <Text className="text-[11px] font-semibold text-white">{stageContacts.length} in {selectedStage || 'all'}</Text>
+            <Text className="text-[11px] font-semibold text-white">{total || contacts.length} leaduri</Text>
           </View>
         </View>
         {showSearch && (
@@ -199,75 +207,68 @@ export default function LeadsListScreen() {
             className="mt-3 px-3.5 py-2.5 rounded-xl bg-white/15 border border-white/25 text-white text-sm"
           />
         )}
-        {/* Pipeline switcher — only worth showing when there's a choice */}
-        {pipelines.length > 1 && (
-          <View className="mt-3 -mx-4">
+        {/* Source filter — the same list the web uses. */}
+        <View className="mt-3 -mx-4">
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={{ paddingHorizontal: 16, gap: 6 }}
           >
-            {pipelines.map((pipeline) => {
-              const isActive = pipeline.id === selectedPipeline?.id;
+            {SOURCE_OPTIONS.map((option) => {
+              const isActive = option.value === source;
               return (
                 <TouchableOpacity
-                  key={pipeline.id}
-                  onPress={() => { if (!isActive) selectPipeline(pipeline); }}
+                  key={option.value || 'all'}
+                  onPress={() => setSource(option.value)}
                   className={`px-3.5 py-2 rounded-full border ${
                     isActive ? 'bg-white border-white' : 'bg-white/10 border-white/25'
                   }`}
                 >
                   <Text className={`text-xs font-semibold ${isActive ? 'text-sky-900' : 'text-white'}`}>
-                    {pipeline.name}
+                    {option.label}
                   </Text>
                 </TouchableOpacity>
               );
             })}
           </ScrollView>
-          </View>
-        )}
+        </View>
       </View>
 
-      {/* Stage tabs */}
-      {stageNames.length > 0 && (
-        <View>
+      {/* Month filter */}
+      <View>
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={{ paddingHorizontal: 12, paddingVertical: 12, gap: 6 }}
         >
           <TouchableOpacity
-            onPress={() => selectStage('All')}
+            onPress={() => setMonth(null)}
             className={`px-3 py-2 rounded-xl border ${
-              selectedStage === 'All' ? 'bg-slate-900 border-slate-900' : 'bg-white border-slate-200'
+              month === null ? 'bg-slate-900 border-slate-900' : 'bg-white border-slate-200'
             }`}
           >
-            <Text className={`text-xs font-semibold ${selectedStage === 'All' ? 'text-white' : 'text-slate-600'}`}>
-              All
-              <Text className={`text-[10px] ${selectedStage === 'All' ? 'text-white/60' : 'text-slate-400'}`}> {contacts.length}</Text>
+            <Text className={`text-xs font-semibold ${month === null ? 'text-white' : 'text-slate-600'}`}>
+              Toate lunile
             </Text>
           </TouchableOpacity>
-          {stageNames.map((stageName, i) => {
-            const count = contacts.filter(c => asStageName(c.pipelineStage) === stageName).length;
-            const isActive = stageName === selectedStage;
+          {MONTHS.map((label, index) => {
+            const isActive = month === index;
             return (
               <TouchableOpacity
-                key={`${stageName}-${i}`}
-                onPress={() => selectStage(stageName)}
+                key={label}
+                onPress={() => setMonth(index)}
                 className={`px-3 py-2 rounded-xl border ${
                   isActive ? 'bg-slate-900 border-slate-900' : 'bg-white border-slate-200'
                 }`}
               >
                 <Text className={`text-xs font-semibold ${isActive ? 'text-white' : 'text-slate-600'}`}>
-                  {stageName}
-                  <Text className={`text-[10px] ${isActive ? 'text-white/60' : 'text-slate-400'}`}> {count}</Text>
+                  {label}
                 </Text>
               </TouchableOpacity>
             );
           })}
         </ScrollView>
-        </View>
-      )}
+      </View>
 
       {/* Error */}
       {fetchError && !isLoading && (
@@ -285,18 +286,29 @@ export default function LeadsListScreen() {
 
       {/* List */}
       <FlatList
-        data={stageContacts}
+        data={contacts}
         keyExtractor={(item, index) => item.id || `lead-${index}`}
         renderItem={renderItem}
         contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 20 }}
         refreshControl={
           <RefreshControl refreshing={isLoading} onRefresh={onRefresh} tintColor="#0c4a6e" />
         }
+        // Pages of 50 from the server, appended as the caller scrolls. The
+        // screen used to pull a flat 200 and show nothing beyond them.
+        onEndReached={() => { void loadMore(); }}
+        onEndReachedThreshold={0.4}
+        ListFooterComponent={
+          hasMore ? (
+            <View className="py-6 items-center">
+              <Text className="text-xs text-slate-400">Se încarcă…</Text>
+            </View>
+          ) : null
+        }
         ListEmptyComponent={
           !isLoading ? (
             <View className="items-center justify-center py-16">
-              <Text className="text-sm font-medium text-slate-500">No leads in {selectedStage || 'this stage'}</Text>
-              <Text className="text-xs text-slate-400 mt-1">Tap + to create your first lead.</Text>
+              <Text className="text-sm font-medium text-slate-500">Niciun lead pentru filtrele alese</Text>
+              <Text className="text-xs text-slate-400 mt-1">Schimbă sursa sau luna, ori apasă + pentru a adăuga unul.</Text>
             </View>
           ) : null
         }

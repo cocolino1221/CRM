@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { buildContactQuery } from '../lib/lead-filters';
 import api from '../lib/api';
 import type { Contact, Pipeline, User } from '../types';
 
@@ -12,6 +13,18 @@ interface LeadsState {
   fetchError: string;
   search: string;
   setSearch: (s: string) => void;
+  /** '' means every source. */
+  source: string;
+  setSource: (s: string) => void;
+  /** 0-indexed; null means every month. */
+  month: number | null;
+  year: number;
+  setMonth: (m: number | null) => void;
+  setYear: (y: number) => void;
+  page: number;
+  total: number;
+  hasMore: boolean;
+  loadMore: () => Promise<void>;
   fetchPipelines: () => Promise<void>;
   fetchContacts: () => Promise<void>;
   fetchUsers: () => Promise<void>;
@@ -65,6 +78,24 @@ const normalizeContact = (raw: unknown): Contact | null => {
   };
 };
 
+/** The contacts endpoint has answered with three different shapes over time. */
+function readContacts(data: any): { contacts: Contact[]; total: number } {
+  const raw: unknown[] = Array.isArray(data?.contacts)
+    ? data.contacts
+    : Array.isArray(data)
+      ? data
+      : Array.isArray(data?.data)
+        ? data.data
+        : [];
+  const contacts = raw
+    .map(normalizeContact)
+    .filter((contact): contact is Contact => Boolean(contact));
+  return {
+    contacts,
+    total: typeof data?.total === 'number' ? data.total : contacts.length,
+  };
+}
+
 export const useLeadsStore = create<LeadsState>((set, get) => ({
   contacts: [],
   pipelines: [],
@@ -74,8 +105,17 @@ export const useLeadsStore = create<LeadsState>((set, get) => ({
   isLoading: true,
   fetchError: '',
   search: '',
+  source: '',
+  month: null,
+  year: new Date().getFullYear(),
+  page: 1,
+  total: 0,
+  hasMore: false,
 
-  setSearch: (s) => set({ search: s }),
+  setSearch: (s) => set({ search: s, page: 1 }),
+  setSource: (s) => set({ source: s, page: 1 }),
+  setMonth: (m) => set({ month: m, page: 1 }),
+  setYear: (y) => set({ year: y, page: 1 }),
 
   fetchPipelines: async () => {
     try {
@@ -104,27 +144,41 @@ export const useLeadsStore = create<LeadsState>((set, get) => ({
   },
 
   fetchContacts: async () => {
-    const { selectedPipeline, search } = get();
-    if (!selectedPipeline) { set({ isLoading: false }); return; }
-    set({ isLoading: true });
+    const { search, source, month, year } = get();
+    set({ isLoading: true, page: 1 });
     try {
-      const params: any = { pipelineId: selectedPipeline.id, limit: 200, page: 1 };
-      if (search) params.search = search;
+      // Deliberately unscoped by pipeline, exactly as on the web: a closer
+      // must see every lead in the workspace, not the slice belonging to one
+      // of several duplicate default pipelines. The screen used to load
+      // nothing at all when no pipeline was selected.
+      const params = buildContactQuery({ search, source, month, year, page: 1, limit: 50 });
       const res = await api.get('/contacts', { params });
-      const rawContacts: unknown[] = Array.isArray(res.data?.contacts)
-        ? res.data.contacts
-        : Array.isArray(res.data)
-          ? res.data
-          : Array.isArray(res.data?.data)
-            ? res.data.data
-            : [];
-      const contacts = rawContacts
-        .map(normalizeContact)
-        .filter((contact): contact is Contact => Boolean(contact));
-      set({ contacts, isLoading: false, fetchError: '' });
+      const { contacts, total } = readContacts(res.data);
+      set({
+        contacts,
+        total,
+        hasMore: contacts.length < total,
+        isLoading: false,
+        fetchError: '',
+      });
     } catch (err: any) {
       const msg = err?.response?.data?.message || 'Failed to load leads';
       set({ isLoading: false, fetchError: msg });
+    }
+  },
+
+  loadMore: async () => {
+    const { search, source, month, year, page, contacts, hasMore, isLoading } = get();
+    if (!hasMore || isLoading) return;
+    const next = page + 1;
+    try {
+      const params = buildContactQuery({ search, source, month, year, page: next, limit: 50 });
+      const res = await api.get('/contacts', { params });
+      const { contacts: more, total } = readContacts(res.data);
+      const merged = [...contacts, ...more];
+      set({ contacts: merged, page: next, total, hasMore: merged.length < total });
+    } catch {
+      // A failed page must not empty the list the caller is already working.
     }
   },
 
