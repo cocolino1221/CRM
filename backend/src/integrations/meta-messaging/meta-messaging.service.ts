@@ -1736,6 +1736,11 @@ export class MetaMessagingService {
       'Instagram Contact',
       `Messenger ${externalUserId}`,
       `Instagram ${externalUserId}`,
+      // The readable form this service now generates when Meta refuses the
+      // profile. It must be listed here too, or a contact stored under it
+      // would never be upgraded once a real name finally arrives.
+      `Contact Messenger ·${externalUserId.slice(-4)}`,
+      `Contact Instagram ·${externalUserId.slice(-4)}`,
     ]);
     if (placeholders.has(full)) return true;
 
@@ -2316,9 +2321,14 @@ export class MetaMessagingService {
     if (fullName) return fullName;
     const profileName = String(fetchedProfileName || '').trim();
     if (profileName) return profileName;
+    // Meta refuses the profile for some senders — notably messages arriving
+    // from a shared post — with "(#100) No matching user found", which is
+    // permanent. A 16-digit page-scoped id tells a human nothing, so show a
+    // readable label with just enough of the id to tell two apart.
+    const shortId = externalUserId.slice(-4);
     return channel === 'messenger'
-      ? `Messenger ${externalUserId}`
-      : `Instagram ${externalUserId}`;
+      ? `Contact Messenger ·${shortId}`
+      : `Contact Instagram ·${shortId}`;
   }
 
   private buildConversationKey(
