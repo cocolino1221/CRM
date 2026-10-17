@@ -5,6 +5,8 @@ import { Plus, Search, Phone, Video, Trophy, TrendingUp, TrendingDown, UserCheck
 import { getInitials } from '@/lib/utils';
 import api from '@/lib/api';
 import { DispositionDialog } from '@/components/calls/DispositionDialog';
+import BookedList from '@/components/queues/BookedList';
+import ToCallList from '@/components/queues/ToCallList';
 
 const PHONE_PREFIXES = [
   { code: '+40', country: 'RO', flag: '🇷🇴' },
@@ -167,6 +169,28 @@ export default function LeadsPage() {
   const [detailContact, setDetailContact] = useState<Contact | null>(null);
   // A call placed outside the app — the caller still records the outcome.
   const [logCallFor, setLogCallFor] = useState<Contact | null>(null);
+  type QueueTab = 'pipeline' | 'booked' | 'to-call';
+  const [queueTab, setQueueTab] = useState<QueueTab>('pipeline');
+
+  // A convenience for the viewer, not state the server needs — and a blocked
+  // or private store must not stop the page rendering.
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('leads:queueTab');
+      if (saved === 'pipeline' || saved === 'booked' || saved === 'to-call') setQueueTab(saved);
+    } catch {
+      // No stored preference; the default stands.
+    }
+  }, []);
+
+  const selectQueueTab = (tab: QueueTab) => {
+    setQueueTab(tab);
+    try {
+      localStorage.setItem('leads:queueTab', tab);
+    } catch {
+      // The tab still switches; it just will not be remembered.
+    }
+  };
   const [isLoadingDetail, setIsLoadingDetail] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [modalError, setModalError] = useState('');
@@ -957,6 +981,29 @@ export default function LeadsPage() {
         </div>
       </div>
 
+      {/* The caller works one page: the board, who is booked, who to ring. */}
+      <div className="flex gap-1 overflow-x-auto border-b border-gray-200 dark:border-gray-700">
+        {([
+          { id: 'pipeline' as QueueTab, label: 'Pipeline' },
+          { id: 'booked' as QueueTab, label: 'Programați' },
+          { id: 'to-call' as QueueTab, label: 'De sunat' },
+        ]).map((t) => (
+          <button
+            key={t.id}
+            onClick={() => selectQueueTab(t.id)}
+            className={`whitespace-nowrap border-b-2 px-4 py-2.5 text-sm font-semibold transition ${
+              queueTab === t.id
+                ? 'border-indigo-600 text-indigo-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {queueTab === 'pipeline' && (
+        <>
       {/* Mobile pipeline switcher: tap a pipeline to see its leads */}
       {pipelines.length > 1 && (
         <div className="md:hidden -mx-4 px-4 overflow-x-auto">
@@ -1337,6 +1384,12 @@ export default function LeadsPage() {
           </div>
         </div>
       )}
+
+        </>
+      )}
+
+      {queueTab === 'booked' && <BookedList />}
+      {queueTab === 'to-call' && <ToCallList />}
 
       {/* Lead Detail Modal */}
       {logCallFor && (
