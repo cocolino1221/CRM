@@ -1,0 +1,134 @@
+import { Injectable } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { Activity } from '../database/entities/activity.entity';
+import { Booking, BookingStatus } from '../database/entities/booking.entity';
+import { Contact, ContactSource } from '../database/entities/contact.entity';
+
+const DEFAULT_LIMIT = 50;
+
+/**
+ * The three lists a caller works from: who is overdue, who is booked, and who
+ * filled in the form but was never scheduled.
+ *
+ * Read-only over data that already exists. Kept apart from ActivitiesService,
+ * which owns the disposition transaction — a read surface and a transactional
+ * writer are two different reasons to change.
+ */
+@Injectable()
+export class WorkQueuesService {
+  constructor(
+    @InjectRepository(Activity)
+    private readonly activityRepository: Repository<Activity>,
+    @InjectRepository(Booking)
+    private readonly bookingRepository: Repository<Booking>,
+    @InjectRepository(Contact)
+    private readonly contactRepository: Repository<Contact>,
+  ) {}
+
+  /**
+   * The surface that makes followUpDate readable. Without it the column is
+   * written and never seen, which is what the disposition work set out to fix.
+   */
+  async findFollowUpsDue(workspaceId: string, userId?: string, before?: Date): Promise<Activity[]> {
+    const cutoff = before ?? new Date();
+
+    const query = this.activityRepository
+      .createQueryBuilder('activity')
+      .where('activity.workspaceId = :workspaceId', { workspaceId })
+      .andWhere('activity.followUpRequired = :required', { required: true })
+      .andWhere('activity.followUpDate IS NOT NULL')
+      .andWhere('activity.followUpDate <= :cutoff', { cutoff })
+      .leftJoinAndSelect('activity.contact', 'contact')
+      .orderBy('activity.followUpDate', 'ASC');
+
+    if (userId) {
+      query.andWhere('activity.userId = :userId', { userId });
+    }
+
+    return query.getMany();
+  }
+
+  /** Upcoming appointments — the "Programați" list. */
+  async findBooked(workspaceId: string, userId?: string): Promise<Booking[]> {
+    const query = this.bookingRepository
+      .createQueryBuilder('booking')
+      .where('booking.workspaceId = :workspaceId', { workspaceId })
+      .andWhere('booking.startTime >= :now', { now: new Date() })
+      .andWhere('booking.status NOT IN (:...excluded)', {
+        excluded: [BookingStatus.CANCELLED, BookingStatus.NO_SHOW],
+      })
+      .leftJoinAndSelect('booking.contact', 'contact')
+      .leftJoinAndSelect('booking.host', 'host')
+      .orderBy('booking.startTime', 'ASC');
+
+    // The person a booking belongs to is its host; Booking has no userId.
+    if (userId) {
+      query.andWhere('booking.hostId = :userId', { userId });
+    }
+
+    return query.getMany();
+  }
+
+  /**
+   * The calling queue: people who filled in the Typeform and were never
+   * scheduled.
+   *
+   * A left join with IS NULL rather than a NOT IN subquery — this table holds
+   * tens of thousands of contacts, and the join uses the existing index on
+   * bookings.contactId.
+   */
+  async findUnbookedLeads(
+    workspaceId: string,
+    page = 1,
+    limit = DEFAULT_LIMIT,
+  ): Promise<{ data: Contact[]; total: number }> {
+    const [data, total] = await this.contactRepository
+      .createQueryBuilder('contact')
+      .where('contact.workspaceId = :workspaceId', { workspaceId })
+      .andWhere('contact.source = :source', { source: ContactSource.TYPEFORM })
+      .andWhere('contact.deletedAt IS NULL')
+      .leftJoin(Booking, 'booking', 'booking.contactId = contact.id')
+      .andWhere('booking.id IS NULL')
+      .orderBy('contact.createdAt', 'DESC')
+      .skip((page - 1) * limit)
+      .take(limit)
+      .getManyAndCount();
+
+    return { data, total };
+  }
+
+  /**
+   * Attach the most recent call recording to each row, so a caller can hear the
+   * last conversation before dialling again. Nothing new is recorded —
+   * logCallActivity already writes metadata.recordingUrl.
+   */
+  async attachLatestRecordings<T extends { id: string; recordingUrl?: string }>(
+    workspaceId: string,
+    rows: T[],
+  ): Promise<T[]> {
+    if (!rows.length) return rows;
+
+    const contactIds = rows.map((row) => row.id);
+    const latest = await this.activityRepository
+      .createQueryBuilder('activity')
+      .select('activity.contactId', 'contactid')
+      .addSelect(`activity.metadata->>'recordingUrl'`, 'recordingurl')
+      .where('activity.workspaceId = :workspaceId', { workspaceId })
+      .andWhere('activity.contactId IN (:...contactIds)', { contactIds })
+      .andWhere(`activity.metadata->>'recordingUrl' IS NOT NULL`)
+      .orderBy('activity.occurredAt', 'DESC')
+      .getRawMany();
+
+    const byContact = new Map<string, string>();
+    for (const row of latest) {
+      const contactId = row.contactid ?? row.contactId;
+      const url = row.recordingurl ?? row.recordingUrl;
+      if (contactId && url && !byContact.has(contactId)) byContact.set(contactId, url);
+    }
+
+    return rows.map((row) =>
+      byContact.has(row.id) ? { ...row, recordingUrl: byContact.get(row.id) } : row,
+    );
+  }
+}
