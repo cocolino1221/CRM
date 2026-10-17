@@ -8,9 +8,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useLeadsStore } from '../stores/leads-store';
+import { useAuthStore } from '../stores/auth-store';
 import { SOURCE_OPTIONS } from '../lib/lead-filters';
 import { leadStage } from '../lib/lead-stage';
-import DispositionDialog from '../components/DispositionDialog';
+import LeadSheet from '../components/LeadSheet';
 import Avatar from '../components/Avatar';
 import type { LeadsStackParams } from '../navigation/LeadsStack';
 import type { Contact } from '../types';
@@ -47,6 +48,7 @@ export default function LeadsListScreen() {
     search, setSearch, source, setSource, month, setMonth, year,
     fetchContacts,
   } = useLeadsStore();
+  const currentUserId = useAuthStore((state) => state.user?.id);
   const [dispositionFor, setDispositionFor] = useState<any | null>(null);
   const [showSearch, setShowSearch] = useState(false);
   const navigation = useNavigation<Nav>();
@@ -316,16 +318,18 @@ export default function LeadsListScreen() {
       />
 
       {dispositionFor && (
-        <DispositionDialog
-          contactId={dispositionFor.id}
-          contactName={
-            `${dispositionFor.firstName ?? ''} ${dispositionFor.lastName ?? ''}`.trim() ||
-            dispositionFor.phone ||
-            dispositionFor.email ||
-            'Contact'
-          }
-          phone={dispositionFor.phone}
-          onViewDetails={() => {
+        <LeadSheet
+          contact={dispositionFor}
+          bookedIds={bookedIds}
+          currentUserId={currentUserId}
+          onClose={() => setDispositionFor(null)}
+          onSaved={() => {
+            setDispositionFor(null);
+            // The badge changes the moment a booking exists, so the list is
+            // re-read rather than left showing the state from before.
+            fetchContacts();
+          }}
+          onOpenRecord={() => {
             const contact = dispositionFor;
             setDispositionFor(null);
             navigation.navigate('LeadDetail', {
@@ -333,13 +337,6 @@ export default function LeadsListScreen() {
               contact,
               contactIds: contacts.map((c: any) => c.id),
             });
-          }}
-          onClose={() => setDispositionFor(null)}
-          onSaved={() => {
-            setDispositionFor(null);
-            // The badge changes the moment someone is booked, so the list is
-            // re-read rather than left showing the state from before.
-            fetchContacts();
           }}
         />
       )}
