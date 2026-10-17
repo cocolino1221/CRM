@@ -8,7 +8,7 @@ import { Roles } from '../auth/decorators/roles.decorator';
 import { CurrentWorkspace } from '../auth/decorators/current-workspace.decorator';
 import { QueryActivitiesDto } from './dto/query-activities.dto';
 import { CreateAndDispositionDto, DispositionDto } from './dto/disposition.dto';
-import { WorkQueuesService } from './work-queues.service';
+import { WorkQueuesService, parseQueueSource } from './work-queues.service';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 
 const ALL_ROLES = ['admin', 'manager', 'sales_rep', 'closer', 'setter', 'caller', 'support_agent'];
@@ -89,23 +89,26 @@ export class ActivitiesController {
   async booked(
     @CurrentWorkspace('id') workspaceId: string,
     @CurrentUser() user: any,
+    @Query('source') source?: string,
   ) {
     const scoped = ['admin', 'manager'].includes(user?.role) ? undefined : user?.id;
-    return this.workQueues.findBooked(workspaceId, scoped);
+    return this.workQueues.findBooked(workspaceId, scoped, parseQueueSource(source));
   }
 
   @Get('queues/to-call')
-  @ApiOperation({ summary: 'Typeform leads that were never scheduled — the De sunat list' })
+  @ApiOperation({ summary: 'Leads (Typeform, WooCommerce, manual) never scheduled — the De sunat list' })
   @Roles(...CALLING_ROLES)
   async toCall(
     @CurrentWorkspace('id') workspaceId: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
+    @Query('source') source?: string,
   ) {
     const { data, total } = await this.workQueues.findUnbookedLeads(
       workspaceId,
       page ? Number(page) : undefined,
       limit ? Number(limit) : undefined,
+      parseQueueSource(source),
     );
     // Each row carries the last call recording so a caller can listen before dialling.
     const enriched = await this.workQueues.attachLatestRecordings(workspaceId, data as any);

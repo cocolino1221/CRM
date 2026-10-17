@@ -7,6 +7,18 @@ import { Contact, ContactSource } from '../database/entities/contact.entity';
 
 const DEFAULT_LIMIT = 50;
 
+/** Where the people on the calling queues come from. */
+export const QUEUE_SOURCES: ContactSource[] = [
+  ContactSource.TYPEFORM,
+  ContactSource.WOOCOMMERCE,
+  ContactSource.MANUAL,
+];
+
+/** A requested source the queues know, or undefined for "all of them". */
+export function parseQueueSource(value?: string): ContactSource | undefined {
+  return QUEUE_SOURCES.find((source) => source === value);
+}
+
 /**
  * The three lists a caller works from: who is overdue, who is booked, and who
  * filled in the form but was never scheduled.
@@ -50,7 +62,7 @@ export class WorkQueuesService {
   }
 
   /** Upcoming appointments — the "Programați" list. */
-  async findBooked(workspaceId: string, userId?: string): Promise<Booking[]> {
+  async findBooked(workspaceId: string, userId?: string, source?: ContactSource): Promise<Booking[]> {
     const query = this.bookingRepository
       .createQueryBuilder('booking')
       .where('booking.workspaceId = :workspaceId', { workspaceId })
@@ -67,12 +79,16 @@ export class WorkQueuesService {
       query.andWhere('booking.hostId = :userId', { userId });
     }
 
+    if (source) {
+      query.andWhere('contact.source = :source', { source });
+    }
+
     return query.getMany();
   }
 
   /**
-   * The calling queue: people who filled in the Typeform and were never
-   * scheduled.
+   * The calling queue: people from the lead sources (Typeform, WooCommerce,
+   * added by hand) who were never scheduled, optionally narrowed to one.
    *
    * A left join with IS NULL rather than a NOT IN subquery — this table holds
    * tens of thousands of contacts, and the join uses the existing index on
@@ -82,11 +98,13 @@ export class WorkQueuesService {
     workspaceId: string,
     page = 1,
     limit = DEFAULT_LIMIT,
+    source?: ContactSource,
   ): Promise<{ data: Contact[]; total: number }> {
+    const sources = source ? [source] : QUEUE_SOURCES;
     const [data, total] = await this.contactRepository
       .createQueryBuilder('contact')
       .where('contact.workspaceId = :workspaceId', { workspaceId })
-      .andWhere('contact.source = :source', { source: ContactSource.TYPEFORM })
+      .andWhere('contact.source IN (:...sources)', { sources })
       .andWhere('contact.deletedAt IS NULL')
       .leftJoin(Booking, 'booking', 'booking.contactId = contact.id')
       .andWhere('booking.id IS NULL')

@@ -11,8 +11,10 @@ import { useCallback, useEffect, useState } from 'react';
 import { Calendar, Loader2, MessageCircle, Phone, RefreshCw, User } from 'lucide-react';
 import api from '@/lib/api';
 import {
+  QUEUE_SOURCE_OPTIONS,
   contactDisplayName,
   formatQueueTime,
+  queueSourceLabel,
   whatsappDigits,
   type QueueContactRef,
 } from '@/lib/queue-rows';
@@ -27,6 +29,7 @@ interface Booking {
     lastName?: string;
     phone?: string;
     email?: string;
+    source?: string;
   } | null;
   host?: { id: string; firstName?: string; lastName?: string; email?: string } | null;
 }
@@ -42,65 +45,85 @@ export default function BookedList({
   const [rows, setRows] = useState<Booking[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [source, setSource] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
-      const res = await api.get('/activities/queues/booked');
+      const res = await api.get('/activities/queues/booked', {
+        params: source ? { source } : undefined,
+      });
       setRows(Array.isArray(res.data) ? res.data : (res.data?.data ?? []));
     } catch (err: any) {
       setError(err?.response?.data?.message || 'Nu s-au putut încărca programările.');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [source]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
+  // The header stays up while loading or empty, so the source filter can
+  // always be changed back.
+  let body: JSX.Element | null = null;
   if (loading) {
-    return (
+    body = (
       <div className="flex items-center justify-center py-16 text-gray-400">
         <Loader2 className="h-6 w-6 animate-spin" />
       </div>
     );
-  }
-
-  if (error) {
-    return (
-      <div className="rounded-2xl border border-red-200 bg-red-50 p-6 text-sm text-red-700">
+  } else if (error) {
+    body = (
+      <div className="m-4 rounded-2xl border border-red-200 bg-red-50 p-6 text-sm text-red-700">
         {error}
         <button onClick={load} className="ml-3 underline">
           Încearcă din nou
         </button>
       </div>
     );
-  }
-
-  if (!rows.length) {
-    return (
-      <div className="rounded-2xl border border-gray-200 bg-white p-10 text-center dark:border-gray-700 dark:bg-gray-800">
+  } else if (!rows.length) {
+    body = (
+      <div className="p-10 text-center">
         <Calendar className="mx-auto h-8 w-8 text-gray-300" />
-        <p className="mt-3 text-sm text-gray-500">Nicio programare viitoare</p>
+        <p className="mt-3 text-sm text-gray-500">
+          {source ? 'Nicio programare din sursa aleasă' : 'Nicio programare viitoare'}
+        </p>
       </div>
     );
   }
 
   return (
     <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800">
-      <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3 dark:border-gray-700">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-200 px-4 py-3 dark:border-gray-700">
         <span className="text-sm font-semibold text-gray-700 dark:text-gray-200">
-          {rows.length} {rows.length === 1 ? 'programare' : 'programări'}
+          {loading ? '…' : rows.length} {rows.length === 1 ? 'programare' : 'programări'}
         </span>
-        <button
-          onClick={load}
-          className="inline-flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700"
+        <div className="flex items-center gap-3">
+        <select
+          value={source}
+          onChange={(e) => setSource(e.target.value)}
+          onClick={(e) => e.stopPropagation()}
+          aria-label="Sursă"
+          className="rounded-lg border border-gray-200 bg-white px-2 py-1 text-xs text-gray-700 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-200"
         >
-          <RefreshCw className="h-3.5 w-3.5" /> Reîncarcă
-        </button>
+          {QUEUE_SOURCE_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+          <button
+            onClick={load}
+            className="inline-flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700"
+          >
+            <RefreshCw className="h-3.5 w-3.5" /> Reîncarcă
+          </button>
+        </div>
       </div>
+      {body ?? (
       <ul className="divide-y divide-gray-100 dark:divide-gray-700">
         {rows.map((b) => (
           <li
@@ -129,6 +152,11 @@ export default function BookedList({
             <span className="min-w-[10rem] flex-1 font-medium text-gray-900 dark:text-white">
               {contactDisplayName(b.contact)}
             </span>
+            {queueSourceLabel(b.contact?.source) && (
+              <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600 dark:bg-gray-700 dark:text-gray-300">
+                {queueSourceLabel(b.contact?.source)}
+              </span>
+            )}
             {b.contact?.phone && (
               <a
                 href={`tel:${b.contact.phone}`}
@@ -160,6 +188,7 @@ export default function BookedList({
           </li>
         ))}
       </ul>
+      )}
     </div>
   );
 }

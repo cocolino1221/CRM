@@ -1,4 +1,4 @@
-import { WorkQueuesService } from './work-queues.service';
+import { WorkQueuesService, parseQueueSource } from './work-queues.service';
 import { BookingStatus } from '../database/entities/booking.entity';
 
 const WORKSPACE = 'workspace-1';
@@ -140,6 +140,39 @@ describe('WorkQueuesService.findUnbookedLeads', () => {
       expect.stringContaining('workspaceId'),
       expect.objectContaining({ workspaceId: WORKSPACE }),
     );
+  });
+});
+
+describe('Queue source filter', () => {
+  const sourceParams = (builder: any) =>
+    builder.andWhere.mock.calls.map((c: any[]) => c[1]).filter((p: any) => p && ('source' in p || 'sources' in p));
+
+  it('De sunat covers Typeform, WooCommerce and manual by default', async () => {
+    const { service, contactBuilder } = build();
+    await service.findUnbookedLeads(WORKSPACE);
+    expect(sourceParams(contactBuilder)).toEqual([{ sources: ['typeform', 'woocommerce', 'manual'] }]);
+  });
+
+  it('De sunat narrows to one source', async () => {
+    const { service, contactBuilder } = build();
+    await service.findUnbookedLeads(WORKSPACE, 1, 50, 'woocommerce' as any);
+    expect(sourceParams(contactBuilder)).toEqual([{ sources: ['woocommerce'] }]);
+  });
+
+  it('Programați filters by the contact source only when asked', async () => {
+    const all = build();
+    await all.service.findBooked(WORKSPACE);
+    expect(sourceParams(all.bookingBuilder)).toEqual([]);
+
+    const one = build();
+    await one.service.findBooked(WORKSPACE, undefined, 'typeform' as any);
+    expect(sourceParams(one.bookingBuilder)).toEqual([{ source: 'typeform' }]);
+  });
+
+  it('ignores a source the queues do not know', () => {
+    expect(parseQueueSource('payflow')).toBeUndefined();
+    expect(parseQueueSource(undefined)).toBeUndefined();
+    expect(parseQueueSource('manual')).toBe('manual');
   });
 });
 

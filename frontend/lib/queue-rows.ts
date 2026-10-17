@@ -83,3 +83,25 @@ export function whatsappDigits(
   if (digits.startsWith('0')) return `${defaultCountryCode}${digits.slice(1)}`;
   return digits;
 }
+
+/** The sources the calling queues work. '' means all of them. */
+export const QUEUE_SOURCE_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: '', label: 'Toate sursele' },
+  { value: 'typeform', label: 'Typeform' },
+  { value: 'woocommerce', label: 'WooCommerce' },
+  { value: 'manual', label: 'Manual' },
+];
+
+const SOURCE_LABELS: Record<string, string> = {
+  typeform: 'Typeform',
+  woocommerce: 'WooCommerce',
+  manual: 'Manual',
+  facebook: 'Facebook',
+  instagram: 'Instagram',
+  whatsapp: 'WhatsApp',
+};
+
+export function queueSourceLabel(source?: string | null): string | null {
+  if (!source) return null;
+  return SOURCE_LABELS[source] ?? source;
+}
