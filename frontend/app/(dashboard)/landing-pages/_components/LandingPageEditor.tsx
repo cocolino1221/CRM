@@ -1,6 +1,9 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import SectionsEditor from './SectionsEditor';
+import { FITNESS_CONSULT_PRESET, SECTION_LIBRARY, type LandingSection } from '@/lib/landing-sections';
+import { itemsKeyFor } from '@/lib/section-edit';
 import { useRouter } from 'next/navigation';
 import { Save, Plus, Trash2, Upload } from 'lucide-react';
 import api from '@/lib/api';
@@ -102,6 +105,36 @@ export default function LandingPageEditor({ initial }: Props) {
     setDraft((d) => ({ ...d, content: { ...d.content, hero: { ...d.content?.hero, ...patch } } }));
   const setBenefits = (next: string[]) =>
     setDraft((d) => ({ ...d, content: { ...d.content, benefits: next } }));
+  const sections: LandingSection[] = (draft.content as any)?.sections || [];
+  const setSections = (next: LandingSection[]) =>
+    setDraft((d) => ({ ...d, content: { ...d.content, sections: next } as any }));
+
+  // The old pages carry a flat benefits list and no sections. Converting is
+  // one click rather than automatic: it is the owner's copy, and a silent
+  // rewrite of a live page is not ours to make.
+  const convertBenefits = () => {
+    setSections([
+      {
+        type: 'whatYouGet',
+        title: 'Ce primești',
+        items: benefits.filter(Boolean).map((b) => ({ title: b })),
+      } as LandingSection,
+    ]);
+    setBenefits([]);
+  };
+
+  const applyFitnessPreset = () => {
+    if (sections.length && !window.confirm('Înlocuiesc secțiunile existente cu șablonul?')) return;
+    setDraft((d) => ({
+      ...d,
+      content: {
+        ...d.content,
+        hero: { ...(d.content?.hero || {}), ...(FITNESS_CONSULT_PRESET.hero as any) },
+        stickyCta: FITNESS_CONSULT_PRESET.stickyCta,
+        sections: FITNESS_CONSULT_PRESET.sections,
+      } as any,
+    }));
+  };
   const setTheme = (patch: Partial<typeof theme>) =>
     setDraft((d) => ({ ...d, content: { ...d.content, theme: { ...d.content?.theme, ...patch } } }));
   const applyPreset = (key: string) => {
@@ -299,28 +332,30 @@ export default function LandingPageEditor({ initial }: Props) {
             </select>
           </section>
 
-          {/* Benefits */}
+          {/* Sections — what the page actually says */}
           <section>
-            <h3 className="mb-3 font-semibold text-gray-900">Benefits</h3>
-            {benefits.map((b, i) => (
-              <div key={i} className="mb-2 flex gap-2">
-                <input
-                  value={b}
-                  onChange={(e) => {
-                    const next = [...benefits];
-                    next[i] = e.target.value;
-                    setBenefits(next);
-                  }}
-                  className="flex-1 rounded-lg border border-gray-200 px-3 py-2"
-                />
-                <button onClick={() => setBenefits(benefits.filter((_, j) => j !== i))} className="rounded-lg bg-red-50 p-2 text-red-600">
-                  <Trash2 size={14} />
+            {benefits.length > 0 && sections.length === 0 && (
+              <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm dark:border-amber-900 dark:bg-amber-950">
+                <p className="text-amber-800 dark:text-amber-200">
+                  Pagina are o listă veche de {benefits.length} beneficii. Se afișează în
+                  continuare, dar nu poate fi aranjată. Mută-le în secțiuni ca să le poți
+                  edita aici.
+                </p>
+                <button
+                  type="button"
+                  onClick={convertBenefits}
+                  className="mt-2 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white"
+                >
+                  Mută în secțiuni
                 </button>
               </div>
-            ))}
-            <button onClick={() => setBenefits([...benefits, ''])} className="inline-flex items-center gap-1 text-sm text-blue-600">
-              <Plus size={14} /> Add benefit
-            </button>
+            )}
+
+            <SectionsEditor
+              sections={sections}
+              onChange={setSections}
+              onApplyPreset={applyFitnessPreset}
+            />
           </section>
 
           {/* Capture */}
@@ -495,6 +530,35 @@ export default function LandingPageEditor({ initial }: Props) {
                 </li>
               ))}
             </ul>
+          )}
+
+          {/* An outline, not a second renderer. Drawing the sections properly
+              here would mean a copy of the public page's markup, and the two
+              would drift — the outline says what will be on the page and in
+              what order, and the page itself is one click away. */}
+          {sections.length > 0 && (
+            <ol className="mb-6 space-y-1.5 rounded-xl border border-dashed border-current/20 p-4 text-sm opacity-80">
+              {sections.map((section, i) => {
+                const definition = SECTION_LIBRARY.find((d) => d.type === section.type);
+                const key = itemsKeyFor(section);
+                const count = key ? ((section as any)[key] || []).length : 0;
+                return (
+                  <li key={i} className="flex items-center gap-2">
+                    <span
+                      className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-xs text-white"
+                      style={{ background: hero.accentColor || theme.accentColor }}
+                    >
+                      {i + 1}
+                    </span>
+                    <span className="font-medium">{definition?.label ?? section.type}</span>
+                    {(section as any).title && (
+                      <span className="truncate opacity-60">— {(section as any).title}</span>
+                    )}
+                    {key && <span className="ml-auto text-xs opacity-50">{count} rânduri</span>}
+                  </li>
+                );
+              })}
+            </ol>
           )}
           <div
             className="rounded-xl border border-gray-200 p-6 text-gray-900"
