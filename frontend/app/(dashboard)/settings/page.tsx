@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { User, Bell, Lock, Building2, Palette, Loader2, Check, AlertCircle, Copy, RefreshCw, Link } from 'lucide-react';
+import DomainsSettings from '@/components/settings/DomainsSettings';
+import { User, Bell, Lock, Building2, Palette, Loader2, Check, AlertCircle, Copy, RefreshCw, Link, Globe } from 'lucide-react';
 import api from '@/lib/api';
 import ThemeSettings from '@/components/settings/ThemeSettings';
 import NotificationSettings from '@/components/settings/NotificationSettings';
@@ -242,6 +243,7 @@ export default function SettingsPage() {
     { id: 'security', name: 'Security', icon: Lock },
     { id: 'notifications', name: 'Notifications', icon: Bell },
     { id: 'workspace', name: 'Workspace', icon: Building2 },
+    { id: 'domains', name: 'Domenii', icon: Globe },
   ];
 
   if (isLoading) {
@@ -441,6 +443,8 @@ export default function SettingsPage() {
         {activeTab === 'notifications' && (
           <NotificationSettings />
         )}
+
+        {activeTab === 'domains' && <DomainsSettings />}
 
         {activeTab === 'workspace' && (
           <WorkspaceTab

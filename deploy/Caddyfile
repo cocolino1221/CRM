@@ -14,11 +14,12 @@
 		# Answers 200 for a verified customer domain, 404 for everything
 		# else. The 404 is what stops a stranger pointing any domain here
 		# and burning the Let's Encrypt rate limit.
+		# Caddy appends ?domain=<host> to this URL and issues a
+		# certificate only on a 2xx. The rate limiting that used to live
+		# here (interval/burst) was removed in Caddy 2.7 — the ask
+		# endpoint is the only gate now, which is why it answers 404
+		# rather than anything softer.
 		ask http://backend:8080/api/v1/landing-pages/domains/check
-
-		# Caddy appends ?domain=<host> to the ask URL.
-		interval 2m
-		burst 5
 	}
 }
 
