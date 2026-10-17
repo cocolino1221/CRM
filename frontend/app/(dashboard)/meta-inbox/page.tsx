@@ -1625,7 +1625,7 @@ export default function MessagesPage() {
 
   return (
     <>
-      <div className="flex flex-col gap-3 overflow-hidden rounded-[28px] bg-slate-100/70 p-3 xl:h-[calc(100dvh-6.5rem)]">
+      <div className="flex flex-col gap-2.5 overflow-hidden rounded-[22px] bg-slate-200/70 p-2 ring-1 ring-slate-300/40 sm:gap-3 sm:rounded-[28px] sm:p-3 xl:h-[calc(100dvh-6.5rem)]">
         <div className="px-2 pt-1">
           <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
             <div>
@@ -1749,11 +1749,11 @@ export default function MessagesPage() {
 
         <div
           className={cn(
-            'grid min-h-[600px] gap-3 xl:min-h-0 xl:flex-1 xl:overflow-hidden',
+            'grid min-h-[600px] gap-2.5 sm:gap-3 xl:min-h-0 xl:flex-1 xl:overflow-hidden',
             showDetails ? 'xl:grid-cols-[300px_minmax(0,1fr)_280px]' : 'xl:grid-cols-[300px_minmax(0,1fr)]',
           )}
         >
-          <aside className="flex min-h-0 flex-col overflow-hidden rounded-3xl bg-white shadow-[0_1px_3px_rgba(15,23,42,0.04),0_8px_24px_-16px_rgba(15,23,42,0.12)]">
+          <aside className="flex min-h-0 flex-col overflow-hidden rounded-[20px] bg-white shadow-[0_1px_2px_rgba(15,23,42,0.06),0_10px_28px_-14px_rgba(15,23,42,0.18)] ring-1 ring-slate-900/[0.06] sm:rounded-3xl">
             <div className="px-4 pb-2 pt-4">
               <div className="flex items-center justify-between gap-3">
                 <div>
@@ -1835,7 +1835,7 @@ export default function MessagesPage() {
 
           <main
             className={cn(
-              'flex min-h-0 flex-col overflow-hidden rounded-3xl bg-white shadow-[0_1px_3px_rgba(15,23,42,0.04),0_8px_24px_-16px_rgba(15,23,42,0.12)]',
+              'flex min-h-0 flex-col overflow-hidden rounded-[20px] bg-white shadow-[0_1px_2px_rgba(15,23,42,0.06),0_10px_28px_-14px_rgba(15,23,42,0.18)] ring-1 ring-slate-900/[0.06] sm:rounded-3xl',
             )}
           >
             <div className="px-5 py-4 shadow-[0_1px_0_rgba(15,23,42,0.04)]">
@@ -2332,7 +2332,7 @@ export default function MessagesPage() {
           </main>
 
           {showDetails && (
-            <aside className="overflow-y-auto rounded-3xl bg-white shadow-[0_1px_3px_rgba(15,23,42,0.04),0_8px_24px_-16px_rgba(15,23,42,0.12)]">
+            <aside className="overflow-y-auto rounded-[20px] bg-white shadow-[0_1px_2px_rgba(15,23,42,0.06),0_10px_28px_-14px_rgba(15,23,42,0.18)] ring-1 ring-slate-900/[0.06] sm:rounded-3xl">
               <div className="px-5 py-5">
                 <div className="text-sm font-semibold text-slate-950">Details</div>
               </div>
