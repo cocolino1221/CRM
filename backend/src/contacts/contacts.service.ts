@@ -35,6 +35,21 @@ export function leadSource(contactSource: string): 'typeform' | 'social' | 'manu
   return 'manual';
 }
 
+/**
+ * A date range reaching the API is built by a browser, pasted into a URL, or
+ * hand-edited. An unparseable bound must be refused rather than dropped: a
+ * silently ignored filter returns every contact in the workspace and looks
+ * like it worked.
+ */
+function parseRangeBound(value: string | undefined, field: string): Date | null {
+  if (value === undefined || value === null || value === '') return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    throw new BadRequestException(`${field} is not a valid date`);
+  }
+  return date;
+}
+
 @Injectable()
 export class ContactsService {
   private readonly logger = new Logger(ContactsService.name);
@@ -71,6 +86,8 @@ export class ContactsService {
       minLeadScore,
       maxLeadScore,
       emailOptIn,
+      createdFrom,
+      createdTo,
       sortBy = SortField.CREATED_AT,
       sortOrder = 'DESC',
       includeCompany,
@@ -119,6 +136,8 @@ export class ContactsService {
       minLeadScore,
       maxLeadScore,
       emailOptIn,
+      createdFrom: parseRangeBound(createdFrom, 'createdFrom'),
+      createdTo: parseRangeBound(createdTo, 'createdTo'),
     });
 
     // Apply sorting
@@ -800,6 +819,8 @@ export class ContactsService {
     minLeadScore?: number;
     maxLeadScore?: number;
     emailOptIn?: boolean;
+    createdFrom?: Date | null;
+    createdTo?: Date | null;
   }): void {
     const {
       search,
@@ -813,7 +834,19 @@ export class ContactsService {
       minLeadScore,
       maxLeadScore,
       emailOptIn,
+      createdFrom,
+      createdTo,
     } = filters;
+
+    if (createdFrom && createdTo && createdFrom.getTime() > createdTo.getTime()) {
+      throw new BadRequestException('createdFrom must not be later than createdTo');
+    }
+    if (createdFrom) {
+      queryBuilder.andWhere('contact.createdAt >= :createdFrom', { createdFrom });
+    }
+    if (createdTo) {
+      queryBuilder.andWhere('contact.createdAt <= :createdTo', { createdTo });
+    }
 
     if (search) {
       const trimmedSearch = search.trim();

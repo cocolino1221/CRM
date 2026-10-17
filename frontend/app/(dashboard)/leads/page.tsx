@@ -5,8 +5,10 @@ import { Plus, Search, Phone, Video, Trophy, TrendingUp, TrendingDown, UserCheck
 import { getInitials } from '@/lib/utils';
 import api from '@/lib/api';
 import { DispositionDialog } from '@/components/calls/DispositionDialog';
+import LeadsList from '@/components/leads/LeadsList';
 import BookedList from '@/components/queues/BookedList';
 import ToCallList from '@/components/queues/ToCallList';
+import type { QueueContactRef } from '@/lib/queue-rows';
 
 const PHONE_PREFIXES = [
   { code: '+40', country: 'RO', flag: '🇷🇴' },
@@ -169,15 +171,15 @@ export default function LeadsPage() {
   const [detailContact, setDetailContact] = useState<Contact | null>(null);
   // A call placed outside the app — the caller still records the outcome.
   const [logCallFor, setLogCallFor] = useState<Contact | null>(null);
-  type QueueTab = 'pipeline' | 'booked' | 'to-call';
-  const [queueTab, setQueueTab] = useState<QueueTab>('pipeline');
+  type QueueTab = 'all' | 'booked' | 'to-call';
+  const [queueTab, setQueueTab] = useState<QueueTab>('all');
 
   // A convenience for the viewer, not state the server needs — and a blocked
   // or private store must not stop the page rendering.
   useEffect(() => {
     try {
       const saved = localStorage.getItem('leads:queueTab');
-      if (saved === 'pipeline' || saved === 'booked' || saved === 'to-call') setQueueTab(saved);
+      if (saved === 'all' || saved === 'booked' || saved === 'to-call') setQueueTab(saved);
     } catch {
       // No stored preference; the default stands.
     }
@@ -310,9 +312,8 @@ export default function LeadsPage() {
         params.search = searchQuery;
       }
 
-      if (selectedPipeline) {
-        params.pipelineId = selectedPipeline.id;
-      }
+      // Deliberately unscoped: a closer must see every lead in the workspace,
+      // not the slice belonging to one of several duplicate default pipelines.
 
       console.log('Fetching contacts with params:', params);
       const response = await api.get<any>('/contacts', { params });
@@ -758,6 +759,15 @@ export default function LeadsPage() {
     };
   };
 
+  /**
+   * A queue row carries only enough of a contact to draw itself. openDetailModal
+   * refetches the rest, so seeding it with that partial is enough to show the
+   * right name while the request is in flight.
+   */
+  const openContactFromQueue = (contact: QueueContactRef) => {
+    void openDetailModal(contact as Contact);
+  };
+
   const openDetailModal = async (contact: Contact) => {
     setShowDetailModal(true);
     setDetailContact(contact);
@@ -984,7 +994,7 @@ export default function LeadsPage() {
       {/* The caller works one page: the board, who is booked, who to ring. */}
       <div className="flex gap-1 overflow-x-auto border-b border-gray-200 dark:border-gray-700">
         {([
-          { id: 'pipeline' as QueueTab, label: 'Pipeline' },
+          { id: 'all' as QueueTab, label: 'Toate leadurile' },
           { id: 'booked' as QueueTab, label: 'Programați' },
           { id: 'to-call' as QueueTab, label: 'De sunat' },
         ]).map((t) => (
@@ -1002,394 +1012,14 @@ export default function LeadsPage() {
         ))}
       </div>
 
-      {queueTab === 'pipeline' && (
-        <>
-      {/* Mobile pipeline switcher: tap a pipeline to see its leads */}
-      {pipelines.length > 1 && (
-        <div className="md:hidden -mx-4 px-4 overflow-x-auto">
-          <div className="flex gap-2 w-max pb-1">
-            {pipelines.map(pipeline => {
-              const active = selectedPipeline?.id === pipeline.id;
-              return (
-                <button
-                  key={pipeline.id}
-                  onClick={() => setSelectedPipeline(pipeline)}
-                  className={`whitespace-nowrap rounded-full px-4 py-2 text-sm font-medium border transition-all ${
-                    active
-                      ? 'bg-indigo-600 border-indigo-600 text-white shadow'
-                      : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'
-                  }`}
-                >
-                  {pipeline.name}
-                </button>
-              );
-            })}
-          </div>
-        </div>
+      {queueTab === 'all' && (
+        <LeadsList
+          onViewDetails={(lead) => openDetailModal(lead as unknown as Contact)}
+        />
       )}
 
-      {/* Pipeline Selector, Date Filter and Search */}
-      <div className="flex items-center gap-2 sm:gap-4 flex-wrap">
-        <div className="relative w-full sm:w-64">
-          <select
-            value={selectedPipeline?.id || ''}
-            onChange={(e) => {
-              const pipeline = pipelines.find(p => p.id === e.target.value);
-              setSelectedPipeline(pipeline || null);
-            }}
-            className="w-full rounded-xl border border-gray-300 bg-white py-3 px-4 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-            disabled={pipelines.length === 0}
-          >
-            {pipelines.length === 0 ? (
-              <option value="">Loading pipelines...</option>
-            ) : (
-              pipelines.map(pipeline => (
-                <option key={pipeline.id} value={pipeline.id}>
-                  {pipeline.name} {pipeline.isDefault && '(Default)'}
-                </option>
-              ))
-            )}
-          </select>
-        </div>
-
-        {/* Month Filter */}
-        <div className="relative">
-          <button
-            onClick={() => setShowDateFilter(!showDateFilter)}
-            className="flex items-center gap-2 rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-all"
-          >
-            <Calendar className="h-4 w-4" />
-            {selectedMonth !== null ? (
-              <span>
-                {new Date(selectedYear, selectedMonth).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
-              </span>
-            ) : (
-              <span>All Time</span>
-            )}
-          </button>
-
-          {showDateFilter && (
-            <div className="absolute top-full mt-2 left-0 z-50 bg-white rounded-xl shadow-xl border border-gray-200 p-4 w-72">
-              <div className="mb-3">
-                <label className="block text-xs font-semibold text-gray-700 mb-2">Year</label>
-                <select
-                  value={selectedYear}
-                  onChange={(e) => setSelectedYear(Number(e.target.value))}
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-                >
-                  {Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i).map(year => (
-                    <option key={year} value={year}>{year}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="mb-3">
-                <label className="block text-xs font-semibold text-gray-700 mb-2">Month</label>
-                <div className="grid grid-cols-3 gap-2">
-                  <button
-                    onClick={() => {
-                      setSelectedMonth(null);
-                      setShowDateFilter(false);
-                    }}
-                    className={`px-3 py-2 text-xs font-medium rounded-lg transition-all ${
-                      selectedMonth === null
-                        ? 'bg-indigo-600 text-white'
-                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                    }`}
-                  >
-                    All
-                  </button>
-                  {['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'].map((month, index) => (
-                    <button
-                      key={month}
-                      onClick={() => {
-                        setSelectedMonth(index);
-                        setShowDateFilter(false);
-                      }}
-                      className={`px-3 py-2 text-xs font-medium rounded-lg transition-all ${
-                        selectedMonth === index
-                          ? 'bg-indigo-600 text-white'
-                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                      }`}
-                    >
-                      {month}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-
-        <button
-          onClick={() => {
-            setShowPipelineModal(true);
-            setModalError('');
-          }}
-          className="flex items-center gap-2 rounded-xl bg-white border border-indigo-300 px-4 py-2.5 text-sm font-semibold text-indigo-700 hover:bg-indigo-50 transition-all"
-          title="Create new pipeline"
-        >
-          <Plus className="h-4 w-4" />
-          New Pipeline
-        </button>
-        <div className="relative flex-1 min-w-[12rem]">
-          <Search className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-indigo-400" />
-          <input
-            type="text"
-            placeholder="Search leads by name, email, company, or phone..."
-            value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                applySearch();
-              }
-            }}
-            className="w-full rounded-xl border border-indigo-200/50 bg-white/50 py-3 pl-11 pr-4 text-sm placeholder:text-gray-500 focus:border-indigo-400 focus:bg-white focus:outline-none focus:ring-4 focus:ring-indigo-100 transition-all shadow-sm"
-          />
-        </div>
-        <button
-          onClick={applySearch}
-          className="flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700 transition-all"
-        >
-          Search
-        </button>
-      </div>
-
-      {/* Pipeline Board */}
-      {selectedPipeline && selectedPipeline.stages && selectedPipeline.stages.length > 0 ? (
-        <div className="flex-1 overflow-x-auto pb-6">
-          <div className="flex gap-4 min-w-max h-full">
-            {selectedPipeline.stages
-              .filter(stage => stage && stage.id) // Filter out any null/undefined stages
-              .sort((a, b) => a.displayOrder - b.displayOrder)
-              .map((stage) => {
-              const stageLeads = getLeadsForStage(stage.id);
-              const colorStyles = getColorClasses(stage.color || '#3B82F6');
-
-              return (
-                <div
-                  key={stage.id}
-                  className="flex flex-col w-80 bg-gray-50 rounded-xl border border-gray-200 shadow-sm"
-                >
-                  {/* Stage Header */}
-                  <div
-                    className="p-4 rounded-t-xl"
-                    style={{ background: colorStyles.gradient }}
-                  >
-                    <div className="flex items-center justify-between text-white">
-                      <div className="flex items-center gap-2">
-                        <h3 className="font-semibold">{stage.name}</h3>
-                      </div>
-                      <span className="bg-white/20 px-2.5 py-1 rounded-full text-xs font-bold">
-                        {stageLeads.length}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Stage Cards */}
-                  <div className="flex-1 p-2 space-y-2 overflow-y-auto max-h-[calc(100vh-280px)]">
-                    {stageLeads.length === 0 ? (
-                      <div className="text-center py-6 text-gray-400 text-xs">
-                        No leads in this stage
-                      </div>
-                    ) : (
-                      stageLeads.map((contact) => (
-                        <div
-                          key={contact.id}
-                          onClick={() => setLogCallFor(contact)}
-                          className="bg-white rounded-lg border border-gray-200 p-2.5 shadow-sm hover:shadow-md transition-all cursor-pointer group"
-                        >
-                          {/* Lead Name + delete button */}
-                          <div className="mb-1.5">
-                            <div className="flex items-start justify-between gap-1">
-                              <h4 className="font-semibold text-gray-900 text-xs leading-tight">
-                                {contact.firstName} {contact.lastName}
-                              </h4>
-                              <div className="flex items-center gap-0.5 flex-shrink-0">
-                                <button
-                                  onClick={(e) => handleTogglePreluat(contact, e)}
-                                  className={`p-0.5 rounded transition-opacity ${contact.preluat ? 'text-green-600' : 'text-gray-300 opacity-0 group-hover:opacity-100 hover:text-green-500'}`}
-                                  title={contact.preluat ? 'Preluat — click to unmark' : 'Mark as preluat'}
-                                >
-                                  {contact.preluat ? <CheckCircle2 className="h-3.5 w-3.5" /> : <Circle className="h-3.5 w-3.5" />}
-                                </button>
-                                <button
-                                  onClick={(e) => handleDeleteLead(contact, e)}
-                                  className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-red-50 hover:text-red-500 text-gray-300"
-                                  title="Delete lead"
-                                >
-                                  <Trash2 className="h-3 w-3" />
-                                </button>
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-1 text-[10px] text-gray-500 mt-0.5">
-                              <Mail className="h-2.5 w-2.5 flex-shrink-0" />
-                              <span className="truncate">{contact.email}</span>
-                            </div>
-                            {contact.phone && (
-                              <div className="flex items-center gap-1 text-[10px] text-gray-500 mt-0.5">
-                                <Phone className="h-2.5 w-2.5 flex-shrink-0" />
-                                <span>{contact.phone}</span>
-                              </div>
-                            )}
-                            {contact.company && (
-                              <div className="flex items-center gap-1 text-[10px] text-gray-500 mt-0.5">
-                                <Building className="h-2.5 w-2.5 flex-shrink-0" />
-                                <span>{contact.company.name}</span>
-                              </div>
-                            )}
-                          </div>
-
-                          {/* Team Assignments */}
-                          {(contact.setter || contact.caller || contact.closer) && (
-                            <div className="mb-1.5 p-1.5 bg-gray-50 rounded text-[10px] space-y-0.5">
-                              {contact.setter && (
-                                <div className="flex items-center gap-1">
-                                  <Users className="h-2.5 w-2.5 text-blue-600" />
-                                  <span className="text-gray-500">S:</span>
-                                  <span className="font-medium">{contact.setter.firstName}</span>
-                                </div>
-                              )}
-                              {contact.caller && (
-                                <div className="flex items-center gap-1">
-                                  <Phone className="h-2.5 w-2.5 text-purple-600" />
-                                  <span className="text-gray-500">C:</span>
-                                  <span className="font-medium">{contact.caller.firstName}</span>
-                                </div>
-                              )}
-                              {contact.closer && (
-                                <div className="flex items-center gap-1">
-                                  <Trophy className="h-2.5 w-2.5 text-green-600" />
-                                  <span className="text-gray-500">Cl:</span>
-                                  <span className="font-medium">{contact.closer.firstName}</span>
-                                </div>
-                              )}
-                            </div>
-                          )}
-
-                          {/* Lead Score */}
-                          <div className="mb-1.5">
-                            <div className="flex items-center justify-between mb-0.5">
-                              <span className="text-[10px] text-gray-500">Score</span>
-                              <span className="text-[10px] font-bold text-gray-900">{contact.leadScore}</span>
-                            </div>
-                            <div className="w-full bg-gray-200 rounded-full h-1">
-                              <div
-                                className={`h-1 rounded-full transition-all ${getLeadScoreColor(contact.leadScore)}`}
-                                style={{ width: `${contact.leadScore}%` }}
-                              />
-                            </div>
-                          </div>
-
-                          {/* Date */}
-                          <div className="text-[10px] text-gray-400 mb-1.5">
-                            {new Date(contact.createdAt).toLocaleDateString()}
-                          </div>
-
-                          {/* Inline status badge */}
-                          <div
-                            className="mb-1.5"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <select
-                              value={contact.status}
-                              onChange={(e) => handleInlineStatusChange(contact, e.target.value)}
-                              onClick={(e) => e.stopPropagation()}
-                              className={`w-full text-[10px] font-semibold rounded-full px-2 py-1 border-0 cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-400 ${
-                                contact.status === 'qualified' ? 'bg-green-100 text-green-700' :
-                                contact.status === 'customer' ? 'bg-emerald-100 text-emerald-700' :
-                                contact.status === 'prospect' ? 'bg-purple-100 text-purple-700' :
-                                contact.status === 'inactive' ? 'bg-gray-100 text-gray-700' :
-                                contact.status === 'churned' ? 'bg-red-100 text-red-700' :
-                                'bg-blue-100 text-blue-700'
-                              }`}
-                            >
-                              <option value="lead">Lead</option>
-                              <option value="prospect">Prospect</option>
-                              <option value="qualified">Qualified</option>
-                              <option value="customer">Customer</option>
-                              <option value="inactive">Inactive</option>
-                              <option value="churned">Churned</option>
-                            </select>
-                          </div>
-
-                          {/* Quick Stage Controls */}
-                          {(() => {
-                            const sortedStages = [...(selectedPipeline?.stages || [])].sort((a, b) => a.displayOrder - b.displayOrder);
-                            const currentIdx = sortedStages.findIndex(s => s.id === contact.pipelineStageId);
-                            const prevStage = currentIdx > 0 ? sortedStages[currentIdx - 1] : null;
-                            const nextStage = currentIdx < sortedStages.length - 1 ? sortedStages[currentIdx + 1] : null;
-                            return (
-                              <div
-                                className="flex items-center gap-1 pt-1.5 border-t border-gray-100"
-                                onClick={(e) => e.stopPropagation()}
-                              >
-                                <button
-                                  onClick={() => prevStage && handleQuickStageChange(contact, prevStage.id)}
-                                  disabled={!prevStage}
-                                  title={prevStage ? `← ${prevStage.name}` : 'Already at first stage'}
-                                  className="p-1 rounded hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-all flex-shrink-0"
-                                >
-                                  <ChevronLeft className="h-3 w-3 text-gray-600" />
-                                </button>
-                                <select
-                                  value={contact.pipelineStageId || ''}
-                                  onChange={(e) => handleQuickStageChange(contact, e.target.value)}
-                                  className="flex-1 text-[10px] rounded border border-gray-200 px-1.5 py-1 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 bg-white text-gray-700 cursor-pointer"
-                                >
-                                  {sortedStages.map(s => (
-                                    <option key={s.id} value={s.id}>{s.name}</option>
-                                  ))}
-                                </select>
-                                <button
-                                  onClick={() => nextStage && handleQuickStageChange(contact, nextStage.id)}
-                                  disabled={!nextStage}
-                                  title={nextStage ? `${nextStage.name} →` : 'Already at last stage'}
-                                  className="p-1 rounded hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-all flex-shrink-0"
-                                >
-                                  <ChevronRight className="h-3 w-3 text-gray-600" />
-                                </button>
-                              </div>
-                            );
-                          })()}
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      ) : selectedPipeline && (!selectedPipeline.stages || selectedPipeline.stages.length === 0) ? (
-        <div className="flex items-center justify-center h-96">
-          <div className="text-center">
-            <p className="text-gray-600 font-semibold">No pipeline stages found</p>
-            <p className="text-gray-500 text-sm mt-2">Please create pipeline stages first.</p>
-          </div>
-        </div>
-      ) : (
-        <div className="flex items-center justify-center h-96">
-          <div className="text-center">
-            <Loader2 className="h-12 w-12 animate-spin text-indigo-600 mx-auto mb-4" />
-            <p className="text-gray-600 font-semibold">Setting up your pipeline...</p>
-            <p className="text-gray-500 text-sm mt-2">This will only take a moment.</p>
-            <button
-              onClick={fetchPipelines}
-              className="mt-4 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors"
-            >
-              Refresh
-            </button>
-          </div>
-        </div>
-      )}
-
-        </>
-      )}
-
-      {queueTab === 'booked' && <BookedList />}
-      {queueTab === 'to-call' && <ToCallList />}
+      {queueTab === 'booked' && <BookedList onOpenContact={openContactFromQueue} />}
+      {queueTab === 'to-call' && <ToCallList onOpenContact={openContactFromQueue} />}
 
       {/* Lead Detail Modal */}
       {logCallFor && (

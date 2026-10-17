@@ -1,14 +1,4 @@
-import {
-  IsOptional,
-  IsString,
-  IsEnum,
-  IsNumber,
-  IsArray,
-  IsBoolean,
-  IsUUID,
-  Min,
-  Max,
-} from 'class-validator';
+import { IsArray, IsBoolean, IsDateString, IsEnum, IsNumber, IsOptional, IsString, IsUUID, Max, Min } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 import { ContactStatus, ContactSource } from '../../database/entities/contact.entity';
 
@@ -52,6 +42,16 @@ export class QueryContactsDto {
   @IsOptional()
   @IsEnum(ContactSource)
   source?: ContactSource;
+
+  /** ISO 8601. Only contacts created at or after this instant. */
+  @IsOptional()
+  @IsDateString()
+  createdFrom?: string;
+
+  /** ISO 8601. Only contacts created at or before this instant. */
+  @IsOptional()
+  @IsDateString()
+  createdTo?: string;
 
   @IsOptional()
   @IsUUID()
