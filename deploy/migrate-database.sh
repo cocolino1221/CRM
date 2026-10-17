@@ -16,6 +16,10 @@
 
 set -euo pipefail
 
+# The dump and the row-count files describe the whole database; neither is
+# for other accounts on this machine to read.
+umask 077
+
 DUMP_DIR="${DUMP_DIR:-./dumps}"
 DUMP_FILE="$DUMP_DIR/easyteam-$(date +%Y%m%d).dump"
 COUNTS_BEFORE="$DUMP_DIR/counts-neon.txt"
@@ -24,7 +28,7 @@ COUNTS_AFTER="$DUMP_DIR/counts-local.txt"
 : "${NEON_URL:?set NEON_URL}"
 : "${LOCAL_URL:?set LOCAL_URL}"
 
-mkdir -p "$DUMP_DIR"
+install -d -m 700 "$DUMP_DIR"
 
 # Every table with its live row count. Not an estimate: reltuples lies after
 # a bulk load, and this number is the whole point of the exercise.

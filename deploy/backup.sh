@@ -7,14 +7,21 @@
 
 set -euo pipefail
 
+# A dump is a complete copy of the database — contacts, tokens, everything.
+# Anything this script creates stays readable by its owner alone.
+umask 077
+
 BACKUP_DIR="${BACKUP_DIR:-/var/backups/easyteam}"
 KEEP_DAYS="${KEEP_DAYS:-14}"
 COMPOSE_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-mkdir -p "$BACKUP_DIR"
+install -d -m 700 "$BACKUP_DIR"
 STAMP=$(date +%Y%m%d-%H%M)
 FILE="$BACKUP_DIR/easyteam-$STAMP.dump"
 
+# Created with the right mode before a single byte goes in, rather than
+# fixed afterwards — the gap is where a reader gets in.
+install -m 600 /dev/null "$FILE"
 docker compose -f "$COMPOSE_DIR/docker-compose.yml" exec -T postgres \
   pg_dump -U "${POSTGRES_USER:-easyteam}" -d "${POSTGRES_DB:-easyteam}" \
   --format=custom --no-owner --no-acl > "$FILE"

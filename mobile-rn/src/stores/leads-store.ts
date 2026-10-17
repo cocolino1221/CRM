@@ -151,7 +151,7 @@ export const useLeadsStore = create<LeadsState>((set, get) => ({
       // must see every lead in the workspace, not the slice belonging to one
       // of several duplicate default pipelines. The screen used to load
       // nothing at all when no pipeline was selected.
-      const params = buildContactQuery({ search, source, month, year, page: 1, limit: 50 });
+      const params = buildContactQuery({ search, source, month, year, page: 1, limit: 100 });
       const res = await api.get('/contacts', { params });
       const { contacts, total } = readContacts(res.data);
       set({
@@ -172,7 +172,7 @@ export const useLeadsStore = create<LeadsState>((set, get) => ({
     if (!hasMore || isLoading) return;
     const next = page + 1;
     try {
-      const params = buildContactQuery({ search, source, month, year, page: next, limit: 50 });
+      const params = buildContactQuery({ search, source, month, year, page: next, limit: 100 });
       const res = await api.get('/contacts', { params });
       const { contacts: more, total } = readContacts(res.data);
       const merged = [...contacts, ...more];
