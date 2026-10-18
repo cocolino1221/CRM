@@ -51,6 +51,8 @@ import { ManyChatIntegrationHandler } from './handlers/manychat.handler';
 import { ContactsModule } from '../contacts/contacts.module';
 import { QueueModule } from '../queues/queue.module';
 import { WhatsAppModule } from './whatsapp/whatsapp.module';
+import { DocumentsModule } from '../documents/documents.module';
+import { GoogleSheetsModule } from './google-sheets/google-sheets.module';
 
 @Module({
   imports: [
@@ -76,6 +78,8 @@ import { WhatsAppModule } from './whatsapp/whatsapp.module';
     ContactsModule, // Import ContactsModule to access ContactsService
     QueueModule, // Import QueueModule to enable async import jobs
     WhatsAppModule, // Import WhatsAppModule for auto-send on new leads
+    DocumentsModule, // Route webhook-first providers (PayFunnels/eSemneaza) to DocumentsService
+    GoogleSheetsModule,
   ],
   controllers: [IntegrationsController],
   providers: [
