@@ -66,3 +66,19 @@ describe('landing templates', () => {
     expect(getTemplate('nope')).toBeUndefined();
   });
 });
+
+describe('4-step templates', () => {
+  it.each(['transformation-protocol', 'apply-4-steps-light'])('%s runs video → objections → form → before/after', (key) => {
+    const t = getTemplate(key)!;
+    expect(t.content.sections.map((s) => s.type)).toEqual(['video', 'steps', 'form', 'beforeAfter']);
+    expect(t.content.sections.map((s) => s.eyebrow?.slice(0, 7))).toEqual(['Pasul 1', 'Pasul 2', 'Pasul 3', 'Pasul 4']);
+    const objections = t.content.sections[1] as any;
+    expect(objections.items).toHaveLength(4);
+  });
+
+  it('never puts two forms on a page', () => {
+    for (const t of LANDING_TEMPLATES) {
+      expect(t.content.sections.filter((s) => s.type === 'form').length, t.key).toBeLessThanOrEqual(1);
+    }
+  });
+});

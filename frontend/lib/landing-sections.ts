@@ -42,7 +42,15 @@ export interface FaqItem {
   answer?: string;
 }
 
-export type LandingSection =
+/**
+ * Every section may carry a small label above its title — "Pasul 1 · Începe
+ * aici" — which is how a page reads as a sequence of steps.
+ */
+interface SectionBase {
+  eyebrow?: string;
+}
+
+type SectionBody =
   | { type: 'socialProof'; title?: string; stats: StatItem[] }
   | { type: 'testimonials'; title?: string; items: Testimonial[] }
   | { type: 'beforeAfter'; title?: string; items: BeforeAfterItem[] }
@@ -52,7 +60,15 @@ export type LandingSection =
   | { type: 'coach'; name?: string; photo?: string; bio?: string; credentials?: string[] }
   | { type: 'faq'; title?: string; items: FaqItem[] }
   | { type: 'guarantee'; title?: string; text?: string }
-  | { type: 'text'; title?: string; body?: string };
+  | { type: 'text'; title?: string; body?: string }
+  /**
+   * Where the form sits. Without this section the form stays beside the
+   * headline; with it, the form moves here — e.g. as step 3 after the video
+   * and the objections. There is still only ever one form on the page.
+   */
+  | { type: 'form'; title?: string; subtitle?: string };
+
+export type LandingSection = SectionBody & SectionBase;
 
 export type SectionType = LandingSection['type'];
 
@@ -67,6 +83,7 @@ const KNOWN_TYPES: SectionType[] = [
   'faq',
   'guarantee',
   'text',
+  'form',
 ];
 
 function nonEmpty(value: unknown): boolean {
@@ -78,6 +95,11 @@ function hasAnyContent(items: unknown, keys: string[]): boolean {
   return items.some(
     (item) => item && typeof item === 'object' && keys.some((k) => nonEmpty((item as any)[k])),
   );
+}
+
+/** Does the page place its form inside the sections instead of the hero? */
+export function hasFormSection(sections: LandingSection[]): boolean {
+  return sections.some((s) => s?.type === 'form');
 }
 
 /** Would this section put anything on screen? An empty one is noise. */
@@ -104,6 +126,8 @@ export function sectionIsRenderable(section: LandingSection): boolean {
       return nonEmpty(section.title) || nonEmpty(section.text);
     case 'text':
       return nonEmpty(section.title) || nonEmpty(section.body);
+    case 'form':
+      return true;
     default:
       return false;
   }
@@ -254,6 +278,17 @@ export const SECTION_LIBRARY: SectionDefinition[] = [
       type: 'guarantee',
       title: 'Fără obligații',
       text: 'Dacă după discuție nu ți se potrivește, pleci cu planul de start și nu te mai sunăm.',
+    }),
+  },
+  {
+    type: 'form',
+    label: 'Formular în pagină',
+    hint: 'Mută formularul aici (ex. pasul 3), în loc de lângă titlu. Doar unul pe pagină.',
+    blank: () => ({
+      type: 'form',
+      eyebrow: 'Pasul 3 · Aplică',
+      title: 'Completează formularul',
+      subtitle: 'Durează mai puțin de un minut. Te sunăm noi.',
     }),
   },
   {

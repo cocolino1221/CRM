@@ -96,9 +96,15 @@ export function photoPlaceholder(label: 'ÎNAINTE' | 'DUPĂ', tint: string): str
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
 }
 
-function beforeAfter(tint: string, pairs: Array<{ label: string; caption: string }>, title: string): LandingSection {
+function beforeAfter(
+  tint: string,
+  pairs: Array<{ label: string; caption: string }>,
+  title: string,
+  eyebrow?: string,
+): LandingSection {
   return {
     type: 'beforeAfter',
+    ...(eyebrow ? { eyebrow } : {}),
     title,
     items: pairs.map((p) => ({
       beforeImage: photoPlaceholder('ÎNAINTE', tint),
@@ -179,13 +185,13 @@ export const LANDING_TEMPLATES: LandingTemplate[] = [
     key: 'transformation-protocol',
     name: 'Protocol de transformare',
     category: 'transformation',
-    description: 'Pași, video și înainte/după — pentru coaching de slăbire.',
+    description: 'Pasul 1 video, pasul 2 cele 4 obiecții, pasul 3 formular, pasul 4 înainte/după.',
     pageName: 'Protocolul de transformare',
     content: {
       hero: {
-        eyebrow: 'Pasul 1 · Începe aici',
+        eyebrow: 'Ghid în 4 pași',
         title: 'Cum au slăbit clienții mei 15–20 kg urmând 4 pași simpli',
-        subtitle: 'Urmărește cu atenție și înțelege exact cum funcționează programul și cum te poate ajuta.',
+        subtitle: 'Parcurge pașii de mai jos în ordine. Durează sub 10 minute și îți arată exact cum te pot ajuta.',
         ctaLabel: 'Vreau să aplic',
         trustLine: 'Durează doar 1 minut.',
       },
@@ -193,23 +199,61 @@ export const LANDING_TEMPLATES: LandingTemplate[] = [
       submitButtonText: 'Aplică acum',
       theme: THEMES.emberDark,
       sections: [
-        { type: 'video', title: 'Pasul 1 — cum funcționează', url: '', caption: 'Urmărește până la final.' },
+        { type: 'video', eyebrow: 'Pasul 1 · Începe aici', title: 'Urmărește video-ul de introducere', url: '', caption: 'Află cum funcționează programul și dacă ți se potrivește.' },
         {
           type: 'steps',
-          title: 'Pasul 2 — cele 4 obstacole',
+          eyebrow: 'Pasul 2 · Obstacolele',
+          title: 'Cele 4 obiecții care te țin pe loc — și cum le depășim',
           items: [
-            { title: '„Nu am timp"', description: 'Antrenamente de 30 de minute, acasă sau la sală.' },
-            { title: '„Mi-e foame tot timpul"', description: 'Mese care țin de foame, nu porții mici.' },
-            { title: '„Mă las după 2 săptămâni"', description: 'Check-in săptămânal cu mine.' },
-            { title: '„Am încercat tot"', description: 'Plan făcut pentru corpul tău, nu copiat.' },
+            { title: '„Nu am timp"', description: 'Antrenamente de 30 de minute, de 3 ori pe săptămână, acasă sau la sală.' },
+            { title: '„Mi-e foame tot timpul"', description: 'Mese care țin de foame. Nu porții mici, ci alegeri mai bune.' },
+            { title: '„Mă las după 2 săptămâni"', description: 'Check-in săptămânal cu mine. Nu mai ești singur(ă) pe drum.' },
+            { title: '„Am încercat tot și nu merge"', description: 'Plan făcut pentru corpul și programul tău, nu copiat de pe internet.' },
           ],
         },
+        { type: 'form', eyebrow: 'Pasul 3 · Aplică', title: 'Aplică pentru un loc în program', subtitle: 'Completează formularul. Te sunăm în 24 de ore să vedem dacă ți se potrivește.' },
         beforeAfter('#f97316', [
           { label: '16 săptămâni', caption: '„Nu aveam timp" — mamă a doi copii' },
           { label: '12 săptămâni', caption: '„Mă lăsam mereu" — 38 de ani' },
-        ], 'Rezultate reale'),
-        { type: 'socialProof', stats: [{ value: '300+', label: 'transformări' }, { value: '−15 kg', label: 'în medie' }, { value: '12 săpt.', label: 'durata' }] },
-        { type: 'faq', title: 'Întrebări', items: [{ question: 'Pentru cine e?', answer: 'Pentru cine vrea să slăbească 8+ kg și e gata să urmeze un plan.' }, { question: 'Cât costă?', answer: 'Discutăm la apel, după ce vedem dacă ți se potrivește.' }] },
+          { label: '20 de săptămâni', caption: '„Am încercat tot" — 45 de ani' },
+        ], 'Rezultatele celor care au trecut deja prin cei 4 pași', 'Pasul 4 · Rezultate'),
+      ],
+    },
+  },
+  {
+    key: 'apply-4-steps-light',
+    name: 'Aplicare în 4 pași (light)',
+    category: 'consultation',
+    description: 'Același flux în 4 pași, pe fundal deschis: video, obiecții, formular, rezultate.',
+    pageName: 'Aplică în 4 pași',
+    content: {
+      hero: {
+        eyebrow: 'Ghid în 4 pași',
+        title: 'Află în 4 pași dacă programul meu e potrivit pentru tine',
+        subtitle: 'Un video scurt, răspunsuri la cele mai frecvente îndoieli, apoi aplici. Simplu.',
+        ctaLabel: 'Aplică acum',
+      },
+      stickyCta: { enabled: true, label: 'Aplică acum' },
+      submitButtonText: 'Trimite aplicația',
+      theme: THEMES.cleanLight,
+      sections: [
+        { type: 'video', eyebrow: 'Pasul 1 · Introducere', title: 'Cine sunt și cum lucrez', url: '', caption: '3 minute.' },
+        {
+          type: 'steps',
+          eyebrow: 'Pasul 2 · Obiecții',
+          title: 'Ce te-ar putea opri — și de ce nu e o problemă',
+          items: [
+            { title: '„E prea scump"', description: 'Discutăm variante. Prima discuție e gratuită.' },
+            { title: '„Nu am experiență"', description: 'Planul pornește exact de unde ești acum.' },
+            { title: '„Am program haotic"', description: 'Adaptăm antrenamentele la săptămâna ta reală.' },
+            { title: '„Nu știu dacă funcționează pentru mine"', description: 'Asta aflăm împreună la apel, fără obligații.' },
+          ],
+        },
+        { type: 'form', eyebrow: 'Pasul 3 · Aplică', title: 'Lasă-mi datele tale', subtitle: 'Te sun eu, la ora care îți convine.' },
+        beforeAfter('#2563eb', [
+          { label: '4 luni', caption: 'Andreea, 34 de ani' },
+          { label: '6 luni', caption: 'Mihai, 41 de ani' },
+        ], 'Ce au obținut alții', 'Pasul 4 · Rezultate'),
       ],
     },
   },

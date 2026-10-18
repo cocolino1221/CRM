@@ -134,6 +134,18 @@ function SectionFields({
         </div>
       );
 
+    case 'form':
+      return (
+        <div className="space-y-3">
+          <Field label="Titlu deasupra formularului" value={section.title} onChange={(v) => onPatch({ title: v })} />
+          <Field label="Text scurt" value={section.subtitle} onChange={(v) => onPatch({ subtitle: v })} />
+          <p className="text-xs text-gray-500">
+            Formularul propriu-zis e cel ales mai jos, la „Capture block”. Cât timp secțiunea asta există,
+            formularul apare aici, nu lângă titlu.
+          </p>
+        </div>
+      );
+
     default:
       return (
         <Field
@@ -276,6 +288,11 @@ export default function SectionsEditor({
                   onClick={() => setOpenIndex(open ? null : i)}
                   className="flex-1 text-left"
                 >
+                  {section.eyebrow && (
+                    <span className="mr-2 rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">
+                      {section.eyebrow}
+                    </span>
+                  )}
                   <span className="text-sm font-medium text-gray-900 dark:text-white">
                     {definition?.label ?? section.type}
                   </span>
@@ -313,6 +330,12 @@ export default function SectionsEditor({
 
               {open && (
                 <div className="space-y-4 border-t border-gray-100 px-3 py-4 dark:border-gray-700">
+                  <Field
+                    label="Etichetă deasupra (opțional)"
+                    value={section.eyebrow}
+                    placeholder="Pasul 1 · Începe aici"
+                    onChange={(v) => onChange(updateSection(sections, i, { eyebrow: v }))}
+                  />
                   <SectionFields
                     section={section}
                     onPatch={(patch) => onChange(updateSection(sections, i, patch))}
@@ -365,7 +388,10 @@ export default function SectionsEditor({
             </button>
           </div>
           <div className="grid gap-2 sm:grid-cols-2">
-            {SECTION_LIBRARY.map((definition) => (
+            {SECTION_LIBRARY.filter(
+              // One form per page: once placed, it can only be moved.
+              (definition) => definition.type !== 'form' || !sections.some((s) => s.type === 'form'),
+            ).map((definition) => (
               <button
                 key={definition.type}
                 type="button"

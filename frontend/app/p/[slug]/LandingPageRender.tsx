@@ -18,8 +18,11 @@
  * original renderer: they work and they are what the reporting counts.
  */
 
-import { useEffect, useMemo, useState } from 'react';
-import { normalizeSections, type LandingSection } from '@/lib/landing-sections';
+import { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { hasFormSection, normalizeSections, type LandingSection } from '@/lib/landing-sections';
+
+/** The current section's "Pasul X" label, read by Shell so every section type gets it. */
+const EyebrowContext = createContext<{ eyebrow?: string; accent: string }>({ accent: '#2563eb' });
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_URL || 'https://slackcrm-backend.fly.dev/api/v1';
@@ -71,6 +74,7 @@ export default function LandingPageRender({ slug, initialPage, initialForm, prev
     [page.content],
   );
   const sticky = page.content?.stickyCta;
+  const formInSections = hasFormSection(sections);
 
   const [values, setValues] = useState<Record<string, any>>({});
   const [submitting, setSubmitting] = useState(false);
@@ -252,7 +256,13 @@ export default function LandingPageRender({ slug, initialPage, initialForm, prev
     <div style={{ background: bg, color: text, fontFamily: theme.fontFamily || undefined }}>
       {/* Hero: the form sits beside the promise, not below the page. */}
       <header className="px-5 pb-12 pt-10 sm:px-8 lg:pb-20 lg:pt-16">
-        <div className="mx-auto grid max-w-6xl items-start gap-10 lg:grid-cols-2 lg:gap-14">
+        <div
+          className={
+            formInSections
+              ? 'mx-auto max-w-3xl text-center'
+              : 'mx-auto grid max-w-6xl items-start gap-10 lg:grid-cols-2 lg:gap-14'
+          }
+        >
           <div>
             {hero.logo && <img src={hero.logo} alt="" className="mb-8 h-10" />}
             {hero.eyebrow && (
@@ -278,12 +288,23 @@ export default function LandingPageRender({ slug, initialPage, initialForm, prev
               />
             )}
           </div>
-          <div className="lg:sticky lg:top-8">{formCard}</div>
+          {!formInSections && <div className="lg:sticky lg:top-8">{formCard}</div>}
         </div>
       </header>
 
       {sections.map((section, i) => (
-        <Section key={i} section={section} accent={accent} card={card} onCta={scrollToForm} />
+        <EyebrowContext.Provider key={i} value={{ eyebrow: section.eyebrow, accent }}>
+          {section.type === 'form' ? (
+            <Shell title={section.title}>
+              {section.subtitle && (
+                <p className="-mt-5 mb-8 text-center opacity-75">{section.subtitle}</p>
+              )}
+              <div className="mx-auto max-w-xl">{formCard}</div>
+            </Shell>
+          ) : (
+            <Section section={section} accent={accent} card={card} onCta={scrollToForm} />
+          )}
+        </EyebrowContext.Provider>
       ))}
 
       {/* Mobile sticky CTA: most of this traffic is on a phone, and the form
@@ -318,9 +339,20 @@ function Shell({
   children: React.ReactNode;
   tight?: boolean;
 }) {
+  const { eyebrow, accent } = useContext(EyebrowContext);
   return (
     <section className={`px-5 sm:px-8 ${tight ? 'py-8' : 'py-12 lg:py-16'}`}>
       <div className="mx-auto max-w-5xl">
+        {eyebrow && (
+          <p className="mb-3 text-center">
+            <span
+              className="inline-block rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wider"
+              style={{ background: `${accent}22`, color: accent }}
+            >
+              {eyebrow}
+            </span>
+          </p>
+        )}
         {title && (
           <h2 className="mb-8 text-center text-2xl font-bold sm:text-3xl">{title}</h2>
         )}
@@ -486,7 +518,8 @@ function Section({
     case 'steps':
       return (
         <Shell title={section.title}>
-          <ol className="grid gap-6 sm:grid-cols-3">
+          {/* Four items (e.g. the four objections) read as a 2×2 block, not 3 + 1. */}
+          <ol className={`grid gap-6 ${section.items.length % 2 === 0 && section.items.length !== 6 ? 'sm:grid-cols-2' : 'sm:grid-cols-3'}`}>
             {section.items.map((it, i) => (
               <li key={i}>
                 <span
