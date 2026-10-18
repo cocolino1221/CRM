@@ -8,6 +8,7 @@ import { Booking } from '../database/entities/booking.entity';
 import { User } from '../database/entities/user.entity';
 import { Contact } from '../database/entities/contact.entity';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { ContactsModule } from '../contacts/contacts.module';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
       Contact,
     ]),
     NotificationsModule,
+    ContactsModule,
   ],
   controllers: [SchedulingController],
   providers: [SchedulingService],

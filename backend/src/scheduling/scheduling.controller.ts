@@ -12,6 +12,7 @@ import {
   ValidationPipe,
   HttpCode,
   HttpStatus,
+  BadRequestException,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -165,6 +166,27 @@ export class SchedulingController {
   ) {
     const dateObj = new Date(date);
     return this.schedulingService.getAvailableSlots(slug, dateObj, timezone);
+  }
+
+  @Get('public/:slug/team-slots')
+  @ApiOperation({ summary: 'Free hours across everyone bookable, with who is free at each' })
+  @ApiParam({ name: 'slug', description: 'Any public meeting type slug in the workspace' })
+  @ApiQuery({ name: 'date', description: 'Date in YYYY-MM-DD format', required: true })
+  async getTeamSlots(@Param('slug') slug: string, @Query('date') date: string) {
+    return this.schedulingService.getTeamSlots(slug, new Date(date));
+  }
+
+  @Post('public/:slug/callback-request')
+  @ApiOperation({ summary: 'The lead cannot pick an hour and asks to be called instead' })
+  @HttpCode(HttpStatus.CREATED)
+  async requestCallback(
+    @Param('slug') slug: string,
+    @Body() body: { name: string; phone: string; email?: string; notes?: string },
+  ) {
+    if (!String(body?.name || '').trim() || !String(body?.phone || '').trim()) {
+      throw new BadRequestException('Numele și telefonul sunt necesare.');
+    }
+    return this.schedulingService.requestCallback(slug, body);
   }
 
   @Post('public/bookings')

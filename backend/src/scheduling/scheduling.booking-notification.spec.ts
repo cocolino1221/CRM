@@ -7,6 +7,7 @@ import { Booking } from '../database/entities/booking.entity';
 import { User } from '../database/entities/user.entity';
 import { Contact } from '../database/entities/contact.entity';
 import { NotificationsService } from '../notifications/notifications.service';
+import { ContactsService } from '../contacts/contacts.service';
 
 /**
  * Booking a slot used to tell nobody: the host learned about it by looking at
@@ -63,6 +64,7 @@ describe('SchedulingService — booking notifies its host', () => {
           useValue: { findOne: jest.fn().mockResolvedValue({ id: 'c1' }) },
         },
         { provide: NotificationsService, useValue: { create } },
+        { provide: ContactsService, useValue: {} },
       ],
     }).compile();
 
