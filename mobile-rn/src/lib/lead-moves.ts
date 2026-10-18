@@ -11,6 +11,8 @@
  * transaction and is idempotent on the request id.
  */
 
+import { parseMoney } from './money';
+
 export type LeadMoveId = 'scheduled' | 'won' | 'lost' | 'callback' | 'note';
 
 export interface LeadMove {
@@ -82,13 +84,6 @@ function contactName(contact: MoveInput['contact']): string {
   );
 }
 
-/** A Romanian keyboard gives a decimal comma. */
-function parseAmount(raw: string | undefined): number | null {
-  if (!raw || !raw.trim()) return null;
-  const value = Number(raw.trim().replace(',', '.'));
-  return Number.isFinite(value) && value > 0 ? value : null;
-}
-
 export function buildMovePayloads(input: MoveInput): MovePayloads {
   const notes = input.notes?.trim();
   const disposition: Record<string, any> = {
@@ -124,7 +119,7 @@ export function buildMovePayloads(input: MoveInput): MovePayloads {
 
     case 'won': {
       disposition.outcome = 'successful';
-      const value = parseAmount(input.amount);
+      const value = parseMoney(input.amount);
       if (value === null) {
         return {
           disposition,

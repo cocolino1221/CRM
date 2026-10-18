@@ -26,6 +26,7 @@ export interface AuthResponse {
     role: string;
     status: string;
     workspaceId: string;
+    preferences?: Record<string, any>;
   };
 }
 
@@ -38,6 +39,7 @@ export interface User {
   status?: string;
   workspaceId: string;
   avatar?: string;
+  preferences?: Record<string, any>;
 }
 
 class AuthService {

@@ -106,7 +106,16 @@ export class WorkQueuesService {
       .where('contact.workspaceId = :workspaceId', { workspaceId })
       .andWhere('contact.source IN (:...sources)', { sources })
       .andWhere('contact.deletedAt IS NULL')
-      .leftJoin(Booking, 'booking', 'booking.contactId = contact.id')
+      // A cancelled meeting is not a booking. Joining on contactId alone meant
+      // a lead who booked and then cancelled vanished from both lists at once:
+      // excluded from Programați by its status, and excluded from De sunat
+      // because a row existed. Nobody ever called them again.
+      .leftJoin(
+        Booking,
+        'booking',
+        'booking.contactId = contact.id AND booking.status NOT IN (:...ignored)',
+        { ignored: [BookingStatus.CANCELLED, BookingStatus.NO_SHOW] },
+      )
       .andWhere('booking.id IS NULL')
       .orderBy('contact.createdAt', 'DESC')
       .skip((page - 1) * limit)

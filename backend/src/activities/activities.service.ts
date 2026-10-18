@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, EntityManager, FindOptionsWhere, Repository } from 'typeorm';
+import { DataSource, EntityManager, FindOptionsWhere, Raw, Repository } from 'typeorm';
 import {
   Activity,
   ActivityDirection,
@@ -93,6 +93,32 @@ export class ActivitiesService {
   ): Promise<Activity> {
     return this.dataSource.transaction(async (manager) => {
       const activityRepository = manager.getRepository(Activity);
+
+      // The guard inside writeDisposition compares against the activity's own
+      // metadata, which on this path is a brand-new empty object — so it
+      // could never fire and a retry after a timeout sold the same thing
+      // twice. The earlier attempt has to be looked up before one is built.
+      const earlier = await activityRepository.findOne({
+        where: {
+          workspaceId,
+          metadata: Raw(
+            (alias) => `${alias}->>'dispositionRequestId' = :requestId`,
+            { requestId: dto.clientRequestId },
+          ),
+        } as any,
+      });
+      if (earlier) return earlier;
+
+      // contactId arrives straight off the wire with only @IsUUID() on it.
+      // Without this, a user could attach a call — and a closed-won deal — to
+      // another tenant's contact, whose name and email then rendered here.
+      const contact = await manager.getRepository(Contact).findOne({
+        where: { id: contactId, workspaceId },
+      });
+      if (!contact) {
+        throw new NotFoundException('Contactul nu a fost găsit');
+      }
+
       const activity = activityRepository.create({
         workspaceId,
         contactId,
@@ -127,21 +153,55 @@ export class ActivitiesService {
     activity.outcome = dto.outcome;
     if (dto.notes !== undefined) activity.followUpNotes = dto.notes;
 
-    if (dto.followUp) {
-      activity.followUpRequired = true;
-      activity.followUpDate = new Date(dto.followUp.at);
+    const taskRepository = manager.getRepository(Task);
+    const existingTaskId = metadata.dispositionTaskId;
 
-      const task = manager.getRepository(Task).create({
-        workspaceId,
-        title: dto.followUp.title || 'Revenire apel',
-        type: TaskType.CALL,
-        status: TaskStatus.PENDING,
-        priority: TaskPriority.MEDIUM,
-        dueDate: new Date(dto.followUp.at),
-        assigneeId: userId,
-        contactId: activity.contactId,
+    if (dto.followUp) {
+      const dueDate = new Date(dto.followUp.at);
+      activity.followUpRequired = true;
+      activity.followUpDate = dueDate;
+
+      if (existingTaskId) {
+        // A correction re-states the same call. Inserting again gave the
+        // caller two reminders for one conversation.
+        const existing = await taskRepository.findOne({
+          where: { id: existingTaskId, workspaceId },
+        });
+        if (existing) {
+          existing.title = dto.followUp.title || existing.title;
+          existing.dueDate = dueDate;
+          existing.status = TaskStatus.PENDING;
+          // Clear the marker so the cron treats the new date as unnotified.
+          existing.customFields = { ...(existing.customFields ?? {}), reminderNotifiedAt: null };
+          await taskRepository.save(existing);
+        }
+      } else {
+        const task = taskRepository.create({
+          workspaceId,
+          title: dto.followUp.title || 'Revenire apel',
+          dueDate,
+          status: TaskStatus.PENDING,
+          assigneeId: userId,
+          contactId: activity.contactId,
+          customFields: { origin: 'disposition' },
+        });
+        const savedTask = await taskRepository.save(task);
+        metadata.dispositionTaskId = (savedTask as any).id;
+      }
+    } else if (existingTaskId) {
+      // The caller corrected the outcome and dropped the follow-up. Leaving
+      // the task pending kept the reminder armed and kept the call in the
+      // follow-ups queue for something explicitly un-scheduled.
+      activity.followUpRequired = false;
+      activity.followUpDate = null as any;
+      const existing = await taskRepository.findOne({
+        where: { id: existingTaskId, workspaceId },
       });
-      await manager.getRepository(Task).save(task);
+      if (existing) {
+        existing.status = TaskStatus.CANCELLED;
+        await taskRepository.save(existing);
+      }
+      delete metadata.dispositionTaskId;
     }
 
     // Only ever one deal per call: a correction re-states the outcome, it does

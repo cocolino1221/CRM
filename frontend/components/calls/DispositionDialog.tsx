@@ -16,6 +16,7 @@ import {
   CALLBACK_CHOICES,
   OUTCOMES,
   buildDispositionPayload,
+  describeBlocker,
   defaultFollowUpFor,
   dispositionEndpoint,
   outcomeById,
@@ -124,6 +125,27 @@ export function DispositionDialog({
 
   const submit = useCallback(async () => {
     if (!row || !payload || submitting) return;
+
+    // The phone refuses an "interested" outcome with no readable amount; this
+    // dialog used to submit it and record no deal at all, silently. Same
+    // button, same action, two different results.
+    const blocker = describeBlocker({
+      row,
+      clientRequestId: clientRequestId.current,
+      contactId,
+      contactName,
+      notes,
+      amount,
+      followUpAt,
+      bookingSent,
+      activityId,
+      durationSeconds,
+    });
+    if (blocker) {
+      setError(blocker);
+      return;
+    }
+
     setSubmitting(true);
     setError('');
     try {

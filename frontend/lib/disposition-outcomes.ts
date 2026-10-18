@@ -8,6 +8,8 @@
  */
 
 /** What the backend stores. Three UI rows share `successful` by design. */
+import { parseMoney } from './money';
+
 export type ActivityOutcome =
   | 'successful'
   | 'failed'
@@ -70,16 +72,6 @@ function atHour(hour: number, now: Date, dayOffset = 0): Date {
   return d.getTime() <= now.getTime() ? atHour(hour, now, dayOffset + 1) : d;
 }
 
-/**
- * A Romanian keyboard gives a decimal comma, and a caller who tabs past the
- * field leaves it blank. Neither may become a 0 RON deal.
- */
-export function parseAmount(raw: string | undefined): number | null {
-  if (!raw || !raw.trim()) return null;
-  const value = Number(raw.trim().replace(',', '.'));
-  return Number.isFinite(value) && value > 0 ? value : null;
-}
-
 export interface DispositionPayloadInput {
   row: OutcomeRow;
   clientRequestId: string;
@@ -120,7 +112,7 @@ export function buildDispositionPayload(input: DispositionPayloadInput): Disposi
   }
 
   if (input.row.followOn === 'amount') {
-    const value = parseAmount(input.amount);
+    const value = parseMoney(input.amount);
     if (value !== null) payload.deal = { value, currency: 'RON' };
   }
 
@@ -138,4 +130,18 @@ export function buildDispositionPayload(input: DispositionPayloadInput): Disposi
 
 export function dispositionEndpoint(activityId: string | undefined): string {
   return activityId ? `/activities/${activityId}/disposition` : '/activities/disposition';
+}
+
+/**
+ * Whether this payload can be saved, or what to tell the caller instead.
+ *
+ * The web dialog used to submit an "interested" outcome with an unreadable
+ * amount and record no deal at all — silently, while the phone refused the
+ * identical action. Same button, two different results.
+ */
+export function describeBlocker(input: DispositionPayloadInput): string | null {
+  if (input.row.followOn === 'amount' && parseMoney(input.amount) === null) {
+    return 'Pune suma încasată — altfel se înregistrează o vânzare de zero.';
+  }
+  return null;
 }
