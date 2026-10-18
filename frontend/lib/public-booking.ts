@@ -90,3 +90,43 @@ export function buildBookingPayload(input: {
     timezone: input.timeZone || WORKSPACE_TIMEZONE,
   };
 }
+
+export interface CallbackForm {
+  name: string;
+  phone: string;
+  email?: string;
+  notes?: string;
+}
+
+/**
+ * The lead who will not pick an hour still has to be reachable, so the phone
+ * is required here where it is optional for a booking: a booking carries a
+ * time everyone has agreed on, a callback carries only a promise to ring.
+ */
+export function callbackError(form: CallbackForm): string | null {
+  if (!form.name.trim()) return 'Spune-ne cum te cheamă.';
+  const digits = form.phone.replace(/\D/g, '');
+  if (digits.length < 9) return 'Lasă-ne un număr de telefon valid.';
+  if (form.email?.trim() && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(form.email.trim())) {
+    return 'Adresa de email nu pare validă.';
+  }
+  return null;
+}
+
+export function buildCallbackPayload(form: CallbackForm) {
+  return {
+    name: form.name.trim(),
+    phone: form.phone.trim(),
+    email: form.email?.trim() || undefined,
+    notes: form.notes?.trim() || undefined,
+  };
+}
+
+/** "Andrei", "Andrei sau Ioana", "Andrei și încă 2" — kept short for a chip. */
+export function hostsLabel(hosts: Array<{ name: string }>): string {
+  const names = hosts.map((h) => h.name).filter(Boolean);
+  if (names.length === 0) return 'Cineva din echipă';
+  if (names.length === 1) return names[0];
+  if (names.length === 2) return `${names[0]} sau ${names[1]}`;
+  return `${names[0]} și încă ${names.length - 1}`;
+}

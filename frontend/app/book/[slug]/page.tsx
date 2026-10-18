@@ -11,12 +11,15 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
-import { Calendar, CheckCircle2, Clock, Loader2, User } from 'lucide-react';
+import { Calendar, CheckCircle2, Clock, Loader2, PhoneCall, User } from 'lucide-react';
 import {
   WORKSPACE_TIMEZONE,
   buildBookingPayload,
+  buildCallbackPayload,
+  callbackError,
   formatSlotTime,
   guestError,
+  hostsLabel,
   nextDays,
   type Guest,
 } from '@/lib/public-booking';
@@ -32,9 +35,17 @@ interface MeetingType {
   user?: { firstName?: string; lastName?: string };
 }
 
+interface Host {
+  userId: string;
+  meetingTypeId: string;
+  name: string;
+}
+
 interface Slot {
   startTime: string;
   endTime: string;
+  /** Everyone bookable at that hour. The lead picks the time first. */
+  hosts: Host[];
 }
 
 export default function PublicBookingPage() {
@@ -46,6 +57,9 @@ export default function PublicBookingPage() {
   const [day, setDay] = useState('');
   const [slots, setSlots] = useState<Slot[]>([]);
   const [chosen, setChosen] = useState<Slot | null>(null);
+  const [host, setHost] = useState<Host | null>(null);
+  const [askingCallback, setAskingCallback] = useState(false);
+  const [callbackDone, setCallbackDone] = useState(false);
   const [guest, setGuest] = useState<Guest>({ name: '', email: '', phone: '' });
   const [notes, setNotes] = useState('');
 
@@ -77,10 +91,12 @@ export default function PublicBookingPage() {
     if (!slug || !day) return;
     setLoadingSlots(true);
     setChosen(null);
+    setHost(null);
     try {
       const qs = new URLSearchParams({ date: day, timezone: WORKSPACE_TIMEZONE });
+      // team-slots, not slots: whoever is free at an hour, across the team.
       const res = await fetch(
-        `${API_BASE}/scheduling/public/${encodeURIComponent(slug)}/slots?${qs}`,
+        `${API_BASE}/scheduling/public/${encodeURIComponent(slug)}/team-slots?${qs}`,
         { cache: 'no-store' },
       );
       setSlots(res.ok ? await res.json() : []);
@@ -96,7 +112,8 @@ export default function PublicBookingPage() {
   }, [loadSlots]);
 
   const submit = async () => {
-    if (!meeting || !chosen) return;
+    const target = host ?? chosen?.hosts?.[0] ?? null;
+    if (!chosen || !target) return;
     const invalid = guestError(guest);
     if (invalid) {
       setError(invalid);
@@ -111,7 +128,9 @@ export default function PublicBookingPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(
           buildBookingPayload({
-            meetingTypeId: meeting.id,
+            // The hour decides the person, so the booking belongs to their
+            // meeting type, not to whoever's link was pasted into Typeform.
+            meetingTypeId: target.meetingTypeId,
             startTime: chosen.startTime,
             guest,
             notes,
@@ -133,6 +152,39 @@ export default function PublicBookingPage() {
     }
   };
 
+  /**
+   * The way out of choosing. The lead becomes a contact with no booking,
+   * which is what the De sunat queue is, and everyone who works the phone is
+   * told — so "I cannot decide" costs a lead nothing.
+   */
+  const askToBeCalled = async () => {
+    const form = { name: guest.name, phone: guest.phone ?? '', email: guest.email, notes };
+    const invalid = callbackError(form);
+    if (invalid) {
+      setError(invalid);
+      return;
+    }
+
+    setSubmitting(true);
+    setError('');
+    try {
+      const res = await fetch(
+        `${API_BASE}/scheduling/public/${encodeURIComponent(slug)}/callback-request`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(buildCallbackPayload(form)),
+        },
+      );
+      if (!res.ok) throw new Error('Nu am putut trimite cererea.');
+      setCallbackDone(true);
+    } catch (err: any) {
+      setError(err?.message || 'Nu am putut trimite cererea.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   if (loading) {
     return (
       <main className="flex min-h-screen items-center justify-center text-gray-400">
@@ -147,6 +199,20 @@ export default function PublicBookingPage() {
         <p className="rounded-2xl border border-gray-200 bg-white p-6 text-center text-sm text-gray-600">
           {error || 'Pagina de programare nu există.'}
         </p>
+      </main>
+    );
+  }
+
+  if (callbackDone) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-gray-50 px-4">
+        <div className="w-full max-w-md rounded-2xl border border-gray-200 bg-white p-8 text-center">
+          <PhoneCall className="mx-auto h-12 w-12 text-indigo-500" />
+          <h1 className="mt-4 text-xl font-bold text-gray-900">Te sunăm noi</h1>
+          <p className="mt-2 text-sm text-gray-600">
+            Un coleg te contactează în curând ca să stabiliți ora împreună.
+          </p>
+        </div>
       </main>
     );
   }
@@ -245,6 +311,27 @@ export default function PublicBookingPage() {
         )}
       </section>
 
+      {chosen && chosen.hosts.length > 1 && (
+        <section className="mt-6">
+          <h2 className="text-sm font-semibold text-gray-700">Cu cine vrei să vorbești?</h2>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {chosen.hosts.map((h) => (
+              <button
+                key={h.meetingTypeId}
+                onClick={() => setHost(h)}
+                className={`rounded-xl border px-3 py-2 text-sm ${
+                  (host ?? chosen.hosts[0]).meetingTypeId === h.meetingTypeId
+                    ? 'border-indigo-600 bg-indigo-600 text-white'
+                    : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
+                }`}
+              >
+                {h.name}
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
+
       {chosen && (
         <section className="mt-8 rounded-2xl border border-gray-200 bg-white p-5">
           <h2 className="text-sm font-semibold text-gray-700">Datele tale</h2>
@@ -284,10 +371,66 @@ export default function PublicBookingPage() {
             disabled={submitting}
             className="mt-4 w-full rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
           >
-            {submitting ? 'Se confirmă…' : `Confirmă pentru ${formatSlotTime(chosen.startTime)}`}
+            {submitting
+              ? 'Se confirmă…'
+              : `Confirmă ${formatSlotTime(chosen.startTime)} cu ${(host ?? chosen.hosts[0])?.name ?? hostsLabel(chosen.hosts)}`}
           </button>
         </section>
       )}
+
+      <section className="mt-8 rounded-2xl border border-dashed border-gray-300 bg-gray-50 p-5">
+        {!askingCallback ? (
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm text-gray-600">
+              Nu găsești o oră care să-ți convină?
+            </p>
+            <button
+              onClick={() => {
+                setAskingCallback(true);
+                setError('');
+              }}
+              className="inline-flex items-center gap-2 rounded-xl border border-indigo-300 bg-white px-4 py-2 text-sm font-medium text-indigo-700 hover:bg-indigo-50"
+            >
+              <PhoneCall className="h-4 w-4" /> Vreau să fiu sunat
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <h2 className="text-sm font-semibold text-gray-700">Te sunăm noi</h2>
+            <p className="text-xs text-gray-500">
+              Lasă-ne un nume și un număr. Un coleg te caută ca să stabiliți ora.
+            </p>
+            <input
+              value={guest.name}
+              onChange={(e) => setGuest({ ...guest, name: e.target.value })}
+              placeholder="Nume și prenume"
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+            />
+            <input
+              value={guest.phone}
+              onChange={(e) => setGuest({ ...guest, phone: e.target.value })}
+              placeholder="Telefon"
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+            />
+            {error && <p className="text-sm text-red-600">{error}</p>}
+            <div className="flex gap-2">
+              <button
+                onClick={() => void askToBeCalled()}
+                disabled={submitting}
+                className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+              >
+                {submitting ? 'Se trimite…' : 'Trimite'}
+              </button>
+              <button
+                onClick={() => setAskingCallback(false)}
+                className="rounded-xl border border-gray-300 px-4 py-2 text-sm text-gray-600 hover:bg-white"
+              >
+                Renunț
+              </button>
+            </div>
+          </div>
+        )}
+      </section>
     </main>
   );
 }

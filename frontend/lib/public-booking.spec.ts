@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildCallbackPayload,
+  callbackError,
+  hostsLabel,
   buildBookingPayload,
   dateParam,
   formatSlotTime,
@@ -99,5 +102,54 @@ describe('buildBookingPayload', () => {
   it('always carries a timezone, since the DTO requires one', () => {
     expect(buildBookingPayload(base).timezone).toBe('Europe/Bucharest');
     expect(buildBookingPayload({ ...base, timeZone: 'Europe/Madrid' }).timezone).toBe('Europe/Madrid');
+  });
+});
+
+describe('callbackError', () => {
+  const form = { name: 'Vlad Popescu', phone: '0722000111' };
+
+  it('passes a name and a usable number', () => {
+    expect(callbackError(form)).toBeNull();
+    expect(callbackError({ ...form, phone: '+40 722 000 111' })).toBeNull();
+  });
+
+  it('asks for a name', () => {
+    expect(callbackError({ ...form, name: '  ' })).toMatch(/cheamă/);
+  });
+
+  // A callback with no reachable number is a promise nobody can keep.
+  it('insists on a real number', () => {
+    expect(callbackError({ ...form, phone: '' })).toMatch(/telefon/);
+    expect(callbackError({ ...form, phone: '0722' })).toMatch(/telefon/);
+  });
+
+  it('checks the address only when one was given', () => {
+    expect(callbackError({ ...form, email: '' })).toBeNull();
+    expect(callbackError({ ...form, email: 'nope' })).toMatch(/email/);
+  });
+});
+
+describe('buildCallbackPayload', () => {
+  it('trims, and omits what was left blank', () => {
+    const payload = buildCallbackPayload({
+      name: ' Vlad ',
+      phone: ' 0722000111 ',
+      email: '   ',
+      notes: '  ',
+    });
+
+    expect(payload).toEqual({ name: 'Vlad', phone: '0722000111', email: undefined, notes: undefined });
+  });
+});
+
+describe('hostsLabel', () => {
+  it('names one, offers a choice of two, counts the rest', () => {
+    expect(hostsLabel([{ name: 'Andrei' }])).toBe('Andrei');
+    expect(hostsLabel([{ name: 'Andrei' }, { name: 'Ioana' }])).toBe('Andrei sau Ioana');
+    expect(hostsLabel([{ name: 'A' }, { name: 'B' }, { name: 'C' }])).toBe('A și încă 2');
+  });
+
+  it('says something sensible when nobody is named', () => {
+    expect(hostsLabel([])).toBe('Cineva din echipă');
   });
 });

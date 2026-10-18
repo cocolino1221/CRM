@@ -155,6 +155,11 @@ export class SchedulingService {
     const byStart = new Map<string, { startTime: string; endTime: string; duration: number; hosts: any[] }>();
 
     for (const meetingType of meetingTypes) {
+      // A meeting type outlives the person who owns it: deleting a user leaves
+      // their row behind, and TypeORM will not load a soft-deleted relation.
+      // Without this a lead is offered an hour with someone who has left.
+      if (!meetingType.user) continue;
+
       const slots = await this.slotsForMeetingType(meetingType, date);
       for (const slot of slots) {
         const existing = byStart.get(slot.startTime);
