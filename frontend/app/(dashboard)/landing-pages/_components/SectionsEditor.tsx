@@ -248,7 +248,7 @@ export default function SectionsEditor({
           onClick={onApplyPreset}
           className="inline-flex items-center gap-1.5 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm font-semibold text-indigo-700 dark:border-indigo-900 dark:bg-indigo-950 dark:text-indigo-300"
         >
-          <Sparkles className="h-4 w-4" /> Șablon fitness
+          <Sparkles className="h-4 w-4" /> Alege un șablon
         </button>
       </div>
 

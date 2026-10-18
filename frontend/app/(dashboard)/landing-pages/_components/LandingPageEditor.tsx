@@ -2,7 +2,9 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import SectionsEditor from './SectionsEditor';
-import { FITNESS_CONSULT_PRESET, SECTION_LIBRARY, type LandingSection } from '@/lib/landing-sections';
+import { SECTION_LIBRARY, type LandingSection } from '@/lib/landing-sections';
+import { templateToContent, type LandingTemplate } from '@/lib/landing-templates';
+import TemplateGallery from '@/components/landing/TemplateGallery';
 import { itemsKeyFor } from '@/lib/section-edit';
 import { useRouter } from 'next/navigation';
 import { Save, Plus, Trash2, Upload } from 'lucide-react';
@@ -22,6 +24,8 @@ interface FormOption {
 
 interface Props {
   initial?: LandingPage;
+  /** Start a new page from this template instead of blank. */
+  template?: LandingTemplate;
 }
 
 type Draft = Partial<LandingPage>;
@@ -72,14 +76,17 @@ function ImageField({
   );
 }
 
-export default function LandingPageEditor({ initial }: Props) {
+export default function LandingPageEditor({ initial, template }: Props) {
   const router = useRouter();
+  const [showGallery, setShowGallery] = useState(false);
   const [draft, setDraft] = useState<Draft>(
     initial || {
-      name: '',
+      name: template?.pageName || '',
       status: LandingPageStatus.DRAFT,
       captureType: LandingPageCaptureType.NATIVE,
-      content: { hero: { title: '', subtitle: '', accentColor: '#2563eb' }, benefits: [] },
+      content: template
+        ? (templateToContent(template) as any)
+        : { hero: { title: '', subtitle: '', accentColor: '#2563eb' }, benefits: [] },
       postSubmit: { successMessage: 'Thank you!', whatsapp: { enabled: false, message: '' } },
       seo: {},
     },
@@ -123,17 +130,23 @@ export default function LandingPageEditor({ initial }: Props) {
     setBenefits([]);
   };
 
-  const applyFitnessPreset = () => {
-    if (sections.length && !window.confirm('Înlocuiesc secțiunile existente cu șablonul?')) return;
+  // Swapping templates replaces copy, sections and colours; the logo and the
+  // hero image are the owner's own and stay.
+  const applyTemplate = (chosen: LandingTemplate) => {
+    const hasWork = sections.length > 0 || Boolean(hero.title?.trim());
+    if (hasWork && !window.confirm(`Înlocuiesc conținutul paginii cu șablonul „${chosen.name}"?`)) return;
+    const next = templateToContent(chosen);
     setDraft((d) => ({
       ...d,
+      name: d.name?.trim() ? d.name : chosen.pageName,
       content: {
         ...d.content,
-        hero: { ...(d.content?.hero || {}), ...(FITNESS_CONSULT_PRESET.hero as any) },
-        stickyCta: FITNESS_CONSULT_PRESET.stickyCta,
-        sections: FITNESS_CONSULT_PRESET.sections,
+        ...next,
+        themePreset: undefined,
+        hero: { ...next.hero, logo: d.content?.hero?.logo, image: d.content?.hero?.image },
       } as any,
     }));
+    setShowGallery(false);
   };
   const setTheme = (patch: Partial<typeof theme>) =>
     setDraft((d) => ({ ...d, content: { ...d.content, theme: { ...d.content?.theme, ...patch } } }));
@@ -200,6 +213,13 @@ export default function LandingPageEditor({ initial }: Props) {
 
   return (
     <div className="flex h-full flex-col">
+      {showGallery && (
+        <TemplateGallery
+          onPick={applyTemplate}
+          onBlank={() => setShowGallery(false)}
+          onClose={() => setShowGallery(false)}
+        />
+      )}
       <div className="flex items-center justify-between border-b border-gray-200 p-4">
         <input
           value={draft.name || ''}
@@ -354,7 +374,7 @@ export default function LandingPageEditor({ initial }: Props) {
             <SectionsEditor
               sections={sections}
               onChange={setSections}
-              onApplyPreset={applyFitnessPreset}
+              onApplyPreset={() => setShowGallery(true)}
             />
           </section>
 

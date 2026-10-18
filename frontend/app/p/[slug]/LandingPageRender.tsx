@@ -44,6 +44,8 @@ interface Props {
   slug: string;
   initialPage: any;
   initialForm: PublicForm | null;
+  /** Template gallery preview: no view tracking, and the form doesn't submit. */
+  preview?: boolean;
 }
 
 function readUtms(): Record<string, string> {
@@ -58,7 +60,7 @@ function readUtms(): Record<string, string> {
   return out;
 }
 
-export default function LandingPageRender({ slug, initialPage, initialForm }: Props) {
+export default function LandingPageRender({ slug, initialPage, initialForm, preview = false }: Props) {
   const page = initialPage;
   const form = initialForm;
   const hero = page.content?.hero || {};
@@ -83,11 +85,12 @@ export default function LandingPageRender({ slug, initialPage, initialForm }: Pr
   // Fire a tracked view (raw + unique cookie dedup) once on mount. The host
   // goes along so the view is counted against the right workspace's page.
   useEffect(() => {
+    if (preview) return;
     const qs = new URLSearchParams({ host: window.location.host });
     fetch(`${API_BASE}/landing-pages/public/${slug}?${qs}`, { credentials: 'include' }).catch(
       () => {},
     );
-  }, [slug]);
+  }, [slug, preview]);
 
   useEffect(() => {
     const el = document.getElementById('formular');
@@ -109,6 +112,10 @@ export default function LandingPageRender({ slug, initialPage, initialForm }: Pr
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    if (preview) {
+      setDone({ message: 'Aceasta este o previzualizare — formularul real apare pe pagina publicată.' });
+      return;
+    }
     setSubmitting(true);
     try {
       const qs = new URLSearchParams({ host: window.location.host });
@@ -415,6 +422,28 @@ function Section({
       );
 
     case 'video':
+      // The template gallery marks an unfilled video slot so its preview
+      // shows where the owner's video will go.
+      if (section.url?.startsWith('preview:')) {
+        return (
+          <Shell title={section.title}>
+            <div
+              className="flex aspect-video w-full items-center justify-center rounded-2xl border-2 border-dashed"
+              style={{ borderColor: `${accent}66`, background: `${accent}14` }}
+            >
+              <span
+                className="flex h-14 w-14 items-center justify-center rounded-full text-2xl text-white"
+                style={{ background: accent }}
+              >
+                ▶
+              </span>
+            </div>
+            {section.caption && (
+              <p className="mt-3 text-center text-sm opacity-70">{section.caption}</p>
+            )}
+          </Shell>
+        );
+      }
       return (
         <Shell title={section.title}>
           <video
