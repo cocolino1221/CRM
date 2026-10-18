@@ -78,3 +78,11 @@ describe('visibleKpis', () => {
     expect(visibleKpis(undefined, defs)).toEqual([]);
   });
 });
+
+describe('kpiProgress bounds', () => {
+  // A negative KPI drew a bar with a negative width, which the browser drops
+  // — so it looked like an empty bar rather than a number below zero.
+  it('never goes below zero', () => {
+    expect(kpiProgress(-50, 100)).toBe(0);
+  });
+});

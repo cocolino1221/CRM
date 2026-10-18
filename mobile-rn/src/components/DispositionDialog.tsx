@@ -133,6 +133,7 @@ export default function DispositionDialog({
     if (restoring || !selected) return;
     void saveDraft(draftKey, {
       outcome: row?.outcome,
+      rowId: row?.id,
       notes,
       followUpAt: followUpAt ?? undefined,
       dealValue: amount ? Number(amount.replace(',', '.')) : undefined,

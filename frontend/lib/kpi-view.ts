@@ -54,7 +54,9 @@ export function kpiProgress(
 ): number | null {
   if (!isNumber(target) || target <= 0) return null;
   if (!isNumber(value)) return 0;
-  return Math.min(100, (value / target) * 100);
+  // Clamped at both ends: a negative width is dropped by the browser, so a
+  // KPI below zero looked like an empty bar rather than a problem.
+  return Math.max(0, Math.min(100, (value / target) * 100));
 }
 
 /** The enabled KPIs, in the order the workspace chose, with their definitions. */

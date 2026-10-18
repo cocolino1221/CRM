@@ -154,7 +154,11 @@ export function normalizeSections(
   if (!content || typeof content !== 'object') return [];
 
   const declared = content.sections;
-  if (Array.isArray(declared)) {
+  // An empty array is not a decision to publish nothing: the editor writes
+  // `sections` on every save, so once it existed the benefits branch below
+  // became unreachable and an old live page went blank the first time its
+  // owner added a section and removed it again.
+  if (Array.isArray(declared) && declared.length > 0) {
     return declared
       .filter(
         (s): s is LandingSection =>

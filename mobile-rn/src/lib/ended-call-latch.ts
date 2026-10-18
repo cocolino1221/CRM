@@ -15,6 +15,13 @@
 export interface EndedCall {
   /** Absent when logging the call failed; the dialog then creates the activity. */
   activityId?: string;
+  /**
+   * The contact this call was with. Kept apart from waId: both gates used to
+   * pass the phone number as contactId, so the one case the optional
+   * activityId exists for — the log having failed — posted a phone number
+   * into a field the server validates as a UUID and failed every time.
+   */
+  contactId?: string;
   waId: string;
   contactName: string;
   durationSeconds: number;
@@ -26,6 +33,7 @@ export interface EndedCall {
 
 export interface LatchInput {
   activityId?: string;
+  contactId?: string;
   waId: string;
   contactName: string;
   durationSeconds: number;
@@ -44,10 +52,17 @@ function notify(): void {
 export function latchEndedCall(input: LatchInput): void {
   // We failed to place the call; that is our bug, not an outcome the caller
   // has anything to report about.
-  if (input.status === 'failed') return;
+  if (input.status === 'failed') {
+    // And clear whatever was held: leaving the previous call latched meant
+    // the caller was asked about the wrong conversation, with its duration
+    // and its recording.
+    clearEndedCall();
+    return;
+  }
 
   ended = {
     activityId: input.activityId,
+    contactId: input.contactId,
     waId: input.waId,
     contactName: input.contactName,
     durationSeconds: input.durationSeconds,

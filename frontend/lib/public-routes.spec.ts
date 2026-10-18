@@ -73,3 +73,23 @@ describe('the booking page', () => {
     expect(isPublicPath('/booking-settings')).toBe(false);
   });
 });
+
+describe('isPublicPath and paths that only look public', () => {
+  // A dot-segment under a public prefix resolves inside the CRM while the
+  // guard answered "public", so an unauthenticated visitor would be shown
+  // the page while it loaded.
+  it('refuses a path that climbs out of the public prefix', () => {
+    expect(isPublicPath('/p/../dashboard')).toBe(false);
+    expect(isPublicPath('/p/a/../../contacts')).toBe(false);
+  });
+
+  it('refuses the encoded form of the same trick', () => {
+    expect(isPublicPath('/p/%2e%2e/dashboard')).toBe(false);
+    expect(isPublicPath('/p/..%2fdashboard')).toBe(false);
+    expect(isPublicPath('/p/%2E%2E/leads')).toBe(false);
+  });
+
+  it('still allows an ordinary slug that merely contains dots', () => {
+    expect(isPublicPath('/p/oferta.2026')).toBe(true);
+  });
+});

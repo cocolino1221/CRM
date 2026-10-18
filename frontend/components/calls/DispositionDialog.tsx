@@ -76,7 +76,11 @@ export function DispositionDialog({
     const draft = loadDraft(draftKey);
     if (!draft) return;
     if (draft.clientRequestId) clientRequestId.current = draft.clientRequestId;
-    const row = OUTCOMES.find((o) => o.outcome === draft.outcome);
+    // By row first: three rows share the outcome "successful", so matching on
+    // the outcome alone reopened the dialog on a different question.
+    const row =
+      (draft.rowId && OUTCOMES.find((o) => o.id === draft.rowId)) ||
+      OUTCOMES.find((o) => o.outcome === draft.outcome);
     if (row) setSelected(row.id);
     if (draft.notes) setNotes(draft.notes);
     if (draft.followUpAt) setFollowUpAt(draft.followUpAt);
@@ -110,6 +114,7 @@ export function DispositionDialog({
     if (!selected) return;
     saveDraft(draftKey, {
       outcome: row?.outcome,
+      rowId: row?.id,
       notes,
       followUpAt: followUpAt ?? undefined,
       dealValue: amount ? Number(amount) : undefined,

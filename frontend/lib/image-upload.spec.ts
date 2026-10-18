@@ -25,9 +25,23 @@ describe('rejectReasonFor', () => {
   });
 
   it('refuses something that is not an image', () => {
-    for (const type of ['application/pdf', 'text/plain', 'video/mp4', '']) {
+    for (const type of ['application/pdf', 'text/plain', 'video/mp4']) {
       expect(rejectReasonFor(file({ type }))).toBeTruthy();
     }
+  });
+
+  // Some Android pickers hand over a file with no type at all, so the
+  // extension is the only thing left to judge it by.
+  it('falls back to the extension when the picker reports no type', () => {
+    expect(rejectReasonFor(file({ type: '', name: 'poza.jpg' }))).toBeNull();
+    expect(rejectReasonFor(file({ type: '', name: 'contract.pdf' }))).toBeTruthy();
+    expect(rejectReasonFor(file({ type: '', name: 'fara-extensie' }))).toBeTruthy();
+  });
+
+  // An unconverted iPhone photo. Refusing it told the owner their own camera
+  // roll was "not an image".
+  it('accepts an iPhone HEIC photo', () => {
+    expect(rejectReasonFor(file({ type: 'image/heic', name: 'IMG_0001.HEIC' }))).toBeNull();
   });
 
   // Browsers hand over SVG as an image type, and an SVG can carry script.

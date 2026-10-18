@@ -77,11 +77,18 @@ export function whatsappDigits(
   const digits = trimmed.replace(/\D/g, '');
   if (!digits) return null;
 
-  if (trimmed.startsWith('+')) return digits;
-  if (digits.startsWith('00') && digits.length > 2) return digits.slice(2);
-  if (digits.startsWith(defaultCountryCode)) return digits;
-  if (digits.startsWith('0')) return `${defaultCountryCode}${digits.slice(1)}`;
-  return digits;
+  let normalized: string;
+  if (trimmed.startsWith('+')) normalized = digits;
+  else if (digits.startsWith('00') && digits.length > 2) normalized = digits.slice(2);
+  else if (digits.startsWith(defaultCountryCode)) normalized = digits;
+  else if (digits.startsWith('0')) normalized = `${defaultCountryCode}${digits.slice(1)}`;
+  else normalized = digits;
+
+  // "0", "(0)" and "0 7 2 1" used to come out as "40", "40" and "40721" —
+  // plausible-looking links that open an empty chat. This workspace is full
+  // of junk numbers, so the short ones are refused rather than dressed up.
+  if (normalized.length < 8 || normalized.length > 15) return null;
+  return normalized;
 }
 
 /** The sources the calling queues work. '' means all of them. */

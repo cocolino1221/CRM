@@ -205,3 +205,24 @@ describe('the fitness consultation preset', () => {
     expect(FITNESS_CONSULT_PRESET.stickyCta?.enabled).toBe(true);
   });
 });
+
+describe('an empty sections list', () => {
+  // The editor writes `sections` on every save. Once it existed, even empty,
+  // the legacy benefits branch became unreachable — so an old live page whose
+  // owner added a section and removed it again published with nothing below
+  // the hero.
+  it('still falls back to the legacy benefits a live page carries', () => {
+    const out = normalizeSections({
+      hero: { title: 'x' },
+      benefits: ['Plan personalizat', 'Antrenor dedicat'],
+      sections: [],
+    } as any);
+
+    expect(out).toHaveLength(1);
+    expect(out[0].type).toBe('whatYouGet');
+  });
+
+  it('renders nothing when there is nothing to render', () => {
+    expect(normalizeSections({ hero: { title: 'x' }, sections: [] } as any)).toEqual([]);
+  });
+});

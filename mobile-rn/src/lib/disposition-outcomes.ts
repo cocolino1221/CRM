@@ -56,16 +56,49 @@ export function outcomeById(id: string | null): OutcomeRow | null {
  * The follow-up a row starts with, so the common case is one keystroke and
  * submit. Null means the caller picks, or the spec says none at all.
  */
+/** Nobody answers a callback at 00:40, so a late one lands the next morning. */
+function withinCallingHours(at: Date): Date {
+  const hour = at.getHours();
+  if (hour >= 9 && hour < 21) return at;
+
+  const moved = new Date(at);
+  if (hour >= 21) moved.setDate(moved.getDate() + 1);
+  moved.setHours(9, 0, 0, 0);
+  return moved;
+}
+
 export function defaultFollowUpFor(rowId: string, now: Date = new Date()): string | null {
-  if (rowId === 'busy') return new Date(now.getTime() + 3600 * 1000).toISOString();
-  if (rowId === 'not_now') return new Date(now.getTime() + 3 * 24 * 3600 * 1000).toISOString();
+  if (rowId === 'busy') {
+    return withinCallingHours(new Date(now.getTime() + 3600 * 1000)).toISOString();
+  }
+  if (rowId === 'not_now') {
+    return withinCallingHours(new Date(now.getTime() + 3 * 24 * 3600 * 1000)).toISOString();
+  }
   return null;
 }
 
 /** The three callback offers behind "N-a răspuns", "Mesagerie vocală" and "Ocupat". */
 export const CALLBACK_CHOICES = [
-  { id: 'in_1h', label: 'Peste o oră', at: (now = new Date()) => new Date(now.getTime() + 3600 * 1000) },
-  { id: 'today_18', label: 'Azi la 18:00', at: (now = new Date()) => atHour(18, now) },
+  {
+    id: 'in_1h',
+    label: 'Peste o oră',
+    // Snapped to the minute. Recomputed to the millisecond on every render,
+    // this value never equalled the one in state, so the chip could never
+    // show as selected and the caller kept re-clicking it.
+    at: (now = new Date()) => {
+      const at = new Date(now.getTime() + 3600 * 1000);
+      at.setSeconds(0, 0);
+      return at;
+    },
+  },
+  {
+    id: 'today_18',
+    // Past 18:00 the same click used to schedule tomorrow while still saying
+    // "Azi", so the label is computed rather than fixed.
+    label: 'Azi la 18:00',
+    labelFor: (now = new Date()) => (atHour(18, now).getDate() === now.getDate() ? 'Azi la 18:00' : 'Mâine la 18:00'),
+    at: (now = new Date()) => atHour(18, now),
+  },
   { id: 'tomorrow_10', label: 'Mâine la 10:00', at: (now = new Date()) => atHour(10, now, 1) },
 ];
 

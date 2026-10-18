@@ -38,6 +38,21 @@ const PUBLIC_PREFIXES = [
 
 export function isPublicPath(pathname: string | null | undefined): boolean {
   if (!pathname) return false;
+
+  // A dot-segment resolves somewhere else than it reads: "/p/../dashboard"
+  // looks public to a prefix test and lands in the CRM. Browsers do not
+  // normalise the encoded forms, so those are checked too.
+  let decoded = pathname;
+  try {
+    decoded = decodeURIComponent(pathname);
+  } catch {
+    // A malformed escape is not something to grant access on.
+    return false;
+  }
+  const segments = decoded.split('/');
+  if (segments.some((segment) => segment === '..' || segment === '.')) return false;
+  if (decoded !== pathname && /%2f/i.test(pathname)) return false;
+
   if (pathname === '/') return true;
 
   // Compare segment by segment: a bare `startsWith` would let `/p` open

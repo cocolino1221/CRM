@@ -11,6 +11,13 @@
 
 export interface DispositionDraft {
   outcome?: string;
+  /**
+   * Which row the caller actually picked. Three rows share the outcome
+   * "successful", so restoring by outcome alone could reopen the dialog on
+   * "interesat" — an amount field — when the caller had chosen "nu acum" and
+   * set a follow-up date, which was then submitted unseen.
+   */
+  rowId?: string;
   notes?: string;
   followUpAt?: string;
   dealValue?: number;

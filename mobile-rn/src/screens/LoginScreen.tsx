@@ -26,7 +26,10 @@ export default function LoginScreen() {
       if (!parsed) return;
 
       if (parsed.error) {
-        setLocalError(decodeURIComponent(parsed.error));
+        // URLSearchParams has already decoded this; decoding again threw
+        // URIError on anything containing a percent sign, inside an async
+        // handler nobody awaited, so the screen simply sat there.
+        setLocalError(parsed.error);
         return;
       }
 

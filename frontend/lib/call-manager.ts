@@ -25,6 +25,8 @@ type CallStatus = 'completed' | 'missed' | 'no_answer' | 'rejected' | 'failed';
 export interface CallManagerState {
   isOpen: boolean;
   waId: string | null;
+  /** The CRM contact being called, when the caller started from one. */
+  contactId: string | null;
   contactName: string;
   phase: CallPhase;
   error: string;
@@ -64,6 +66,7 @@ export function describeCallError(err: any): string {
 const initialState: CallManagerState = {
   isOpen: false,
   waId: null,
+  contactId: null,
   contactName: '',
   phase: 'checking_permission',
   error: '',
@@ -126,7 +129,7 @@ class CallManager {
    * back (matches "press call again → reopen the active conversation").
    * Returns 'busy' if an active call for a DIFFERENT contact exists.
    */
-  open(waId: string, contactName: string): 'started' | 'reopened' | 'busy' {
+  open(waId: string, contactName: string, contactId?: string): 'started' | 'reopened' | 'busy' {
     if (this.state.waId) {
       if (this.state.waId === waId) {
         this.setState({ isOpen: true });
@@ -136,7 +139,7 @@ class CallManager {
       return 'busy';
     }
     this.disclosureSent = false;
-    this.setState({ ...initialState, isOpen: true, waId, contactName, phase: 'checking_permission' });
+    this.setState({ ...initialState, isOpen: true, waId, contactId: contactId ?? null, contactName, phase: 'checking_permission' });
     void this.checkPermissionAndMaybeStart();
     return 'started';
   }
@@ -413,6 +416,7 @@ class CallManager {
     if (waId) {
       latchEndedCall({
         activityId,
+        contactId: this.state.contactId ?? undefined,
         waId,
         contactName,
         durationSeconds: finalDuration,

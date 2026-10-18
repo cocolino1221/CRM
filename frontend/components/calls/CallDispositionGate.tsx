@@ -15,6 +15,7 @@ export default function CallDispositionGate() {
   const ended = useSyncExternalStore(subscribeEndedCall, getEndedCall, () => null);
 
   if (!ended) return null;
+  if (!ended.activityId && !ended.contactId) return null;
 
   return (
     <DispositionDialog
@@ -22,7 +23,9 @@ export default function CallDispositionGate() {
       // draft and request id.
       key={`${ended.waId}-${ended.endedAt}`}
       activityId={ended.activityId}
-      contactId={ended.waId}
+      // Without an activity and without a contact there is nothing the
+      // server can attach the outcome to, so the dialog is not offered.
+      contactId={ended.contactId ?? ''}
       contactName={ended.contactName}
       durationSeconds={ended.durationSeconds}
       recordingUrl={ended.recordingUrl}
