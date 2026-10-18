@@ -1,4 +1,4 @@
-import { IsEmail, IsString, IsOptional, MinLength, MaxLength } from 'class-validator';
+import { IsEmail, IsString, IsOptional } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 
@@ -17,12 +17,8 @@ export class LoginDto {
 
   @ApiProperty({
     description: 'User password',
-    minLength: 8,
-    maxLength: 128,
   })
   @IsString({ message: 'Password must be a string' })
-  @MinLength(8, { message: 'Password must be at least 8 characters long' })
-  @MaxLength(128, { message: 'Password must be less than 128 characters' })
   password: string;
 
   @ApiPropertyOptional({
