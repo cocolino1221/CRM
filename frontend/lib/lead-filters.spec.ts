@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { SOURCE_OPTIONS, buildContactQuery, monthRange } from './lead-filters';
+import { SOURCE_OPTIONS, buildContactQuery, monthRange , customRange, periodRange } from './lead-filters';
 
 describe('monthRange', () => {
   it('covers the whole month, first instant to last', () => {
@@ -110,5 +110,52 @@ describe('Payflow in the leads list', () => {
 
   it('does not offer Payflow as a source filter', () => {
     expect(SOURCE_OPTIONS.map((o) => o.value)).not.toContain('payflow');
+  });
+});
+
+describe('customRange', () => {
+  it('covers whole days, not instants', () => {
+    const { createdFrom, createdTo } = customRange('2026-10-01', '2026-10-03');
+
+    expect(new Date(createdFrom!).getHours()).toBe(0);
+    expect(new Date(createdFrom!).getDate()).toBe(1);
+    // The 3rd is included to its last millisecond.
+    expect(new Date(createdTo!).getDate()).toBe(3);
+    expect(new Date(createdTo!).getHours()).toBe(23);
+  });
+
+  it('accepts one end on its own', () => {
+    expect(customRange('2026-10-01', undefined).createdTo).toBeUndefined();
+    expect(customRange(undefined, '2026-10-03').createdFrom).toBeUndefined();
+  });
+
+  it('ignores a half-typed date rather than inventing one', () => {
+    expect(customRange('2026-10', undefined)).toEqual({});
+    expect(customRange('', '')).toEqual({});
+  });
+});
+
+describe('periodRange', () => {
+  it('asks for nothing when the period is "all"', () => {
+    expect(periodRange({ kind: 'all' })).toEqual({});
+  });
+
+  it('turns a month into its first and last instant', () => {
+    const { createdFrom, createdTo } = periodRange({ kind: 'month', year: 2026, month: 1 });
+
+    expect(new Date(createdFrom!).getMonth()).toBe(1);
+    // February ends on the 28th in 2026, which is the point of using day 0.
+    expect(new Date(createdTo!).getDate()).toBe(28);
+  });
+
+  it('passes a custom range through', () => {
+    const range = periodRange({ kind: 'custom', from: '2026-10-01', to: '2026-10-03' });
+
+    expect(range.createdFrom).toBeDefined();
+    expect(range.createdTo).toBeDefined();
+  });
+
+  it('asks for nothing when a month was never picked', () => {
+    expect(periodRange({ kind: 'month', year: 2026 })).toEqual({});
   });
 });

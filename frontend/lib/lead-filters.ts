@@ -93,3 +93,46 @@ export function buildContactQuery(state: LeadFilterState): ContactQuery {
 
   return query;
 }
+
+export type PeriodKind = 'all' | 'month' | 'custom';
+
+export interface PeriodState {
+  kind: PeriodKind;
+  /** For 'month'. */
+  year?: number;
+  month?: number;
+  /** For 'custom', as the date inputs give them: YYYY-MM-DD. */
+  from?: string;
+  to?: string;
+}
+
+/**
+ * A custom range covers whole days in the viewer's own clock: someone picking
+ * "1 to 3 October" means all of the 3rd, not midnight at its start.
+ */
+export function customRange(from?: string, to?: string): { createdFrom?: string; createdTo?: string } {
+  const out: { createdFrom?: string; createdTo?: string } = {};
+  if (from) {
+    const [y, m, d] = from.split('-').map(Number);
+    if (y && m && d) out.createdFrom = new Date(y, m - 1, d, 0, 0, 0, 0).toISOString();
+  }
+  if (to) {
+    const [y, m, d] = to.split('-').map(Number);
+    if (y && m && d) out.createdTo = new Date(y, m - 1, d, 23, 59, 59, 999).toISOString();
+  }
+  return out;
+}
+
+/** The window a period selection asks the server for. */
+export function periodRange(period: PeriodState): { createdFrom?: string; createdTo?: string } {
+  if (period.kind === 'month' && period.month !== undefined && period.month !== null) {
+    return monthRange(period.year ?? new Date().getFullYear(), period.month);
+  }
+  if (period.kind === 'custom') return customRange(period.from, period.to);
+  return {};
+}
+
+export const MONTH_NAMES = [
+  'Ianuarie', 'Februarie', 'Martie', 'Aprilie', 'Mai', 'Iunie',
+  'Iulie', 'August', 'Septembrie', 'Octombrie', 'Noiembrie', 'Decembrie',
+];
