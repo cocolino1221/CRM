@@ -19,6 +19,7 @@ import { Deal } from './deal.entity';
 import { Task } from './task.entity';
 
 export enum UserRole {
+  SUPER_ADMIN = 'super_admin',
   ADMIN = 'admin',
   MANAGER = 'manager',
   CLOSER = 'closer',
@@ -183,6 +184,8 @@ export class User extends WorkspaceEntity {
   hasPermission(action: string): boolean {
     // Role-based permission check
     switch (this.role) {
+      case UserRole.SUPER_ADMIN:
+        return true; // Super admin can do everything
       case UserRole.ADMIN:
         return true; // Admin can do everything
       case UserRole.MANAGER:
