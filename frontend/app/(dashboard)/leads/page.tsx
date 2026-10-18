@@ -1,9 +1,10 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Plus, Search, Phone, Video, Trophy, TrendingUp, TrendingDown, UserCheck, Loader2, Mail, Building, Calendar, DollarSign, MoreVertical, Edit, Trash2, X, AlertCircle, Settings, Users, Tag, FileText, Star, Clock, Briefcase, Eye, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, MessageSquare, Send, ExternalLink, RefreshCw, Upload, CheckCircle2, Circle } from 'lucide-react';
+import { Plus, Search, Phone, Video, Trophy, TrendingUp, TrendingDown, UserCheck, Loader2, Mail, Building, Calendar, DollarSign, MoreVertical, Edit, Trash2, X, AlertCircle, Settings, Users, Tag, FileText, Star, Clock, Briefcase, Eye, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, MessageSquare, Send, ExternalLink, RefreshCw, Upload, CheckCircle2, Circle, Check } from 'lucide-react';
 import { getInitials } from '@/lib/utils';
 import api from '@/lib/api';
+import { assignableAs, defaultSetterFor } from '@/lib/team-roles';
 import { DispositionDialog } from '@/components/calls/DispositionDialog';
 import LeadsList from '@/components/leads/LeadsList';
 import BookedList from '@/components/queues/BookedList';
@@ -176,6 +177,14 @@ export default function LeadsPage() {
   const [detailContact, setDetailContact] = useState<Contact | null>(null);
   // A call placed outside the app — the caller still records the outcome.
   const [logCallFor, setLogCallFor] = useState<Contact | null>(null);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+
+  useEffect(() => {
+    api
+      .get<User>('/auth/me')
+      .then((res) => setCurrentUser(res.data))
+      .catch(() => setCurrentUser(null));
+  }, []);
   type QueueTab = 'all' | 'booked' | 'to-call';
   const [queueTab, setQueueTab] = useState<QueueTab>('all');
 
@@ -381,6 +390,10 @@ export default function LeadsPage() {
       tags: [],
       pipelineId: selectedPipeline?.id || '',
       pipelineStageId: firstStage?.id || '',
+      // A manually added lead starts credited to whoever is adding it —
+      // which is what "the setter who added it" means in practice. Empty
+      // when that person does not do the job, so nothing is credited falsely.
+      setterId: defaultSetterFor(users as any, currentUser as any),
     });
     setModalError('');
   };
@@ -526,6 +539,7 @@ export default function LeadsPage() {
       // Update pipeline stage with payment info
       const pipelineData: any = {
         pipelineStageId: newStageId,
+        pipelineId: pendingStageChange.stage?.pipelineId,
         paymentMethod: paymentFormData.paymentMethod,
       };
 
@@ -543,6 +557,11 @@ export default function LeadsPage() {
 
       // Update contact status to customer
       await api.put(`/contacts/${contact.id}`, { status: 'customer' });
+
+      // The lead's own window may still be open behind the payment form.
+      setDetailContact(prev => prev?.id === contact.id
+        ? { ...prev, pipelineStageId: newStageId, pipelineStage: pendingStageChange.stage, status: 'customer' }
+        : prev);
 
       setShowPaymentModal(false);
       setShowEditModal(false);
@@ -700,17 +719,23 @@ export default function LeadsPage() {
 
     // Optimistic update
     setContacts(prev => prev.map(c =>
-      c.id === contact.id ? { ...c, pipelineStageId: newStageId, pipelineStage: stage } : c
+      c.id === contact.id ? { ...c, pipelineStageId: newStageId, pipelineStage: stage, pipelineId: stage.pipelineId } : c
     ));
+    setDetailContact(prev => prev?.id === contact.id ? { ...prev, pipelineStageId: newStageId, pipelineStage: stage, pipelineId: stage.pipelineId } : prev);
 
     try {
-      await api.put(`/pipelines/contacts/${contact.id}`, { pipelineStageId: newStageId });
+      // A lead that never had a pipeline (e.g. from WooCommerce) needs one too,
+      // or the board would never show it in the stage it was just moved to.
+      await api.put(`/pipelines/contacts/${contact.id}`, { pipelineStageId: newStageId, pipelineId: stage.pipelineId });
     } catch (err: any) {
       console.error('Failed to move lead:', err);
       // Revert on error
       setContacts(prev => prev.map(c =>
         c.id === contact.id ? { ...c, pipelineStageId: contact.pipelineStageId, pipelineStage: contact.pipelineStage } : c
       ));
+      setDetailContact(prev => prev?.id === contact.id
+        ? { ...prev, pipelineStageId: contact.pipelineStageId, pipelineStage: contact.pipelineStage }
+        : prev);
     }
   };
 
@@ -912,9 +937,13 @@ export default function LeadsPage() {
     churned: 'bg-red-100 text-red-700',
   };
 
-  const setters = users.filter(u => u.role?.toLowerCase() === 'setter');
-  const callers = users.filter(u => u.role?.toLowerCase() === 'caller');
-  const closers = users.filter(u => u.role?.toLowerCase() === 'closer');
+  // Filtering each slot to the single role of the same name left these
+  // dropdowns empty: this workspace has admins, a super_admin and closers,
+  // and nobody holding the literal role "setter" — so a manually added lead
+  // could not be credited to anyone, including whoever was adding it.
+  const setters = assignableAs(users as any, 'setter');
+  const callers = assignableAs(users as any, 'caller');
+  const closers = assignableAs(users as any, 'closer');
 
   if (isLoading && pipelines.length === 0) {
     return (
@@ -1379,6 +1408,44 @@ export default function LeadsPage() {
                   </div>
                 )}
 
+                {/* Where the lead stands: one click moves it to any stage of its pipeline. */}
+                {(() => {
+                  const pipeline =
+                    pipelines.find(p => p.id === detailContact.pipelineId) ||
+                    pipelines.find(p => p.stages?.some(s => s.id === detailContact.pipelineStageId)) ||
+                    selectedPipeline;
+                  const stages = [...(pipeline?.stages || [])].sort((a, b) => a.displayOrder - b.displayOrder);
+                  if (!stages.length) return null;
+                  return (
+                    <div>
+                      <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">Status</h3>
+                      <div className="flex flex-wrap gap-2">
+                        {stages.map(stage => {
+                          const active = stage.id === detailContact.pipelineStageId;
+                          return (
+                            <button
+                              key={stage.id}
+                              type="button"
+                              onClick={() => void handleQuickStageChange(detailContact, stage.id)}
+                              disabled={active}
+                              className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
+                                active ? 'text-white shadow-sm' : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
+                              }`}
+                              style={active ? { backgroundColor: stage.color || '#6366F1', borderColor: stage.color || '#6366F1' } : undefined}
+                            >
+                              {!active && (
+                                <span className="h-2 w-2 rounded-full" style={{ backgroundColor: stage.color || '#6366F1' }} />
+                              )}
+                              {active && <Check className="h-3.5 w-3.5" />}
+                              {stage.name}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })()}
+
                 {/* A call placed from a handset still needs its outcome recorded. */}
                 <div className="mb-5">
                   <button
@@ -1703,26 +1770,34 @@ export default function LeadsPage() {
                 className="flex items-center gap-1 text-sm text-indigo-600 hover:text-indigo-700 font-medium transition-colors mt-1"
               >
                 {showMoreFields ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-                {showMoreFields ? 'Hide details' : 'More details (setter, source, notes…)'}
+                {showMoreFields ? 'Hide details' : 'More details (caller, closer, source, notes…)'}
               </button>
+
+              {/* Who booked this lead. On the form rather than behind the
+                  toggle: it is the field most worth filling on a manual add,
+                  and buried under "More details" it was almost never set. */}
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  Setter <span className="font-normal text-gray-400">(cine l-a adăugat)</span>
+                </label>
+                <select
+                  disabled={isSubmitting}
+                  value={formData.setterId || ''}
+                  onChange={(e) => setFormData({ ...formData, setterId: e.target.value })}
+                  className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 disabled:bg-gray-50 disabled:cursor-not-allowed transition-all"
+                >
+                  <option value="">Nimeni</option>
+                  {setters.map(user => (
+                    <option key={user.id} value={user.id}>
+                      {user.firstName} {user.lastName}
+                      {user.id === currentUser?.id ? ' (tu)' : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
 
               {showMoreFields && (
                 <div className="grid grid-cols-2 gap-4 pt-2 border-t border-gray-100">
-                  {/* Setter */}
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-2">Setter</label>
-                    <select
-                      disabled={isSubmitting}
-                      value={formData.setterId || ''}
-                      onChange={(e) => setFormData({ ...formData, setterId: e.target.value })}
-                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 disabled:bg-gray-50 disabled:cursor-not-allowed transition-all"
-                    >
-                      <option value="">None</option>
-                      {setters.map(user => (
-                        <option key={user.id} value={user.id}>{user.firstName} {user.lastName}</option>
-                      ))}
-                    </select>
-                  </div>
                   {/* Caller */}
                   <div>
                     <label className="block text-sm font-semibold text-gray-700 mb-2">Caller</label>
