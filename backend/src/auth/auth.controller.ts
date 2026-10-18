@@ -393,7 +393,12 @@ export class AuthController {
   @ApiOperation({ summary: 'Start Google OAuth login flow' })
   @ApiResponse({ status: 302, description: 'Redirect to Google OAuth' })
   async googleAuth(@Res() res: Response, @Query('source') source?: string): Promise<void> {
-    const state = this.authService.generateOAuthState(source === 'mobile' ? 'mobile' : 'web');
+    // `source=mobile` is deliberately ignored here. The app starts its login
+    // at /auth/oauth/start, which binds it; honouring the parameter on this
+    // open route would let anyone mint an unbound mobile state and walk
+    // around that binding.
+    void source;
+    const state = this.authService.generateOAuthState('web');
     res.redirect(this.buildGoogleAuthUrl(state));
   }
 
@@ -458,6 +463,19 @@ export class AuthController {
     }
 
     try {
+      const bindingHash = this.authService.getOAuthStateBindingHash(state) ?? undefined;
+
+      // A mobile login that carries no binding started somewhere other than
+      // /auth/oauth/start — the older route, which anyone can call. Issuing a
+      // deep-link code for it would hand back exactly the injectable code
+      // this binding exists to prevent.
+      if (stateSource === 'mobile' && !bindingHash) {
+        res.redirect(
+          `${errorRedirectUrl}${encodeURIComponent('Autentificare expirată. Încearcă din nou din aplicație.')}`,
+        );
+        return;
+      }
+
       const authResponse = await this.authService.googleLogin(code);
 
       // Create short-lived auth code to avoid placing tokens in URL. The
@@ -465,7 +483,8 @@ export class AuthController {
       // this login is the only one that can redeem the code.
       const authCode = this.authService.createOAuthAuthCode(
         authResponse,
-        this.authService.getOAuthStateBindingHash(state) ?? undefined,
+        bindingHash,
+        stateSource,
       );
 
       const encodedCode = encodeURIComponent(authCode);

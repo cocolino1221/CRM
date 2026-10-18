@@ -479,13 +479,21 @@ export class AuthService implements OnModuleInit {
   /**
    * Create short-lived auth code for OAuth callback exchange
    */
-  createOAuthAuthCode(authResponse: AuthResponse, bindingHash?: string): string {
+  createOAuthAuthCode(
+    authResponse: AuthResponse,
+    bindingHash?: string,
+    source?: 'web' | 'mobile',
+  ): string {
     const payload = {
       type: 'oauth-auth-code',
       data: authResponse,
       // Present for a flow that started with a binding; the exchange then
       // demands the secret behind it.
       bindingHash,
+      // Recorded so the exchange can insist that a mobile code was bound.
+      // Without this, starting the old flow (/auth/google?source=mobile)
+      // produced an unbound code and the binding check simply never ran.
+      source,
     };
 
     return this.jwtService.sign(payload, {
@@ -503,16 +511,23 @@ export class AuthService implements OnModuleInit {
         type: string;
         data: AuthResponse;
         bindingHash?: string;
+        source?: string;
       };
 
       if (payload.type !== 'oauth-auth-code' || !payload.data) {
         throw new UnauthorizedException('Invalid auth code');
       }
 
-      // A bound code belongs to one client. Without the secret behind the
-      // hash, this is someone else's code — or ours in someone else's hands.
-      if (payload.bindingHash) {
-        if (!binding || this.hashOAuthBinding(binding) !== payload.bindingHash) {
+      // Every deep-link code must be bound. Checking only when the code
+      // happens to carry a hash fails open: an attacker starts the older
+      // flow, gets a code with no hash, and the check never runs.
+      const mustBeBound = Boolean(payload.bindingHash) || payload.source === 'mobile' || Boolean(binding);
+      if (mustBeBound) {
+        if (
+          !binding ||
+          !payload.bindingHash ||
+          this.hashOAuthBinding(binding) !== payload.bindingHash
+        ) {
           throw new UnauthorizedException('Invalid auth code');
         }
       }

@@ -117,6 +117,36 @@ describe('OAuth login binding', () => {
     expect(service.consumeOAuthAuthCode(code)).toMatchObject({ accessToken: 'a' });
   });
 
+  // The bypass the first version left open: start the login the old way,
+  // get a state with no binding in it, and the exchange asks for nothing.
+  it('refuses an unbound code that claims to be a mobile login', () => {
+    const { service } = build();
+
+    const code = service.createOAuthAuthCode(authResponse, undefined, 'mobile');
+
+    expect(() => service.consumeOAuthAuthCode(code)).toThrow(UnauthorizedException);
+  });
+
+  it('refuses an unbound code when a binding is presented anyway', () => {
+    const { service } = build();
+    const { binding } = service.createOAuthBinding();
+
+    const code = service.createOAuthAuthCode(authResponse);
+
+    // Either the code lost its binding or this binding belongs elsewhere;
+    // neither is a login worth completing.
+    expect(() => service.consumeOAuthAuthCode(code, binding)).toThrow(UnauthorizedException);
+  });
+
+  it('still redeems a bound mobile code with its secret', () => {
+    const { service } = build();
+    const { binding, bindingHash } = service.createOAuthBinding();
+
+    const code = service.createOAuthAuthCode(authResponse, bindingHash, 'mobile');
+
+    expect(service.consumeOAuthAuthCode(code, binding)).toMatchObject({ accessToken: 'a' });
+  });
+
   it('refuses a code that was not signed by us', () => {
     const { service } = build();
     const forged = new JwtService({ secret: 'someone-else' }).sign({
