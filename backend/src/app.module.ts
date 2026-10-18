@@ -35,6 +35,7 @@ import { EventsModule } from './events/events.module';
 import { MeetingReminderModule } from './events/meeting-reminder.module';
 import { AvailabilityModule } from './availability/availability.module';
 import { BookingsModule } from './bookings/bookings.module';
+import { SchedulingModule } from './scheduling/scheduling.module';
 import { DocumentsModule } from './documents/documents.module';
 import { PaymentsModule } from './payments/payments.module';
 import { FormsModule } from './forms/forms.module';
@@ -206,6 +207,7 @@ import { validationSchema } from './config/env.validation';
     MeetingReminderModule,
     AvailabilityModule,
     BookingsModule,
+    SchedulingModule,
     DocumentsModule,
     PaymentsModule,
     FormsModule,

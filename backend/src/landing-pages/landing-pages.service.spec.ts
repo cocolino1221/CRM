@@ -22,6 +22,10 @@ describe('LandingPagesService', () => {
   beforeEach(async () => {
     repo = {
       findOne: jest.fn(),
+      find: jest.fn().mockImplementation(async (opts: any) => {
+        const one = await (repo.findOne as any)(opts);
+        return one ? [one] : [];
+      }),
       create: jest.fn((x) => x),
       save: jest.fn(async (x) => ({ id: 'lp1', ...x })),
       update: jest.fn(async () => undefined),

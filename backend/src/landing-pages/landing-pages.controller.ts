@@ -21,6 +21,9 @@ import { CreateLandingPageDto } from './dto/create-landing-page.dto';
 import { UpdateLandingPageDto } from './dto/update-landing-page.dto';
 import { SubmitLandingPageDto } from './dto/submit-landing-page.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { RolesGuard } from '../auth/guards/roles.guard';
 import { LandingPageStatus } from '../database/entities/landing-page.entity';
 import { THEME_PRESETS } from './theme-presets';
 
@@ -32,6 +35,22 @@ export class LandingPagesController {
     private readonly landingPagesService: LandingPagesService,
     private readonly landingDomains: LandingDomainsService,
   ) {}
+
+  /**
+   * The hostname this request actually arrived on.
+   *
+   * It used to be read from a `host` query parameter the client supplied.
+   * That let anyone aim a submission at another tenant's domain: the contact
+   * landed in that workspace, their funnel enrolled it, and a WhatsApp
+   * welcome went out on their billed number to a phone the attacker chose.
+   * The client's value is ignored; only what the proxy reports counts.
+   */
+  private requestHost(req: Request): string | undefined {
+    const headers = (req as any)?.headers ?? {};
+    const forwarded = headers['x-forwarded-host'];
+    const first = Array.isArray(forwarded) ? forwarded[0] : forwarded;
+    return (first || headers['host'] || undefined) as string | undefined;
+  }
 
   @Get('theme-presets')
   @UseGuards(JwtAuthGuard)
@@ -74,7 +93,8 @@ export class LandingPagesController {
       });
     }
 
-    const workspaceId = await this.landingDomains.resolveWorkspaceByHost(host);
+    void host; // Supplied by the client; deliberately not trusted.
+    const workspaceId = await this.landingDomains.resolveWorkspaceByHost(this.requestHost(req));
     return this.landingPagesService.getPublicView(slug, { countUnique, skipView, workspaceId });
   }
 
@@ -85,9 +105,11 @@ export class LandingPagesController {
     @Ip() ip: string,
     @Headers('user-agent') userAgent: string,
     @Headers('referer') referrer: string,
+    @Req() req: Request,
     @Query('host') host?: string,
   ) {
-    const workspaceId = await this.landingDomains.resolveWorkspaceByHost(host);
+    void host; // Supplied by the client; deliberately not trusted.
+    const workspaceId = await this.landingDomains.resolveWorkspaceByHost(this.requestHost(req));
     return this.landingPagesService.submitPublic(slug, dto, {
       ipAddress: ip,
       userAgent,
@@ -108,6 +130,12 @@ export class LandingPagesController {
    * at this server and burning the Let's Encrypt rate limit.
    */
   @Get('domains/check')
+  // Unauthenticated by necessity — a proxy has no credentials — but it
+  // answers 200 only for a hostname some workspace has verified, which makes
+  // it a list of the platform's customers to anyone willing to guess domains.
+  // The throttle makes guessing them one at a time expensive.
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
   async checkDomain(@Query('domain') domain?: string) {
     const workspaceId = domain
       ? await this.landingDomains.resolveWorkspaceByHost(domain)
@@ -119,6 +147,7 @@ export class LandingPagesController {
   }
 
   @Get('domains')
+    @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'caller', 'support_agent')
   @UseGuards(JwtAuthGuard)
   async listDomains(@Req() req: any) {
     const domains = await this.landingDomains.list(req.user.workspaceId);
@@ -128,6 +157,9 @@ export class LandingPagesController {
   }
 
   @Post('domains')
+    // Workspace-wide configuration: deleting a verified domain takes every
+  // live page on it offline and releases the hostname for anyone to claim.
+  @Roles('admin', 'manager')
   @UseGuards(JwtAuthGuard)
   async addDomain(@Req() req: any, @Body() body: { hostname: string }) {
     const domain = await this.landingDomains.addDomain(req.user.workspaceId, body?.hostname);
@@ -135,6 +167,9 @@ export class LandingPagesController {
   }
 
   @Post('domains/:id/verify')
+    // Workspace-wide configuration: deleting a verified domain takes every
+  // live page on it offline and releases the hostname for anyone to claim.
+  @Roles('admin', 'manager')
   @UseGuards(JwtAuthGuard)
   async verifyDomain(@Req() req: any, @Param('id') id: string) {
     const domain = await this.landingDomains.verify(req.user.workspaceId, id);
@@ -142,6 +177,9 @@ export class LandingPagesController {
   }
 
   @Delete('domains/:id')
+    // Workspace-wide configuration: deleting a verified domain takes every
+  // live page on it offline and releases the hostname for anyone to claim.
+  @Roles('admin', 'manager')
   @UseGuards(JwtAuthGuard)
   async removeDomain(@Req() req: any, @Param('id') id: string) {
     await this.landingDomains.remove(req.user.workspaceId, id);

@@ -69,7 +69,10 @@ export class LandingPage extends WorkspaceEntity {
   @Column({ type: 'varchar', length: 255, comment: 'Internal name' })
   name: string;
 
-  @Column({ type: 'varchar', length: 100, unique: true, comment: 'Public URL slug /p/{slug}' })
+  // Unique per workspace, enforced by UQ_landing_pages_workspace_slug (see
+  // the AddLandingDomains migration). A global `unique: true` here would be
+  // recreated by synchronize and would undo that.
+  @Column({ type: 'varchar', length: 100, comment: 'Public URL slug /p/{slug}' })
   @Index('IDX_landing_pages_slug')
   slug: string;
 

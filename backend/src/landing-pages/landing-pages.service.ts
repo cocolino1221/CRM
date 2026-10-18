@@ -44,7 +44,7 @@ export class LandingPagesService {
     dto: CreateLandingPageDto,
   ): Promise<LandingPage> {
     const slug = dto.slug
-      ? await this.assertSlugFree(dto.slug)
+      ? await this.assertSlugFree(dto.slug, workspaceId)
       : await this.generateUniqueSlug(dto.name);
 
     const page = this.landingPageRepository.create({
@@ -94,7 +94,7 @@ export class LandingPagesService {
     const page = await this.findOne(id, workspaceId);
 
     if (dto.slug && dto.slug !== page.slug) {
-      await this.assertSlugFree(dto.slug);
+      await this.assertSlugFree(dto.slug, workspaceId);
     }
 
     const becomingActive =
@@ -147,13 +147,30 @@ export class LandingPagesService {
     opts: { countUnique: boolean; skipView?: boolean; workspaceId?: string | null },
   ): Promise<LandingPage> {
     // A request that arrived on a workspace's own domain is scoped to it, so
-    // two customers can both publish "oferta". A request on the platform host
-    // has no workspace and falls back to a plain slug lookup.
-    const page = await this.landingPageRepository.findOne({
-      where: opts.workspaceId
-        ? { slug, status: LandingPageStatus.ACTIVE, workspaceId: opts.workspaceId }
-        : { slug, status: LandingPageStatus.ACTIVE },
-    });
+    // two customers can both publish "oferta".
+    //
+    // On the platform host there is no workspace to scope by. Picking the
+    // first row would mean serving an arbitrary tenant's page — and taking
+    // their form submissions — whenever two workspaces share a slug, so an
+    // ambiguous slug is refused instead of guessed.
+    let page: LandingPage | null;
+    if (opts.workspaceId) {
+      page = await this.landingPageRepository.findOne({
+        where: { slug, status: LandingPageStatus.ACTIVE, workspaceId: opts.workspaceId },
+      });
+    } else {
+      const matches = await this.landingPageRepository.find({
+        where: { slug, status: LandingPageStatus.ACTIVE },
+        take: 2,
+      });
+      if (matches.length > 1) {
+        this.logger.warn(
+          `Slug "${slug}" is published by ${matches.length} workspaces; refusing to guess`,
+        );
+        throw new NotFoundException('Landing page not found');
+      }
+      page = matches[0] ?? null;
+    }
     if (!page) {
       throw new NotFoundException('Landing page not found');
     }
@@ -199,11 +216,21 @@ export class LandingPagesService {
   ): Promise<LandingPageSubmitResult> {
     // Scoped the same way the view is, so a submission cannot land in another
     // workspace that happens to share the slug.
-    const page = await this.landingPageRepository.findOne({
-      where: metadata.workspaceId
-        ? { slug, status: LandingPageStatus.ACTIVE, workspaceId: metadata.workspaceId }
-        : { slug, status: LandingPageStatus.ACTIVE },
-    });
+    // Same rule as the view: an ambiguous slug on the platform host is
+    // refused rather than resolved to an arbitrary tenant, because this call
+    // writes a contact into whichever workspace it picks.
+    let page: LandingPage | null;
+    if (metadata.workspaceId) {
+      page = await this.landingPageRepository.findOne({
+        where: { slug, status: LandingPageStatus.ACTIVE, workspaceId: metadata.workspaceId },
+      });
+    } else {
+      const matches = await this.landingPageRepository.find({
+        where: { slug, status: LandingPageStatus.ACTIVE },
+        take: 2,
+      });
+      page = matches.length === 1 ? matches[0] : null;
+    }
     if (!page) {
       throw new NotFoundException('Landing page not found');
     }
@@ -285,8 +312,14 @@ export class LandingPagesService {
     }
   }
 
-  private async assertSlugFree(slug: string): Promise<string> {
-    const existing = await this.landingPageRepository.findOne({ where: { slug } });
+  private async assertSlugFree(slug: string, workspaceId: string): Promise<string> {
+    // Scoped to the workspace. A global check defeated the migration that
+    // made slugs per-workspace, let any tenant reserve "oferta" or "promo"
+    // across the whole platform with a throwaway draft, and answered whether
+    // another tenant was already using a given slug.
+    const existing = await this.landingPageRepository.findOne({
+      where: { slug, workspaceId },
+    });
     if (existing) {
       throw new BadRequestException('A landing page with this slug already exists');
     }
