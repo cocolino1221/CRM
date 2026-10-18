@@ -13,7 +13,7 @@ import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
-import { createHash, randomBytes } from 'crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'crypto';
 import * as bcrypt from 'bcrypt';
 import { v4 as uuidv4 } from 'uuid';
 import { User, UserRole, UserStatus } from '../database/entities/user.entity';
@@ -479,64 +479,88 @@ export class AuthService implements OnModuleInit {
   /**
    * Create short-lived auth code for OAuth callback exchange
    */
+  /**
+   * A handle for a finished OAuth login, redeemable once.
+   *
+   * This used to be a JWT carrying the whole AuthResponse — access token and
+   * refresh token included — and it was placed in the redirect URL, deep link
+   * included. A JWT payload is base64url, not encrypted, so any app that
+   * received the link could decode it and read the refresh token without ever
+   * calling the exchange: the binding was bypassed by a shorter path, and the
+   * same string sat in browser history, Referer headers and proxy logs.
+   *
+   * Nothing about the session travels in the URL now. The handle is random,
+   * it is held here, and redeeming it removes it.
+   *
+   * The store is in-process. That is correct for one instance and it is what
+   * runs today; a second instance would make a login started on one and
+   * exchanged on the other fail closed (the user retries), never leak. Move
+   * it to Redis before scaling out.
+   */
+  private readonly oauthCodes = new Map<
+    string,
+    { data: AuthResponse; bindingHash?: string; source?: string; expiresAt: number }
+  >();
+
   createOAuthAuthCode(
     authResponse: AuthResponse,
     bindingHash?: string,
     source?: 'web' | 'mobile',
   ): string {
-    const payload = {
-      type: 'oauth-auth-code',
-      data: authResponse,
-      // Present for a flow that started with a binding; the exchange then
-      // demands the secret behind it.
-      bindingHash,
-      // Recorded so the exchange can insist that a mobile code was bound.
-      // Without this, starting the old flow (/auth/google?source=mobile)
-      // produced an unbound code and the binding check simply never ran.
-      source,
-    };
+    this.sweepExpiredOAuthCodes();
 
-    return this.jwtService.sign(payload, {
-      secret: this.oauthStateSecret,
-      expiresIn: Math.floor(this.oauthAuthCodeTtlMs / 1000),
+    const code = randomBytes(32).toString('hex');
+    this.oauthCodes.set(code, {
+      data: authResponse,
+      bindingHash,
+      source,
+      expiresAt: Date.now() + this.oauthAuthCodeTtlMs,
     });
+
+    return code;
+  }
+
+  private sweepExpiredOAuthCodes(): void {
+    const now = Date.now();
+    for (const [code, entry] of this.oauthCodes) {
+      if (entry.expiresAt <= now) this.oauthCodes.delete(code);
+    }
   }
 
   /**
-   * Consume and invalidate auth code
+   * Redeem the handle. Every code must carry a binding and present it:
+   * accepting an unbound one let an attacker complete a login with their own
+   * account and push that code into someone else's app.
    */
   consumeOAuthAuthCode(code: string, binding?: string): AuthResponse {
-    try {
-      const payload = this.jwtService.verify(code, { secret: this.oauthStateSecret }) as {
-        type: string;
-        data: AuthResponse;
-        bindingHash?: string;
-        source?: string;
-      };
+    const entry = code ? this.oauthCodes.get(code) : undefined;
 
-      if (payload.type !== 'oauth-auth-code' || !payload.data) {
-        throw new UnauthorizedException('Invalid auth code');
-      }
+    // Removed whatever happens next, so a redeemed or expired handle is gone
+    // rather than replayable for the rest of its five minutes.
+    if (entry) this.oauthCodes.delete(code);
 
-      // Every deep-link code must be bound. Checking only when the code
-      // happens to carry a hash fails open: an attacker starts the older
-      // flow, gets a code with no hash, and the check never runs.
-      const mustBeBound = Boolean(payload.bindingHash) || payload.source === 'mobile' || Boolean(binding);
-      if (mustBeBound) {
-        if (
-          !binding ||
-          !payload.bindingHash ||
-          this.hashOAuthBinding(binding) !== payload.bindingHash
-        ) {
-          throw new UnauthorizedException('Invalid auth code');
-        }
-      }
-
-      return payload.data;
-    } catch (error) {
-      this.logger.warn(`OAuth code exchange failed: ${error.message}`);
+    if (!entry || entry.expiresAt <= Date.now()) {
+      this.logger.warn('OAuth code exchange failed: unknown or expired code');
       throw new UnauthorizedException('Invalid or expired auth code');
     }
+
+    if (
+      !entry.bindingHash ||
+      !binding ||
+      !this.oauthBindingMatches(binding, entry.bindingHash)
+    ) {
+      this.logger.warn('OAuth code exchange failed: missing or wrong binding');
+      throw new UnauthorizedException('Invalid or expired auth code');
+    }
+
+    return entry.data;
+  }
+
+  /** Compared in constant time, so the hash cannot be probed byte by byte. */
+  private oauthBindingMatches(binding: string, expectedHash: string): boolean {
+    const actual = Buffer.from(this.hashOAuthBinding(binding), 'hex');
+    const expected = Buffer.from(expectedHash, 'hex');
+    return actual.length === expected.length && timingSafeEqual(actual, expected);
   }
 
   /**

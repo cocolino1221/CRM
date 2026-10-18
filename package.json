@@ -56,14 +56,17 @@
     "clean": "rm -rf backend/dist backend/node_modules frontend/.next frontend/node_modules node_modules",
     "clean:build": "rm -rf backend/dist frontend/.next",
     "fresh": "npm run clean && npm install && npm run build",
-    "prepare": "node -e \"try { require('husky').install() } catch (e) {}\""
+    "prepare": "node -e \"try { require('husky').install() } catch (e) {}\"",
+    "android": "expo run:android",
+    "ios": "expo run:ios"
   },
   "devDependencies": {
     "@faker-js/faker": "^10.2.0",
     "concurrently": "^8.2.2",
     "husky": "^8.0.3",
     "lint-staged": "^15.2.9",
-    "pg": "^8.17.1"
+    "pg": "^8.17.1",
+    "playwright": "^1.60.0"
   },
   "engines": {
     "node": ">=20.0.0",
@@ -77,5 +80,10 @@
     "*.{json,md}": [
       "prettier --write"
     ]
+  },
+  "dependencies": {
+    "expo": "^54.0.33",
+    "react": "19.1.0",
+    "react-native": "0.81.5"
   }
 }

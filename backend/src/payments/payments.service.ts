@@ -65,7 +65,11 @@ export class PaymentsService {
         page: 1,
         limit: 500,
       });
-      const items: any[] = result?.data ?? result?.items ?? [];
+      // findPayments answers with { payments, total, summary }. Reading
+      // `data` here silently dropped every PayFunnels payment, and the catch
+      // below meant it never surfaced as an error — the screen simply showed
+      // half the money.
+      const items: any[] = result?.payments ?? [];
       return items.map(fromPayfunnelDocument);
     } catch {
       // One provider being unreachable must not empty the other's rows.
@@ -79,7 +83,10 @@ export class PaymentsService {
       .leftJoinAndSelect('deal.contact', 'contact')
       .where('deal.workspaceId = :workspaceId', { workspaceId })
       .andWhere(`deal.customFields->>'source' = :source`, { source: 'payflow' })
-      .orderBy('deal.actualCloseDate', 'DESC')
+      // A deal that is not closed has no actualCloseDate, and Postgres sorts
+      // NULLS FIRST on DESC — a workspace with many open deals would fill the
+      // page with them and report zero income.
+      .orderBy('COALESCE(deal.actualCloseDate, deal.createdAt)', 'DESC', 'NULLS LAST')
       .take(500)
       .getMany();
 

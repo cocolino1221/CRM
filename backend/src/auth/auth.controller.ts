@@ -1,20 +1,4 @@
-import {
-  Controller,
-  Post,
-  Get,
-  Put,
-  Patch,
-  Body,
-  UseGuards,
-  Request,
-  HttpCode,
-  HttpStatus,
-  Ip,
-  Res,
-  Query,
-  UnauthorizedException,
-  ValidationPipe,
-} from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Ip, Patch, Post, Put, Query, Req, Request, Res, UnauthorizedException, UseGuards, ValidationPipe } from '@nestjs/common';
 import { Response } from 'express';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
@@ -398,7 +382,21 @@ export class AuthController {
     // open route would let anyone mint an unbound mobile state and walk
     // around that binding.
     void source;
-    const state = this.authService.generateOAuthState('web');
+
+    // The browser gets a binding too, in an httpOnly cookie it returns
+    // automatically on the exchange. Without it, an attacker could finish a
+    // login with their own account and push the resulting code into someone
+    // else's client, which would accept it for having no binding to check.
+    const { binding, bindingHash } = this.authService.createOAuthBinding();
+    res.cookie('oauth_binding', binding, {
+      httpOnly: true,
+      secure: this.configService.get('NODE_ENV') === 'production',
+      sameSite: 'lax',
+      maxAge: 10 * 60 * 1000,
+      path: '/',
+    });
+
+    const state = this.authService.generateOAuthState('web', bindingHash);
     res.redirect(this.buildGoogleAuthUrl(state));
   }
 
@@ -586,9 +584,15 @@ export class AuthController {
   async exchangeOAuthCode(
     @Body('code') code: string,
     @Body('binding') binding: string | undefined,
+    @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ): Promise<Omit<AuthResponse, 'refreshToken'>> {
-    const result = await this.authService.consumeOAuthAuthCode(code, binding);
+    // The app sends its binding in the body; the browser sends it as the
+    // cookie set when the login began and never handles it itself.
+    const presented = binding || (req as any).cookies?.oauth_binding;
+    const result = await this.authService.consumeOAuthAuthCode(code, presented);
+
+    res.clearCookie('oauth_binding', { path: '/' });
 
     // Set httpOnly cookies (same as login/register)
     res.cookie('accessToken', result.accessToken, this.getCookieOptions(false));

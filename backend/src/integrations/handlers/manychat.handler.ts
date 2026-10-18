@@ -187,8 +187,9 @@ export class ManyChatIntegrationHandler {
           const cleanPhone = phone.replace(/[^0-9]/g, '');
           if (cleanPhone.length >= 7) {
             const templateName = whatsappConfig.templateName || 'hello_world';
-            const rawLang = whatsappConfig.language || 'en_US';
-            const language = rawLang === 'en' ? 'en_US' : rawLang;
+            const rawLang = whatsappConfig.language || 'en';
+            // Meta hello_world is en_US; custom templates may exist only in en.
+            const language = rawLang === 'en' && templateName === 'hello_world' ? 'en_US' : rawLang;
             // Skip name param for hello_world (it has 0 params — Meta #132000 error)
             const params: any[] = [];
             if (whatsappConfig.includeNameParam && firstName && templateName !== 'hello_world') {

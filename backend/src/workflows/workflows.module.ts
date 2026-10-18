@@ -8,6 +8,7 @@ import { ContactsModule } from '../contacts/contacts.module';
 import { EmailModule } from '../email/email.module';
 import { TasksModule } from '../tasks/tasks.module';
 import { DealsModule } from '../deals/deals.module';
+import { WhatsAppModule } from '../integrations/whatsapp/whatsapp.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { DealsModule } from '../deals/deals.module';
     EmailModule,
     TasksModule,
     DealsModule,
+    WhatsAppModule,
   ],
   controllers: [WorkflowsController],
   providers: [WorkflowsService, WorkflowTemplatesService],

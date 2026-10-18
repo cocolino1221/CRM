@@ -36,6 +36,7 @@ export interface FormField {
   placeholder?: string;
   required: boolean;
   options?: string[]; // For select, radio, checkbox
+  width?: 'full' | 'half';
   validation?: {
     min?: number;
     max?: number;
@@ -44,6 +45,21 @@ export interface FormField {
   };
   defaultValue?: any;
   helpText?: string;
+}
+
+export interface FormStartScreenSettings {
+  enabled?: boolean;
+  title?: string;
+  description?: string;
+  buttonText?: string;
+}
+
+export interface FormThemeSettings {
+  accentColor?: string;
+  backgroundColor?: string;
+  cardColor?: string;
+  textColor?: string;
+  fontFamily?: string;
 }
 
 export interface FormSettings {
@@ -55,6 +71,11 @@ export interface FormSettings {
   allowMultipleSubmissions?: boolean;
   requireAuthentication?: boolean;
   captchaEnabled?: boolean;
+  layoutMode?: 'classic' | 'oneQuestion';
+  showProgressBar?: boolean;
+  showQuestionNumbers?: boolean;
+  startScreen?: FormStartScreenSettings;
+  theme?: FormThemeSettings;
 }
 
 @Entity('forms')

@@ -687,11 +687,56 @@ export class IntegrationsService implements OnModuleInit {
           this.logger.warn(`Failed to remove deselected page rows: ${error?.message || error}`);
         }
       }
+
+      await this.unsubscribeUnclaimedFacebookPages(allPages, selectedPageIds);
     }
 
     await this.removeOrphanSocialIntegrations(siblingRows);
 
     return primary;
+  }
+
+  private async unsubscribeUnclaimedFacebookPages(
+    pages: any[],
+    selectedPageIds: string[],
+  ): Promise<void> {
+    const selected = new Set(selectedPageIds);
+    const deselectedPages = pages.filter((page: any) => {
+      const pageId = String(page?.id || '').trim();
+      return pageId && !selected.has(pageId);
+    });
+    if (!deselectedPages.length) return;
+
+    const deselectedIds = deselectedPages.map((page: any) => String(page.id).trim());
+    const claimedRows = await this.integrationRepository
+      .createQueryBuilder('integration')
+      .where('integration.type = :type', { type: IntegrationType.API })
+      .andWhere("integration.config->>'pageId' IN (:...pageIds)", { pageIds: deselectedIds })
+      .getMany();
+    const claimedIds = new Set(
+      claimedRows.map((row) => String(row.config?.pageId || '').trim()).filter(Boolean),
+    );
+
+    for (const page of deselectedPages) {
+      const pageId = String(page.id).trim();
+      const pageAccessToken = String(page.access_token || '').replace(/\s+/g, '');
+      if (claimedIds.has(pageId) || !pageAccessToken) continue;
+
+      try {
+        await this.httpService.axiosRef.delete(
+          `https://graph.facebook.com/v23.0/${pageId}/subscribed_apps`,
+          {
+            params: { access_token: pageAccessToken },
+            timeout: 15000,
+          },
+        );
+        this.logger.log(`Unsubscribed deselected Facebook page ${pageId}`);
+      } catch (error: any) {
+        this.logger.warn(
+          `Could not unsubscribe deselected Facebook page ${pageId}: ${error?.response?.data?.error?.message || error?.message || 'unknown error'}`,
+        );
+      }
+    }
   }
 
   // Page picker support: list the Facebook pages this connect's grant covers,

@@ -1,17 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import {
-  IsBoolean,
-  IsDateString,
-  IsEnum,
-  IsNumber,
-  IsOptional,
-  IsPositive,
-  IsString,
-  IsUUID,
-  MaxLength,
-  ValidateNested,
-} from 'class-validator';
+import { IsBoolean, IsDateString, IsEnum, IsNumber, IsOptional, IsPositive, IsString, IsUUID, Length, Matches, MaxLength, ValidateNested } from 'class-validator';
 import { ActivityOutcome } from '../../database/entities/activity.entity';
 
 export class DispositionFollowUpDto {
@@ -70,8 +59,19 @@ export class DispositionDto {
    * bad connection retries with the same value, and the retry must not create a
    * second task or a second deal.
    */
-  @ApiProperty({ description: 'Client-generated id making a retry safe' })
-  @IsUUID()
+  @ApiProperty({
+    description: 'Client-generated id making a retry safe',
+    example: 'disp-1792260000000-a1b2c3d4',
+  })
+  // An idempotency key, not a credential: it only has to be unique per
+  // attempt. @IsUUID() rejected every disposition from the phone — React
+  // Native has no crypto.randomUUID, so the app mints "disp-<ms>-<random>"
+  // and the whole feature recorded nothing.
+  @IsString()
+  @Length(8, 100)
+  @Matches(/^[A-Za-z0-9_-]+$/, {
+    message: 'clientRequestId may contain only letters, digits, hyphen and underscore',
+  })
   clientRequestId: string;
 }
 

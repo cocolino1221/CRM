@@ -26,6 +26,17 @@ export interface SystemLogEntry {
   metadata?: Record<string, any>;
 }
 
+/**
+ * Postgres returns numeric columns as strings, so a bare `sum + deal.value`
+ * concatenates instead of adding: two wins of 1500.00 and 250.00 produced
+ * "01500.00250.00", which then reached the daily KPIs, the end-of-day report
+ * and the 90-day trend as a number nobody could read.
+ */
+function toMoney(value: unknown): number {
+  const n = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
 @Injectable()
 export class AnalyticsService {
   private readonly logger = new Logger(AnalyticsService.name);
@@ -110,7 +121,7 @@ export class AnalyticsService {
     const wonDeals = deals.filter(d => d.stage === DealStage.CLOSED_WON);
     const lostDeals = deals.filter(d => d.stage === DealStage.CLOSED_LOST);
 
-    const totalRevenue = wonDeals.reduce((sum, d) => sum + d.value, 0);
+    const totalRevenue = wonDeals.reduce((sum, d) => sum + toMoney(d.value), 0);
     const averageDealSize = wonDeals.length > 0 ? totalRevenue / wonDeals.length : 0;
     const winRate = deals.length > 0 ? (wonDeals.length / deals.length) * 100 : 0;
 
@@ -281,7 +292,7 @@ export class AnalyticsService {
 
     // Calculate average monthly revenue
     const avgMonthlyRevenue = historicalDeals.length > 0
-      ? historicalDeals.reduce((sum, d) => sum + d.value, 0) / 6
+      ? historicalDeals.reduce((sum, d) => sum + toMoney(d.value), 0) / 6
       : 0;
 
     // Get current pipeline
@@ -292,7 +303,7 @@ export class AnalyticsService {
       .andWhere('deal.actualCloseDate IS NULL')
       .getMany();
 
-    const pipelineValue = pipelineDeals.reduce((sum, d) => sum + d.value * (d.probability / 100), 0);
+    const pipelineValue = pipelineDeals.reduce((sum, d) => sum + toMoney(d.value) * (d.probability / 100), 0);
 
     // Generate forecast
     const forecast = [];
@@ -571,7 +582,7 @@ export class AnalyticsService {
     const dealsLost = deals.filter(d => d.stage === DealStage.CLOSED_LOST).length;
     const revenue = deals
       .filter(d => d.stage === DealStage.CLOSED_WON)
-      .reduce((sum, d) => sum + d.value, 0);
+      .reduce((sum, d) => sum + toMoney(d.value), 0);
 
     // WhatsApp calls are deliberately stored as whatsapp_message with
     // metadata.messageType === 'call' so the chat UI renders them inline.
@@ -733,10 +744,15 @@ export class AnalyticsService {
         emailsSent: kpis.emailsSent,
         meetingsHeld: kpis.meetingsHeld,
       },
-      teamPerformance: Array.from(teamStats.values()).sort(
-        (a, b) => b.revenueGenerated - a.revenueGenerated,
-      ),
-      pipeline: {
+      // Scoped to one person when the caller is not a manager. The sections
+      // below are built from workspace-wide queries and cannot be narrowed
+      // row by row, so they are withheld rather than filtered — a caller
+      // opening their own day was reading every colleague's revenue, every
+      // won deal by name, and the whole pipeline.
+      teamPerformance: Array.from(teamStats.values())
+        .filter((row: any) => !userId || row.userId === userId)
+        .sort((a, b) => b.revenueGenerated - a.revenueGenerated),
+      ...(userId ? {} : { pipeline: {
         totalValue: kpis.pipelineValue,
         totalDeals: await this.dealRepository.count({
           where: { workspaceId, actualCloseDate: null as any, deletedAt: null as any },
@@ -757,8 +773,7 @@ export class AnalyticsService {
             deletedAt: null as any,
           },
         }),
-      },
-      topWins,
+      }, topWins }),
       actionItems: {
         overdueTasks,
         followUpsNeeded,
@@ -911,7 +926,7 @@ export class AnalyticsService {
         totalNewContacts: kpis.reduce((sum, k) => sum + k.newContacts, 0),
         totalNewDeals: kpis.reduce((sum, k) => sum + k.newDeals, 0),
         totalDealsWon: kpis.reduce((sum, k) => sum + k.dealsWon, 0),
-        totalRevenue: kpis.reduce((sum, k) => sum + k.revenue, 0),
+        totalRevenue: kpis.reduce((sum, k) => sum + toMoney(k.revenue), 0),
         averageConversionRate: kpis.reduce((sum, k) => sum + k.conversionRate, 0) / kpis.length,
       },
     };

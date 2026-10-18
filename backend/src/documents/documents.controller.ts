@@ -107,6 +107,21 @@ export class DocumentsController {
     return this.documentsService.getPayfunnelDashboardData(req.user.workspaceId);
   }
 
+  @Delete('payfunnel/subscriptions/:subscriptionId')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Dismiss a PayFunnels failed/overdue subscription from mobile risk tab' })
+  @ApiResponse({ status: 200, description: 'PayFunnels risk subscription dismissed successfully' })
+  async dismissPayfunnelRiskSubscription(
+    @Req() req: any,
+    @Param('subscriptionId') subscriptionId: string,
+  ) {
+    return this.documentsService.dismissPayfunnelRiskSubscription(
+      req.user.workspaceId,
+      req.user.id,
+      subscriptionId,
+    );
+  }
+
   @Get('esemneaza/requests')
   @ApiOperation({ summary: 'List eSemneaza sign requests' })
   @ApiResponse({ status: 200, description: 'Sign requests retrieved successfully' })
@@ -220,6 +235,7 @@ export class DocumentsController {
       paymentDescription?: string;
       paymentLinkUrl?: string;
       paymentLinkName?: string;
+      paymentLinkId?: string;
       sendPaymentEmail?: boolean;
       sendPaymentWhatsApp?: boolean;
     },
@@ -374,6 +390,7 @@ export class DocumentsController {
       sendWhatsApp?: boolean;
       paymentLinkUrl?: string;
       paymentLinkName?: string;
+      paymentLinkId?: string;
     },
   ) {
     return this.documentsService.generatePaymentLinkForDocument(

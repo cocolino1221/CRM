@@ -43,6 +43,8 @@ export class TokenBlacklistService {
       port: redisPort,
       password: redisPassword || undefined,
       db: redisDb,
+      // Upstash (and most managed Redis) require TLS; local dev Redis doesn't.
+      ...(redisHost !== 'localhost' && redisHost !== '127.0.0.1' ? { tls: {} } : {}),
       retryStrategy: (times) => {
         if (times > 5) {
           this.logger.warn('Redis connection failed after 5 retries. Token blacklist disabled.');

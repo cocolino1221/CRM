@@ -9,6 +9,7 @@ import { TasksService } from '../tasks/tasks.service';
 import { DealsService } from '../deals/deals.service';
 import { TaskPriority, TaskStatus } from '../database/entities/task.entity';
 import { DealStage, DealPriority } from '../database/entities/deal.entity';
+import { WhatsAppService } from '../integrations/whatsapp/whatsapp.service';
 
 @Injectable()
 export class WorkflowsService {
@@ -24,6 +25,7 @@ export class WorkflowsService {
     private readonly emailService: EmailService,
     private readonly tasksService: TasksService,
     private readonly dealsService: DealsService,
+    private readonly whatsAppService: WhatsAppService,
   ) {
     // Listen for events that can trigger workflows
     this.setupEventListeners();
@@ -176,6 +178,9 @@ export class WorkflowsService {
       case WorkflowActionType.SEND_EMAIL:
         return this.executeEmailAction(action, triggerData);
 
+      case WorkflowActionType.SEND_WHATSAPP:
+        return this.executeSendWhatsAppAction(action, triggerData, workspaceId);
+
       case WorkflowActionType.CREATE_TASK:
         return this.executeCreateTaskAction(action, triggerData, workspaceId);
 
@@ -217,6 +222,73 @@ export class WorkflowsService {
     });
 
     return { success: true, to: to || triggerData.email };
+  }
+
+  private async executeSendWhatsAppAction(action: any, triggerData: any, workspaceId: string): Promise<any> {
+    const configuredTo = String(action.config?.to || '').trim();
+    const resolvedTo = String(
+      configuredTo
+      || triggerData.waId
+      || triggerData.phone
+      || triggerData.contactPhone
+      || triggerData.contact?.phoneNormalized
+      || triggerData.contact?.phone
+      || '',
+    ).trim();
+
+    if (!resolvedTo) {
+      throw new Error('Cannot send WhatsApp: no destination phone available');
+    }
+
+    const messageTemplate = String(action.config?.message || action.config?.body || '').trim();
+    if (!messageTemplate) {
+      throw new Error('Cannot send WhatsApp: message is required');
+    }
+
+    const processedMessage = this.replaceVariables(messageTemplate, triggerData);
+    const integrationId = String(action.config?.integrationId || triggerData.integrationId || '').trim() || undefined;
+    const replyToMessageId = String(action.config?.replyToMessageId || triggerData.messageId || '').trim() || undefined;
+    const replyPreviewText = String(action.config?.replyPreviewText || triggerData.messageText || '').trim() || undefined;
+    const executionUserId = String(
+      action.config?.userId
+      || triggerData.userId
+      || triggerData.ownerId
+      || triggerData.createdBy
+      || '',
+    ).trim() || undefined;
+
+    const sent = await this.whatsAppService.sendMessageForWorkspace(
+      workspaceId,
+      {
+        to: resolvedTo,
+        type: 'text',
+        content: processedMessage,
+        ...(replyToMessageId ? { context: { messageId: replyToMessageId } } : {}),
+      },
+      integrationId,
+    );
+
+    const sentMessageId = sent.result?.messages?.[0]?.id;
+    await this.whatsAppService.saveOutboundActivity(
+      resolvedTo,
+      processedMessage,
+      'text',
+      workspaceId,
+      executionUserId,
+      sentMessageId,
+      sent.sender,
+      {
+        ...(replyToMessageId ? { replyToMessageId } : {}),
+        ...(replyPreviewText ? { replyPreviewText } : {}),
+      },
+    );
+
+    return {
+      success: true,
+      to: resolvedTo,
+      messageId: sentMessageId,
+      senderIntegrationId: sent.sender?.senderIntegrationId,
+    };
   }
 
   private async executeCreateTaskAction(action: any, triggerData: any, workspaceId: string): Promise<any> {
@@ -358,8 +430,9 @@ export class WorkflowsService {
   }
 
   private replaceVariables(template: string, data: any): string {
-    return template.replace(/\{\{(\w+)\}\}/g, (match, key) => {
-      return this.getNestedValue(data, key) || match;
+    return template.replace(/\{\{([\w.]+)\}\}/g, (match, key) => {
+      const value = this.getNestedValue(data, key);
+      return value === undefined || value === null ? match : String(value);
     });
   }
 
@@ -377,6 +450,16 @@ export class WorkflowsService {
     // Listen for payment received event
     this.eventEmitter.on('payment.received', async (data) => {
       await this.triggerWorkflows(WorkflowTriggerType.PAYMENT_RECEIVED, data);
+    });
+
+    // Listen for inbound WhatsApp message event
+    this.eventEmitter.on('whatsapp.message.received', async (data) => {
+      await this.triggerWorkflows(WorkflowTriggerType.WHATSAPP_MESSAGE_RECEIVED, data);
+    });
+
+    // Listen for WhatsApp button/list reply click event
+    this.eventEmitter.on('whatsapp.button.clicked', async (data) => {
+      await this.triggerWorkflows(WorkflowTriggerType.WHATSAPP_BUTTON_CLICKED, data);
     });
 
     // Add more event listeners as needed

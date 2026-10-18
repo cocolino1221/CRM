@@ -418,8 +418,8 @@ export class GoogleSheetsService {
                   integration.userId,
                   'sheets',
                   'New lead from Google Sheets',
-                  `${displayName} — imported from "${config.spreadsheetName || 'sheet'}"`,
-                  '/leads',
+                  `${displayName} — added from Google Sheet "${config.spreadsheetName || 'sheet'}"${config.sheetName ? `, tab "${config.sheetName}"` : ''}`,
+                  `/leads/${contact.id}`,
                 )
                 .catch(() => undefined);
             }

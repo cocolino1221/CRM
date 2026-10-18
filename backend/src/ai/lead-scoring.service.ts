@@ -174,26 +174,24 @@ export class LeadScoringService {
     total: number;
     avgScore: number;
   }> {
-    const contacts = await this.contactRepository.find({
-      where: { workspaceId },
-      relations: ['deals', 'activities'],
-    });
+    // DISABLED: this endpoint is polled by the dashboard every 30s and used to
+    // re-score every contact in the workspace (one query per contact, fanned out
+    // with Promise.all). That saturated the DB pool and blocked the event loop,
+    // which in turn made the Typeform webhook time out and be redelivered,
+    // creating duplicate contacts and duplicate welcome messages.
+    // No query is performed here for now. Scoring still runs on contact
+    // create/update and through the AI_LEAD_SCORE queue job.
+    void workspaceId;
 
-    const scores = await Promise.all(
-      contacts.map(c => this.scoreContact(c.id, workspaceId))
-    );
-
-    const distribution = {
-      gradeA: scores.filter(s => s.grade.startsWith('A')).length,
-      gradeB: scores.filter(s => s.grade === 'B').length,
-      gradeC: scores.filter(s => s.grade === 'C').length,
-      gradeD: scores.filter(s => s.grade === 'D').length,
-      gradeF: scores.filter(s => s.grade === 'F').length,
-      total: scores.length,
-      avgScore: scores.reduce((sum, s) => sum + s.score, 0) / scores.length,
+    return {
+      gradeA: 0,
+      gradeB: 0,
+      gradeC: 0,
+      gradeD: 0,
+      gradeF: 0,
+      total: 0,
+      avgScore: 0,
     };
-
-    return distribution;
   }
 
   // Scoring factor calculations

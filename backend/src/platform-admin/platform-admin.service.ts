@@ -3,7 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
-import { Workspace } from '../database/entities/workspace.entity';
+import { Workspace, WorkspaceSettings } from '../database/entities/workspace.entity';
 import { User, UserRole, UserStatus } from '../database/entities/user.entity';
 import { Contact } from '../database/entities/contact.entity';
 import { Activity } from '../database/entities/activity.entity';
@@ -80,6 +80,24 @@ export class PlatformAdminService {
     };
   }
 
+  private mapPlanToPackage(plan: WorkspacePlan): 'starter' | 'growth' | 'scale' {
+    if (plan === 'professional') return 'growth';
+    if (plan === 'enterprise') return 'scale';
+    return 'starter';
+  }
+
+  private getWorkspaceLimitsForPackage(
+    packageId: 'starter' | 'growth' | 'scale',
+  ): NonNullable<WorkspaceSettings['limits']> {
+    if (packageId === 'growth') {
+      return { maxUsers: 25, maxWhatsAppNumbers: 3 };
+    }
+    if (packageId === 'scale') {
+      return { maxUsers: null, maxWhatsAppNumbers: 10 };
+    }
+    return { maxUsers: 8, maxWhatsAppNumbers: 1 };
+  }
+
   private sanitizeFeatures(raw: any): WorkspaceFeatureFlags {
     const defaults = this.getDefaultFeatures();
     const input = raw && typeof raw === 'object' ? raw : {};
@@ -94,12 +112,22 @@ export class PlatformAdminService {
     return next;
   }
 
-  private getDefaultWorkspaceSettings() {
+  private getDefaultWorkspaceSettings(plan: WorkspacePlan = 'trial'): WorkspaceSettings {
+    const packageId = this.mapPlanToPackage(plan);
+    const billingStatus: NonNullable<NonNullable<WorkspaceSettings['billing']>['billingStatus']> =
+      plan === 'trial' ? 'trialing' : 'inactive';
     return {
       timezone: 'UTC',
       dateFormat: 'MM/DD/YYYY',
       currency: 'USD',
       features: this.getDefaultFeatures(),
+      billing: {
+        grandfathered: false,
+        package: packageId,
+        billingProvider: 'stripe' as const,
+        billingStatus,
+      },
+      limits: this.getWorkspaceLimitsForPackage(packageId),
     };
   }
 
@@ -172,7 +200,7 @@ export class PlatformAdminService {
         domain,
         plan: (payload.plan || 'trial') as WorkspacePlan,
         isActive: payload.isActive ?? true,
-        settings: this.getDefaultWorkspaceSettings(),
+        settings: this.getDefaultWorkspaceSettings((payload.plan || 'trial') as WorkspacePlan),
       });
       const savedWorkspace = await workspaceRepo.save(workspace);
 

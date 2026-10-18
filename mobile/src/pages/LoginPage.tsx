@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { MessageCircle, Eye, EyeOff, Loader2, ShieldCheck, Sparkles } from 'lucide-react';
 import { useAuthStore } from '@/stores/auth-store';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://slackcrm-backend.fly.dev/api/v1';
+const API_BASE_URL = 'https://slackcrm-backend.fly.dev/api/v1';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');

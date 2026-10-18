@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { EmailCampaign, EmailCampaignStatus } from '../database/entities/email-campaign.entity';
 import { Contact } from '../database/entities/contact.entity';
 import { EmailService } from '../email/email.service';
+import { CampaignDispatchService } from '../scheduler/campaign-dispatch.service';
 
 @Injectable()
 export class EmailCampaignsService {
@@ -15,6 +16,7 @@ export class EmailCampaignsService {
     @InjectRepository(Contact)
     private readonly contactRepo: Repository<Contact>,
     private readonly emailService: EmailService,
+    private readonly dispatch: CampaignDispatchService,
   ) {}
 
   async findAll(workspaceId: string) {
@@ -46,7 +48,11 @@ export class EmailCampaignsService {
       createdById: userId,
       status,
     });
-    return this.campaignRepo.save(campaign);
+    const saved = await this.campaignRepo.save(campaign);
+    if (saved.status === EmailCampaignStatus.SCHEDULED && saved.scheduledAt) {
+      await this.dispatch.scheduleEmail(saved.id, workspaceId, saved.scheduledAt);
+    }
+    return saved;
   }
 
   async update(workspaceId: string, id: string, dto: Partial<EmailCampaign>) {
@@ -55,11 +61,20 @@ export class EmailCampaignsService {
       throw new BadRequestException('Cannot edit a campaign that is sending or already sent');
     }
     Object.assign(campaign, dto);
-    return this.campaignRepo.save(campaign);
+    const saved = await this.campaignRepo.save(campaign);
+    if ('scheduledAt' in dto || 'status' in dto) {
+      if (saved.status === EmailCampaignStatus.SCHEDULED && saved.scheduledAt) {
+        await this.dispatch.scheduleEmail(saved.id, workspaceId, saved.scheduledAt);
+      } else {
+        await this.dispatch.cancel('email', saved.id);
+      }
+    }
+    return saved;
   }
 
   async remove(workspaceId: string, id: string) {
     const campaign = await this.findOne(workspaceId, id);
+    await this.dispatch.cancel('email', id);
     await this.campaignRepo.remove(campaign);
     return { deleted: true };
   }
@@ -89,7 +104,9 @@ export class EmailCampaignsService {
     }
     campaign.scheduledAt = new Date(scheduledAt);
     campaign.status = EmailCampaignStatus.SCHEDULED;
-    return this.campaignRepo.save(campaign);
+    const saved = await this.campaignRepo.save(campaign);
+    await this.dispatch.scheduleEmail(saved.id, workspaceId, saved.scheduledAt);
+    return saved;
   }
 
   /**
@@ -130,6 +147,9 @@ export class EmailCampaignsService {
     if (!campaign.subject || (!campaign.htmlBody && !campaign.textBody)) {
       throw new BadRequestException('Campaign must have subject and body');
     }
+
+    // Cancel any pending scheduled dispatch so it can't double-fire
+    await this.dispatch.cancel('email', id);
 
     campaign.status = EmailCampaignStatus.SENDING;
     await this.campaignRepo.save(campaign);

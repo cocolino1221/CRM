@@ -35,43 +35,9 @@ export class ActivitiesController {
     return this.activitiesService.findAll(workspaceId, query);
   }
 
-  @Get(':id')
-  @ApiOperation({ summary: 'Get a single activity' })
-  @ApiResponse({ status: 404, description: 'Activity not found in this workspace' })
-  @Roles(...ALL_ROLES)
-  async findOne(
-    @CurrentWorkspace('id') workspaceId: string,
-    @Param('id', ParseUUIDPipe) id: string,
-  ) {
-    return this.activitiesService.findOne(workspaceId, id);
-  }
-
-  @Post(':id/disposition')
-  @ApiOperation({ summary: 'Record the outcome of a call and its follow-up action' })
-  @ApiResponse({ status: 201, description: 'Disposition recorded' })
-  @ApiResponse({ status: 404, description: 'Activity not found in this workspace' })
-  @Roles(...CALLING_ROLES)
-  async disposition(
-    @CurrentWorkspace('id') workspaceId: string,
-    @CurrentUser('id') userId: string,
-    @Param('id', ParseUUIDPipe) id: string,
-    @Body(ValidationPipe) dto: DispositionDto,
-  ) {
-    return this.activitiesService.applyDisposition(workspaceId, userId, id, dto);
-  }
-
-  @Post('disposition')
-  @ApiOperation({ summary: 'Log a call made outside the app and record its outcome' })
-  @ApiResponse({ status: 201, description: 'Call logged and dispositioned' })
-  @Roles(...CALLING_ROLES)
-  async createAndDisposition(
-    @CurrentWorkspace('id') workspaceId: string,
-    @CurrentUser('id') userId: string,
-    @Body(ValidationPipe) dto: CreateAndDispositionDto,
-  ) {
-    return this.activitiesService.createAndDisposition(workspaceId, userId, dto.contactId, dto);
-  }
-
+  // These literal paths must be declared before @Get(':id'): Nest matches in
+  // declaration order, so ':id' was swallowing "follow-ups" and the queue
+  // returned "Validation failed (uuid is expected)" instead of any data.
   @Get('follow-ups')
   @ApiOperation({ summary: 'Activities whose follow-up is due' })
   @Roles(...CALLING_ROLES)
@@ -114,4 +80,42 @@ export class ActivitiesController {
     const enriched = await this.workQueues.attachLatestRecordings(workspaceId, data as any);
     return { data: enriched, total };
   }
+
+  @Get(':id')
+  @ApiOperation({ summary: 'Get a single activity' })
+  @ApiResponse({ status: 404, description: 'Activity not found in this workspace' })
+  @Roles(...ALL_ROLES)
+  async findOne(
+    @CurrentWorkspace('id') workspaceId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.activitiesService.findOne(workspaceId, id);
+  }
+
+  @Post(':id/disposition')
+  @ApiOperation({ summary: 'Record the outcome of a call and its follow-up action' })
+  @ApiResponse({ status: 201, description: 'Disposition recorded' })
+  @ApiResponse({ status: 404, description: 'Activity not found in this workspace' })
+  @Roles(...CALLING_ROLES)
+  async disposition(
+    @CurrentWorkspace('id') workspaceId: string,
+    @CurrentUser('id') userId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body(ValidationPipe) dto: DispositionDto,
+  ) {
+    return this.activitiesService.applyDisposition(workspaceId, userId, id, dto);
+  }
+
+  @Post('disposition')
+  @ApiOperation({ summary: 'Log a call made outside the app and record its outcome' })
+  @ApiResponse({ status: 201, description: 'Call logged and dispositioned' })
+  @Roles(...CALLING_ROLES)
+  async createAndDisposition(
+    @CurrentWorkspace('id') workspaceId: string,
+    @CurrentUser('id') userId: string,
+    @Body(ValidationPipe) dto: CreateAndDispositionDto,
+  ) {
+    return this.activitiesService.createAndDisposition(workspaceId, userId, dto.contactId, dto);
+  }
+
 }

@@ -107,14 +107,16 @@ describe('OAuth login binding', () => {
     expect(() => service.consumeOAuthAuthCode(code, '')).toThrow(UnauthorizedException);
   });
 
-  // The browser flow has no deep link to hijack and no client to hold a
-  // secret, so it keeps working exactly as before.
-  it('still redeems an unbound code, for the web flow', () => {
+  // Superseded. This test used to assert that the web flow could redeem an
+  // unbound code — which is how an attacker completed a login with their own
+  // account and pushed that code into someone else's app. The web flow now
+  // carries its binding in an httpOnly cookie.
+  it('refuses an unbound code from any flow', () => {
     const { service } = build();
 
     const code = service.createOAuthAuthCode(authResponse);
 
-    expect(service.consumeOAuthAuthCode(code)).toMatchObject({ accessToken: 'a' });
+    expect(() => service.consumeOAuthAuthCode(code)).toThrow(UnauthorizedException);
   });
 
   // The bypass the first version left open: start the login the old way,
@@ -147,13 +149,11 @@ describe('OAuth login binding', () => {
     expect(service.consumeOAuthAuthCode(code, binding)).toMatchObject({ accessToken: 'a' });
   });
 
-  it('refuses a code that was not signed by us', () => {
+  it('refuses a handle it never issued', () => {
     const { service } = build();
-    const forged = new JwtService({ secret: 'someone-else' }).sign({
-      type: 'oauth-auth-code',
-      data: authResponse,
-    });
 
-    expect(() => service.consumeOAuthAuthCode(forged)).toThrow(UnauthorizedException);
+    expect(() => service.consumeOAuthAuthCode('f'.repeat(64), 'anything')).toThrow(
+      UnauthorizedException,
+    );
   });
 });

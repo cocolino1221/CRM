@@ -1,0 +1,29 @@
+display_information:
+  name: SlackCRM
+  description: Connect your CRM with Slack for seamless communication and collaboration
+  background_color: "#4A154B"
+
+features:
+  bot_user:
+    display_name: SlackCRM Bot
+    always_online: true
+
+oauth_config:
+  redirect_urls:
+    - https://slackcrm-backend.fly.dev/api/v1/integrations/oauth/callback
+  scopes:
+    user:
+      - channels:read
+      - users:read
+      - chat:write
+    bot:
+      - channels:read
+      - channels:history
+      - chat:write
+      - users:read
+      - files:read
+
+settings:
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false

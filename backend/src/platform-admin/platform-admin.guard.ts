@@ -39,6 +39,38 @@ export class PlatformAdminGuard implements CanActivate {
     return String(raw || '').trim();
   }
 
+  private normalizeEmailForMatch(email?: string): string {
+    const raw = String(email || '').trim().toLowerCase();
+    if (!raw || !raw.includes('@')) return raw;
+    const [localPart, domainPart] = raw.split('@');
+    if (!localPart || !domainPart) return raw;
+
+    if (domainPart === 'gmail.com' || domainPart === 'googlemail.com') {
+      const localBase = localPart.split('+')[0].replace(/\./g, '');
+      return `${localBase}@gmail.com`;
+    }
+
+    return `${localPart}@${domainPart}`;
+  }
+
+  private isConfiguredPlatformOwnerEmail(email?: string): boolean {
+    const configured = [
+      ...(String(this.configService.get<string>('SUPER_ADMIN_EMAILS') || process.env.SUPER_ADMIN_EMAILS || '')
+        .split(',')
+        .map((entry) => entry.trim())
+        .filter(Boolean)),
+      String(this.configService.get<string>('SUPER_ADMIN_EMAIL') || process.env.SUPER_ADMIN_EMAIL || '').trim(),
+      // keep owner fallback addresses for existing deployments
+      'constantin.pristavita@gmail.com',
+      'constantinpristavita@gmail.com',
+    ]
+      .map((entry) => this.normalizeEmailForMatch(entry))
+      .filter(Boolean);
+
+    const normalizedTarget = this.normalizeEmailForMatch(email);
+    return !!normalizedTarget && configured.includes(normalizedTarget);
+  }
+
   private extractJwtToken(request: any): string {
     const cookieToken = String(request?.cookies?.accessToken || '').trim();
     if (cookieToken) return cookieToken;
@@ -72,6 +104,7 @@ export class PlatformAdminGuard implements CanActivate {
 
       if (!user || user.isLocked) return null;
       if (user.role !== UserRole.SUPER_ADMIN) return null;
+      if (!this.isConfiguredPlatformOwnerEmail(user.email)) return null;
       return user;
     } catch {
       return null;

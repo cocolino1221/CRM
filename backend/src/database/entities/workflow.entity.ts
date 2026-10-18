@@ -16,6 +16,8 @@ export enum WorkflowStatus {
 }
 
 export enum WorkflowTriggerType {
+  WHATSAPP_MESSAGE_RECEIVED = 'whatsapp.message.received',
+  WHATSAPP_BUTTON_CLICKED = 'whatsapp.button.clicked',
   CONTACT_CREATED = 'contact.created',
   CONTACT_UPDATED = 'contact.updated',
   DEAL_CREATED = 'deal.created',
@@ -32,6 +34,7 @@ export enum WorkflowTriggerType {
 }
 
 export enum WorkflowActionType {
+  SEND_WHATSAPP = 'send_whatsapp',
   SEND_EMAIL = 'send_email',
   SEND_SMS = 'send_sms',
   CREATE_TASK = 'create_task',

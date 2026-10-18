@@ -1,6 +1,6 @@
 import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, LessThanOrEqual } from 'typeorm';
+import { Repository } from 'typeorm';
 import {
   WhatsAppCampaign,
   WhatsAppCampaignStatus,
@@ -8,6 +8,7 @@ import {
 } from '../../database/entities/whatsapp-campaign.entity';
 import { WhatsAppService } from './whatsapp.service';
 import { normalizePhoneE164 } from '../../common/utils/phone.util';
+import { CampaignDispatchService } from '../../scheduler/campaign-dispatch.service';
 
 export interface CreateWaCampaignDto {
   name: string;
@@ -26,6 +27,7 @@ export class WhatsAppCampaignsService {
     @InjectRepository(WhatsAppCampaign)
     private readonly repo: Repository<WhatsAppCampaign>,
     private readonly whatsappService: WhatsAppService,
+    private readonly dispatch: CampaignDispatchService,
   ) {}
 
   // ─── CRUD ────────────────────────────────────────────────────────────────────
@@ -69,7 +71,11 @@ export class WhatsAppCampaignsService {
       status,
       stats: {},
     });
-    return this.repo.save(campaign);
+    const saved = await this.repo.save(campaign);
+    if (saved.status === WhatsAppCampaignStatus.SCHEDULED && saved.scheduledAt) {
+      await this.dispatch.scheduleWhatsApp(saved.id, workspaceId, saved.scheduledAt);
+    }
+    return saved;
   }
 
   async update(
@@ -99,7 +105,15 @@ export class WhatsAppCampaignsService {
           ? WhatsAppCampaignStatus.SCHEDULED
           : WhatsAppCampaignStatus.DRAFT;
     }
-    return this.repo.save(campaign);
+    const saved = await this.repo.save(campaign);
+    if ('scheduledAt' in dto) {
+      if (saved.status === WhatsAppCampaignStatus.SCHEDULED && saved.scheduledAt) {
+        await this.dispatch.scheduleWhatsApp(saved.id, workspaceId, saved.scheduledAt);
+      } else {
+        await this.dispatch.cancel('wa', saved.id);
+      }
+    }
+    return saved;
   }
 
   async remove(workspaceId: string, id: string): Promise<{ deleted: boolean }> {
@@ -107,6 +121,7 @@ export class WhatsAppCampaignsService {
     if (campaign.status === WhatsAppCampaignStatus.SENDING) {
       throw new BadRequestException('Cannot delete a campaign that is currently sending');
     }
+    await this.dispatch.cancel('wa', id);
     await this.repo.remove(campaign);
     return { deleted: true };
   }
@@ -127,7 +142,9 @@ export class WhatsAppCampaignsService {
     }
     campaign.scheduledAt = new Date(scheduledAt);
     campaign.status = WhatsAppCampaignStatus.SCHEDULED;
-    return this.repo.save(campaign);
+    const saved = await this.repo.save(campaign);
+    await this.dispatch.scheduleWhatsApp(saved.id, workspaceId, saved.scheduledAt);
+    return saved;
   }
 
   // ─── Execution ───────────────────────────────────────────────────────────────
@@ -144,6 +161,9 @@ export class WhatsAppCampaignsService {
     if (campaign.status === WhatsAppCampaignStatus.SENT) {
       throw new BadRequestException('Campaign has already been sent');
     }
+
+    // Cancel any pending scheduled dispatch so it can't double-fire
+    await this.dispatch.cancel('wa', id);
 
     // Mark as sending immediately so duplicate calls are rejected
     campaign.status = WhatsAppCampaignStatus.SENDING;
@@ -249,16 +269,6 @@ export class WhatsAppCampaignsService {
   }
 
   // ─── Scheduler support ───────────────────────────────────────────────────────
-
-  /** Called by cron to pick up campaigns whose scheduledAt has passed */
-  async findDueCampaigns(): Promise<WhatsAppCampaign[]> {
-    return this.repo.find({
-      where: {
-        status: WhatsAppCampaignStatus.SCHEDULED,
-        scheduledAt: LessThanOrEqual(new Date()),
-      },
-    });
-  }
 
   /** Reset campaigns stuck in SENDING (e.g. after server restart) */
   async resetStuckCampaigns(): Promise<void> {

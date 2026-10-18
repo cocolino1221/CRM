@@ -27,6 +27,9 @@ export interface WhatsAppActivity {
     waId?: string;
     messageType?: string;
     messageStatus?: 'sent' | 'delivered' | 'read' | 'failed';
+    senderIntegrationId?: string;
+    senderPhoneNumberId?: string;
+    senderPhoneDisplay?: string;
     mediaUrl?: string;
     mediaCaption?: string;
     fileName?: string;
@@ -44,6 +47,8 @@ export interface Conversation {
   waId: string;
   contactName: string;
   contactId: string | null;
+  preferredSenderIntegrationId?: string | null;
+  preferredSenderPhoneDisplay?: string | null;
   phone: string;
   lastMessage: string;
   lastMessageTime: string;

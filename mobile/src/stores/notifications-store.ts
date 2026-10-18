@@ -6,6 +6,7 @@ interface NotificationsState {
   notifications: Notification[];
   unreadCount: number;
   isLoading: boolean;
+  fetchError: string;
   fetchNotifications: () => Promise<void>;
   fetchUnreadCount: () => Promise<void>;
   markAsRead: (id: string) => Promise<void>;
@@ -16,14 +17,16 @@ export const useNotificationsStore = create<NotificationsState>((set, get) => ({
   notifications: [],
   unreadCount: 0,
   isLoading: false,
+  fetchError: '',
 
   fetchNotifications: async () => {
     set({ isLoading: true });
     try {
       const res = await api.get('/notifications');
-      set({ notifications: res.data || [], isLoading: false });
-    } catch {
-      set({ isLoading: false });
+      set({ notifications: res.data || [], isLoading: false, fetchError: '' });
+    } catch (err: any) {
+      const msg = err?.response?.data?.message || 'Failed to load notifications';
+      set({ isLoading: false, fetchError: msg });
     }
   },
 
