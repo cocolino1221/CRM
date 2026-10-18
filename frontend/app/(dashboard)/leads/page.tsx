@@ -8,6 +8,7 @@ import { DispositionDialog } from '@/components/calls/DispositionDialog';
 import LeadsList from '@/components/leads/LeadsList';
 import BookedList from '@/components/queues/BookedList';
 import ToCallList from '@/components/queues/ToCallList';
+import ScheduleDialog from '@/components/bookings/ScheduleDialog';
 import type { QueueContactRef } from '@/lib/queue-rows';
 
 const PHONE_PREFIXES = [
@@ -167,6 +168,10 @@ export default function LeadsPage() {
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [showPipelineModal, setShowPipelineModal] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
+  // The lead a setter is booking a closer's slot for, from the detail popup.
+  const [schedulingContact, setSchedulingContact] = useState<Contact | null>(null);
+  // Bumped after a booking so both queues refetch — each owns its own rows.
+  const [queueRefresh, setQueueRefresh] = useState(0);
   const [editingContact, setEditingContact] = useState<Contact | null>(null);
   const [detailContact, setDetailContact] = useState<Contact | null>(null);
   // A call placed outside the app — the caller still records the outcome.
@@ -1018,8 +1023,8 @@ export default function LeadsPage() {
         />
       )}
 
-      {queueTab === 'booked' && <BookedList onOpenContact={openContactFromQueue} />}
-      {queueTab === 'to-call' && <ToCallList onOpenContact={openContactFromQueue} />}
+      {queueTab === 'booked' && <BookedList key={queueRefresh} onOpenContact={openContactFromQueue} />}
+      {queueTab === 'to-call' && <ToCallList key={queueRefresh} onOpenContact={openContactFromQueue} />}
 
       {/* Lead Detail Modal */}
       {logCallFor && (
@@ -1039,6 +1044,19 @@ export default function LeadsPage() {
           }}
           onClose={() => setLogCallFor(null)}
           onSaved={() => fetchContacts()}
+        />
+      )}
+
+      {schedulingContact && (
+        <ScheduleDialog
+          contact={schedulingContact}
+          onClose={() => setSchedulingContact(null)}
+          onScheduled={() => {
+            // The lead has just left De sunat for Programați; both queues and
+            // the main list are now stale.
+            setQueueRefresh((n) => n + 1);
+            void fetchContacts();
+          }}
         />
       )}
 
@@ -1198,6 +1216,15 @@ export default function LeadsPage() {
                     </div>
                   )}
                 </div>
+                {/* Programează manual — the only way a setter gets a lead into Programați */}
+                <button
+                  onClick={() => setSchedulingContact(detailContact)}
+                  className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-2 text-sm font-medium text-blue-600 transition-all hover:bg-blue-50"
+                  title="Programează o întâlnire cu un closer"
+                >
+                  <Calendar className="h-5 w-5" />
+                  <span className="hidden sm:inline">Programează</span>
+                </button>
                 {/* Edit button */}
                 <button
                   onClick={() => { setShowDetailModal(false); setDetailContact(null); openEditModal(detailContact); }}

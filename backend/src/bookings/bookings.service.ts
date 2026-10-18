@@ -144,6 +144,14 @@ export class BookingsService {
     // Validate that booker has permission
     this.validateBookingPermission(bookedBy);
 
+    // Over JSON startTime arrives as a string, and this body has no DTO class
+    // to transform it. Unconverted it reached zonedParts as a string and threw
+    // RangeError: Invalid time value — a 500 on every manual booking.
+    const startTime = dto.startTime instanceof Date ? dto.startTime : new Date(dto.startTime);
+    if (Number.isNaN(startTime.getTime())) {
+      throw new BadRequestException('startTime is not a valid date');
+    }
+
     // Validate host exists
     const host = await this.userRepository.findOne({
       where: { id: dto.hostId, workspaceId },
@@ -154,14 +162,14 @@ export class BookingsService {
     }
 
     // Calculate end time
-    const endTime = new Date(dto.startTime);
+    const endTime = new Date(startTime);
     endTime.setMinutes(endTime.getMinutes() + dto.duration);
 
     // Check if slot is available
     const isAvailable = await this.isSlotAvailable(
       workspaceId,
       dto.hostId,
-      dto.startTime,
+      startTime,
       endTime,
     );
 
@@ -172,7 +180,7 @@ export class BookingsService {
     const withinHours = await this.isWithinAvailability(
       workspaceId,
       dto.hostId,
-      dto.startTime,
+      startTime,
       endTime,
     );
 
@@ -184,6 +192,7 @@ export class BookingsService {
     const booking = this.bookingRepository.create({
       ...dto,
       workspaceId,
+      startTime,
       endTime,
       timezone: dto.timezone || 'UTC',
       status: BookingStatus.CONFIRMED,

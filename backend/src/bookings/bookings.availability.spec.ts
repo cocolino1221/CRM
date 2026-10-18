@@ -109,4 +109,30 @@ describe('BookingsService — manual bookings respect the host’s hours', () =>
     availabilities = [{ ...availabilities[0], isActive: false }];
     await expect(create(mondayMorning)).rejects.toBeInstanceOf(BadRequestException);
   });
+
+  /**
+   * The body of POST /bookings has no DTO class, so startTime arrives as the
+   * string the browser serialised. Every test above hands create() a real
+   * Date, which is why the dialog's first booking came back as a 500:
+   * RangeError: Invalid time value, thrown deep inside the hours check.
+   */
+  it('accepts startTime as an ISO string, the way a JSON client sends it', async () => {
+    await expect(
+      service.create(WORKSPACE, booker, {
+        hostId: HOST,
+        startTime: mondayMorning.toISOString() as any,
+        duration: 30,
+      }),
+    ).resolves.toEqual(expect.objectContaining({ id: 'b1' }));
+  });
+
+  it('refuses a startTime that is not a date at all', async () => {
+    await expect(
+      service.create(WORKSPACE, booker, {
+        hostId: HOST,
+        startTime: 'not-a-date' as any,
+        duration: 30,
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
 });

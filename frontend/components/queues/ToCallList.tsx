@@ -4,13 +4,14 @@
  * "De sunat" — people who filled in the form and were never scheduled.
  *
  * The caller works this list without leaving the page: dial from the row,
- * record the outcome in the dialog, and a contact who gets booked drops out of
- * the list on the next load. The number is a tel: link rather than an in-app
- * call — calls in this workspace are placed from a handset.
+ * book the hour agreed on the phone, record the outcome in the dialog, and a
+ * contact who gets booked drops out of the list on the next load. The number
+ * is a tel: link rather than an in-app call — calls in this workspace are
+ * placed from a handset.
  */
 
 import { useCallback, useEffect, useState } from 'react';
-import { Loader2, MessageCircle, Phone, PhoneOff, RefreshCw } from 'lucide-react';
+import { CalendarPlus, Loader2, MessageCircle, Phone, PhoneOff, RefreshCw } from 'lucide-react';
 import api from '@/lib/api';
 import { MONTH_NAMES, periodRange, type PeriodKind } from '@/lib/lead-filters';
 import {
@@ -22,6 +23,7 @@ import {
   type QueueContactRef,
 } from '@/lib/queue-rows';
 import { DispositionDialog } from '@/components/calls/DispositionDialog';
+import ScheduleDialog from '@/components/bookings/ScheduleDialog';
 
 interface Row {
   id: string;
@@ -48,6 +50,7 @@ export default function ToCallList({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [dispositionFor, setDispositionFor] = useState<Row | null>(null);
+  const [schedulingFor, setSchedulingFor] = useState<Row | null>(null);
   const [source, setSource] = useState('');
   const [periodKind, setPeriodKind] = useState<PeriodKind>('all');
   const [month, setMonth] = useState(new Date().getMonth());
@@ -263,6 +266,19 @@ export default function ToCallList({
                     <MessageCircle className="h-3.5 w-3.5" /> WhatsApp
                   </a>
                 )}
+                {/*
+                  Booking straight from the row: the setter has the lead on the
+                  phone and should not have to open the detail popup first.
+                */}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSchedulingFor(r);
+                  }}
+                  className="inline-flex items-center gap-1 rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 font-medium text-blue-700 hover:bg-blue-100 dark:border-blue-900 dark:bg-blue-950 dark:text-blue-300"
+                >
+                  <CalendarPlus className="h-3.5 w-3.5" /> Programează
+                </button>
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
@@ -286,6 +302,16 @@ export default function ToCallList({
         </ul>
         )}
       </div>
+
+      {schedulingFor && (
+        <ScheduleDialog
+          contact={schedulingFor}
+          timeZone={timeZone}
+          onClose={() => setSchedulingFor(null)}
+          // Once the booking exists the lead belongs in Programați.
+          onScheduled={load}
+        />
+      )}
 
       {dispositionFor && (
         <DispositionDialog
