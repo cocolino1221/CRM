@@ -60,3 +60,16 @@ describe('isPublicPath', () => {
     expect(isPublicPath('')).toBe(false);
   });
 });
+
+describe('the booking page', () => {
+  // A lead sent here from Typeform has no account and never will.
+  it('is reachable without signing in', () => {
+    expect(isPublicPath('/book')).toBe(true);
+    expect(isPublicPath('/book/consultatie-ab12cd')).toBe(true);
+  });
+
+  it('does not open anything that merely starts with the same letters', () => {
+    expect(isPublicPath('/bookings')).toBe(false);
+    expect(isPublicPath('/booking-settings')).toBe(false);
+  });
+});

@@ -122,6 +122,9 @@ export default function BookingSettingsPage() {
           // across every workspace, so it is minted here.
           slug: buildMeetingSlug(meetingName, randomSuffix()),
           isActive: true,
+          // getMeetingTypeBySlug filters on isPublic, which the column
+          // defaults to false — without this the booking page 404s.
+          isPublic: true,
         });
       }
 

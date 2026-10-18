@@ -31,6 +31,9 @@ const PUBLIC_PREFIXES = [
   '/auth/callback',
   // Landing pages. Every visitor here is a stranger by definition.
   '/p',
+  // The booking page a Typeform lead is sent to. Same reasoning: whoever
+  // opens it has no account and never will.
+  '/book',
 ];
 
 export function isPublicPath(pathname: string | null | undefined): boolean {
