@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Linking,
@@ -13,6 +13,13 @@ import {
 import { Mail, MessageCircle, Phone } from 'lucide-react-native';
 import api from '../lib/api';
 import { LEAD_MOVES, buildMovePayloads, moveById, type LeadMoveId } from '../lib/lead-moves';
+import {
+  groupSlotsByDay,
+  hostChoiceFor,
+  labelForSlot,
+  type SlotDay,
+  type TeamSlot,
+} from '../lib/slot-picking';
 import { SOURCE_OPTIONS } from '../lib/lead-filters';
 import { leadStage } from '../lib/lead-stage';
 import { whatsappDigits } from '../lib/whatsapp-phone';
@@ -28,6 +35,9 @@ import { whatsappDigits } from '../lib/whatsapp-phone';
  * outcome, because the badge on the list reads bookings. A tick that left the
  * row unchanged would be worse than no tick at all.
  */
+
+/** The workspace clock; the server reads the rule in this zone too. */
+const TIME_ZONE = 'Europe/Bucharest';
 
 const sourceLabel = (value?: string) =>
   SOURCE_OPTIONS.find((o) => o.value === value)?.label ?? value ?? '—';
@@ -47,12 +57,15 @@ function formatDate(value?: string | Date | null): string {
   }
 }
 
-/** Rounded to the next half hour, which is what someone picking "tomorrow" means. */
-function defaultSlot(daysAhead: number, hour: number): Date {
-  const d = new Date();
-  d.setDate(d.getDate() + daysAhead);
-  d.setHours(hour, 0, 0, 0);
-  return d;
+/** The next few days, so one request covers what a caller will scroll. */
+function nextDays(count: number): string[] {
+  const days: string[] = [];
+  for (let i = 0; i < count; i += 1) {
+    const d = new Date();
+    d.setDate(d.getDate() + i);
+    days.push(d.toISOString().slice(0, 10));
+  }
+  return days;
 }
 
 export default function LeadSheet({
@@ -79,6 +92,14 @@ export default function LeadSheet({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
+  // The team's actual free hours. The sheet used to offer four computed
+  // labels that were not looked up anywhere, so it could book an hour
+  // nobody was free for.
+  const [days, setDays] = useState<SlotDay[]>([]);
+  const [loadingSlots, setLoadingSlots] = useState(false);
+  const [slotsError, setSlotsError] = useState('');
+  const [chosenHostId, setChosenHostId] = useState<string | null>(null);
+
   const stage = useMemo(() => leadStage(contact, bookedIds), [contact, bookedIds]);
   const name =
     `${contact.firstName ?? ''} ${contact.lastName ?? ''}`.trim() ||
@@ -97,7 +118,7 @@ export default function LeadSheet({
       notes,
       amount,
       at: at ?? undefined,
-      hostId: currentUserId,
+      hostId: move === 'scheduled' ? chosenHostId ?? undefined : currentUserId,
       clientRequestId: clientRequestId.current,
     });
 
@@ -123,12 +144,44 @@ export default function LeadSheet({
     }
   };
 
-  const slots = [
-    { label: 'Mâine 10:00', at: defaultSlot(1, 10) },
-    { label: 'Mâine 17:00', at: defaultSlot(1, 17) },
-    { label: 'Poimâine 10:00', at: defaultSlot(2, 10) },
-    { label: 'În 7 zile', at: defaultSlot(7, 10) },
-  ];
+  // Loaded only once Programat is chosen: nobody else needs the round trip.
+  useEffect(() => {
+    if (move !== 'scheduled' || days.length || loadingSlots) return;
+
+    let cancelled = false;
+    setLoadingSlots(true);
+    setSlotsError('');
+
+    Promise.all(
+      nextDays(7).map((date) =>
+        api
+          .get<TeamSlot[]>('/scheduling/team-slots', { params: { date } })
+          .then((res) => (Array.isArray(res.data) ? res.data : []))
+          // One bad day must not cost the other six.
+          .catch(() => [] as TeamSlot[]),
+      ),
+    )
+      .then((pages) => {
+        if (cancelled) return;
+        const grouped = groupSlotsByDay(pages.flat(), TIME_ZONE);
+        setDays(grouped);
+        if (!grouped.length) {
+          setSlotsError(
+            'Nicio oră liberă în următoarele 7 zile. Verifică programul colegilor în Setări.',
+          );
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingSlots(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [move, days.length, loadingSlots]);
+
+  const selectedSlot = days.flatMap((d) => d.slots).find((sl) => sl.startTime === at) ?? null;
+  const hostChoice = hostChoiceFor(selectedSlot);
 
   const wa = whatsappDigits(contact.phone);
 
@@ -230,25 +283,104 @@ export default function LeadSheet({
               </View>
             )}
 
-            {selected?.needs === 'datetime' && (
+            {selected?.needs === 'datetime' && move === 'scheduled' && (
               <View className="mt-4">
-                <Text className="text-sm font-medium text-slate-700 mb-1.5">
-                  {move === 'scheduled' ? 'Când e întâlnirea' : 'Când revii'}
-                </Text>
+                <Text className="text-sm font-medium text-slate-700 mb-1.5">Când e întâlnirea</Text>
+
+                {loadingSlots && (
+                  <View className="py-4 items-center">
+                    <ActivityIndicator color="#4f46e5" />
+                  </View>
+                )}
+
+                {slotsError ? <Text className="text-sm text-amber-700">{slotsError}</Text> : null}
+
+                {days.map((day) => (
+                  <View key={day.date} className="mb-3">
+                    <Text className="text-xs font-semibold text-slate-500 mb-1.5">{day.label}</Text>
+                    <View className="flex-row flex-wrap gap-2">
+                      {day.slots.map((slot) => {
+                        const on = at === slot.startTime;
+                        return (
+                          <TouchableOpacity
+                            key={slot.startTime}
+                            onPress={() => {
+                              setAt(slot.startTime);
+                              // One person free means nothing to ask.
+                              const choice = hostChoiceFor(slot);
+                              setChosenHostId(choice.mustAsk ? null : (choice.hosts[0]?.userId ?? null));
+                            }}
+                            className={`rounded-full border px-4 py-2 ${
+                              on ? 'border-indigo-500 bg-indigo-50' : 'border-gray-300'
+                            }`}
+                          >
+                            <Text className={`text-sm ${on ? 'text-indigo-800' : 'text-slate-700'}`}>
+                              {labelForSlot(slot.startTime, TIME_ZONE)}
+                            </Text>
+                            <Text className="text-[10px] text-slate-400">
+                              {slot.hosts.length === 1
+                                ? slot.hosts[0].name
+                                : `${slot.hosts.length} colegi liberi`}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  </View>
+                ))}
+
+                {/* Two people free at that hour, so the caller says which. */}
+                {hostChoice.mustAsk && (
+                  <View className="mt-1">
+                    <Text className="text-sm font-medium text-slate-700 mb-1.5">Cu cine</Text>
+                    <View className="flex-row flex-wrap gap-2">
+                      {hostChoice.hosts.map((host) => {
+                        const on = chosenHostId === host.userId;
+                        return (
+                          <TouchableOpacity
+                            key={host.userId}
+                            onPress={() => setChosenHostId(host.userId)}
+                            className={`rounded-xl border px-4 py-2.5 ${
+                              on ? 'border-indigo-500 bg-indigo-50' : 'border-gray-300'
+                            }`}
+                          >
+                            <Text className={`text-sm ${on ? 'text-indigo-800 font-semibold' : 'text-slate-700'}`}>
+                              {host.name}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  </View>
+                )}
+              </View>
+            )}
+
+            {selected?.needs === 'datetime' && move !== 'scheduled' && (
+              <View className="mt-4">
+                <Text className="text-sm font-medium text-slate-700 mb-1.5">Când revii</Text>
                 <View className="flex-row flex-wrap gap-2">
-                  {slots.map((slot) => {
-                    const iso = slot.at.toISOString();
+                  {[
+                    { label: 'Mâine 10:00', days: 1, hour: 10 },
+                    { label: 'Mâine 17:00', days: 1, hour: 17 },
+                    { label: 'Poimâine 10:00', days: 2, hour: 10 },
+                    { label: 'În 7 zile', days: 7, hour: 10 },
+                  ].map((choice) => {
+                    const when = new Date();
+                    when.setDate(when.getDate() + choice.days);
+                    when.setHours(choice.hour, 0, 0, 0);
+                    const iso = when.toISOString();
                     const on = at === iso;
                     return (
                       <TouchableOpacity
-                        key={slot.label}
+                        key={choice.label}
                         onPress={() => setAt(iso)}
                         className={`rounded-full border px-4 py-2 ${
                           on ? 'border-indigo-500 bg-indigo-50' : 'border-gray-300'
                         }`}
                       >
                         <Text className={`text-sm ${on ? 'text-indigo-800' : 'text-slate-700'}`}>
-                          {slot.label}
+                          {choice.label}
                         </Text>
                       </TouchableOpacity>
                     );
