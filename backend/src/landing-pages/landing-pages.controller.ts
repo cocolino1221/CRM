@@ -148,7 +148,7 @@ export class LandingPagesController {
 
   @Get('domains')
     @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'caller', 'support_agent')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
   async listDomains(@Req() req: any) {
     const domains = await this.landingDomains.list(req.user.workspaceId);
     // The DNS records travel with each row, so the screen never has to
@@ -160,7 +160,7 @@ export class LandingPagesController {
     // Workspace-wide configuration: deleting a verified domain takes every
   // live page on it offline and releases the hostname for anyone to claim.
   @Roles('admin', 'manager')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
   async addDomain(@Req() req: any, @Body() body: { hostname: string }) {
     const domain = await this.landingDomains.addDomain(req.user.workspaceId, body?.hostname);
     return { ...domain, dns: this.landingDomains.instructionsFor(domain) };
@@ -170,7 +170,7 @@ export class LandingPagesController {
     // Workspace-wide configuration: deleting a verified domain takes every
   // live page on it offline and releases the hostname for anyone to claim.
   @Roles('admin', 'manager')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
   async verifyDomain(@Req() req: any, @Param('id') id: string) {
     const domain = await this.landingDomains.verify(req.user.workspaceId, id);
     return { ...domain, dns: this.landingDomains.instructionsFor(domain) };
@@ -180,7 +180,7 @@ export class LandingPagesController {
     // Workspace-wide configuration: deleting a verified domain takes every
   // live page on it offline and releases the hostname for anyone to claim.
   @Roles('admin', 'manager')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
   async removeDomain(@Req() req: any, @Param('id') id: string) {
     await this.landingDomains.remove(req.user.workspaceId, id);
     return { success: true };
