@@ -8,36 +8,18 @@
  * itself; the disposition dialog could record that a link was sent, but it
  * created nothing. A lead that agreed to a time on the phone stayed in De sunat.
  *
- * The hours offered come from /bookings/available-slots, so the setter cannot
- * invent an hour the closer does not work — the backend refuses those anyway
- * (BadRequestException), and a refusal after the lead hung up is useless.
+ * The date comes first and the person last: the dialog shows every hour
+ * anyone in the team is free (/scheduling/team-slots), coloured by closer, and
+ * only asks who takes it when more than one person is free at the hour picked.
+ * The setter cannot invent an hour nobody works — the backend refuses those
+ * anyway, and a refusal after the lead hung up is useless.
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Calendar, Loader2 } from 'lucide-react';
+import { Calendar, Check, Loader2 } from 'lucide-react';
 import api from '@/lib/api';
 import { contactDisplayName, formatQueueTime, type QueueContactRef } from '@/lib/queue-rows';
-
-interface Slot {
-  startTime: string;
-  endTime: string;
-  available?: boolean;
-}
-
-interface Host {
-  id: string;
-  firstName: string;
-  lastName: string;
-  email: string;
-  role: string;
-}
-
-/**
- * Who may hold a meeting. Managers and admins run their own calls in small
- * teams, and a workspace with no dedicated closer would otherwise show an
- * empty dropdown and block scheduling entirely.
- */
-const HOST_ROLES = ['closer', 'manager', 'admin'];
+import { hostColors, resolveHost, slotsForHost, type TeamSlot } from '@/lib/team-slots';
 
 const DURATIONS = [30, 45, 60];
 
@@ -70,70 +52,64 @@ export default function ScheduleDialog({
 }) {
   const today = useMemo(() => isoDate(new Date(), timeZone), [timeZone]);
 
-  const [hosts, setHosts] = useState<Host[]>([]);
-  const [hostId, setHostId] = useState('');
   const [date, setDate] = useState(today);
   const [duration, setDuration] = useState(30);
   const [notes, setNotes] = useState('');
 
-  const [slots, setSlots] = useState<Slot[]>([]);
+  const [slots, setSlots] = useState<TeamSlot[]>([]);
   const [slot, setSlot] = useState('');
+  const [hostId, setHostId] = useState<string | null>(null);
+  /** Show only one closer's hours; null shows everyone. */
+  const [filter, setFilter] = useState<string | null>(null);
 
-  const [loadingHosts, setLoadingHosts] = useState(true);
   const [loadingSlots, setLoadingSlots] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
   const name = contactDisplayName(contact);
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await api.get<Host[]>('/users');
-        if (cancelled) return;
-        const list = (res.data ?? []).filter((u) =>
-          HOST_ROLES.includes(String(u.role ?? '').toLowerCase()),
-        );
-        setHosts(list);
-        if (list.length === 1) setHostId(list[0].id);
-      } catch {
-        if (!cancelled) setError('Nu s-a putut încărca lista de closeri.');
-      } finally {
-        if (!cancelled) setLoadingHosts(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
   const loadSlots = useCallback(async () => {
-    if (!hostId || !date) {
+    if (!date) {
       setSlots([]);
       return;
     }
     setLoadingSlots(true);
     setError('');
-    // A stale slot staying selected while another closer's hours load would
-    // submit the wrong hour, so the choice is dropped on every reload.
+    // A stale hour staying selected while another day loads would submit the
+    // wrong hour, so the choice is dropped on every reload.
     setSlot('');
     try {
-      const res = await api.get<Slot[]>(`/bookings/available-slots/${hostId}`, {
-        params: { date },
-      });
-      setSlots(Array.isArray(res.data) ? res.data : []);
+      const res = await api.get<TeamSlot[]>('/scheduling/team-slots', { params: { date } });
+      setSlots(Array.isArray(res.data) ? res.data.filter((s) => s.hosts?.length) : []);
     } catch (err: any) {
       setSlots([]);
       setError(err?.response?.data?.message || 'Nu s-au putut încărca orele libere.');
     } finally {
       setLoadingSlots(false);
     }
-  }, [hostId, date]);
+  }, [date]);
 
   useEffect(() => {
     void loadSlots();
   }, [loadSlots]);
+
+  const colors = useMemo(() => hostColors(slots), [slots]);
+  const colorOf = useMemo(() => new Map(colors.map((c) => [c.userId, c.color])), [colors]);
+  const visible = useMemo(() => slotsForHost(slots, filter), [slots, filter]);
+  const picked = useMemo(() => slots.find((s) => s.startTime === slot) ?? null, [slots, slot]);
+
+  // A filter for someone not free at all on the new day would show nothing.
+  useEffect(() => {
+    if (filter && !colorOf.has(filter)) setFilter(null);
+  }, [filter, colorOf]);
+
+  const pickSlot = (s: TeamSlot) => {
+    setSlot(s.startTime);
+    setHostId(resolveHost(s, hostId ?? filter));
+  };
+
+  const timeOf = (iso: string) =>
+    new Intl.DateTimeFormat('ro-RO', { timeZone, hour: '2-digit', minute: '2-digit' }).format(new Date(iso));
 
   const submit = async () => {
     if (!hostId || !slot) return;
@@ -173,7 +149,7 @@ export default function ScheduleDialog({
         role="dialog"
         aria-modal="true"
         aria-label="Programează manual"
-        className="w-full max-w-md rounded-2xl bg-white p-5 shadow-xl dark:bg-gray-900"
+        className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-2xl bg-white p-5 shadow-xl dark:bg-gray-900"
       >
         <div className="mb-4 flex items-start gap-3">
           <Calendar className="mt-0.5 h-5 w-5 shrink-0 text-blue-600" />
@@ -185,34 +161,6 @@ export default function ScheduleDialog({
               Lead-ul trece din „De sunat" în „Programați".
             </p>
           </div>
-        </div>
-
-        <div className="mb-3">
-          <label
-            htmlFor="schedule-host"
-            className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-200"
-          >
-            Closer
-          </label>
-          <select
-            id="schedule-host"
-            value={hostId}
-            onChange={(e) => setHostId(e.target.value)}
-            disabled={loadingHosts}
-            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800"
-          >
-            <option value="">{loadingHosts ? 'Se încarcă…' : 'Alege closerul'}</option>
-            {hosts.map((h) => (
-              <option key={h.id} value={h.id}>
-                {`${h.firstName ?? ''} ${h.lastName ?? ''}`.trim() || h.email}
-              </option>
-            ))}
-          </select>
-          {!loadingHosts && !hosts.length && (
-            <p className="mt-1 text-xs text-amber-600">
-              Niciun closer în workspace — adaugă unul înainte de a programa.
-            </p>
-          )}
         </div>
 
         <div className="mb-3 grid grid-cols-2 gap-3">
@@ -258,42 +206,113 @@ export default function ScheduleDialog({
           <span className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-200">
             Ora
           </span>
-          {!hostId ? (
-            <p className="rounded-lg border border-dashed border-gray-300 px-3 py-4 text-center text-sm text-gray-500 dark:border-gray-700">
-              Alege întâi closerul.
-            </p>
-          ) : loadingSlots ? (
-            <div className="flex items-center justify-center py-5 text-gray-400">
-              <Loader2 className="h-5 w-5 animate-spin" />
-            </div>
-          ) : slots.length ? (
-            <div className="grid max-h-44 grid-cols-3 gap-2 overflow-y-auto pr-1">
-              {slots.map((s) => (
+          {colors.length > 1 && (
+            <div className="mb-2 flex flex-wrap gap-1.5" aria-label="Filtrează după closer">
+              <button
+                type="button"
+                onClick={() => setFilter(null)}
+                className={`rounded-full border px-2.5 py-0.5 text-xs ${
+                  filter === null
+                    ? 'border-gray-800 bg-gray-800 text-white dark:border-gray-200 dark:bg-gray-200 dark:text-gray-900'
+                    : 'border-gray-300 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800'
+                }`}
+              >
+                Toți
+              </button>
+              {colors.map((c) => (
                 <button
-                  key={s.startTime}
+                  key={c.userId}
                   type="button"
-                  data-testid="schedule-slot"
-                  onClick={() => setSlot(s.startTime)}
-                  className={`rounded-lg border px-2 py-1.5 text-sm transition ${
-                    slot === s.startTime
-                      ? 'border-blue-500 bg-blue-50 font-medium text-blue-700 dark:bg-blue-950 dark:text-blue-200'
-                      : 'border-gray-200 hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-800'
+                  onClick={() => setFilter(filter === c.userId ? null : c.userId)}
+                  className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs ${
+                    filter === c.userId
+                      ? 'font-medium text-white'
+                      : 'border-gray-300 text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800'
                   }`}
+                  style={filter === c.userId ? { backgroundColor: c.color, borderColor: c.color } : undefined}
                 >
-                  {new Intl.DateTimeFormat('ro-RO', {
-                    timeZone,
-                    hour: '2-digit',
-                    minute: '2-digit',
-                  }).format(new Date(s.startTime))}
+                  <span className="h-2 w-2 rounded-full" style={{ backgroundColor: filter === c.userId ? '#fff' : c.color }} />
+                  {c.name}
                 </button>
               ))}
             </div>
+          )}
+          {loadingSlots ? (
+            <div className="flex items-center justify-center py-5 text-gray-400">
+              <Loader2 className="h-5 w-5 animate-spin" />
+            </div>
+          ) : visible.length ? (
+            <div className="grid max-h-48 grid-cols-3 gap-2 overflow-y-auto pr-1">
+              {visible.map((s) => {
+                const selected = slot === s.startTime;
+                const only = s.hosts.length === 1 ? colorOf.get(s.hosts[0].userId) : undefined;
+                return (
+                  <button
+                    key={s.startTime}
+                    type="button"
+                    data-testid="schedule-slot"
+                    onClick={() => pickSlot(s)}
+                    title={s.hosts.map((h) => h.name).join(', ')}
+                    className={`relative rounded-lg border px-2 pb-2.5 pt-1.5 text-sm transition ${
+                      selected
+                        ? 'border-blue-500 bg-blue-50 font-medium text-blue-700 ring-2 ring-blue-500/40 dark:bg-blue-950 dark:text-blue-200'
+                        : 'border-gray-200 hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-800'
+                    }`}
+                    style={!selected && only ? { borderLeftColor: only, borderLeftWidth: 4 } : undefined}
+                  >
+                    {timeOf(s.startTime)}
+                    <span className="absolute inset-x-0 bottom-1 flex justify-center gap-0.5">
+                      {s.hosts.map((h) => (
+                        <span
+                          key={h.userId}
+                          className="h-1.5 w-1.5 rounded-full"
+                          style={{ backgroundColor: colorOf.get(h.userId) }}
+                        />
+                      ))}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
           ) : (
             <p className="rounded-lg border border-dashed border-gray-300 px-3 py-4 text-center text-sm text-gray-500 dark:border-gray-700">
-              Nicio oră liberă în ziua asta. Alege altă dată.
+              {slots.length
+                ? 'Closerul ales nu are ore libere în ziua asta.'
+                : 'Nicio oră liberă în ziua asta. Alege altă dată sau verifică orele din Disponibilitate.'}
             </p>
           )}
         </div>
+
+        {picked && (
+          <div className="mb-3">
+            <span className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-200">
+              Closer {picked.hosts.length > 1 && <span className="font-normal text-gray-500">— liberi la {timeOf(picked.startTime)}</span>}
+            </span>
+            <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Closer">
+              {picked.hosts.map((h) => {
+                const active = hostId === h.userId;
+                const color = colorOf.get(h.userId);
+                return (
+                  <button
+                    key={h.userId}
+                    type="button"
+                    role="radio"
+                    aria-checked={active}
+                    onClick={() => setHostId(h.userId)}
+                    className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm ${
+                      active ? 'font-medium text-white' : 'border-gray-300 text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800'
+                    }`}
+                    style={active ? { backgroundColor: color, borderColor: color } : undefined}
+                  >
+                    {active ? <Check className="h-3.5 w-3.5" /> : <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: color }} />}
+                    {h.name}
+                  </button>
+                );
+              })}
+            </div>
+            {!hostId && <p className="mt-1 text-xs text-amber-600">Alege cine preia programarea.</p>}
+          </div>
+        )}
 
         <div className="mb-3">
           <label
@@ -311,9 +330,10 @@ export default function ScheduleDialog({
           />
         </div>
 
-        {slot && (
+        {slot && hostId && (
           <p className="mb-3 text-sm text-gray-600 dark:text-gray-300">
-            Se programează pentru <strong>{formatQueueTime(slot, timeZone)}</strong>.
+            Se programează pentru <strong>{formatQueueTime(slot, timeZone)}</strong> cu{' '}
+            <strong>{picked?.hosts.find((h) => h.userId === hostId)?.name}</strong>.
           </p>
         )}
 

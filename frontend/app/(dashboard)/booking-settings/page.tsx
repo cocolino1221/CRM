@@ -9,7 +9,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Calendar, Check, Copy, Eraser, Loader2, Save } from 'lucide-react';
+import { Calendar, Check, Copy, Eraser, ExternalLink, Loader2, Save } from 'lucide-react';
 import api from '@/lib/api';
 import {
   SLOT_INTERVALS,
@@ -80,6 +80,7 @@ export default function BookingSettingsPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [saved, setSaved] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -270,6 +271,10 @@ export default function BookingSettingsPage() {
     );
   }
 
+  // The page renders only after the client has loaded, so window is there.
+  // The public page lives on the same origin as this dashboard.
+  const bookingLink = meeting ? `${window.location.origin}/book/${meeting.slug}` : '';
+
   const showLabel = (m: number) => step >= 30 || m % 60 === 0;
 
   return (
@@ -313,10 +318,30 @@ export default function BookingSettingsPage() {
         </div>
         {durationError && <p className="mt-2 text-xs text-red-600">Durata trebuie să fie între 5 și 480 de minute.</p>}
         {meeting && (
-          <p className="mt-3 text-xs text-gray-500">
-            Identificatorul public al paginii tale:{' '}
-            <code className="rounded bg-gray-100 px-1.5 py-0.5 text-gray-700">{meeting.slug}</code>
-          </p>
+          <div className="mt-3 text-xs text-gray-500">
+            Linkul pe care îl primește leadul ca să-și aleagă ora:
+            <div className="mt-1 flex flex-wrap items-center gap-2">
+              <code className="min-w-0 break-all rounded bg-gray-100 px-1.5 py-0.5 text-gray-700">{bookingLink}</code>
+              <button
+                type="button"
+                onClick={() => {
+                  void navigator.clipboard?.writeText(bookingLink).then(() => setCopied(true));
+                }}
+                className="inline-flex items-center gap-1 rounded-lg border border-gray-300 px-2 py-1 text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700"
+              >
+                {copied ? <Check className="h-3.5 w-3.5 text-green-600" /> : <Copy className="h-3.5 w-3.5" />}
+                {copied ? 'Copiat' : 'Copiază'}
+              </button>
+              <a
+                href={bookingLink}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 rounded-lg border border-gray-300 px-2 py-1 text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700"
+              >
+                <ExternalLink className="h-3.5 w-3.5" /> Deschide
+              </a>
+            </div>
+          </div>
         )}
       </section>
 
