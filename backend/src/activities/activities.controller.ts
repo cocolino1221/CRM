@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query, UseGuards, ValidationPipe } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query, UseGuards, ValidationPipe , BadRequestException } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { ActivitiesService } from './activities.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -8,7 +8,7 @@ import { Roles } from '../auth/decorators/roles.decorator';
 import { CurrentWorkspace } from '../auth/decorators/current-workspace.decorator';
 import { QueryActivitiesDto } from './dto/query-activities.dto';
 import { CreateAndDispositionDto, DispositionDto } from './dto/disposition.dto';
-import { WorkQueuesService, parseQueueSource } from './work-queues.service';
+import { WorkQueuesService, parseQueueDate, parseQueueSource } from './work-queues.service';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 
 const ALL_ROLES = ['admin', 'manager', 'sales_rep', 'closer', 'setter', 'caller', 'support_agent'];
@@ -69,12 +69,22 @@ export class ActivitiesController {
     @Query('page') page?: string,
     @Query('limit') limit?: string,
     @Query('source') source?: string,
+    @Query('createdFrom') createdFrom?: string,
+    @Query('createdTo') createdTo?: string,
   ) {
+    const from = parseQueueDate(createdFrom);
+    const to = parseQueueDate(createdTo);
+    if (from && to && from.getTime() > to.getTime()) {
+      throw new BadRequestException('createdFrom must not be later than createdTo');
+    }
+
     const { data, total } = await this.workQueues.findUnbookedLeads(
       workspaceId,
       page ? Number(page) : undefined,
       limit ? Number(limit) : undefined,
       parseQueueSource(source),
+      from,
+      to,
     );
     // Each row carries the last call recording so a caller can listen before dialling.
     const enriched = await this.workQueues.attachLatestRecordings(workspaceId, data as any);

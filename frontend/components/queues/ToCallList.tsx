@@ -12,6 +12,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Loader2, MessageCircle, Phone, PhoneOff, RefreshCw } from 'lucide-react';
 import api from '@/lib/api';
+import { MONTH_NAMES, periodRange, type PeriodKind } from '@/lib/lead-filters';
 import {
   QUEUE_SOURCE_OPTIONS,
   contactDisplayName,
@@ -48,13 +49,24 @@ export default function ToCallList({
   const [error, setError] = useState('');
   const [dispositionFor, setDispositionFor] = useState<Row | null>(null);
   const [source, setSource] = useState('');
+  const [periodKind, setPeriodKind] = useState<PeriodKind>('all');
+  const [month, setMonth] = useState(new Date().getMonth());
+  const [year, setYear] = useState(new Date().getFullYear());
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
+      const { createdFrom, createdTo } = periodRange({ kind: periodKind, year, month, from, to });
+      const params = {
+        ...(source ? { source } : {}),
+        ...(createdFrom ? { createdFrom } : {}),
+        ...(createdTo ? { createdTo } : {}),
+      };
       const res = await api.get('/activities/queues/to-call', {
-        params: source ? { source } : undefined,
+        params: Object.keys(params).length ? params : undefined,
       });
       setRows(res.data?.data ?? []);
       setTotal(res.data?.total ?? 0);
@@ -63,7 +75,7 @@ export default function ToCallList({
     } finally {
       setLoading(false);
     }
-  }, [source]);
+  }, [source, periodKind, month, year, from, to]);
 
   useEffect(() => {
     void load();
@@ -92,7 +104,9 @@ export default function ToCallList({
       <div className="p-10 text-center">
         <PhoneOff className="mx-auto h-8 w-8 text-gray-300" />
         <p className="mt-3 text-sm text-gray-500">
-          {source ? 'Nimeni de sunat din sursa aleasă' : 'Toți leadurii au fost programați'}
+          {source || periodKind !== 'all'
+            ? 'Nimeni de sunat cu filtrele alese'
+            : 'Toți leadurii au fost programați'}
         </p>
       </div>
     );
@@ -106,6 +120,65 @@ export default function ToCallList({
             {loading ? '…' : total} de sunat
           </span>
           <div className="flex items-center gap-3">
+          <select
+            value={periodKind}
+            onChange={(e) => setPeriodKind(e.target.value as PeriodKind)}
+            onClick={(e) => e.stopPropagation()}
+            aria-label="Perioadă"
+            className="rounded-lg border border-gray-200 bg-white px-2 py-1 text-xs text-gray-700 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-200"
+          >
+            <option value="all">Toată perioada</option>
+            <option value="month">Pe lună</option>
+            <option value="custom">Interval</option>
+          </select>
+
+          {periodKind === 'month' && (
+            <>
+              <select
+                value={month}
+                onChange={(e) => setMonth(Number(e.target.value))}
+                onClick={(e) => e.stopPropagation()}
+                aria-label="Luna"
+                className="rounded-lg border border-gray-200 bg-white px-2 py-1 text-xs text-gray-700 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-200"
+              >
+                {MONTH_NAMES.map((name, i) => (
+                  <option key={name} value={i}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+              <input
+                type="number"
+                value={year}
+                onChange={(e) => setYear(Number(e.target.value))}
+                onClick={(e) => e.stopPropagation()}
+                aria-label="Anul"
+                className="w-20 rounded-lg border border-gray-200 bg-white px-2 py-1 text-xs text-gray-700 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-200"
+              />
+            </>
+          )}
+
+          {periodKind === 'custom' && (
+            <>
+              <input
+                type="date"
+                value={from}
+                onChange={(e) => setFrom(e.target.value)}
+                onClick={(e) => e.stopPropagation()}
+                aria-label="De la"
+                className="rounded-lg border border-gray-200 bg-white px-2 py-1 text-xs text-gray-700 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-200"
+              />
+              <input
+                type="date"
+                value={to}
+                onChange={(e) => setTo(e.target.value)}
+                onClick={(e) => e.stopPropagation()}
+                aria-label="Până la"
+                className="rounded-lg border border-gray-200 bg-white px-2 py-1 text-xs text-gray-700 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-200"
+              />
+            </>
+          )}
+
           <select
             value={source}
             onChange={(e) => setSource(e.target.value)}

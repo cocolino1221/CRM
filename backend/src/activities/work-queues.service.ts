@@ -15,6 +15,17 @@ export const QUEUE_SOURCES: ContactSource[] = [
 ];
 
 /** A requested source the queues know, or undefined for "all of them". */
+/**
+ * A date from the query string, or undefined when there is nothing usable.
+ * An unparseable value filters nothing rather than silently emptying the
+ * queue — a caller staring at zero leads would blame the data, not the URL.
+ */
+export function parseQueueDate(value?: string): Date | undefined {
+  if (!value) return undefined;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? undefined : date;
+}
+
 export function parseQueueSource(value?: string): ContactSource | undefined {
   return QUEUE_SOURCES.find((source) => source === value);
 }
@@ -99,6 +110,9 @@ export class WorkQueuesService {
     page = 1,
     limit = DEFAULT_LIMIT,
     source?: ContactSource,
+    /** The window the lead arrived in. Both ends optional and inclusive. */
+    createdFrom?: Date,
+    createdTo?: Date,
   ): Promise<{ data: Contact[]; total: number }> {
     const sources = source ? [source] : QUEUE_SOURCES;
     const [data, total] = await this.contactRepository
@@ -106,6 +120,8 @@ export class WorkQueuesService {
       .where('contact.workspaceId = :workspaceId', { workspaceId })
       .andWhere('contact.source IN (:...sources)', { sources })
       .andWhere('contact.deletedAt IS NULL')
+      .andWhere(createdFrom ? 'contact.createdAt >= :createdFrom' : '1=1', { createdFrom })
+      .andWhere(createdTo ? 'contact.createdAt <= :createdTo' : '1=1', { createdTo })
       // A cancelled meeting is not a booking. Joining on contactId alone meant
       // a lead who booked and then cancelled vanished from both lists at once:
       // excluded from Programați by its status, and excluded from De sunat
