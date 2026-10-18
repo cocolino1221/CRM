@@ -1,21 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildMeetingSlug,
-  dayError,
+  cellState,
+  defaultWeek,
+  emptyWeek,
+  intervalToUnits,
   isValidTime,
   planAvailabilityChanges,
+  rangeUnits,
   slugify,
+  toMinutes,
+  unitsToIntervals,
+  weekFromRows,
   WEEKDAYS,
-  type DayRow,
+  type Weekday,
 } from './booking-settings';
-
-const row = (over: Partial<DayRow> = {}): DayRow => ({
-  dayOfWeek: 'monday',
-  startTime: '09:00',
-  endTime: '17:00',
-  enabled: true,
-  ...over,
-});
 
 describe('WEEKDAYS', () => {
   it('starts the week on Monday and covers all seven days', () => {
@@ -40,92 +39,132 @@ describe('isValidTime', () => {
   });
 });
 
-describe('dayError', () => {
-  it('passes a normal working day', () => {
-    expect(dayError(row())).toBeNull();
+const h = (time: string) => toMinutes(time);
+
+describe('unitsToIntervals', () => {
+  it('merges contiguous units and splits at gaps', () => {
+    const units = [...rangeUnits(h('09:00'), h('10:00')), ...rangeUnits(h('11:30'), h('12:30'))];
+    expect(unitsToIntervals(units)).toEqual([
+      { startTime: '09:00', endTime: '10:00' },
+      { startTime: '11:30', endTime: '12:30' },
+    ]);
   });
 
-  // A day that is not worked cannot be wrong, whatever is left in its inputs.
-  it('never complains about a day that is switched off', () => {
-    expect(dayError(row({ enabled: false, startTime: 'nonsense', endTime: '' }))).toBeNull();
+  it('is order-independent', () => {
+    expect(unitsToIntervals([h('09:15'), h('09:00')])).toEqual([{ startTime: '09:00', endTime: '09:30' }]);
   });
 
-  it('catches an end that is not after the start', () => {
-    expect(dayError(row({ startTime: '17:00', endTime: '09:00' }))).toMatch(/după/);
-    expect(dayError(row({ startTime: '09:00', endTime: '09:00' }))).toMatch(/după/);
+  // The backend refuses 24:00, so a day that runs to midnight is stored as 23:59.
+  it('writes midnight as 23:59', () => {
+    expect(unitsToIntervals([h('23:45')])).toEqual([{ startTime: '23:45', endTime: '23:59' }]);
   });
 
-  it('catches a malformed hour', () => {
-    expect(dayError(row({ endTime: '25:00' }))).toMatch(/HH:MM/);
+  it('returns nothing for an empty day', () => {
+    expect(unitsToIntervals([])).toEqual([]);
+  });
+});
+
+describe('intervalToUnits', () => {
+  it('round-trips with unitsToIntervals, midnight included', () => {
+    const interval = { startTime: '22:00', endTime: '23:59' };
+    expect(unitsToIntervals(intervalToUnits(interval))).toEqual([interval]);
+  });
+
+  // An hour typed before the grid existed must never be widened.
+  it('only keeps units wholly inside an off-grid interval', () => {
+    expect(intervalToUnits({ startTime: '09:10', endTime: '10:05' })).toEqual([h('09:15'), h('09:30'), h('09:45')]);
+  });
+
+  it('accepts the HH:MM:SS the time column returns', () => {
+    expect(intervalToUnits({ startTime: '09:00:00', endTime: '09:30:00' })).toEqual([h('09:00'), h('09:15')]);
+  });
+});
+
+describe('weekFromRows / defaultWeek', () => {
+  it('collects several windows on one day', () => {
+    const week = weekFromRows([
+      { dayOfWeek: 'monday', startTime: '09:00:00', endTime: '10:00:00' },
+      { dayOfWeek: 'monday', startTime: '11:30:00', endTime: '12:30:00' },
+    ]);
+    expect(week.monday.size).toBe(8);
+    expect(week.tuesday.size).toBe(0);
+  });
+
+  it('starts with weekdays nine to five and the weekend off', () => {
+    const week = defaultWeek();
+    expect(unitsToIntervals(week.friday)).toEqual([{ startTime: '09:00', endTime: '17:00' }]);
+    expect(week.saturday.size).toBe(0);
+  });
+});
+
+describe('cellState', () => {
+  const units = new Set([h('09:00'), h('09:15'), h('09:30')]);
+  it('reports a half-selected coarse cell as partial', () => {
+    expect(cellState(units, h('09:00'), 30)).toBe('all');
+    expect(cellState(units, h('09:30'), 30)).toBe('some');
+    expect(cellState(units, h('10:00'), 30)).toBe('none');
   });
 });
 
 describe('planAvailabilityChanges', () => {
-  it('creates a day that the closer has just switched on', () => {
-    const plan = planAvailabilityChanges([], [row()]);
+  const week = (rows: Array<[Weekday, string, string]>) => {
+    const w = emptyWeek();
+    for (const [day, start, end] of rows) for (const m of rangeUnits(h(start), h(end))) w[day].add(m);
+    return w;
+  };
 
+  it('creates every window of a split day', () => {
+    const plan = planAvailabilityChanges([], week([['monday', '09:00', '10:00'], ['monday', '11:30', '12:30']]));
     expect(plan.create).toEqual([
-      { dayOfWeek: 'monday', startTime: '09:00', endTime: '17:00', isActive: true },
+      { dayOfWeek: 'monday', startTime: '09:00', endTime: '10:00', isActive: true },
+      { dayOfWeek: 'monday', startTime: '11:30', endTime: '12:30', isActive: true },
     ]);
-    expect(plan.update).toEqual([]);
     expect(plan.remove).toEqual([]);
   });
 
-  it('updates a day whose hours moved', () => {
+  it('leaves a row that already matches alone, even as HH:MM:SS', () => {
     const plan = planAvailabilityChanges(
-      [{ id: 'a1', dayOfWeek: 'monday', startTime: '09:00', endTime: '17:00' }],
-      [row({ endTime: '18:00' })],
+      [{ id: 'a1', dayOfWeek: 'monday', startTime: '09:00:00', endTime: '17:00:00' }],
+      week([['monday', '09:00', '17:00']]),
     );
-
-    expect(plan.update).toEqual([{ id: 'a1', startTime: '09:00', endTime: '18:00', isActive: true }]);
-    expect(plan.create).toEqual([]);
+    expect(plan).toEqual({ create: [], remove: [] });
   });
 
-  it('leaves an unchanged day completely alone', () => {
+  it('replaces a window whose hours moved', () => {
     const plan = planAvailabilityChanges(
       [{ id: 'a1', dayOfWeek: 'monday', startTime: '09:00', endTime: '17:00' }],
-      [row()],
+      week([['monday', '09:00', '12:00']]),
     );
-
-    expect(plan).toEqual({ create: [], update: [], remove: [] });
-  });
-
-  // The public page reads these rows, so a day switched off has to disappear.
-  it('deletes a day that was switched off', () => {
-    const plan = planAvailabilityChanges(
-      [{ id: 'a1', dayOfWeek: 'monday', startTime: '09:00', endTime: '17:00' }],
-      [row({ enabled: false })],
-    );
-
     expect(plan.remove).toEqual(['a1']);
-    expect(plan.create).toEqual([]);
+    expect(plan.create).toEqual([{ dayOfWeek: 'monday', startTime: '09:00', endTime: '12:00', isActive: true }]);
   });
 
-  it('deletes a stale row for a weekday the form does not show', () => {
+  // The public page reads these rows, so a day cleared in the grid must vanish.
+  it('deletes a cleared day', () => {
     const plan = planAvailabilityChanges(
-      [{ id: 'ghost', dayOfWeek: 'sunday', startTime: '10:00', endTime: '12:00' }],
-      [row()],
+      [{ id: 'a1', dayOfWeek: 'sunday', startTime: '10:00', endTime: '12:00' }],
+      emptyWeek(),
     );
-
-    expect(plan.remove).toEqual(['ghost']);
+    expect(plan.remove).toEqual(['a1']);
   });
 
-  it('handles a whole week at once', () => {
-    const existing = [
-      { id: 'mon', dayOfWeek: 'monday' as const, startTime: '09:00', endTime: '17:00' },
-      { id: 'tue', dayOfWeek: 'tuesday' as const, startTime: '09:00', endTime: '17:00' },
-    ];
-    const desired = [
-      row({ dayOfWeek: 'monday', endTime: '16:00' }),
-      row({ dayOfWeek: 'tuesday', enabled: false }),
-      row({ dayOfWeek: 'wednesday' }),
-    ];
+  it('drops a duplicate of a row it keeps', () => {
+    const row = { dayOfWeek: 'monday' as const, startTime: '09:00', endTime: '10:00' };
+    const plan = planAvailabilityChanges([{ id: 'a', ...row }, { id: 'b', ...row }], week([['monday', '09:00', '10:00']]));
+    expect(plan).toEqual({ create: [], remove: ['b'] });
+  });
 
-    const plan = planAvailabilityChanges(existing, desired);
-
-    expect(plan.update.map((u) => u.id)).toEqual(['mon']);
-    expect(plan.remove).toEqual(['tue']);
-    expect(plan.create.map((c) => c.dayOfWeek)).toEqual(['wednesday']);
+  // Two adjacent rows would make a straddling booking fail server-side.
+  it('merges what were two adjacent rows into one', () => {
+    const plan = planAvailabilityChanges(
+      [
+        { id: 'a', dayOfWeek: 'monday', startTime: '09:00', endTime: '10:00' },
+        { id: 'b', dayOfWeek: 'monday', startTime: '10:00', endTime: '11:00' },
+      ],
+      week([['monday', '09:00', '11:00']]),
+    );
+    expect(plan.remove).toEqual(['a', 'b']);
+    expect(plan.create).toEqual([{ dayOfWeek: 'monday', startTime: '09:00', endTime: '11:00', isActive: true }]);
   });
 });
 

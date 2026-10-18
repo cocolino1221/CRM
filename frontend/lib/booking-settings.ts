@@ -29,91 +29,153 @@ export const WEEKDAYS: Array<{ value: Weekday; label: string }> = [
 /** The same shape the backend's CreateAvailabilityDto validates. */
 export const TIME_PATTERN = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;
 
-export interface DayRow {
-  /** Present once the row exists on the server. */
-  id?: string;
-  dayOfWeek: Weekday;
+/** The finest grain the grid stores; coarser views are made of these. */
+export const UNIT = 15;
+
+/** Start times a lead can be offered, in minutes between them. */
+export const SLOT_INTERVALS = [15, 30, 60] as const;
+export type SlotInterval = (typeof SLOT_INTERVALS)[number];
+
+/**
+ * A closer's week as the starts (minutes since midnight) of every 15-minute
+ * unit they are free in. Stored at the finest grain so switching the grid
+ * from 15 to 30 minutes and back never loses a selection.
+ */
+export type WeekUnits = Record<Weekday, Set<number>>;
+
+export interface Interval {
   startTime: string;
   endTime: string;
-  enabled: boolean;
 }
 
 export function isValidTime(value: string): boolean {
   return TIME_PATTERN.test(String(value || '').trim());
 }
 
-/** Minutes since midnight, for comparing two HH:MM strings. */
-function minutes(value: string): number {
-  const [h, m] = value.split(':').map(Number);
+/** Minutes since midnight for an HH:MM (or HH:MM:SS) string. */
+export function toMinutes(value: string): number {
+  const [h, m] = String(value).split(':').map(Number);
   return h * 60 + m;
 }
 
+/** HH:MM for minutes since midnight; 1440 is written as 24:00 for display only. */
+export function toTime(minutes: number): string {
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
+export function emptyWeek(): WeekUnits {
+  return Object.fromEntries(WEEKDAYS.map(({ value }) => [value, new Set<number>()])) as WeekUnits;
+}
+
+/** Every unit in [start, end). */
+export function rangeUnits(start: number, end: number): number[] {
+  const out: number[] = [];
+  for (let m = start; m < end; m += UNIT) out.push(m);
+  return out;
+}
+
+/** A week nobody has touched yet: weekdays nine to five, weekend off. */
+export function defaultWeek(): WeekUnits {
+  const week = emptyWeek();
+  for (const { value } of WEEKDAYS) {
+    if (value === 'saturday' || value === 'sunday') continue;
+    week[value] = new Set(rangeUnits(9 * 60, 17 * 60));
+  }
+  return week;
+}
+
 /**
- * The reason a day cannot be saved, or null when it is fine. A disabled day is
- * never wrong — it is simply not worked.
+ * The units a saved interval covers. A unit only counts when it sits wholly
+ * inside — an old 09:10 start is shown from 09:15, never widened to 09:00.
  */
-export function dayError(row: DayRow): string | null {
-  if (!row.enabled) return null;
-  if (!isValidTime(row.startTime) || !isValidTime(row.endTime)) {
-    return 'Ora trebuie scrisă ca HH:MM.';
+export function intervalToUnits(interval: Interval): number[] {
+  const start = Math.ceil(toMinutes(interval.startTime) / UNIT) * UNIT;
+  // The time column cannot hold 24:00, so a day ending 23:59 means midnight.
+  const rawEnd = toMinutes(interval.endTime);
+  const end = rawEnd === 23 * 60 + 59 ? 24 * 60 : Math.floor(rawEnd / UNIT) * UNIT;
+  return rangeUnits(start, end);
+}
+
+/**
+ * Contiguous units merged into the fewest intervals. Adjacent rows must never
+ * be saved: a booking that straddles them would be refused by the server,
+ * which checks each row on its own.
+ */
+export function unitsToIntervals(units: Iterable<number>): Interval[] {
+  const sorted = [...new Set(units)].sort((a, b) => a - b);
+  const out: Interval[] = [];
+  let start: number | null = null;
+  let prev = -UNIT;
+  for (const m of sorted) {
+    if (start === null) start = m;
+    else if (m !== prev + UNIT) {
+      out.push({ startTime: toTime(start), endTime: endTime(prev + UNIT) });
+      start = m;
+    }
+    prev = m;
   }
-  if (minutes(row.endTime) <= minutes(row.startTime)) {
-    return 'Ora de final trebuie să fie după cea de început.';
+  if (start !== null) out.push({ startTime: toTime(start), endTime: endTime(prev + UNIT) });
+  return out;
+}
+
+/** The backend only accepts 00:00–23:59, so midnight is stored as 23:59. */
+function endTime(minutes: number): string {
+  return minutes >= 24 * 60 ? '23:59' : toTime(minutes);
+}
+
+export function weekFromRows(
+  rows: Array<{ dayOfWeek: Weekday; startTime: string; endTime: string }>,
+): WeekUnits {
+  const week = emptyWeek();
+  for (const row of rows) {
+    if (!week[row.dayOfWeek]) continue;
+    for (const m of intervalToUnits(row)) week[row.dayOfWeek].add(m);
   }
-  return null;
+  return week;
+}
+
+/** How much of a grid cell [start, start+step) is selected: 'all', 'some' or 'none'. */
+export function cellState(units: Set<number>, start: number, step: number): 'all' | 'some' | 'none' {
+  const inside = rangeUnits(start, start + step);
+  const on = inside.filter((m) => units.has(m)).length;
+  return on === 0 ? 'none' : on === inside.length ? 'all' : 'some';
 }
 
 export interface AvailabilityChange {
   create: Array<{ dayOfWeek: Weekday; startTime: string; endTime: string; isActive: true }>;
-  update: Array<{ id: string; startTime: string; endTime: string; isActive: true }>;
   remove: string[];
 }
 
 /**
- * What to send so the server ends up matching the form.
+ * What to send so the server ends up matching the grid.
  *
- * A day the closer switched off is deleted rather than left inactive: the
- * public booking page reads availability rows, and a stale row nobody can see
- * in the form is the kind of thing that puts a caller on a Sunday call.
+ * A row that already says exactly what the grid says is left alone; every
+ * other row is deleted and the missing windows created. Deleting rather than
+ * deactivating matters: the public page reads these rows, and a stale one
+ * nobody can see in the grid is what puts a lead on a Sunday call.
  */
 export function planAvailabilityChanges(
   existing: Array<{ id: string; dayOfWeek: Weekday; startTime: string; endTime: string }>,
-  desired: DayRow[],
+  week: WeekUnits,
 ): AvailabilityChange {
-  const byDay = new Map(existing.map((row) => [row.dayOfWeek, row]));
-  const change: AvailabilityChange = { create: [], update: [], remove: [] };
-
-  for (const row of desired) {
-    const current = byDay.get(row.dayOfWeek);
-
-    if (!row.enabled) {
-      if (current) change.remove.push(current.id);
-      continue;
-    }
-
-    if (!current) {
-      change.create.push({
-        dayOfWeek: row.dayOfWeek,
-        startTime: row.startTime,
-        endTime: row.endTime,
-        isActive: true,
-      });
-    } else if (current.startTime !== row.startTime || current.endTime !== row.endTime) {
-      change.update.push({
-        id: current.id,
-        startTime: row.startTime,
-        endTime: row.endTime,
-        isActive: true,
-      });
+  const key = (day: string, start: string, end: string) => `${day}|${start.slice(0, 5)}|${end.slice(0, 5)}`;
+  const wanted = new Map<string, { dayOfWeek: Weekday; startTime: string; endTime: string }>();
+  for (const { value } of WEEKDAYS) {
+    for (const interval of unitsToIntervals(week[value] ?? [])) {
+      wanted.set(key(value, interval.startTime, interval.endTime), { dayOfWeek: value, ...interval });
     }
   }
 
-  // A row for a weekday the form does not know about would never be editable.
-  const known = new Set(desired.map((r) => r.dayOfWeek));
+  const change: AvailabilityChange = { create: [], remove: [] };
   for (const row of existing) {
-    if (!known.has(row.dayOfWeek)) change.remove.push(row.id);
+    const k = key(row.dayOfWeek, row.startTime, row.endTime);
+    // A second identical row is a duplicate: keep the first, drop the rest.
+    if (wanted.has(k)) wanted.delete(k);
+    else change.remove.push(row.id);
   }
-
+  for (const row of wanted.values()) change.create.push({ ...row, isActive: true });
   return change;
 }
 
