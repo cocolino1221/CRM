@@ -1,5 +1,6 @@
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import AnalyticsScreen from '../screens/AnalyticsScreen';
+import AvailabilityScreen from '../screens/AvailabilityScreen';
 import AutomationsScreen from '../screens/AutomationsScreen';
 import CalendarScreen from '../screens/CalendarScreen';
 import DocumentsScreen from '../screens/DocumentsScreen';
@@ -13,6 +14,7 @@ export type WorkspaceStackParams = {
   Documents: undefined;
   Payments: undefined;
   Automations: undefined;
+  Availability: undefined;
 };
 
 const Stack = createNativeStackNavigator<WorkspaceStackParams>();
@@ -26,6 +28,7 @@ export default function WorkspaceStack() {
       <Stack.Screen name="Documents" component={DocumentsScreen} />
       <Stack.Screen name="Payments" component={PaymentsScreen} />
       <Stack.Screen name="Automations" component={AutomationsScreen} />
+      <Stack.Screen name="Availability" component={AvailabilityScreen} />
     </Stack.Navigator>
   );
 }

@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { View, Text, TouchableOpacity } from 'react-native';
-import { LogOut, Shield, Bell, MessageCircle, Calendar, UserCog, ChevronRight } from 'lucide-react-native';
+import { LogOut, Shield, Bell, CalendarClock, MessageCircle, Calendar, UserCog, ChevronRight } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useNavigation } from '@react-navigation/native';
 import { useAuthStore } from '../stores/auth-store';
 import Avatar from '../components/Avatar';
 import NotificationPreferencesScreen from './NotificationPreferencesScreen';
@@ -9,6 +10,7 @@ import NotificationPreferencesScreen from './NotificationPreferencesScreen';
 export default function SettingsScreen() {
   const { user, logout } = useAuthStore();
   const insets = useSafeAreaInsets();
+  const navigation = useNavigation<any>();
   const [showNotificationPrefs, setShowNotificationPrefs] = useState(false);
 
   if (!user) return null;
@@ -52,6 +54,24 @@ export default function SettingsScreen() {
             </View>
             <Text className="text-xs font-semibold text-emerald-600">Connected</Text>
           </View>
+          <TouchableOpacity
+            onPress={() =>
+              // The hours live in the Workspace stack; a closer looking for
+              // them starts here, where every other personal setting is.
+              navigation.navigate('Workspace', { screen: 'Availability' })
+            }
+            className="flex-row items-center justify-between px-4 py-3.5 border-b border-slate-100"
+            activeOpacity={0.7}
+          >
+            <View className="flex-row items-center gap-2">
+              <CalendarClock size={16} color="#0f766e" />
+              <Text className="text-sm text-slate-700">Disponibilitatea mea</Text>
+            </View>
+            <View className="flex-row items-center gap-1">
+              <Text className="text-xs text-slate-500">Orele libere</Text>
+              <ChevronRight size={14} color="#94a3b8" />
+            </View>
+          </TouchableOpacity>
           <TouchableOpacity
             onPress={() => setShowNotificationPrefs(true)}
             className="flex-row items-center justify-between px-4 py-3.5 border-b border-slate-100"

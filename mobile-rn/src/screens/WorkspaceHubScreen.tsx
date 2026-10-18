@@ -11,6 +11,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   BarChart3,
   Bot,
+  CalendarClock,
   CalendarDays,
   CheckCircle2,
   CreditCard,
@@ -35,7 +36,7 @@ type WorkspaceCard = {
   subtitle: string;
   icon: typeof FolderKanban;
   accent: string;
-  route: 'Analytics' | 'Calendar' | 'Documents' | 'Payments' | 'Automations';
+  route: 'Analytics' | 'Calendar' | 'Documents' | 'Payments' | 'Automations' | 'Availability';
 };
 
 const asNumber = (value: unknown, fallback = 0): number => {
@@ -77,6 +78,16 @@ export default function WorkspaceHubScreen() {
       icon: CalendarDays,
       accent: '#0f766e',
       route: 'Calendar',
+    },
+    {
+      id: 'availability',
+      title: 'Disponibilitate',
+      // The hours a closer is free; without them they are never offered as a
+      // host when a lead is scheduled.
+      subtitle: 'Orele în care ești liber pentru programări',
+      icon: CalendarClock,
+      accent: '#0f766e',
+      route: 'Availability',
     },
     {
       id: 'documents',

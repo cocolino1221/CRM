@@ -58,10 +58,11 @@ export class SchedulingController {
   @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'caller')
   async updateAvailability(
     @CurrentWorkspace('id') workspaceId: string,
+    @CurrentUser('id') userId: string,
     @Param('id', ParseUUIDPipe) id: string,
     @Body(ValidationPipe) dto: Partial<CreateAvailabilityDto>,
   ) {
-    return this.schedulingService.updateAvailability(workspaceId, id, dto);
+    return this.schedulingService.updateAvailability(workspaceId, userId, id, dto);
   }
 
   @Delete('availability/:id')
@@ -72,9 +73,10 @@ export class SchedulingController {
   @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'caller')
   async deleteAvailability(
     @CurrentWorkspace('id') workspaceId: string,
+    @CurrentUser('id') userId: string,
     @Param('id', ParseUUIDPipe) id: string,
   ) {
-    await this.schedulingService.deleteAvailability(workspaceId, id);
+    await this.schedulingService.deleteAvailability(workspaceId, userId, id);
   }
 
   // ========== Meeting Types Endpoints ==========
@@ -111,10 +113,11 @@ export class SchedulingController {
   @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'caller')
   async updateMeetingType(
     @CurrentWorkspace('id') workspaceId: string,
+    @CurrentUser('id') userId: string,
     @Param('id', ParseUUIDPipe) id: string,
     @Body(ValidationPipe) dto: Partial<CreateMeetingTypeDto>,
   ) {
-    return this.schedulingService.updateMeetingType(workspaceId, id, dto);
+    return this.schedulingService.updateMeetingType(workspaceId, userId, id, dto);
   }
 
   @Delete('meeting-types/:id')
@@ -125,9 +128,10 @@ export class SchedulingController {
   @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'caller')
   async deleteMeetingType(
     @CurrentWorkspace('id') workspaceId: string,
+    @CurrentUser('id') userId: string,
     @Param('id', ParseUUIDPipe) id: string,
   ) {
-    await this.schedulingService.deleteMeetingType(workspaceId, id);
+    await this.schedulingService.deleteMeetingType(workspaceId, userId, id);
   }
 
   // ========== Public Booking Endpoints (No Auth) ==========

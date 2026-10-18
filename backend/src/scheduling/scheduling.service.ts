@@ -54,9 +54,21 @@ export class SchedulingService {
     });
   }
 
-  async updateAvailability(workspaceId: string, id: string, dto: Partial<CreateAvailabilityDto>) {
+  /**
+   * Everyone in the workspace may edit their own hours, so the owner is part
+   * of what is looked up: without it any of them could move or delete a
+   * colleague's window by id, and the lead would be offered an hour that
+   * colleague never agreed to. A row that belongs to someone else reads as
+   * absent rather than forbidden — there is nothing here to tell them about.
+   */
+  async updateAvailability(
+    workspaceId: string,
+    userId: string,
+    id: string,
+    dto: Partial<CreateAvailabilityDto>,
+  ) {
     const availability = await this.availabilityRepository.findOne({
-      where: { id, workspaceId, deletedAt: null as any },
+      where: { id, workspaceId, userId, deletedAt: null as any },
     });
 
     if (!availability) {
@@ -67,8 +79,8 @@ export class SchedulingService {
     return this.availabilityRepository.save(availability);
   }
 
-  async deleteAvailability(workspaceId: string, id: string) {
-    const result = await this.availabilityRepository.softDelete({ id, workspaceId });
+  async deleteAvailability(workspaceId: string, userId: string, id: string) {
+    const result = await this.availabilityRepository.softDelete({ id, workspaceId, userId });
     if (result.affected === 0) {
       throw new NotFoundException('Availability not found');
     }
@@ -109,9 +121,19 @@ export class SchedulingService {
     return meetingType;
   }
 
-  async updateMeetingType(workspaceId: string, id: string, dto: Partial<CreateMeetingTypeDto>) {
+  /**
+   * Owner-scoped for the same reason as availability: the meeting type holds
+   * the duration and the step a person's hours are offered in, and the hours
+   * screen writes one on every save.
+   */
+  async updateMeetingType(
+    workspaceId: string,
+    userId: string,
+    id: string,
+    dto: Partial<CreateMeetingTypeDto>,
+  ) {
     const meetingType = await this.meetingTypeRepository.findOne({
-      where: { id, workspaceId, deletedAt: null as any },
+      where: { id, workspaceId, userId, deletedAt: null as any },
     });
 
     if (!meetingType) {
@@ -122,8 +144,8 @@ export class SchedulingService {
     return this.meetingTypeRepository.save(meetingType);
   }
 
-  async deleteMeetingType(workspaceId: string, id: string) {
-    const result = await this.meetingTypeRepository.softDelete({ id, workspaceId });
+  async deleteMeetingType(workspaceId: string, userId: string, id: string) {
+    const result = await this.meetingTypeRepository.softDelete({ id, workspaceId, userId });
     if (result.affected === 0) {
       throw new NotFoundException('Meeting type not found');
     }
