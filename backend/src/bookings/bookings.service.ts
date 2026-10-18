@@ -169,6 +169,17 @@ export class BookingsService {
       throw new BadRequestException('Time slot is not available');
     }
 
+    const withinHours = await this.isWithinAvailability(
+      workspaceId,
+      dto.hostId,
+      dto.startTime,
+      endTime,
+    );
+
+    if (!withinHours) {
+      throw new BadRequestException('That hour is outside this host\'s working hours');
+    }
+
     // Create booking
     const booking = this.bookingRepository.create({
       ...dto,
@@ -232,6 +243,68 @@ export class BookingsService {
     return this.bookingRepository.findOne({
       where: { id },
       relations: ['host', 'contact', 'meetingType'],
+    });
+  }
+
+  /** Minutes since midnight for an "HH:MM" (or "HH:MM:SS") column. */
+  private static toMinutes(value: string): number {
+    const [h, m] = String(value || '').slice(0, 5).split(':').map(Number);
+    return (h || 0) * 60 + (m || 0);
+  }
+
+  /** The weekday and the time of day of a moment, as read in a given zone. */
+  private zonedParts(date: Date, timeZone: string): { weekday: string; minutes: number } {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      weekday: 'long',
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23',
+    }).formatToParts(date);
+    const part = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
+
+    return {
+      weekday: part('weekday').toLowerCase(),
+      minutes: Number(part('hour')) * 60 + Number(part('minute')),
+    };
+  }
+
+  /**
+   * Whether the host actually works then.
+   *
+   * Overlap was always checked; the hours themselves never were, so a caller
+   * could put a lead down for 03:00 on a Sunday. A host who has declared no
+   * hours at all is left alone on purpose: every closer had an empty week
+   * until the availability screen existed, and enforcing hours nobody has set
+   * would have stopped manual booking everywhere at once.
+   */
+  private async isWithinAvailability(
+    workspaceId: string,
+    hostId: string,
+    startTime: Date,
+    endTime: Date,
+  ): Promise<boolean> {
+    const rows = await this.availabilityRepository.find({
+      where: { workspaceId, userId: hostId },
+    });
+    // Zero rows means the host never configured a week. A row switched off is
+    // the opposite: a deliberate "not then", which must still be enforced.
+    if (rows.length === 0) return true;
+    const active = rows.filter((row) => row.isActive !== false);
+
+    return active.some((row) => {
+      const zone = row.timezone || 'UTC';
+      const start = this.zonedParts(startTime, zone);
+      const end = this.zonedParts(endTime, zone);
+
+      if (start.weekday !== String(row.dayOfWeek)) return false;
+      // A meeting running past midnight cannot sit inside one day's window.
+      if (end.minutes <= start.minutes) return false;
+
+      return (
+        start.minutes >= BookingsService.toMinutes(row.startTime) &&
+        end.minutes <= BookingsService.toMinutes(row.endTime)
+      );
     });
   }
 

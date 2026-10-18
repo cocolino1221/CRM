@@ -129,8 +129,11 @@ export default function BookingSettingsPage() {
       }
 
       const plan = planAvailabilityChanges(existing, days);
-      for (const row of plan.create) await api.post('/scheduling/availability', row);
-      for (const row of plan.update) await api.put(`/scheduling/availability/${row.id}`, row);
+      // The column defaults to UTC, but the hours above were typed in the
+      // viewer's own clock — without this a 09:00 start is read as 11:00.
+      const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Europe/Bucharest';
+      for (const row of plan.create) await api.post('/scheduling/availability', { ...row, timezone });
+      for (const row of plan.update) await api.put(`/scheduling/availability/${row.id}`, { ...row, timezone });
       for (const id of plan.remove) await api.delete(`/scheduling/availability/${id}`);
 
       await load();
