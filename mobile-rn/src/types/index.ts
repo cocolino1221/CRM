@@ -99,6 +99,9 @@ export interface Contact {
   pipelineId?: string;
   company?: { id: string; name: string };
   owner?: { id: string; firstName: string; lastName: string };
+  /** Who booked this lead — the setter credited with it. */
+  setterId?: string;
+  setter?: { id: string; firstName: string; lastName: string };
   deals?: Array<{ id: string; title: string; stage?: string; value?: number }>;
   customFields?: any;
   createdAt: string;

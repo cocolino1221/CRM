@@ -7,6 +7,8 @@ import { X, UserPlus, Check } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import { useLeadsStore } from '../stores/leads-store';
+import { useAuthStore } from '../stores/auth-store';
+import { assignableAs, defaultSetterFor } from '../lib/team-roles';
 import { useToastStore } from '../stores/toast-store';
 import Avatar from '../components/Avatar';
 import type { LeadsStackParams } from '../navigation/LeadsStack';
@@ -34,6 +36,7 @@ export default function LeadFormScreen() {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const { createContact, updateContact, selectedPipeline, pipelines, fetchPipelines, users, fetchUsers } = useLeadsStore();
+  const currentUser = useAuthStore((state) => state.user);
   const showToast = useToastStore(s => s.show);
   const contact = route.params?.contact;
   const isEdit = !!contact;
@@ -58,8 +61,19 @@ export default function LeadFormScreen() {
   const [stage, setStage] = useState(contactStage || asStageName(firstStage));
   const [source, setSource] = useState(contact?.source || '');
   const [ownerId, setOwnerId] = useState(contact?.owner?.id || '');
+  // Who booked this lead. A manual add starts credited to whoever is adding
+  // it, which is what "the setter who added it" means — empty when their
+  // role does not do that job, so nothing is credited falsely.
+  const [setterId, setSetterId] = useState(
+    contact?.setterId || defaultSetterFor(users as any, currentUser as any),
+  );
+  const [showSetterPicker, setShowSetterPicker] = useState(false);
   const [showUserPicker, setShowUserPicker] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+
+  const eligibleSetters = assignableAs(users as any, 'setter');
+  const setterUser = users.find((u) => u.id === setterId);
+  const setterName = `${setterUser?.firstName ?? ''} ${setterUser?.lastName ?? ''}`.trim();
 
   useEffect(() => { fetchUsers(); }, []);
 
@@ -110,6 +124,7 @@ export default function LeadFormScreen() {
       pipelineId: formPipeline?.id,
       source: source || undefined,
       ownerId: ownerId || undefined,
+      setterId: setterId || undefined,
     };
 
     const error = isEdit
@@ -257,6 +272,32 @@ export default function LeadFormScreen() {
           </ScrollView>
         </View>
 
+        {/* Setter — who booked this lead */}
+        <View className="mb-4">
+          <Text className="text-xs font-semibold text-slate-500 mb-2">
+            Setter <Text className="font-normal text-slate-400">(cine l-a adăugat)</Text>
+          </Text>
+          <TouchableOpacity
+            onPress={() => setShowSetterPicker(true)}
+            className="flex-row items-center gap-3 px-3 py-2.5 rounded-xl border border-slate-200 bg-white"
+          >
+            {setterId ? (
+              <>
+                <Avatar name={setterName} size="sm" />
+                <Text className="text-sm text-slate-900 flex-1">{setterName}</Text>
+                <TouchableOpacity onPress={() => setSetterId('')} hitSlop={8}>
+                  <X size={16} color="#94a3b8" />
+                </TouchableOpacity>
+              </>
+            ) : (
+              <>
+                <UserPlus size={16} color="#94a3b8" />
+                <Text className="text-sm text-slate-400 flex-1">Nimeni</Text>
+              </>
+            )}
+          </TouchableOpacity>
+        </View>
+
         {/* Assignee */}
         {users.length > 0 && (
           <View className="mb-4">
@@ -342,6 +383,46 @@ export default function LeadFormScreen() {
           </View>
         </View>
       </Modal>
+      {/* Only the people who could plausibly have booked it. Filtering to
+          the literal role "setter" left this empty in a workspace that has
+          admins and closers and nobody holding that role. */}
+      <Modal visible={showSetterPicker} animationType="slide" transparent>
+        <View className="flex-1 bg-black/40 justify-end">
+          <View className="bg-white rounded-t-3xl max-h-[70%]" style={{ paddingBottom: insets.bottom > 0 ? insets.bottom : 16 }}>
+            <View className="flex-row items-center justify-between px-4 py-3 border-b border-slate-100">
+              <Text className="text-base font-bold text-slate-900">Cine l-a adăugat</Text>
+              <TouchableOpacity onPress={() => setShowSetterPicker(false)} className="p-1.5 rounded-xl bg-slate-100">
+                <X size={18} color="#64748b" />
+              </TouchableOpacity>
+            </View>
+            <FlatList
+              data={eligibleSetters}
+              keyExtractor={(u: any) => u.id}
+              ListEmptyComponent={
+                <Text className="text-sm text-slate-400 px-4 py-6 text-center">
+                  Nimeni din echipă nu poate fi setter.
+                </Text>
+              }
+              renderItem={({ item: user }: any) => (
+                <TouchableOpacity
+                  onPress={() => { setSetterId(user.id); setShowSetterPicker(false); }}
+                  className="flex-row items-center gap-3 px-4 py-3 border-b border-slate-50"
+                >
+                  <Avatar name={`${user.firstName} ${user.lastName}`} size="sm" />
+                  <View className="flex-1">
+                    <Text className="text-sm font-medium text-slate-900">
+                      {user.firstName} {user.lastName}
+                      {user.id === currentUser?.id ? ' (tu)' : ''}
+                    </Text>
+                  </View>
+                  {setterId === user.id && <Check size={18} color="#0284c7" />}
+                </TouchableOpacity>
+              )}
+            />
+          </View>
+        </View>
+      </Modal>
+
     </KeyboardAvoidingView>
   );
 }
