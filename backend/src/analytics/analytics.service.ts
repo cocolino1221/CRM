@@ -580,9 +580,18 @@ export class AnalyticsService {
 
     const dealsWon = deals.filter(d => d.stage === DealStage.CLOSED_WON).length;
     const dealsLost = deals.filter(d => d.stage === DealStage.CLOSED_LOST).length;
-    const revenue = deals
-      .filter(d => d.stage === DealStage.CLOSED_WON)
-      .reduce((sum, d) => sum + toMoney(d.value), 0);
+    const won = deals.filter(d => d.stage === DealStage.CLOSED_WON);
+    const revenue = won.reduce((sum, d) => sum + toMoney(d.value), 0);
+
+    // The single `revenue` number above adds whatever currencies the deals
+    // happen to carry — 1000 EUR and 1000 RON become 2000, which corresponds
+    // to no amount of money. It is kept because every screen reads it, and
+    // the honest breakdown travels beside it.
+    const revenueByCurrency: Record<string, number> = {};
+    for (const deal of won) {
+      const currency = (deal.currency || 'RON').toUpperCase();
+      revenueByCurrency[currency] = (revenueByCurrency[currency] || 0) + toMoney(deal.value);
+    }
 
     // WhatsApp calls are deliberately stored as whatsapp_message with
     // metadata.messageType === 'call' so the chat UI renders them inline.
@@ -595,12 +604,21 @@ export class AnalyticsService {
     const meetingsHeld = activities.filter(a => a.type === 'meeting').length;
 
     return {
-      date: startOfDay.toISOString().split('T')[0],
+      // Formatted in the workspace's own zone. startOfDay is a local midnight
+      // expressed as a UTC instant, so slicing its ISO string labelled a
+      // Bucharest day with the previous date.
+      date: new Intl.DateTimeFormat('en-CA', {
+        timeZone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }).format(startOfDay),
       newContacts,
       newDeals,
       dealsWon,
       dealsLost,
       revenue,
+      revenueByCurrency,
       activitiesCompleted: activities.length,
       tasksCompleted: tasks.length,
       callsMade,
@@ -622,10 +640,15 @@ export class AnalyticsService {
     this.logger.log(`Generating EOD report for workspace ${workspaceId}`);
 
     const targetDate = date || new Date();
-    const startOfDay = new Date(targetDate);
-    startOfDay.setHours(0, 0, 0, 0);
-    const endOfDay = new Date(targetDate);
-    endOfDay.setHours(23, 59, 59, 999);
+
+    // The KPIs below come from a window in the workspace's timezone, while
+    // this method used to cut its own day with setHours() on the server
+    // clock. For a Bucharest workspace the two differed by two or three
+    // hours, so a deal closed just after local midnight counted toward
+    // today's revenue and yesterday's team performance — one report
+    // disagreeing with itself, with nothing on screen to explain it.
+    const timeZone = await this.getWorkspaceTimeZone(workspaceId);
+    const { start: startOfDay, end: endOfDay } = dayRangeInTimeZone(targetDate, timeZone);
 
     const kpis = await this.getDailyKPIs(workspaceId, targetDate, userId);
 

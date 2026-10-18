@@ -174,8 +174,10 @@ export class SchedulingService {
   }
 
   private async slotsForMeetingType(meetingType: MeetingType, date: Date) {
-    // Get user's availability for the day of week
-    const dayOfWeek = this.getDayOfWeek(date);
+    // The date arrives as YYYY-MM-DD parsed to UTC midnight. Reading it with
+    // local getters would shift the day on any server not running in UTC.
+    const ymd = date.toISOString().slice(0, 10);
+    const dayOfWeek = this.getDayOfWeek(new Date(`${ymd}T12:00:00Z`));
     const availabilities = await this.availabilityRepository.find({
       where: {
         userId: meetingType.userId,
@@ -189,63 +191,46 @@ export class SchedulingService {
       return [];
     }
 
-    // Get existing bookings for that day
-    const startOfDay = new Date(date);
-    startOfDay.setHours(0, 0, 0, 0);
-    const endOfDay = new Date(date);
-    endOfDay.setHours(23, 59, 59, 999);
-
+    // The closer's day can start up to 14h either side of UTC midnight, so the
+    // bookings window is widened by a day each way; the overlap check below is
+    // exact.
+    const dayStart = new Date(`${ymd}T00:00:00Z`).getTime();
     const bookings = await this.bookingRepository.find({
       where: {
         hostId: meetingType.userId,
-        startTime: Between(startOfDay, endOfDay),
+        startTime: Between(new Date(dayStart - 86400000), new Date(dayStart + 2 * 86400000)),
         status: BookingStatus.CONFIRMED,
         deletedAt: null as any,
       },
       order: { startTime: 'ASC' },
     });
 
-    // Generate available slots
+    const step = [15, 30, 60].includes(meetingType.slotInterval) ? meetingType.slotInterval : 15;
     const slots = [];
-    const now = new Date();
-    const minBookingTime = new Date(now.getTime() + meetingType.minNoticeHours * 60 * 60 * 1000);
+    const minBookingTime = new Date(Date.now() + meetingType.minNoticeHours * 60 * 60 * 1000);
 
     for (const availability of availabilities) {
-      const [startHour, startMinute] = availability.startTime.split(':').map(Number);
-      const [endHour, endMinute] = availability.endTime.split(':').map(Number);
-
-      let currentSlot = new Date(date);
-      currentSlot.setHours(startHour, startMinute, 0, 0);
-
-      const endTime = new Date(date);
-      endTime.setHours(endHour, endMinute, 0, 0);
+      // Hours were typed in the closer's clock, not the server's: 09:00 in
+      // Bucharest has to be offered as 09:00 Bucharest.
+      const zone = availability.timezone || 'UTC';
+      let currentSlot = SchedulingService.zonedToUtc(ymd, availability.startTime, zone);
+      const endTime = SchedulingService.zonedToUtc(ymd, availability.endTime, zone);
 
       while (currentSlot < endTime) {
         const slotEnd = new Date(currentSlot.getTime() + meetingType.duration * 60000);
 
-        // Check if slot is in the future (with min notice)
-        if (currentSlot < minBookingTime) {
-          currentSlot = new Date(currentSlot.getTime() + 15 * 60000); // 15 min intervals
-          continue;
-        }
-
-        // Check if slot doesn't exceed end time
         if (slotEnd > endTime) {
           break;
         }
 
-        // Check for conflicts with existing bookings
+        const tooSoon = currentSlot < minBookingTime;
         const hasConflict = bookings.some(booking => {
           const bookingStart = new Date(booking.startTime);
           const bookingEnd = new Date(booking.endTime);
-          return (
-            (currentSlot >= bookingStart && currentSlot < bookingEnd) ||
-            (slotEnd > bookingStart && slotEnd <= bookingEnd) ||
-            (currentSlot <= bookingStart && slotEnd >= bookingEnd)
-          );
+          return currentSlot < bookingEnd && slotEnd > bookingStart;
         });
 
-        if (!hasConflict) {
+        if (!tooSoon && !hasConflict) {
           slots.push({
             startTime: currentSlot.toISOString(),
             endTime: slotEnd.toISOString(),
@@ -253,11 +238,46 @@ export class SchedulingService {
           });
         }
 
-        currentSlot = new Date(currentSlot.getTime() + 15 * 60000); // 15 min intervals
+        currentSlot = new Date(currentSlot.getTime() + step * 60000);
       }
     }
 
-    return slots;
+    return slots.sort((a, b) => a.startTime.localeCompare(b.startTime));
+  }
+
+  /**
+   * The UTC instant of a wall-clock HH:MM on a YYYY-MM-DD in a timezone.
+   * Guesses the instant as if the zone were UTC, measures the zone's offset at
+   * that guess, and corrects; a second pass settles the DST changeover days.
+   */
+  static zonedToUtc(ymd: string, hhmm: string, timeZone: string): Date {
+    const [y, m, d] = ymd.split('-').map(Number);
+    const [h, min] = hhmm.split(':').map(Number);
+    const wall = Date.UTC(y, m - 1, d, h, min);
+
+    const offsetAt = (instant: number) => {
+      let parts: Intl.DateTimeFormatPart[];
+      try {
+        parts = new Intl.DateTimeFormat('en-US', {
+          timeZone,
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit',
+          hourCycle: 'h23',
+        }).formatToParts(new Date(instant));
+      } catch {
+        return 0; // An unknown zone name falls back to UTC rather than failing the page.
+      }
+      const get = (type: string) => Number(parts.find((p) => p.type === type)?.value);
+      const asUtc = Date.UTC(get('year'), get('month') - 1, get('day'), get('hour'), get('minute'));
+      return asUtc - instant;
+    };
+
+    let instant = wall - offsetAt(wall);
+    instant = wall - offsetAt(instant);
+    return new Date(instant);
   }
 
   // ========== Bookings ==========

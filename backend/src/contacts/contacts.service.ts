@@ -41,12 +41,24 @@ export function leadSource(contactSource: string): 'typeform' | 'social' | 'manu
  * silently ignored filter returns every contact in the workspace and looks
  * like it worked.
  */
-function parseRangeBound(value: string | undefined, field: string): Date | null {
+function parseRangeBound(
+  value: string | undefined,
+  field: string,
+  endOfDay = false,
+): Date | null {
   if (value === undefined || value === null || value === '') return null;
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
     throw new BadRequestException(`${field} is not a valid date`);
   }
+
+  // "2026-10-18" parses as midnight, and the predicate is <=, so asking for
+  // a range ending on the 18th excluded the whole of the 18th — the day the
+  // person actually picked. A date with no time means the end of that day.
+  if (endOfDay && /^\d{4}-\d{2}-\d{2}$/.test(value.trim())) {
+    date.setUTCHours(23, 59, 59, 999);
+  }
+
   return date;
 }
 
@@ -139,7 +151,7 @@ export class ContactsService {
       maxLeadScore,
       emailOptIn,
       createdFrom: parseRangeBound(createdFrom, 'createdFrom'),
-      createdTo: parseRangeBound(createdTo, 'createdTo'),
+      createdTo: parseRangeBound(createdTo, 'createdTo', true),
     });
 
     // Apply sorting

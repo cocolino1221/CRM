@@ -187,32 +187,36 @@ export class PushNotificationService implements OnModuleInit {
       metadata?: Record<string, any>;
       category?: string;
     },
-  ): Promise<void> {
-    if (!this.apnsEnabled && !this.firebaseInitialized) return;
+  ): Promise<boolean> {
+    // Returns whether anything was actually delivered. It used to resolve
+    // void in every case, so a caller that marked a reminder "sent" could not
+    // tell delivery from "this user has no device registered" — and a
+    // web-only user's reminders were marked done and never shown.
+    if (!this.apnsEnabled && !this.firebaseInitialized) return false;
 
     // Check user push preferences
     const user = await this.userRepository.findOne({
       where: { id: userId },
       select: ['id', 'preferences'],
     });
-    if (!user) return;
+    if (!user) return false;
 
     // Fine-grained category gate (falls back to the legacy per-type key).
     const category = notification.category || this.getPreferenceKey(notification.type);
     const notifPrefs = (user.preferences as any)?.notifications;
     if (category && notifPrefs?.push && notifPrefs.push[category] === false) {
-      return;
+      return false;
     }
     // Quiet hours: suppress push (the in-app notification row is already saved).
     if (isWithinQuietHours(notifPrefs?.quietHours)) {
-      return;
+      return false;
     }
 
     // Get active device tokens
     const tokens = await this.deviceTokenRepository.find({
       where: { userId, isActive: true },
     });
-    if (tokens.length === 0) return;
+    if (tokens.length === 0) return false;
 
     const data = {
       type: notification.type,
@@ -250,6 +254,8 @@ export class PushNotificationService implements OnModuleInit {
     if (androidTokens.length > 0 && this.firebaseInitialized) {
       await this.sendViaFirebase(androidTokens.map((t) => t.token), notification, data);
     }
+
+    return true;
   }
 
   private async sendViaFirebase(

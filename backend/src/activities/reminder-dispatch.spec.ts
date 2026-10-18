@@ -19,7 +19,7 @@ function build(tasks: any[]) {
       return Promise.resolve(t);
     }),
   };
-  const push = { sendPushToUser: jest.fn().mockResolvedValue(undefined) };
+  const push = { sendPushToUser: jest.fn().mockResolvedValue(true) };
 
   return {
     service: new ReminderDispatchService(taskRepository as any, push as any),
@@ -86,6 +86,27 @@ describe('ReminderDispatchService.dispatchDue', () => {
     const params = builder.andWhere.mock.calls.map((c: any[]) => c[1]).filter(Boolean);
     const statuses = params.find((p: any) => Array.isArray(p.statuses))?.statuses;
     expect(statuses).toEqual(expect.arrayContaining([TaskStatus.PENDING, TaskStatus.IN_PROGRESS]));
+  });
+
+  // The cron used to mark a reminder delivered whatever happened. A caller
+  // who only uses the web has no device registered, so their reminder was
+  // "sent" at 14:00, marked, and never shown to anyone.
+  it('does not mark a reminder that had nowhere to go', async () => {
+    const { service, saved, push } = build([dueTask()]);
+    push.sendPushToUser.mockResolvedValue(false);
+
+    await expect(service.dispatchDue(NOW)).resolves.toBe(0);
+    expect(saved).toHaveLength(0);
+  });
+
+  it('asks only for tasks due recently, not every overdue task ever written', async () => {
+    const { service, taskRepository } = build([]);
+
+    await service.dispatchDue(NOW);
+
+    const builder = taskRepository.createQueryBuilder.mock.results[0].value;
+    const sql = builder.andWhere.mock.calls.map((c: any[]) => String(c[0])).join(' | ');
+    expect(sql).toContain('dueDate >= :floor');
   });
 
   it('keeps going when one push fails', async () => {

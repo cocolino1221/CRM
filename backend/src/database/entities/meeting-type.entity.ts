@@ -119,6 +119,13 @@ export class MeetingType extends WorkspaceEntity {
   minNoticeHours: number;
 
   @Column({
+    type: 'int',
+    default: 15,
+    comment: 'Minutes between offered start times (15, 30 or 60)',
+  })
+  slotInterval: number;
+
+  @Column({
     type: 'jsonb',
     nullable: true,
     comment: 'Custom questions for booking form',

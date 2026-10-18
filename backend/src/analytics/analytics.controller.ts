@@ -1,11 +1,4 @@
-import {
-  Controller,
-  Get,
-  Query,
-  UseGuards,
-  ValidationPipe,
-  ParseIntPipe,
-} from '@nestjs/common';
+import { BadRequestException, Controller, Get, ParseIntPipe, Query, UseGuards, ValidationPipe } from '@nestjs/common';
 import {
   ApiTags,
   ApiOperation,
@@ -21,6 +14,10 @@ import { Roles } from '../auth/decorators/roles.decorator';
 import { CurrentWorkspace } from '../auth/decorators/current-workspace.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { DateRangeDto, TimeRange } from './dto/date-range.dto';
+
+/** A quarter and a bit: enough for any report anyone reads, bounded enough
+ * that the per-day fan-out cannot exhaust the connection pool. */
+const MAX_TREND_DAYS = 120;
 
 @ApiTags('Analytics')
 @Controller('analytics')
@@ -239,11 +236,36 @@ export class AnalyticsController {
     @Query('startDate') startDate: string,
     @Query('endDate') endDate: string,
   ) {
-    return this.analyticsService.getKPITrend(
-      workspaceId,
-      new Date(startDate),
-      new Date(endDate),
-    );
+    // This endpoint fans out one set of queries per day in the range, all at
+    // once. Unvalidated it answered a request with no dates by throwing a
+    // RangeError, and a decade-wide range by issuing thousands of concurrent
+    // queries — enough to starve every other request, from any role.
+    const start = this.parseReportDate(startDate, 'startDate');
+    const end = this.parseReportDate(endDate, 'endDate');
+
+    if (start.getTime() > end.getTime()) {
+      throw new BadRequestException('startDate must not be later than endDate');
+    }
+
+    const days = Math.floor((end.getTime() - start.getTime()) / 86_400_000) + 1;
+    if (days > MAX_TREND_DAYS) {
+      throw new BadRequestException(
+        `Intervalul este prea mare (${days} zile). Maxim ${MAX_TREND_DAYS}.`,
+      );
+    }
+
+    return this.analyticsService.getKPITrend(workspaceId, start, end);
+  }
+
+  private parseReportDate(value: string | undefined, field: string): Date {
+    if (!value) {
+      throw new BadRequestException(`${field} is required`);
+    }
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      throw new BadRequestException(`${field} is not a valid date`);
+    }
+    return date;
   }
 
   @Get('eod-report')

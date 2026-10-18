@@ -9,6 +9,7 @@ import {
   Length,
   IsHexColor,
   IsObject,
+  IsIn,
 } from 'class-validator';
 
 export class CreateMeetingTypeDto {
@@ -73,6 +74,10 @@ export class CreateMeetingTypeDto {
   @Min(0)
   @Max(168)
   minNoticeHours?: number;
+
+  @IsOptional()
+  @IsIn([15, 30, 60])
+  slotInterval?: number;
 
   @IsOptional()
   @IsArray()
