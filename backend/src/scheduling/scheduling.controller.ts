@@ -1,19 +1,4 @@
-import {
-  Controller,
-  Get,
-  Post,
-  Put,
-  Delete,
-  Body,
-  Param,
-  Query,
-  UseGuards,
-  ParseUUIDPipe,
-  ValidationPipe,
-  HttpCode,
-  HttpStatus,
-  BadRequestException,
-} from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Post, Put, Query, Req, UseGuards, ValidationPipe } from '@nestjs/common';
 import {
   ApiTags,
   ApiOperation,
@@ -166,6 +151,18 @@ export class SchedulingController {
   ) {
     const dateObj = new Date(date);
     return this.schedulingService.getAvailableSlots(slug, dateObj, timezone);
+  }
+
+  @Get('team-slots')
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Free hours across the team, with who is free at each' })
+  @ApiQuery({ name: 'date', description: 'Date in YYYY-MM-DD format', required: true })
+  async getTeamSlotsForApp(@Req() req: any, @Query('date') date: string) {
+    const day = new Date(date);
+    if (Number.isNaN(day.getTime())) {
+      throw new BadRequestException('date is not a valid date');
+    }
+    return this.schedulingService.getTeamSlotsForWorkspace(req.user.workspaceId, day);
   }
 
   @Get('public/:slug/team-slots')

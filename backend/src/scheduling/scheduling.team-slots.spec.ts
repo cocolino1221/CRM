@@ -60,7 +60,7 @@ describe('SchedulingService — getTeamSlots only offers people who are still he
       { id: 'b', userId: 'u2', user: { firstName: 'Ion', lastName: 'Rus' } },
     ];
 
-    const [hour] = await service.getTeamSlots('s', new Date('2026-10-19'));
+    const [hour] = await service.getTeamSlots('s', new Date('2026-10-19'), new Date('2026-10-18T09:00:00+03:00'));
 
     expect(hour.hosts.map((h: any) => h.name)).toEqual(['Ana Pop', 'Ion Rus']);
   });
@@ -72,7 +72,7 @@ describe('SchedulingService — getTeamSlots only offers people who are still he
       { id: 'b', userId: 'u2', user: undefined },
     ];
 
-    const [hour] = await service.getTeamSlots('s', new Date('2026-10-19'));
+    const [hour] = await service.getTeamSlots('s', new Date('2026-10-19'), new Date('2026-10-18T09:00:00+03:00'));
 
     expect(hour.hosts.map((h: any) => h.name)).toEqual(['Ana Pop']);
   });
@@ -89,7 +89,7 @@ describe('SchedulingService — getTeamSlots only offers people who are still he
       { id: 'b', userId: 'u2', user: { firstName: 'Ion', lastName: 'Rus' } },
     ];
 
-    const hours = await service.getTeamSlots('s', new Date('2026-10-19'));
+    const hours = await service.getTeamSlots('s', new Date('2026-10-19'), new Date('2026-10-18T09:00:00+03:00'));
 
     expect(hours).toHaveLength(1);
     expect(hours[0].hosts).toHaveLength(2);

@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
+import { isSlotBookable } from './booking-lead-time';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Between, LessThan, MoreThan, Not } from 'typeorm';
 import { Availability, DayOfWeek } from '../database/entities/availability.entity';
@@ -144,11 +145,22 @@ export class SchedulingService {
    * only how the page finds the workspace; whose link it was does not narrow
    * what the lead is offered.
    */
-  async getTeamSlots(slug: string, date: Date) {
+  async getTeamSlots(slug: string, date: Date, now: Date = new Date()) {
     const entry = await this.getMeetingTypeBySlug(slug);
+    return this.getTeamSlotsForWorkspace(entry.workspaceId, date, now);
+  }
 
+  /**
+   * The same free hours, for someone already signed in — the app books from
+   * here, where there is no public slug to resolve a workspace from.
+   *
+   * Hours that break the lead-time rule are dropped rather than returned and
+   * hidden: a client is free to ignore a flag, and the booking endpoint would
+   * then accept what the screen should never have offered.
+   */
+  async getTeamSlotsForWorkspace(workspaceId: string, date: Date, now: Date = new Date()) {
     const meetingTypes = await this.meetingTypeRepository.find({
-      where: { workspaceId: entry.workspaceId, isActive: true, isPublic: true, deletedAt: null as any },
+      where: { workspaceId, isActive: true, isPublic: true, deletedAt: null as any },
       relations: ['user'],
     });
 
@@ -175,7 +187,9 @@ export class SchedulingService {
       }
     }
 
-    return [...byStart.values()].sort((a, b) => a.startTime.localeCompare(b.startTime));
+    return [...byStart.values()]
+      .filter((slot) => isSlotBookable(new Date(slot.startTime), now))
+      .sort((a, b) => a.startTime.localeCompare(b.startTime));
   }
 
   private async slotsForMeetingType(meetingType: MeetingType, date: Date) {
