@@ -130,3 +130,30 @@ export function hostsLabel(hosts: Array<{ name: string }>): string {
   if (names.length === 2) return `${names[0]} sau ${names[1]}`;
   return `${names[0]} și încă ${names.length - 1}`;
 }
+
+/**
+ * The lead's details carried in the link Typeform redirects to, e.g.
+ * `/book/x?name={{field:…}}&email={{field:…}}&phone={{field:…}}`.
+ *
+ * Typeform leaves a recall it could not fill as the literal `{{…}}` or as an
+ * empty value; both count as missing. `complete` is true when nothing is left
+ * for the lead to type, so the page can ask for the hour alone.
+ */
+export function guestFromQuery(params: URLSearchParams): { guest: Guest; complete: boolean } {
+  const read = (...keys: string[]) => {
+    for (const key of keys) {
+      const value = (params.get(key) ?? '').trim();
+      if (value && !/^\{\{.*\}\}$/.test(value)) return value;
+    }
+    return '';
+  };
+  const first = read('first_name', 'prenume');
+  const last = read('last_name', 'nume_familie');
+  const guest: Guest = {
+    name: read('name', 'nume') || [first, last].filter(Boolean).join(' '),
+    email: read('email').toLowerCase(),
+    phone: read('phone', 'telefon'),
+  };
+  const complete = !!guest.name && !!guest.email && guestError(guest) === null;
+  return { guest, complete };
+}

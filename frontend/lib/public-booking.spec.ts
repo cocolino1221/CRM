@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  guestFromQuery,
   buildCallbackPayload,
   callbackError,
   hostsLabel,
@@ -151,5 +152,35 @@ describe('hostsLabel', () => {
 
   it('says something sensible when nobody is named', () => {
     expect(hostsLabel([])).toBe('Cineva din echipă');
+  });
+});
+
+describe('guestFromQuery', () => {
+  const q = (s: string) => guestFromQuery(new URLSearchParams(s));
+
+  it('reads what Typeform put in the link', () => {
+    expect(q('name=Oana%20Tocos&email=TocosOana@gmail.com&phone=%2B40749767923')).toEqual({
+      guest: { name: 'Oana Tocos', email: 'tocosoana@gmail.com', phone: '+40749767923' },
+      complete: true,
+    });
+  });
+
+  it('joins a first and last name sent separately', () => {
+    expect(q('first_name=Oana&last_name=Tocos&email=a@b.ro').guest.name).toBe('Oana Tocos');
+  });
+
+  // An answer Typeform could not recall arrives as the raw placeholder.
+  it('treats an unfilled recall as missing', () => {
+    const { guest, complete } = q('name=%7B%7Bfield%3Aabc%7D%7D&email=a@b.ro');
+    expect(guest.name).toBe('');
+    expect(complete).toBe(false);
+  });
+
+  it('is incomplete when the email is not an email', () => {
+    expect(q('name=Oana&email=nope').complete).toBe(false);
+  });
+
+  it('is empty for a plain link', () => {
+    expect(q('')).toEqual({ guest: { name: '', email: '', phone: '' }, complete: false });
   });
 });

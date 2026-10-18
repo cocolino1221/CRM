@@ -19,6 +19,7 @@ import {
   callbackError,
   formatSlotTime,
   guestError,
+  guestFromQuery,
   hostsLabel,
   nextDays,
   type Guest,
@@ -62,6 +63,19 @@ export default function PublicBookingPage() {
   const [callbackDone, setCallbackDone] = useState(false);
   const [guest, setGuest] = useState<Guest>({ name: '', email: '', phone: '' });
   const [notes, setNotes] = useState('');
+  /** Typeform sent everything we need: the lead only picks the hour. */
+  const [known, setKnown] = useState(false);
+  const [editing, setEditing] = useState(false);
+
+  // Read once on arrival. useSearchParams would force a Suspense boundary for
+  // a value that never changes while the page is open.
+  useEffect(() => {
+    const { guest: fromLink, complete } = guestFromQuery(new URLSearchParams(window.location.search));
+    setGuest(fromLink);
+    setKnown(complete);
+  }, []);
+  const askDetails = !known || editing;
+  const canCallBack = !!guest.name.trim() && !!guest.phone?.trim();
 
   const [loading, setLoading] = useState(true);
   const [loadingSlots, setLoadingSlots] = useState(false);
@@ -246,6 +260,11 @@ export default function PublicBookingPage() {
     <main className="mx-auto min-h-screen max-w-2xl px-4 py-10">
       <header className="text-center">
         <h1 className="text-2xl font-bold text-gray-900">{meeting.name}</h1>
+        {known && (
+          <p className="mt-2 text-sm text-gray-700">
+            Mulțumim, {guest.name.split(' ')[0]}! Mai rămâne doar să alegi ora.
+          </p>
+        )}
         <p className="mt-2 flex flex-wrap items-center justify-center gap-4 text-sm text-gray-500">
           <span className="inline-flex items-center gap-1">
             <Clock className="h-4 w-4" /> {meeting.duration} minute
@@ -334,6 +353,22 @@ export default function PublicBookingPage() {
 
       {chosen && (
         <section className="mt-8 rounded-2xl border border-gray-200 bg-white p-5">
+          {!askDetails ? (
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-sm text-gray-700">
+                Programare pentru <strong>{guest.name}</strong>
+                <span className="block text-xs text-gray-500">{guest.email}</span>
+              </p>
+              <button
+                type="button"
+                onClick={() => setEditing(true)}
+                className="text-xs text-indigo-600 hover:underline"
+              >
+                Nu ești tu? Modifică
+              </button>
+            </div>
+          ) : (
+          <>
           <h2 className="text-sm font-semibold text-gray-700">Datele tale</h2>
           <div className="mt-3 space-y-3">
             <input
@@ -363,6 +398,8 @@ export default function PublicBookingPage() {
               className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
             />
           </div>
+          </>
+          )}
 
           {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
 
@@ -386,9 +423,12 @@ export default function PublicBookingPage() {
             </p>
             <button
               onClick={() => {
-                setAskingCallback(true);
                 setError('');
+                // Name and number came with the link: nothing to ask, just send.
+                if (known && canCallBack && !editing) void askToBeCalled();
+                else setAskingCallback(true);
               }}
+              disabled={submitting}
               className="inline-flex items-center gap-2 rounded-xl border border-indigo-300 bg-white px-4 py-2 text-sm font-medium text-indigo-700 hover:bg-indigo-50"
             >
               <PhoneCall className="h-4 w-4" /> Vreau să fiu sunat

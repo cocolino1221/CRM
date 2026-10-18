@@ -437,19 +437,15 @@ export class SchedulingService {
       throw new BadRequestException('This time slot is no longer available');
     }
 
-    // Check or create contact
-    let contactId = null;
-    const existingContact = await this.contactRepository.findOne({
-      where: {
-        email: dto.guestEmail.toLowerCase(),
-        workspaceId: meetingType.workspaceId,
-        deletedAt: null as any,
-      },
-    });
-
-    if (existingContact) {
-      contactId = existingContact.id;
-    }
+    // The lead almost always exists already — Typeform or a WooCommerce order
+    // created them. Missing them here books a stranger and leaves the real
+    // lead in De sunat forever, so the match is forgiving on both keys.
+    const existingContact = await this.findLeadForBooking(
+      meetingType.workspaceId,
+      dto.guestEmail,
+      dto.guestPhone,
+    );
+    const contactId = existingContact?.id ?? null;
 
     const booking = this.bookingRepository.create({
       ...dto,
@@ -468,6 +464,36 @@ export class SchedulingService {
     const saved = await this.bookingRepository.save(booking);
     await this.notifyHostOfBooking(saved, meetingType, dto);
     return saved;
+  }
+
+  /**
+   * The contact a public booking belongs to: same email in any case first,
+   * then the same phone however it was typed ("0749 767 923" is
+   * "+40749767923"). The last nine digits are the Romanian subscriber number
+   * with or without the 0 / +40 prefix.
+   */
+  async findLeadForBooking(workspaceId: string, email?: string, phone?: string): Promise<Contact | null> {
+    const cleanEmail = String(email || '').trim().toLowerCase();
+    if (cleanEmail) {
+      const byEmail = await this.contactRepository
+        .createQueryBuilder('contact')
+        .where('contact.workspaceId = :workspaceId', { workspaceId })
+        .andWhere('contact.deletedAt IS NULL')
+        .andWhere('LOWER(contact.email) = :email', { email: cleanEmail })
+        .orderBy('contact.createdAt', 'DESC')
+        .getOne();
+      if (byEmail) return byEmail;
+    }
+
+    const digits = String(phone || '').replace(/\D/g, '');
+    if (digits.length < 9) return null;
+    return this.contactRepository
+      .createQueryBuilder('contact')
+      .where('contact.workspaceId = :workspaceId', { workspaceId })
+      .andWhere('contact.deletedAt IS NULL')
+      .andWhere(`regexp_replace(contact.phone, '\\D', '', 'g') LIKE :tail`, { tail: `%${digits.slice(-9)}` })
+      .orderBy('contact.createdAt', 'DESC')
+      .getOne();
   }
 
   /**

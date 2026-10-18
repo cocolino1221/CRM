@@ -61,7 +61,12 @@ describe('SchedulingService — booking notifies its host', () => {
         { provide: getRepositoryToken(User), useValue: {} },
         {
           provide: getRepositoryToken(Contact),
-          useValue: { findOne: jest.fn().mockResolvedValue({ id: 'c1' }) },
+          useValue: {
+            createQueryBuilder: () => {
+              const qb: any = { where: () => qb, andWhere: () => qb, orderBy: () => qb, getOne: async () => ({ id: 'c1' }) };
+              return qb;
+            },
+          },
         },
         { provide: NotificationsService, useValue: { create } },
         { provide: ContactsService, useValue: {} },
