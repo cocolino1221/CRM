@@ -10,7 +10,7 @@ interface AuthState {
   isLoading: boolean;
   error: string | null;
   login: (email: string, password: string) => Promise<boolean>;
-  loginWithOAuthCode: (code: string) => Promise<boolean>;
+  loginWithOAuthCode: (code: string, binding?: string) => Promise<boolean>;
   logout: () => Promise<void>;
   checkAuth: () => Promise<void>;
 }
@@ -57,10 +57,13 @@ export const useAuthStore = create<AuthState>((set) => ({
     }
   },
 
-  loginWithOAuthCode: async (code) => {
+  loginWithOAuthCode: async (code, binding) => {
     set({ isLoading: true, error: null });
     try {
-      const res = await api.post<AuthResponse>('/auth/oauth/exchange', { code });
+      // The binding proves this client is the one that started the login.
+      // Without it the server refuses a bound code, which is what stops a
+      // code from someone else's login being redeemed here.
+      const res = await api.post<AuthResponse>('/auth/oauth/exchange', { code, binding });
       const { user, accessToken, pendingApproval } = res.data;
       if (pendingApproval) {
         set({ isLoading: false, error: 'Your account is pending approval.' });

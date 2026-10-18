@@ -393,11 +393,15 @@ export class AuthController {
   @ApiOperation({ summary: 'Start Google OAuth login flow' })
   @ApiResponse({ status: 302, description: 'Redirect to Google OAuth' })
   async googleAuth(@Res() res: Response, @Query('source') source?: string): Promise<void> {
+    const state = this.authService.generateOAuthState(source === 'mobile' ? 'mobile' : 'web');
+    res.redirect(this.buildGoogleAuthUrl(state));
+  }
+
+  private buildGoogleAuthUrl(state: string): string {
     const googleClientId = this.configService.get('GOOGLE_CLIENT_ID');
     const callbackUrl = this.configService.get('GOOGLE_CALLBACK_URL');
-    const state = this.authService.generateOAuthState(source === 'mobile' ? 'mobile' : 'web');
 
-    const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +
+    return `https://accounts.google.com/o/oauth2/v2/auth?` +
       `client_id=${googleClientId}` +
       `&redirect_uri=${encodeURIComponent(callbackUrl)}` +
       `&response_type=code` +
@@ -405,8 +409,21 @@ export class AuthController {
       `&access_type=offline` +
       `&prompt=consent` +
       `&state=${encodeURIComponent(state)}`;
+  }
 
-    res.redirect(authUrl);
+  @Public()
+  @Post('oauth/start')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Begin a bound OAuth login (mobile)' })
+  async startOAuth(): Promise<{ authUrl: string; binding: string }> {
+    // The binding goes to the client over TLS and never through the browser;
+    // only its hash rides along inside the signed state. The exchange demands
+    // it back, which is what stops a code from someone else's login being
+    // injected into this app's deep link.
+    const { binding, bindingHash } = this.authService.createOAuthBinding();
+    const state = this.authService.generateOAuthState('mobile', bindingHash);
+
+    return { authUrl: this.buildGoogleAuthUrl(state), binding };
   }
 
   @Public()
@@ -443,8 +460,13 @@ export class AuthController {
     try {
       const authResponse = await this.authService.googleLogin(code);
 
-      // Create short-lived auth code to avoid placing tokens in URL
-      const authCode = this.authService.createOAuthAuthCode(authResponse);
+      // Create short-lived auth code to avoid placing tokens in URL. The
+      // binding hash rides across from the state, so the client that started
+      // this login is the only one that can redeem the code.
+      const authCode = this.authService.createOAuthAuthCode(
+        authResponse,
+        this.authService.getOAuthStateBindingHash(state) ?? undefined,
+      );
 
       const encodedCode = encodeURIComponent(authCode);
       res.redirect(
@@ -544,9 +566,10 @@ export class AuthController {
   @ApiResponse({ status: 401, description: 'Invalid or expired auth code' })
   async exchangeOAuthCode(
     @Body('code') code: string,
+    @Body('binding') binding: string | undefined,
     @Res({ passthrough: true }) res: Response,
   ): Promise<Omit<AuthResponse, 'refreshToken'>> {
-    const result = await this.authService.consumeOAuthAuthCode(code);
+    const result = await this.authService.consumeOAuthAuthCode(code, binding);
 
     // Set httpOnly cookies (same as login/register)
     res.cookie('accessToken', result.accessToken, this.getCookieOptions(false));

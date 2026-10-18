@@ -3,33 +3,8 @@ import { View, Text, TextInput, TouchableOpacity, KeyboardAvoidingView, Platform
 import { MessageCircle, Shield, Sparkles, Eye, EyeOff, Chrome } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuthStore } from '../stores/auth-store';
-import { API_BASE_URL } from '../lib/api';
-
-function parseOAuthRedirectUrl(url: string): { code?: string; error?: string } | null {
-  try {
-    const parsed = new URL(url);
-    const path = parsed.pathname.replace(/^\/+/, '');
-    const hostAndPath = [parsed.host, path].filter(Boolean).join('/');
-    const isCallback =
-      path === 'auth/callback' ||
-      hostAndPath === 'auth/callback' ||
-      /\/auth\/callback(?:\?|$)/i.test(url);
-
-    if (!isCallback) return null;
-    return {
-      code: parsed.searchParams.get('code') ?? undefined,
-      error: parsed.searchParams.get('error') ?? undefined,
-    };
-  } catch {
-    if (!/auth\/callback/i.test(url)) return null;
-    const query = url.split('?')[1] ?? '';
-    const params = new URLSearchParams(query);
-    return {
-      code: params.get('code') ?? undefined,
-      error: params.get('error') ?? undefined,
-    };
-  }
-}
+import api from '../lib/api';
+import { parseOAuthRedirectUrl } from '../lib/oauth-callback';
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
@@ -38,6 +13,9 @@ export default function LoginScreen() {
   const [localError, setLocalError] = useState('');
   const [isOAuthLoading, setIsOAuthLoading] = useState(false);
   const handledOAuthCodeRef = useRef<string | null>(null);
+  // Held only here, for one attempt. A callback that arrives without a login
+  // in progress is not ours.
+  const pendingBindingRef = useRef<string | null>(null);
   const { login, loginWithOAuthCode, isLoading, error } = useAuthStore();
   const insets = useSafeAreaInsets();
   const displayError = localError || error;
@@ -63,7 +41,15 @@ export default function LoginScreen() {
       setLocalError('');
       setIsOAuthLoading(true);
       try {
-        await loginWithOAuthCode(parsed.code);
+        const binding = pendingBindingRef.current;
+        if (!binding) {
+          // Nobody on this screen asked for this. An app that can open our
+          // scheme could otherwise hand us a code from its own login.
+          setLocalError('Autentificare neinițiată de aplicație. Încearcă din nou.');
+          return;
+        }
+        pendingBindingRef.current = null;
+        await loginWithOAuthCode(parsed.code, binding);
       } finally {
         setIsOAuthLoading(false);
       }
@@ -90,11 +76,22 @@ export default function LoginScreen() {
 
   const handleGoogleSignIn = async () => {
     setLocalError('');
-    const authUrl = `${API_BASE_URL}/auth/google?source=mobile`;
     try {
-      await Linking.openURL(authUrl);
+      // Ask the server to start the login: it answers with the URL and the
+      // secret that binds the eventual code to this app. Both can fail — no
+      // network, server down — so neither sits outside this guard.
+      const { data } = await api.post<{ authUrl: string; binding: string }>('/auth/oauth/start');
+      if (!data?.authUrl || !data?.binding) {
+        setLocalError('Nu s-a putut începe autentificarea. Încearcă din nou.');
+        return;
+      }
+      pendingBindingRef.current = data.binding;
+      await Linking.openURL(data.authUrl);
     } catch {
-      setLocalError('Could not open Google sign-in.');
+      // A half-started attempt must not leave a binding behind that a later
+      // stray callback could use.
+      pendingBindingRef.current = null;
+      setLocalError('Nu s-a putut deschide autentificarea Google.');
     }
   };
 

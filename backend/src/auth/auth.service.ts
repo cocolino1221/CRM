@@ -13,7 +13,7 @@ import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
-import { randomBytes } from 'crypto';
+import { createHash, randomBytes } from 'crypto';
 import * as bcrypt from 'bcrypt';
 import { v4 as uuidv4 } from 'uuid';
 import { User, UserRole, UserStatus } from '../database/entities/user.entity';
@@ -406,14 +406,53 @@ export class AuthService implements OnModuleInit {
   /**
    * Generate signed OAuth state token to prevent CSRF
    */
-  generateOAuthState(source: 'web' | 'mobile' = 'web'): string {
+  generateOAuthState(source: 'web' | 'mobile' = 'web', bindingHash?: string): string {
     return this.jwtService.sign(
-      { nonce: randomBytes(16).toString('hex'), source },
+      { nonce: randomBytes(16).toString('hex'), source, bindingHash },
       {
         secret: this.oauthStateSecret,
         expiresIn: Math.floor(this.oauthStateTtlMs / 1000),
       },
     );
+  }
+
+  /**
+   * A secret for one login attempt, held only by the client that started it.
+   *
+   * The mobile app used to exchange whatever auth code arrived on its deep
+   * link, so any app on the device able to open etcrm://auth/callback could
+   * hand it a code from the attacker's own login — signing the user into the
+   * attacker's account, where they would then type their data.
+   *
+   * Only the hash travels, inside the signed state, through the browser and
+   * the redirect. The secret goes to the client over TLS and comes back only
+   * on the exchange, which is what binds a code to the client that asked for
+   * it. It is not textbook PKCE — the verifier is minted here rather than on
+   * the device, because React Native has no CSPRNG without a native module —
+   * but it closes the same two doors: a code obtained by someone else cannot
+   * be redeemed here, and a code intercepted from here cannot be redeemed
+   * elsewhere.
+   */
+  createOAuthBinding(): { binding: string; bindingHash: string } {
+    const binding = randomBytes(32).toString('hex');
+    return { binding, bindingHash: this.hashOAuthBinding(binding) };
+  }
+
+  private hashOAuthBinding(binding: string): string {
+    return createHash('sha256').update(binding).digest('hex');
+  }
+
+  /** The hash a state carries, or null when it carries none (the web flow). */
+  getOAuthStateBindingHash(state?: string): string | null {
+    if (!state) return null;
+    try {
+      const payload = this.jwtService.verify(state, { secret: this.oauthStateSecret }) as {
+        bindingHash?: string;
+      };
+      return payload.bindingHash || null;
+    } catch {
+      return null;
+    }
   }
 
   /**
@@ -440,10 +479,13 @@ export class AuthService implements OnModuleInit {
   /**
    * Create short-lived auth code for OAuth callback exchange
    */
-  createOAuthAuthCode(authResponse: AuthResponse): string {
+  createOAuthAuthCode(authResponse: AuthResponse, bindingHash?: string): string {
     const payload = {
       type: 'oauth-auth-code',
       data: authResponse,
+      // Present for a flow that started with a binding; the exchange then
+      // demands the secret behind it.
+      bindingHash,
     };
 
     return this.jwtService.sign(payload, {
@@ -455,15 +497,24 @@ export class AuthService implements OnModuleInit {
   /**
    * Consume and invalidate auth code
    */
-  consumeOAuthAuthCode(code: string): AuthResponse {
+  consumeOAuthAuthCode(code: string, binding?: string): AuthResponse {
     try {
       const payload = this.jwtService.verify(code, { secret: this.oauthStateSecret }) as {
         type: string;
         data: AuthResponse;
+        bindingHash?: string;
       };
 
       if (payload.type !== 'oauth-auth-code' || !payload.data) {
         throw new UnauthorizedException('Invalid auth code');
+      }
+
+      // A bound code belongs to one client. Without the secret behind the
+      // hash, this is someone else's code — or ours in someone else's hands.
+      if (payload.bindingHash) {
+        if (!binding || this.hashOAuthBinding(binding) !== payload.bindingHash) {
+          throw new UnauthorizedException('Invalid auth code');
+        }
       }
 
       return payload.data;
