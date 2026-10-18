@@ -117,3 +117,6 @@ backend/uploads/
 
 # Deploy snapshots
 deploy-backups/
+
+# Local tool settings: holds API tokens and database URLs in plain text.
+.claude/settings.local.json
