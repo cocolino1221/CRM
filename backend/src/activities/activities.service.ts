@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, EntityManager, FindOptionsWhere, Raw, Repository } from 'typeorm';
+import { DataSource, EntityManager, FindOptionsWhere, Repository } from 'typeorm';
 import {
   Activity,
   ActivityDirection,
@@ -98,15 +98,16 @@ export class ActivitiesService {
       // metadata, which on this path is a brand-new empty object — so it
       // could never fire and a retry after a timeout sold the same thing
       // twice. The earlier attempt has to be looked up before one is built.
-      const earlier = await activityRepository.findOne({
-        where: {
-          workspaceId,
-          metadata: Raw(
-            (alias) => `${alias}->>'dispositionRequestId' = :requestId`,
-            { requestId: dto.clientRequestId },
-          ),
-        } as any,
-      });
+      // A query builder, not find() + Raw(): Raw hands over an unquoted
+      // `Activity.metadata`, which Postgres folds to "activity" and rejects —
+      // every save from the app's lead sheet failed on this lookup.
+      const earlier = await activityRepository
+        .createQueryBuilder('activity')
+        .where('activity.workspaceId = :workspaceId', { workspaceId })
+        .andWhere(`activity.metadata->>'dispositionRequestId' = :requestId`, {
+          requestId: dto.clientRequestId,
+        })
+        .getOne();
       if (earlier) return earlier;
 
       // contactId arrives straight off the wire with only @IsUUID() on it.

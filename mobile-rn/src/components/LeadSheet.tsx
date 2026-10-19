@@ -145,8 +145,10 @@ export default function LeadSheet({
   };
 
   // Loaded only once Programat is chosen: nobody else needs the round trip.
+  // loadingSlots stays out of the dependencies: setting it re-ran this effect,
+  // whose cleanup cancelled the request in flight, so the spinner never ended.
   useEffect(() => {
-    if (move !== 'scheduled' || days.length || loadingSlots) return;
+    if (move !== 'scheduled' || days.length) return;
 
     let cancelled = false;
     setLoadingSlots(true);
@@ -178,7 +180,7 @@ export default function LeadSheet({
     return () => {
       cancelled = true;
     };
-  }, [move, days.length, loadingSlots]);
+  }, [move, days.length]);
 
   const selectedSlot = days.flatMap((d) => d.slots).find((sl) => sl.startTime === at) ?? null;
   const hostChoice = hostChoiceFor(selectedSlot);

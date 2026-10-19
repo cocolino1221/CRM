@@ -26,6 +26,18 @@ function buildHarness(options: { existingByRequestId?: any; contact?: any; exist
 
   const repoFor = (bucket: string, findOneResult: any) => ({
     findOne: jest.fn().mockResolvedValue(findOneResult),
+    // The earlier-attempt lookup goes through a query builder; record what it filtered on.
+    lookups: [] as Array<Record<string, any>>,
+    createQueryBuilder: jest.fn(function (this: any) {
+      const params: Record<string, any> = {};
+      const repo = this;
+      const qb: any = {
+        where: jest.fn((_sql: string, p?: any) => (Object.assign(params, p), qb)),
+        andWhere: jest.fn((_sql: string, p?: any) => (Object.assign(params, p), qb)),
+        getOne: jest.fn(() => (repo.lookups.push(params), Promise.resolve(findOneResult))),
+      };
+      return qb;
+    }),
     create: jest.fn().mockImplementation((entity: any) => ({ ...entity })),
     save: jest.fn().mockImplementation((entity: any) => {
       const persisted = { id: entity.id ?? `${bucket}-saved`, ...entity };
@@ -98,11 +110,9 @@ describe('createAndDisposition — idempotency', () => {
 
     await service.createAndDisposition(WORKSPACE, USER, CONTACT, dto() as any);
 
-    const lookup = activityRepo.findOne.mock.calls.find((c: any[]) =>
-      JSON.stringify(c[0]).includes('req-abc12345'),
-    );
-    expect(lookup).toBeTruthy();
-    expect(JSON.stringify(lookup[0])).toContain(WORKSPACE);
+    expect(activityRepo.lookups).toEqual([
+      { workspaceId: WORKSPACE, requestId: 'req-abc12345' },
+    ]);
   });
 });
 

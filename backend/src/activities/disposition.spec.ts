@@ -33,6 +33,18 @@ function buildHarness(options: { activity?: Partial<Activity> | null } = {}) {
 
   const repoFor = (bucket: keyof typeof saved, findOneResult: any) => ({
     findOne: jest.fn().mockResolvedValue(findOneResult),
+    // The earlier-attempt lookup goes through a query builder; record what it filtered on.
+    lookups: [] as Array<Record<string, any>>,
+    createQueryBuilder: jest.fn(function (this: any) {
+      const params: Record<string, any> = {};
+      const repo = this;
+      const qb: any = {
+        where: jest.fn((_sql: string, p?: any) => (Object.assign(params, p), qb)),
+        andWhere: jest.fn((_sql: string, p?: any) => (Object.assign(params, p), qb)),
+        getOne: jest.fn(() => (repo.lookups.push(params), Promise.resolve(findOneResult))),
+      };
+      return qb;
+    }),
     create: jest.fn().mockImplementation((entity: any) => ({ ...entity })),
     save: jest.fn().mockImplementation((entity: any) => {
       const persisted = { id: `${bucket}-saved`, ...entity };
