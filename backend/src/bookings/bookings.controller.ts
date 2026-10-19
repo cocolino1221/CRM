@@ -77,9 +77,10 @@ export class BookingsController {
   }
 
   @Post()
-  @ApiOperation({ summary: 'Create a new booking (setter/caller books for closer)' })
+  @ApiOperation({ summary: 'Create a new booking (setter/caller books for closer, or a closer for themselves)' })
   @ApiResponse({ status: 201, description: 'Booking created successfully' })
-  @Roles('admin', 'manager', 'setter', 'caller')
+  // The service narrows a closer to bookings they host themselves.
+  @Roles('admin', 'manager', 'setter', 'caller', 'closer')
   async create(
     @CurrentWorkspace('id') workspaceId: string,
     @Req() req: any,

@@ -107,3 +107,23 @@ export function groupSlotsByDay(
       slots: day.slots.sort((a, b) => a.startTime.localeCompare(b.startTime)),
     }));
 }
+
+/**
+ * A closer may put a meeting in their own diary at any hour, free slot or not;
+ * the server still refuses one that overlaps. Callers and setters book only
+ * the hours the team declared.
+ */
+export function canPickOwnHour(role: string | null | undefined): boolean {
+  return String(role || '').toLowerCase() === 'closer';
+}
+
+/** The instant for "in N days at HH:MM" on the phone's own clock. */
+export function ownHourIso(dayOffset: number, hour: number, minute: number, now = new Date()): string {
+  const when = new Date(now);
+  when.setDate(when.getDate() + dayOffset);
+  when.setHours(hour, minute, 0, 0);
+  return when.toISOString();
+}
+
+export const OWN_HOURS = Array.from({ length: 15 }, (_, i) => i + 7); // 07–21
+export const OWN_MINUTES = [0, 15, 30, 45];

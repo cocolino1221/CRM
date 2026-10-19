@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { groupSlotsByDay, hostChoiceFor, labelForSlot } from './slot-picking';
+import { canPickOwnHour, groupSlotsByDay, hostChoiceFor, labelForSlot, ownHourIso } from './slot-picking';
 
 /**
  * The sheet offered four fixed labels — "Mâine 10:00" and friends — that were
@@ -77,5 +77,30 @@ describe('groupSlotsByDay', () => {
   it('copes with nothing at all', () => {
     expect(groupSlotsByDay([], 'Europe/Bucharest')).toEqual([]);
     expect(groupSlotsByDay(undefined as any, 'Europe/Bucharest')).toEqual([]);
+  });
+});
+
+describe('closer picking their own hour', () => {
+  it('is only for closers', () => {
+    expect(canPickOwnHour('closer')).toBe(true);
+    expect(canPickOwnHour('CLOSER')).toBe(true);
+    expect(canPickOwnHour('caller')).toBe(false);
+    expect(canPickOwnHour('setter')).toBe(false);
+    expect(canPickOwnHour(undefined)).toBe(false);
+  });
+
+  it('lands on the chosen day and minute on the phone clock', () => {
+    const now = new Date(2026, 9, 19, 9, 40);
+    const iso = ownHourIso(2, 18, 15, now);
+    const d = new Date(iso);
+    expect(d.getDate()).toBe(21);
+    expect(d.getHours()).toBe(18);
+    expect(d.getMinutes()).toBe(15);
+  });
+
+  it('rolls over the end of the month', () => {
+    const d = new Date(ownHourIso(1, 10, 0, new Date(2026, 9, 31, 12, 0)));
+    expect(d.getMonth()).toBe(10);
+    expect(d.getDate()).toBe(1);
   });
 });

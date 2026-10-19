@@ -14,12 +14,17 @@ import { Mail, MessageCircle, Phone } from 'lucide-react-native';
 import api from '../lib/api';
 import { LEAD_MOVES, buildMovePayloads, moveById, type LeadMoveId } from '../lib/lead-moves';
 import {
+  OWN_HOURS,
+  OWN_MINUTES,
+  canPickOwnHour,
   groupSlotsByDay,
   hostChoiceFor,
   labelForSlot,
+  ownHourIso,
   type SlotDay,
   type TeamSlot,
 } from '../lib/slot-picking';
+import { useAuthStore } from '../stores/auth-store';
 import { SOURCE_OPTIONS } from '../lib/lead-filters';
 import { leadStage } from '../lib/lead-stage';
 import { whatsappDigits } from '../lib/whatsapp-phone';
@@ -68,6 +73,15 @@ function nextDays(count: number): string[] {
   return days;
 }
 
+/** "Azi", "Mâine", then "lun. 27 oct." for the own-hour day chips. */
+function formatDay(offset: number): string {
+  if (offset === 0) return 'Azi';
+  if (offset === 1) return 'Mâine';
+  const d = new Date();
+  d.setDate(d.getDate() + offset);
+  return new Intl.DateTimeFormat('ro-RO', { weekday: 'short', day: 'numeric', month: 'short' }).format(d);
+}
+
 export default function LeadSheet({
   contact,
   bookedIds,
@@ -99,6 +113,17 @@ export default function LeadSheet({
   const [loadingSlots, setLoadingSlots] = useState(false);
   const [slotsError, setSlotsError] = useState('');
   const [chosenHostId, setChosenHostId] = useState<string | null>(null);
+
+  // A closer may also book themselves at any hour, free slot or not.
+  const role = useAuthStore((state) => state.user?.role);
+  const ownHourAllowed = canPickOwnHour(role) && !!currentUserId;
+  const [ownHourMode, setOwnHourMode] = useState(false);
+  const [own, setOwn] = useState({ day: 0, hour: 10, minute: 0 });
+  const pickOwn = (next: { day: number; hour: number; minute: number }) => {
+    setOwn(next);
+    setAt(ownHourIso(next.day, next.hour, next.minute));
+    setChosenHostId(currentUserId ?? null);
+  };
 
   const stage = useMemo(() => leadStage(contact, bookedIds), [contact, bookedIds]);
   const name =
@@ -307,6 +332,7 @@ export default function LeadSheet({
                           <TouchableOpacity
                             key={slot.startTime}
                             onPress={() => {
+                              setOwnHourMode(false);
                               setAt(slot.startTime);
                               // One person free means nothing to ask.
                               const choice = hostChoiceFor(slot);
@@ -331,8 +357,99 @@ export default function LeadSheet({
                   </View>
                 ))}
 
+                {ownHourAllowed && (
+                  <View className="mt-1 mb-2">
+                    <TouchableOpacity
+                      onPress={() => {
+                        if (ownHourMode) {
+                          setOwnHourMode(false);
+                          setAt(null);
+                          setChosenHostId(null);
+                        } else {
+                          setOwnHourMode(true);
+                          pickOwn(own);
+                        }
+                      }}
+                      className={`rounded-xl border px-4 py-3 ${
+                        ownHourMode ? 'border-indigo-500 bg-indigo-50' : 'border-dashed border-gray-300'
+                      }`}
+                    >
+                      <Text className={`text-sm font-semibold ${ownHourMode ? 'text-indigo-800' : 'text-slate-700'}`}>
+                        Altă oră, în programul meu
+                      </Text>
+                      <Text className="text-xs text-slate-500">
+                        Oricând vrei, doar să nu se suprapună cu altă programare.
+                      </Text>
+                    </TouchableOpacity>
+
+                    {ownHourMode && (
+                      <View className="mt-3 gap-3">
+                        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                          <View className="flex-row gap-2">
+                            {Array.from({ length: 21 }, (_, day) => {
+                              const on = own.day === day;
+                              const label = formatDay(day);
+                              return (
+                                <TouchableOpacity
+                                  key={day}
+                                  onPress={() => pickOwn({ ...own, day })}
+                                  className={`rounded-full border px-3 py-2 ${
+                                    on ? 'border-indigo-500 bg-indigo-50' : 'border-gray-300'
+                                  }`}
+                                >
+                                  <Text className={`text-sm ${on ? 'text-indigo-800' : 'text-slate-700'}`}>{label}</Text>
+                                </TouchableOpacity>
+                              );
+                            })}
+                          </View>
+                        </ScrollView>
+                        <View className="flex-row flex-wrap gap-2">
+                          {OWN_HOURS.map((hour) => {
+                            const on = own.hour === hour;
+                            return (
+                              <TouchableOpacity
+                                key={hour}
+                                onPress={() => pickOwn({ ...own, hour })}
+                                className={`w-12 items-center rounded-lg border py-2 ${
+                                  on ? 'border-indigo-500 bg-indigo-50' : 'border-gray-300'
+                                }`}
+                              >
+                                <Text className={`text-sm ${on ? 'text-indigo-800' : 'text-slate-700'}`}>
+                                  {String(hour).padStart(2, '0')}
+                                </Text>
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </View>
+                        <View className="flex-row gap-2">
+                          {OWN_MINUTES.map((minute) => {
+                            const on = own.minute === minute;
+                            return (
+                              <TouchableOpacity
+                                key={minute}
+                                onPress={() => pickOwn({ ...own, minute })}
+                                className={`flex-1 items-center rounded-lg border py-2 ${
+                                  on ? 'border-indigo-500 bg-indigo-50' : 'border-gray-300'
+                                }`}
+                              >
+                                <Text className={`text-sm ${on ? 'text-indigo-800' : 'text-slate-700'}`}>
+                                  :{String(minute).padStart(2, '0')}
+                                </Text>
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </View>
+                        <Text className="text-sm text-indigo-800">
+                          {formatDay(own.day)}, ora {String(own.hour).padStart(2, '0')}:
+                          {String(own.minute).padStart(2, '0')} — cu tine
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                )}
+
                 {/* Two people free at that hour, so the caller says which. */}
-                {hostChoice.mustAsk && (
+                {!ownHourMode && hostChoice.mustAsk && (
                   <View className="mt-1">
                     <Text className="text-sm font-medium text-slate-700 mb-1.5">Cu cine</Text>
                     <View className="flex-row flex-wrap gap-2">

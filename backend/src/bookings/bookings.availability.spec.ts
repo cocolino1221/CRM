@@ -1,6 +1,6 @@
 import { Test } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { BookingsService } from './bookings.service';
 import { Booking } from '../database/entities/booking.entity';
 import { Availability, DayOfWeek } from '../database/entities/availability.entity';
@@ -91,6 +91,31 @@ describe('BookingsService — manual bookings respect the host’s hours', () =>
   it('refuses a meeting that would run past the end of the day', async () => {
     // Starts 16:45 Bucharest, 30 minutes long, so it ends at 17:15.
     await expect(create(new Date('2026-10-19T13:45:00.000Z'))).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  describe('a closer booking their own diary', () => {
+    const closer = { id: HOST, role: 'closer' } as any;
+    const ownBooking = (startTime: Date) =>
+      service.create(WORKSPACE, closer, { hostId: HOST, startTime, duration: 30 });
+
+    it('may pick an hour outside their declared hours', async () => {
+      await expect(ownBooking(sundayNight)).resolves.toEqual(expect.objectContaining({ id: 'b1' }));
+    });
+
+    it('still cannot double-book themselves', async () => {
+      overlapCount = 1;
+      await expect(ownBooking(sundayNight)).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('cannot book into a colleague\'s diary', async () => {
+      await expect(
+        service.create(WORKSPACE, { id: 'closer-2', role: 'closer' } as any, {
+          hostId: HOST,
+          startTime: mondayMorning,
+          duration: 30,
+        }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
   });
 
   it('still refuses an hour that is already taken', async () => {

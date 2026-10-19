@@ -143,7 +143,7 @@ export class BookingsService {
     },
   ) {
     // Validate that booker has permission
-    this.validateBookingPermission(bookedBy);
+    this.validateBookingPermission(bookedBy, dto.hostId);
 
     // Over JSON startTime arrives as a string, and this body has no DTO class
     // to transform it. Unconverted it reached zonedParts as a string and threw
@@ -178,12 +178,13 @@ export class BookingsService {
       throw new BadRequestException('Time slot is not available');
     }
 
-    const withinHours = await this.isWithinAvailability(
-      workspaceId,
-      dto.hostId,
-      startTime,
-      endTime,
-    );
+    // A closer putting a meeting in their own diary may pick any hour: the
+    // declared hours are what the team and the public page may book, not a
+    // cage for the closer. Overlap above still applies to everyone.
+    const selfBooked = dto.hostId === bookedBy.id;
+    const withinHours =
+      selfBooked ||
+      (await this.isWithinAvailability(workspaceId, dto.hostId, startTime, endTime));
 
     if (!withinHours) {
       throw new BadRequestException('That hour is outside this host\'s working hours');
@@ -405,9 +406,11 @@ export class BookingsService {
     return overlapping === 0;
   }
 
-  private validateBookingPermission(user: User) {
-    const allowedRoles = ['admin', 'manager', 'setter', 'caller'];
-    if (!allowedRoles.includes(user.role)) {
+  private validateBookingPermission(user: User, hostId: string) {
+    const allowedRoles = ['super_admin', 'admin', 'manager', 'setter', 'caller'];
+    // A closer books only into their own diary, never a colleague's.
+    const closerForSelf = user.role === 'closer' && hostId === user.id;
+    if (!allowedRoles.includes(user.role) && !closerForSelf) {
       throw new ForbiddenException('You do not have permission to create bookings');
     }
   }
