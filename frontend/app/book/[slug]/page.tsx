@@ -9,7 +9,7 @@
  * app does not bounce them to a login screen.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type CSSProperties } from 'react';
 import { useParams } from 'next/navigation';
 import { Calendar, CheckCircle2, Clock, Loader2, PhoneCall, User } from 'lucide-react';
 import {
@@ -24,6 +24,7 @@ import {
   nextDays,
   type Guest,
 } from '@/lib/public-booking';
+import { accentOf, backgroundStyle, toneOf, type BookingBranding } from '@/lib/booking-branding';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'https://slackcrm-backend.fly.dev/api/v1';
 const DAYS_OFFERED = 14;
@@ -34,6 +35,8 @@ interface MeetingType {
   description?: string;
   duration: number;
   user?: { firstName?: string; lastName?: string };
+  /** Logo, background, colours and texts set in Aspect pagină. */
+  branding?: BookingBranding;
 }
 
 interface Host {
@@ -199,6 +202,15 @@ export default function PublicBookingPage() {
     }
   };
 
+  const branding = meeting?.branding;
+  const tone = toneOf(branding);
+  const onBg = tone === 'light'
+    ? { title: 'text-white', text: 'text-white/85', muted: 'text-white/70' }
+    : { title: 'text-gray-900', text: 'text-gray-700', muted: 'text-gray-500' };
+  // The accent travels as a CSS variable so every button and selected chip
+  // follows it without a style prop each.
+  const frame = { ...backgroundStyle(branding), ['--accent' as string]: accentOf(branding) } as CSSProperties;
+
   if (loading) {
     return (
       <main className="flex min-h-screen items-center justify-center text-gray-400">
@@ -219,9 +231,9 @@ export default function PublicBookingPage() {
 
   if (callbackDone) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-gray-50 px-4">
+      <main style={frame} className="flex min-h-screen items-center justify-center px-4">
         <div className="w-full max-w-md rounded-2xl border border-gray-200 bg-white p-8 text-center">
-          <PhoneCall className="mx-auto h-12 w-12 text-indigo-500" />
+          <PhoneCall className="mx-auto h-12 w-12 text-[var(--accent)]" />
           <h1 className="mt-4 text-xl font-bold text-gray-900">Te sunăm noi</h1>
           <p className="mt-2 text-sm text-gray-600">
             Un coleg te contactează în curând ca să stabiliți ora împreună.
@@ -233,7 +245,7 @@ export default function PublicBookingPage() {
 
   if (confirmation) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-gray-50 px-4">
+      <main style={frame} className="flex min-h-screen items-center justify-center px-4">
         <div className="w-full max-w-md rounded-2xl border border-gray-200 bg-white p-8 text-center">
           <CheckCircle2 className="mx-auto h-12 w-12 text-green-500" />
           <h1 className="mt-4 text-xl font-bold text-gray-900">Programare confirmată</h1>
@@ -257,15 +269,21 @@ export default function PublicBookingPage() {
   const hostName = `${meeting.user?.firstName ?? ''} ${meeting.user?.lastName ?? ''}`.trim();
 
   return (
-    <main className="mx-auto min-h-screen max-w-2xl px-4 py-10">
+    <div style={frame} className="min-h-screen">
+    <main className="mx-auto max-w-2xl px-4 py-10">
       <header className="text-center">
-        <h1 className="text-2xl font-bold text-gray-900">{meeting.name}</h1>
+        {branding?.logoUrl && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={branding.logoUrl} alt="" className="mx-auto mb-4 max-h-16 max-w-[12rem] object-contain" />
+        )}
+        <h1 className={`text-2xl font-bold ${onBg.title}`}>{branding?.title || meeting.name}</h1>
+        {branding?.welcome && <p className={`mt-2 whitespace-pre-line text-sm ${onBg.text}`}>{branding.welcome}</p>}
         {known && (
-          <p className="mt-2 text-sm text-gray-700">
+          <p className={`mt-2 text-sm ${onBg.text}`}>
             Mulțumim, {guest.name.split(' ')[0]}! Mai rămâne doar să alegi ora.
           </p>
         )}
-        <p className="mt-2 flex flex-wrap items-center justify-center gap-4 text-sm text-gray-500">
+        <p className={`mt-2 flex flex-wrap items-center justify-center gap-4 text-sm ${onBg.muted}`}>
           <span className="inline-flex items-center gap-1">
             <Clock className="h-4 w-4" /> {meeting.duration} minute
           </span>
@@ -276,12 +294,12 @@ export default function PublicBookingPage() {
           )}
         </p>
         {meeting.description && (
-          <p className="mt-3 text-sm text-gray-600">{meeting.description}</p>
+          <p className={`mt-3 text-sm ${onBg.text}`}>{meeting.description}</p>
         )}
       </header>
 
       <section className="mt-8">
-        <h2 className="flex items-center gap-2 text-sm font-semibold text-gray-700">
+        <h2 className={`flex items-center gap-2 text-sm font-semibold ${onBg.text}`}>
           <Calendar className="h-4 w-4" /> Alege ziua
         </h2>
         <div className="mt-3 flex gap-2 overflow-x-auto pb-2">
@@ -291,7 +309,7 @@ export default function PublicBookingPage() {
               onClick={() => setDay(d.param)}
               className={`whitespace-nowrap rounded-xl border px-3 py-2 text-sm ${
                 day === d.param
-                  ? 'border-indigo-600 bg-indigo-600 text-white'
+                  ? 'border-[var(--accent)] bg-[var(--accent)] text-white'
                   : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
               }`}
             >
@@ -302,7 +320,7 @@ export default function PublicBookingPage() {
       </section>
 
       <section className="mt-6">
-        <h2 className="text-sm font-semibold text-gray-700">Alege ora</h2>
+        <h2 className={`text-sm font-semibold ${onBg.text}`}>Alege ora</h2>
         {loadingSlots ? (
           <div className="flex justify-center py-8 text-gray-400">
             <Loader2 className="h-5 w-5 animate-spin" />
@@ -319,7 +337,7 @@ export default function PublicBookingPage() {
                 onClick={() => setChosen(slot)}
                 className={`rounded-xl border px-2 py-2 text-sm tabular-nums ${
                   chosen?.startTime === slot.startTime
-                    ? 'border-indigo-600 bg-indigo-600 text-white'
+                    ? 'border-[var(--accent)] bg-[var(--accent)] text-white'
                     : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
                 }`}
               >
@@ -340,7 +358,7 @@ export default function PublicBookingPage() {
                 onClick={() => setHost(h)}
                 className={`rounded-xl border px-3 py-2 text-sm ${
                   (host ?? chosen.hosts[0]).meetingTypeId === h.meetingTypeId
-                    ? 'border-indigo-600 bg-indigo-600 text-white'
+                    ? 'border-[var(--accent)] bg-[var(--accent)] text-white'
                     : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
                 }`}
               >
@@ -362,7 +380,7 @@ export default function PublicBookingPage() {
               <button
                 type="button"
                 onClick={() => setEditing(true)}
-                className="text-xs text-indigo-600 hover:underline"
+                className="text-xs text-[var(--accent)] hover:underline"
               >
                 Nu ești tu? Modifică
               </button>
@@ -406,7 +424,7 @@ export default function PublicBookingPage() {
           <button
             onClick={() => void submit()}
             disabled={submitting}
-            className="mt-4 w-full rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+            className="mt-4 w-full rounded-xl bg-[var(--accent)] px-4 py-2.5 text-sm font-medium text-white hover:brightness-110 disabled:opacity-50"
           >
             {submitting
               ? 'Se confirmă…'
@@ -429,7 +447,7 @@ export default function PublicBookingPage() {
                 else setAskingCallback(true);
               }}
               disabled={submitting}
-              className="inline-flex items-center gap-2 rounded-xl border border-indigo-300 bg-white px-4 py-2 text-sm font-medium text-indigo-700 hover:bg-indigo-50"
+              className="inline-flex items-center gap-2 rounded-xl border border-[var(--accent)] bg-white px-4 py-2 text-sm font-medium text-[var(--accent)] hover:bg-gray-50"
             >
               <PhoneCall className="h-4 w-4" /> Vreau să fiu sunat
             </button>
@@ -457,7 +475,7 @@ export default function PublicBookingPage() {
               <button
                 onClick={() => void askToBeCalled()}
                 disabled={submitting}
-                className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+                className="rounded-xl bg-[var(--accent)] px-4 py-2 text-sm font-medium text-white hover:brightness-110 disabled:opacity-50"
               >
                 {submitting ? 'Se trimite…' : 'Trimite'}
               </button>
@@ -472,5 +490,6 @@ export default function PublicBookingPage() {
         )}
       </section>
     </main>
+    </div>
   );
 }

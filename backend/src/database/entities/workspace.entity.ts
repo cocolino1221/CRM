@@ -63,6 +63,8 @@ export interface WorkspaceSettings {
   // Custom logo URL shown in the mobile app instead of the default EasyTeam logo.
   // Set via PUT /workspaces/current/branding; upload itself goes through /upload.
   brandLogoUrl?: string;
+  // Look of the public booking page; validated by normalizeBookingBranding.
+  bookingPage?: import('../../scheduling/booking-branding').BookingBranding;
 }
 
 export interface WorkspaceAudioTemplate {

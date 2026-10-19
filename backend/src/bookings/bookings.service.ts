@@ -4,6 +4,7 @@ import { Repository, Between } from 'typeorm';
 import { Booking, BookingStatus } from '../database/entities/booking.entity';
 import { Availability } from '../database/entities/availability.entity';
 import { User } from '../database/entities/user.entity';
+import { canManageBooking } from './booking-permissions';
 
 @Injectable()
 export class BookingsService {
@@ -218,10 +219,9 @@ export class BookingsService {
       throw new NotFoundException('Booking not found');
     }
 
-    // Only host or admin can cancel
     const user = await this.userRepository.findOne({ where: { id: userId } });
-    if (booking.hostId !== userId && !['admin', 'super_admin'].includes(user?.role || '')) {
-      throw new ForbiddenException('You do not have permission to cancel this booking');
+    if (!canManageBooking(user, booking)) {
+      throw new ForbiddenException('Doar closerul programării o poate anula.');
     }
 
     booking.status = BookingStatus.CANCELLED;
@@ -235,7 +235,7 @@ export class BookingsService {
     return booking;
   }
 
-  async updateStatus(workspaceId: string, id: string, status: BookingStatus) {
+  async updateStatus(workspaceId: string, id: string, status: BookingStatus, actor?: { id?: string; role?: string }) {
     const booking = await this.bookingRepository.findOne({
       where: { id, workspaceId, deletedAt: null },
     });
@@ -244,10 +244,73 @@ export class BookingsService {
       throw new NotFoundException('Booking not found');
     }
 
+    // Any closer could mark any other closer's meeting held or no-show.
+    if (!canManageBooking(actor, booking)) {
+      throw new ForbiddenException('Doar closerul programării îi poate schimba statusul.');
+    }
+
     booking.status = status;
     await this.bookingRepository.save(booking);
 
     this.logger.log(`Booking ${id} status updated to ${status}`);
+
+    return this.bookingRepository.findOne({
+      where: { id },
+      relations: ['host', 'contact', 'meetingType'],
+    });
+  }
+
+  /**
+   * Moves a booking to another hour with the same closer and length. The new
+   * hour is held to the same rules as a new booking — free, inside the
+   * closer's hours, not in the past — except that the booking does not
+   * collide with itself.
+   */
+  async reschedule(
+    workspaceId: string,
+    id: string,
+    actor: { id?: string; role?: string },
+    startTimeInput: string | Date,
+  ) {
+    const booking = await this.bookingRepository.findOne({
+      where: { id, workspaceId, deletedAt: null },
+    });
+    if (!booking) {
+      throw new NotFoundException('Booking not found');
+    }
+    if (!canManageBooking(actor, booking)) {
+      throw new ForbiddenException('Doar closerul programării o poate muta.');
+    }
+    if (booking.status !== BookingStatus.CONFIRMED) {
+      throw new BadRequestException('Doar o programare confirmată poate fi mutată.');
+    }
+
+    const startTime = startTimeInput instanceof Date ? startTimeInput : new Date(startTimeInput);
+    if (Number.isNaN(startTime.getTime())) {
+      throw new BadRequestException('startTime is not a valid date');
+    }
+    if (startTime.getTime() <= Date.now()) {
+      throw new BadRequestException('Ora nouă trebuie să fie în viitor.');
+    }
+
+    const length =
+      booking.duration ||
+      Math.round((new Date(booking.endTime).getTime() - new Date(booking.startTime).getTime()) / 60000) ||
+      30;
+    const endTime = new Date(startTime.getTime() + length * 60000);
+
+    if (!(await this.isSlotAvailable(workspaceId, booking.hostId, startTime, endTime, booking.id))) {
+      throw new BadRequestException('Closerul are deja o programare la ora aceea.');
+    }
+    if (!(await this.isWithinAvailability(workspaceId, booking.hostId, startTime, endTime))) {
+      throw new BadRequestException('Ora aleasă este în afara programului closerului.');
+    }
+
+    const from = booking.startTime;
+    booking.startTime = startTime;
+    booking.endTime = endTime;
+    await this.bookingRepository.save(booking);
+    this.logger.log(`Booking ${id} moved from ${new Date(from).toISOString()} to ${startTime.toISOString()} by ${actor.id}`);
 
     return this.bookingRepository.findOne({
       where: { id },
@@ -322,11 +385,14 @@ export class BookingsService {
     hostId: string,
     startTime: Date,
     endTime: Date,
+    /** A booking being moved must not count as its own conflict. */
+    excludeId?: string,
   ): Promise<boolean> {
     // Check for overlapping bookings
     const overlapping = await this.bookingRepository
       .createQueryBuilder('booking')
       .where('booking.workspaceId = :workspaceId', { workspaceId })
+      .andWhere(excludeId ? 'booking.id != :excludeId' : '1=1', { excludeId })
       .andWhere('booking.hostId = :hostId', { hostId })
       .andWhere('booking.status = :status', { status: BookingStatus.CONFIRMED })
       .andWhere('booking.deletedAt IS NULL')

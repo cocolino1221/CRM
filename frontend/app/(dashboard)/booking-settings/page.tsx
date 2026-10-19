@@ -9,7 +9,8 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Calendar, Check, Copy, Eraser, ExternalLink, Loader2, Save } from 'lucide-react';
+import Link from 'next/link';
+import { Calendar, Check, Copy, Eraser, ExternalLink, Loader2, Palette, Save } from 'lucide-react';
 import api from '@/lib/api';
 import {
   SLOT_INTERVALS,
@@ -279,13 +280,21 @@ export default function BookingSettingsPage() {
 
   return (
     <div className="mx-auto max-w-4xl space-y-6 px-4 py-6">
-      <header>
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div>
         <h1 className="flex items-center gap-2 text-2xl font-bold text-gray-900 dark:text-white">
           <Calendar className="h-6 w-6 text-indigo-600" /> Disponibilitate
         </h1>
         <p className="mt-1 text-sm text-gray-500">
           Marchează în calendar orele în care poți fi programat. Leadul vede doar intervalele colorate.
         </p>
+        </div>
+        <Link
+          href="/booking-settings/aspect"
+          className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700"
+        >
+          <Palette className="h-4 w-4" /> Aspectul paginii
+        </Link>
       </header>
 
       {error && (

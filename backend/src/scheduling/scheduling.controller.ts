@@ -8,6 +8,7 @@ import {
   ApiParam,
 } from '@nestjs/swagger';
 import { SchedulingService } from './scheduling.service';
+import { BookingBrandingService } from './booking-branding.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { WorkspaceGuard } from '../auth/guards/workspace.guard';
@@ -22,7 +23,31 @@ import { User } from '../database/entities/user.entity';
 @ApiTags('Scheduling')
 @Controller('scheduling')
 export class SchedulingController {
-  constructor(private readonly schedulingService: SchedulingService) {}
+  constructor(
+    private readonly schedulingService: SchedulingService,
+    private readonly brandingService: BookingBrandingService,
+  ) {}
+
+  // ========== Booking page look ==========
+
+  @Get('booking-page')
+  @UseGuards(JwtAuthGuard, WorkspaceGuard, RolesGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'How the public booking page looks' })
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'caller', 'support_agent')
+  async getBookingPage(@CurrentWorkspace('id') workspaceId: string) {
+    return this.brandingService.get(workspaceId);
+  }
+
+  @Put('booking-page')
+  @UseGuards(JwtAuthGuard, WorkspaceGuard, RolesGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Set logo, background, colours and texts of the public booking page' })
+  // One page for the whole team, so not every closer gets to repaint it.
+  @Roles('admin', 'manager')
+  async setBookingPage(@CurrentWorkspace('id') workspaceId: string, @Body() body: unknown) {
+    return this.brandingService.set(workspaceId, body);
+  }
 
   // ========== Availability Endpoints ==========
 
@@ -140,7 +165,20 @@ export class SchedulingController {
   @ApiOperation({ summary: 'Get public meeting type by slug' })
   @ApiParam({ name: 'slug', description: 'Meeting type URL slug' })
   async getPublicMeetingType(@Param('slug') slug: string) {
-    return this.schedulingService.getMeetingTypeBySlug(slug);
+    const meetingType = await this.schedulingService.getMeetingTypeBySlug(slug);
+    // Anyone on the internet calls this. The entity carries its owner's full
+    // user row — password hash and email included — so only what the page
+    // shows goes out.
+    return {
+      id: meetingType.id,
+      name: meetingType.name,
+      description: meetingType.description,
+      duration: meetingType.duration,
+      user: meetingType.user
+        ? { firstName: meetingType.user.firstName, lastName: meetingType.user.lastName }
+        : undefined,
+      branding: await this.brandingService.get(meetingType.workspaceId),
+    };
   }
 
   @Get('public/:slug/slots')

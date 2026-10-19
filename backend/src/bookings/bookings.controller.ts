@@ -102,7 +102,8 @@ export class BookingsController {
   @ApiOperation({ summary: 'Cancel a booking' })
   @ApiParam({ name: 'id', description: 'Booking ID' })
   @ApiResponse({ status: 200, description: 'Booking cancelled successfully' })
-  @Roles('admin', 'manager', 'closer', 'setter', 'caller')
+  // The service narrows this further: a closer only their own bookings.
+  @Roles('admin', 'manager', 'closer')
   async cancel(
     @CurrentWorkspace('id') workspaceId: string,
     @Param('id', ParseUUIDPipe) id: string,
@@ -110,6 +111,19 @@ export class BookingsController {
     @Body('reason') reason?: string,
   ) {
     return this.bookingsService.cancel(workspaceId, id, req.user.id, reason);
+  }
+
+  @Patch(':id/reschedule')
+  @ApiOperation({ summary: 'Move a booking to another free hour (its closer, or admin/manager)' })
+  @ApiParam({ name: 'id', description: 'Booking ID' })
+  @Roles('admin', 'manager', 'closer')
+  async reschedule(
+    @CurrentWorkspace('id') workspaceId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() req: any,
+    @Body('startTime') startTime: string,
+  ) {
+    return this.bookingsService.reschedule(workspaceId, id, req.user, startTime);
   }
 
   @Patch(':id/status')
@@ -120,8 +134,9 @@ export class BookingsController {
   async updateStatus(
     @CurrentWorkspace('id') workspaceId: string,
     @Param('id', ParseUUIDPipe) id: string,
+    @Req() req: any,
     @Body('status', new ParseEnumPipe(BookingStatus)) status: BookingStatus,
   ) {
-    return this.bookingsService.updateStatus(workspaceId, id, status);
+    return this.bookingsService.updateStatus(workspaceId, id, status, req.user);
   }
 }

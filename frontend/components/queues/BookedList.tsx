@@ -7,9 +7,12 @@
  * past 2,700 lines and near the point where it stops being safely editable.
  */
 
-import { useCallback, useEffect, useState } from 'react';
-import { Calendar, Loader2, MessageCircle, Phone, RefreshCw, User } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Calendar, CalendarClock, Loader2, MessageCircle, Phone, RefreshCw, User, XCircle } from 'lucide-react';
 import api from '@/lib/api';
+import { authService } from '@/lib/auth';
+import { canManageBooking } from '@/lib/booking-permissions';
+import ManageBookingDialog from '@/components/bookings/ManageBookingDialog';
 import {
   QUEUE_SOURCE_OPTIONS,
   contactDisplayName,
@@ -46,6 +49,9 @@ export default function BookedList({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [source, setSource] = useState('');
+  const [managing, setManaging] = useState<{ booking: Booking; mode: 'move' | 'cancel' } | null>(null);
+  // Read once: the signed-in user does not change while the list is open.
+  const me = useMemo(() => authService.getUser(), []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -185,9 +191,42 @@ export default function BookedList({
                 <User className="h-3.5 w-3.5" /> {contactDisplayName(b.host)}
               </span>
             )}
+            {canManageBooking(me, b) && (
+              <span className="ml-auto flex gap-1.5">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setManaging({ booking: b, mode: 'move' });
+                  }}
+                  className="inline-flex items-center gap-1 rounded-lg border border-gray-300 px-2 py-1 text-xs text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700"
+                >
+                  <CalendarClock className="h-3.5 w-3.5" /> Mută
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setManaging({ booking: b, mode: 'cancel' });
+                  }}
+                  className="inline-flex items-center gap-1 rounded-lg border border-red-200 px-2 py-1 text-xs text-red-600 hover:bg-red-50 dark:border-red-900 dark:hover:bg-red-950"
+                >
+                  <XCircle className="h-3.5 w-3.5" /> Anulează
+                </button>
+              </span>
+            )}
           </li>
         ))}
       </ul>
+      )}
+      {managing && (
+        <ManageBookingDialog
+          booking={managing.booking}
+          mode={managing.mode}
+          timeZone={timeZone}
+          onClose={() => setManaging(null)}
+          onDone={() => void load()}
+        />
       )}
     </div>
   );
