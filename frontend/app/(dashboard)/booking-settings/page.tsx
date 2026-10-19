@@ -10,6 +10,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
+import MeetingPreferenceCard from '@/components/bookings/MeetingPreferenceCard';
 import { Calendar, Check, Copy, Eraser, ExternalLink, Loader2, Palette, Save } from 'lucide-react';
 import api from '@/lib/api';
 import {
@@ -300,6 +301,8 @@ export default function BookingSettingsPage() {
       {error && (
         <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div>
       )}
+
+      <MeetingPreferenceCard />
 
       <section className="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-800">
         <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-200">Tipul întâlnirii</h2>

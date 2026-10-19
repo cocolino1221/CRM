@@ -16,6 +16,13 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  outcomeSummary,
+  providerOptions,
+  type MeetingOutcome,
+  type MeetingProvider,
+  type MeetingProvidersInfo,
+} from '@/lib/meeting-providers';
 import { Calendar, Check, Loader2 } from 'lucide-react';
 import api from '@/lib/api';
 import { contactDisplayName, formatQueueTime, type QueueContactRef } from '@/lib/queue-rows';
@@ -65,6 +72,19 @@ export default function ScheduleDialog({
   const [loadingSlots, setLoadingSlots] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+
+  const [providers, setProviders] = useState<MeetingProvidersInfo | null>(null);
+  /** '' lets the backend pick: the closer's preference, else what's connected. */
+  const [meetingProvider, setMeetingProvider] = useState<'' | MeetingProvider>('');
+  /** Set once booked: the dialog stays open to show the link that went out. */
+  const [outcome, setOutcome] = useState<MeetingOutcome | null>(null);
+
+  useEffect(() => {
+    api
+      .get<MeetingProvidersInfo>('/bookings/meeting-providers')
+      .then((res) => setProviders(res.data))
+      .catch(() => setProviders(null));
+  }, []);
 
   const name = contactDisplayName(contact);
 
@@ -116,7 +136,7 @@ export default function ScheduleDialog({
     setSaving(true);
     setError('');
     try {
-      await api.post('/bookings', {
+      const res = await api.post('/bookings', {
         hostId,
         // The exact string the slots endpoint returned, so the hour the setter
         // picked is the hour stored — no re-parsing in the browser's timezone.
@@ -125,9 +145,15 @@ export default function ScheduleDialog({
         contactId: contact.id,
         notes: notes.trim() || undefined,
         timezone: timeZone,
+        meetingProvider: meetingProvider || undefined,
       });
       onScheduled?.();
-      onClose();
+      const result: MeetingOutcome | undefined = res.data?.meeting;
+      if (result && (result.link || result.warning)) {
+        setOutcome(result);
+      } else {
+        onClose();
+      }
     } catch (err: any) {
       setError(err?.response?.data?.message || 'Programarea nu a putut fi salvată.');
     } finally {
@@ -316,6 +342,30 @@ export default function ScheduleDialog({
 
         <div className="mb-3">
           <label
+            htmlFor="schedule-meeting"
+            className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-200"
+          >
+            Link întâlnire
+          </label>
+          <select
+            id="schedule-meeting"
+            value={meetingProvider}
+            onChange={(e) => setMeetingProvider(e.target.value as '' | MeetingProvider)}
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800"
+          >
+            {providerOptions(providers).map((o) => (
+              <option key={o.value || 'auto'} value={o.value} disabled={o.disabled}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+          <p className="mt-1 text-xs text-gray-500">
+            Linkul se trimite automat pe email la lead și la closer.
+          </p>
+        </div>
+
+        <div className="mb-3">
+          <label
             htmlFor="schedule-notes"
             className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-200"
           >
@@ -343,6 +393,47 @@ export default function ScheduleDialog({
           </p>
         )}
 
+        {outcome ? (
+          <div className="space-y-3">
+            <div
+              role="status"
+              className={`rounded-lg p-3 text-sm ${
+                outcome.link
+                  ? 'bg-green-50 text-green-800 dark:bg-green-950 dark:text-green-200'
+                  : 'bg-amber-50 text-amber-800 dark:bg-amber-950 dark:text-amber-200'
+              }`}
+            >
+              <p className="font-medium">Programare salvată.</p>
+              <p className="mt-1">{outcomeSummary(outcome)}</p>
+              {outcome.link && (
+                <div className="mt-2 flex items-center gap-2">
+                  <a
+                    href={outcome.link}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="min-w-0 flex-1 truncate font-mono text-xs underline"
+                  >
+                    {outcome.link}
+                  </a>
+                  <button
+                    type="button"
+                    onClick={() => void navigator.clipboard?.writeText(outcome.link!)}
+                    className="shrink-0 rounded border border-current px-2 py-0.5 text-xs"
+                  >
+                    Copiază
+                  </button>
+                </div>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              className="w-full rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white"
+            >
+              Gata
+            </button>
+          </div>
+        ) : (
         <div className="flex gap-2">
           <button
             type="button"
@@ -360,6 +451,7 @@ export default function ScheduleDialog({
             {saving ? 'Se salvează…' : 'Programează'}
           </button>
         </div>
+        )}
       </div>
     </div>
   );

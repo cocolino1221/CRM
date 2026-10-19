@@ -460,7 +460,7 @@ export class GoogleIntegrationHandler implements IntegrationHandler {
    */
   private async sheetsRequest<T = any>(
     integration: Integration,
-    method: 'put' | 'post',
+    method: 'put' | 'post' | 'delete',
     url: string,
     query: Record<string, string>,
     body: any,
@@ -608,5 +608,11 @@ export class GoogleIntegrationHandler implements IntegrationHandler {
         },
       },
     });
+  }
+
+  /** Remove a calendar event (and its Meet link) created by createMeetEvent. */
+  async deleteCalendarEvent(integration: Integration, eventId: string): Promise<void> {
+    const url = `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(eventId)}`;
+    await this.sheetsRequest(integration, 'delete', url, { sendUpdates: 'none' }, undefined);
   }
 }

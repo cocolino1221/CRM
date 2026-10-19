@@ -119,6 +119,14 @@ export class Booking extends WorkspaceEntity {
   location?: string;
 
   @Column({
+    type: 'varchar',
+    length: 255,
+    nullable: true,
+    comment: 'Google Calendar event id or Zoom meeting id behind the link',
+  })
+  externalMeetingId?: string;
+
+  @Column({
     type: 'enum',
     enum: BookingStatus,
     default: BookingStatus.PENDING,

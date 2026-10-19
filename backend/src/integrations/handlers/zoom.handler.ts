@@ -85,6 +85,16 @@ export class ZoomIntegrationHandler implements IntegrationHandler {
     return this.createMeeting(accessToken, meetingData);
   }
 
+  /** Delete a meeting created by createMeetingForIntegration. */
+  async deleteMeetingForIntegration(integration: Integration, meetingId: string): Promise<void> {
+    const { accountId, clientId, clientSecret, accessToken: storedToken } = integration.credentials || {};
+    const accessToken = accountId && clientId && clientSecret
+      ? await this.getServerToServerToken(accountId, clientId, clientSecret)
+      : storedToken;
+    if (!accessToken) throw new Error('Zoom integration has no usable credentials');
+    await this.deleteMeeting(accessToken, meetingId);
+  }
+
   /**
    * Get Server-to-Server OAuth token
    */
