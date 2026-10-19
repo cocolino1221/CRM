@@ -10,6 +10,8 @@ import LeadsList from '@/components/leads/LeadsList';
 import BookedList from '@/components/queues/BookedList';
 import ToCallList from '@/components/queues/ToCallList';
 import ScheduleDialog from '@/components/bookings/ScheduleDialog';
+import ClosedList from '@/components/queues/ClosedList';
+import FollowUpList from '@/components/queues/FollowUpList';
 import type { QueueContactRef } from '@/lib/queue-rows';
 
 const PHONE_PREFIXES = [
@@ -185,7 +187,8 @@ export default function LeadsPage() {
       .then((res) => setCurrentUser(res.data))
       .catch(() => setCurrentUser(null));
   }, []);
-  type QueueTab = 'all' | 'booked' | 'to-call';
+  type QueueTab = 'all' | 'booked' | 'to-call' | 'won' | 'lost' | 'follow-up';
+  const QUEUE_TABS: QueueTab[] = ['all', 'booked', 'to-call', 'won', 'lost', 'follow-up'];
   const [queueTab, setQueueTab] = useState<QueueTab>('all');
 
   // A convenience for the viewer, not state the server needs — and a blocked
@@ -193,7 +196,7 @@ export default function LeadsPage() {
   useEffect(() => {
     try {
       const saved = localStorage.getItem('leads:queueTab');
-      if (saved === 'all' || saved === 'booked' || saved === 'to-call') setQueueTab(saved);
+      if (saved && (QUEUE_TABS as string[]).includes(saved)) setQueueTab(saved as QueueTab);
     } catch {
       // No stored preference; the default stands.
     }
@@ -1031,6 +1034,9 @@ export default function LeadsPage() {
           { id: 'all' as QueueTab, label: 'Toate leadurile' },
           { id: 'booked' as QueueTab, label: 'Programați' },
           { id: 'to-call' as QueueTab, label: 'De sunat' },
+          { id: 'follow-up' as QueueTab, label: 'Follow up' },
+          { id: 'won' as QueueTab, label: 'Win' },
+          { id: 'lost' as QueueTab, label: 'Pierduți' },
         ]).map((t) => (
           <button
             key={t.id}
@@ -1054,6 +1060,9 @@ export default function LeadsPage() {
 
       {queueTab === 'booked' && <BookedList key={queueRefresh} onOpenContact={openContactFromQueue} />}
       {queueTab === 'to-call' && <ToCallList key={queueRefresh} onOpenContact={openContactFromQueue} />}
+      {queueTab === 'won' && <ClosedList kind="won" onOpenContact={openContactFromQueue} />}
+      {queueTab === 'lost' && <ClosedList kind="lost" onOpenContact={openContactFromQueue} />}
+      {queueTab === 'follow-up' && <FollowUpList onOpenContact={openContactFromQueue} />}
 
       {/* Lead Detail Modal */}
       {logCallFor && (

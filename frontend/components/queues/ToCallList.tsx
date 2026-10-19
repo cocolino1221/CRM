@@ -51,6 +51,9 @@ export default function ToCallList({
 }) {
   const [rows, setRows] = useState<Row[]>([]);
   const [total, setTotal] = useState(0);
+  // Leads still inside their source's grace period: hidden from the list on
+  // purpose, counted so nobody thinks they went missing.
+  const [waiting, setWaiting] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [dispositionFor, setDispositionFor] = useState<Row | null>(null);
@@ -79,7 +82,11 @@ export default function ToCallList({
           ...(createdTo ? { createdTo } : {}),
         },
       });
-      return { data: (res.data?.data ?? []) as Row[], total: Number(res.data?.total ?? 0) };
+      return {
+        data: (res.data?.data ?? []) as Row[],
+        total: Number(res.data?.total ?? 0),
+        waiting: Number(res.data?.waiting ?? 0),
+      };
     },
     [source, periodKind, month, year, from, to],
   );
@@ -89,9 +96,10 @@ export default function ToCallList({
     setLoading(true);
     setError('');
     try {
-      const { data, total: count } = await fetchPage(1);
+      const { data, total: count, waiting: held } = await fetchPage(1);
       setRows(data);
       setTotal(count);
+      setWaiting(held);
       setPage(1);
       setHasMore(hasMorePages(data.length, count, data.length, PAGE_SIZE));
     } catch (err: any) {
@@ -172,9 +180,19 @@ export default function ToCallList({
     <>
       <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-200 px-4 py-3 dark:border-gray-700">
-          <span className="text-sm font-semibold text-gray-700 dark:text-gray-200">
-            {loading ? '…' : total} de sunat
-          </span>
+          <div className="flex items-baseline gap-3">
+            <span className="text-sm font-semibold text-gray-700 dark:text-gray-200">
+              {loading ? '…' : total} de sunat
+            </span>
+            {!loading && waiting > 0 && (
+              <span
+                className="text-sm font-medium text-gray-500"
+                title="Intrate de curând — li se lasă câteva minute să se programeze singure"
+              >
+                {waiting} în așteptare
+              </span>
+            )}
+          </div>
           <div className="flex items-center gap-3">
           <select
             value={periodKind}

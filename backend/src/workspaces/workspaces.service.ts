@@ -9,6 +9,19 @@ import {
   isKpiKey,
 } from '../common/kpi-definitions';
 
+export interface LeadGrace {
+  typeform: number;
+  woocommerce: number;
+  manual: number;
+}
+
+/**
+ * Ten minutes for the two self-service sources: long enough for someone who
+ * just bought to pick a slot, short enough that a real lead is not left
+ * cooling. A lead typed in by hand waits for nobody.
+ */
+export const DEFAULT_LEAD_GRACE: LeadGrace = { typeform: 10, woocommerce: 10, manual: 0 };
+
 @Injectable()
 export class WorkspacesService {
   constructor(
@@ -106,5 +119,47 @@ export class WorkspacesService {
 
     await this.workspaceRepository.save(workspace);
     return { enabled, targets };
+  }
+
+  /** The per-source wait before a fresh lead reaches "De sunat", in minutes. */
+  async getLeadGrace(workspaceId: string): Promise<LeadGrace> {
+    const workspace = await this.workspaceRepository.findOne({ where: { id: workspaceId } });
+    if (!workspace) {
+      throw new NotFoundException('Workspace not found');
+    }
+    const grace = workspace.settings?.leadGrace ?? {};
+    return {
+      typeform: grace.typeform ?? DEFAULT_LEAD_GRACE.typeform,
+      woocommerce: grace.woocommerce ?? DEFAULT_LEAD_GRACE.woocommerce,
+      manual: grace.manual ?? DEFAULT_LEAD_GRACE.manual,
+    };
+  }
+
+  async setLeadGrace(workspaceId: string, body: Partial<LeadGrace>): Promise<LeadGrace> {
+    const clean: LeadGrace = { ...DEFAULT_LEAD_GRACE };
+    for (const key of Object.keys(DEFAULT_LEAD_GRACE) as (keyof LeadGrace)[]) {
+      const value = body?.[key];
+      if (value === undefined || value === null) continue;
+      // A negative wait would read as "arrived in the future" and hide every
+      // lead from that source for good; hours of silence is not a setting
+      // anyone means to make either.
+      if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 1440) {
+        throw new BadRequestException(`${key}: wait must be between 0 and 1440 minutes`);
+      }
+      clean[key] = value;
+    }
+
+    const workspace = await this.workspaceRepository.findOne({ where: { id: workspaceId } });
+    if (!workspace) {
+      throw new NotFoundException('Workspace not found');
+    }
+
+    workspace.settings = {
+      ...(workspace.settings || ({} as WorkspaceSettings)),
+      leadGrace: clean,
+    } as WorkspaceSettings;
+
+    await this.workspaceRepository.save(workspace);
+    return clean;
   }
 }

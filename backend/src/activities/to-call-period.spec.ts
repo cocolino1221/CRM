@@ -1,3 +1,5 @@
+import { Deal } from '../database/entities/deal.entity';
+import { Workspace } from '../database/entities/workspace.entity';
 import { Test } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { WorkQueuesService, parseQueueDate } from './work-queues.service';
@@ -30,6 +32,7 @@ describe('WorkQueuesService — the De sunat period filter', () => {
       orderBy: jest.fn().mockReturnThis(),
       skip: jest.fn().mockReturnThis(),
       take: jest.fn().mockReturnThis(),
+      getCount: jest.fn().mockResolvedValue(0),
       getManyAndCount: jest.fn().mockResolvedValue([[], 0]),
     };
     return builder;
@@ -45,6 +48,11 @@ describe('WorkQueuesService — the De sunat period filter', () => {
         { provide: getRepositoryToken(Contact), useValue: { createQueryBuilder: qb } },
         { provide: getRepositoryToken(Booking), useValue: { createQueryBuilder: qb, find: jest.fn() } },
         { provide: getRepositoryToken(Activity), useValue: { createQueryBuilder: qb, find: jest.fn() } },
+        { provide: getRepositoryToken(Deal), useValue: { createQueryBuilder: qb } },
+        {
+          provide: getRepositoryToken(Workspace),
+          useValue: { findOne: jest.fn().mockResolvedValue({ settings: {} }) },
+        },
       ],
     }).compile();
 
@@ -72,11 +80,14 @@ describe('WorkQueuesService — the De sunat period filter', () => {
     expect(sql()).not.toContain('contact.createdAt <= :createdTo');
   });
 
-  // Without a period the queue must stay exactly as it was.
-  it('adds no date clause when no period is chosen', async () => {
+  // Without a period the queue filters on no date the caller chose. The
+  // grace clause is not one of those: it is always on, and it is the reason
+  // this no longer just greps for "createdAt".
+  it('adds no period clause when no period is chosen', async () => {
     await service.findUnbookedLeads('ws-1');
 
-    expect(sql()).not.toContain('createdAt');
+    expect(sql()).not.toContain(':createdFrom');
+    expect(sql()).not.toContain(':createdTo');
   });
 });
 

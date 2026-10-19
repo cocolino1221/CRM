@@ -34,6 +34,21 @@ export interface WorkspaceSettings {
     maxUsers?: number | null;
     maxWhatsAppNumbers?: number | null;
   };
+  /**
+   * How long, in minutes, a fresh lead is left alone before it shows up in
+   * "De sunat" — per source, because someone who just bought a book behaves
+   * differently from someone who filled in a form.
+   *
+   * It exists so a setter does not ring the person who is, at that moment,
+   * picking a slot in the calendar. Nothing is stored on the lead: the queue
+   * simply does not return it yet, and the moment it books it appears under
+   * "Programați" instead.
+   */
+  leadGrace?: {
+    typeform?: number;
+    woocommerce?: number;
+    manual?: number;
+  };
   /** Which KPIs the reports show, and the daily target for each. */
   kpis?: {
     enabled: string[];

@@ -16,10 +16,15 @@ function build() {
     skip: jest.fn().mockReturnThis(),
     take: jest.fn().mockReturnThis(),
     getManyAndCount: jest.fn().mockResolvedValue([[], 0]),
+    getCount: jest.fn().mockResolvedValue(0),
     getMany: jest.fn().mockResolvedValue([]),
   };
   const repo = { createQueryBuilder: jest.fn(() => qb) };
-  return { service: new WorkQueuesService(repo as any, repo as any, repo as any), qb };
+  return { service: new WorkQueuesService(repo as any, repo as any, repo as any, repo as any, workspaceRepo() as any), qb };
+}
+
+function workspaceRepo() {
+  return { findOne: jest.fn().mockResolvedValue({ settings: {} }) };
 }
 
 describe('findUnbookedLeads', () => {
