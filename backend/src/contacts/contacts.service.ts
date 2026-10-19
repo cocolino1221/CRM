@@ -18,6 +18,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { buildLeadNotification, shouldNotifyLeadSource } from './lead-notification.util';
 import { GoogleSheetsService } from '../integrations/google-sheets/google-sheets.service';
 import { MetaConversionsService } from '../integrations/meta-conversions/meta-conversions.service';
+import { applyLeadBucket } from './lead-bucket';
 
 export interface ContactsListResult {
   contacts: Contact[];
@@ -107,6 +108,7 @@ export class ContactsService {
       includeOwner,
       includeDeals,
       includeActivities,
+      bucket,
     } = query;
 
     const queryBuilder = this.createBaseQuery(workspaceId);
@@ -153,6 +155,8 @@ export class ContactsService {
       createdFrom: parseRangeBound(createdFrom, 'createdFrom'),
       createdTo: parseRangeBound(createdTo, 'createdTo', true),
     });
+
+    applyLeadBucket(queryBuilder, bucket);
 
     // Apply sorting
     this.applySorting(queryBuilder, sortBy, sortOrder);

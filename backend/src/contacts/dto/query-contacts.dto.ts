@@ -1,6 +1,7 @@
-import { IsArray, IsBoolean, IsDateString, IsEnum, IsNumber, IsOptional, IsString, IsUUID, Max, Min } from 'class-validator';
+import { IsArray, IsBoolean, IsDateString, IsEnum, IsIn, IsNumber, IsOptional, IsString, IsUUID, Max, Min } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 import { ContactStatus, ContactSource } from '../../database/entities/contact.entity';
+import { LEAD_BUCKETS, type LeadBucket } from '../lead-bucket';
 
 export enum SortField {
   CREATED_AT = 'createdAt',
@@ -98,6 +99,11 @@ export class QueryContactsDto {
   @IsBoolean()
   @Type(() => Boolean)
   emailOptIn?: boolean;
+
+  // Where the lead stands: the tabs at the top of the app's lead list.
+  @IsOptional()
+  @IsIn(LEAD_BUCKETS as unknown as string[])
+  bucket?: LeadBucket;
 
   @IsOptional()
   @IsEnum(SortField)

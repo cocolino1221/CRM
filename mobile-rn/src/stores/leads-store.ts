@@ -17,6 +17,11 @@ interface LeadsState {
   /** '' means every source. */
   source: string;
   setSource: (s: string) => void;
+  /** The open tab — '' for every lead. */
+  bucket: string;
+  setBucket: (b: string) => void;
+  /** Sets the lead's closer or caller; null clears it. */
+  assignTeam: (id: string, change: { closerId?: string | null; callerId?: string | null }) => Promise<string | null>;
   /** 0-indexed; null means every month. */
   month: number | null;
   year: number;
@@ -109,6 +114,7 @@ export const useLeadsStore = create<LeadsState>((set, get) => ({
   fetchError: '',
   search: '',
   source: '',
+  bucket: '',
   month: null,
   year: new Date().getFullYear(),
   page: 1,
@@ -118,6 +124,7 @@ export const useLeadsStore = create<LeadsState>((set, get) => ({
 
   setSearch: (s) => set({ search: s, page: 1 }),
   setSource: (s) => set({ source: s, page: 1 }),
+  setBucket: (b) => set({ bucket: b, page: 1 }),
   setMonth: (m) => set({ month: m, page: 1 }),
   setYear: (y) => set({ year: y, page: 1 }),
 
@@ -148,14 +155,14 @@ export const useLeadsStore = create<LeadsState>((set, get) => ({
   },
 
   fetchContacts: async () => {
-    const { search, source, month, year } = get();
+    const { search, source, month, year, bucket } = get();
     set({ isLoading: true, page: 1 });
     try {
       // Deliberately unscoped by pipeline, exactly as on the web: a closer
       // must see every lead in the workspace, not the slice belonging to one
       // of several duplicate default pipelines. The screen used to load
       // nothing at all when no pipeline was selected.
-      const params = buildContactQuery({ search, source, month, year, page: 1, limit: 100 });
+      const params = buildContactQuery({ search, source, month, year, bucket, page: 1, limit: 100 });
       // The bookings queue rides along so each row can say whether the
       // person is booked. Fetched beside the page rather than added to the
       // contacts query, which would have meant a new entity in a module
@@ -187,11 +194,11 @@ export const useLeadsStore = create<LeadsState>((set, get) => ({
   },
 
   loadMore: async () => {
-    const { search, source, month, year, page, contacts, hasMore, isLoading } = get();
+    const { search, source, month, year, bucket, page, contacts, hasMore, isLoading } = get();
     if (!hasMore || isLoading) return;
     const next = page + 1;
     try {
-      const params = buildContactQuery({ search, source, month, year, page: next, limit: 100 });
+      const params = buildContactQuery({ search, source, month, year, bucket, page: next, limit: 100 });
       const res = await api.get('/contacts', { params });
       const { contacts: more, total } = readContacts(res.data);
       const merged = [...contacts, ...more];
@@ -245,6 +252,33 @@ export const useLeadsStore = create<LeadsState>((set, get) => ({
       return null;
     } catch (err: any) {
       return err?.response?.data?.message || 'Failed to delete lead';
+    }
+  },
+
+  assignTeam: async (id, change) => {
+    const before = get().contacts.find((c) => c.id === id);
+    const pick = (userId: string | null | undefined) => {
+      if (!userId) return null;
+      const u = get().users.find((x) => x.id === userId);
+      return u ? { id: u.id, firstName: u.firstName, lastName: u.lastName } : null;
+    };
+    const patch: Partial<Contact> = {};
+    if (change.closerId !== undefined) {
+      patch.closerId = change.closerId;
+      patch.closer = pick(change.closerId);
+    }
+    if (change.callerId !== undefined) {
+      patch.callerId = change.callerId;
+      patch.caller = pick(change.callerId);
+    }
+    // Shown at once: the tag is what the person just tapped.
+    set({ contacts: get().contacts.map((c) => (c.id === id ? { ...c, ...patch } : c)) });
+    try {
+      await api.put(`/pipelines/contacts/${id}`, change);
+      return null;
+    } catch (err: any) {
+      if (before) set({ contacts: get().contacts.map((c) => (c.id === id ? before : c)) });
+      return err?.response?.data?.message || 'Nu s-a putut salva.';
     }
   },
 

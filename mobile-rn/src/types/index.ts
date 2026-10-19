@@ -102,6 +102,11 @@ export interface Contact {
   /** Who booked this lead — the setter credited with it. */
   setterId?: string;
   setter?: { id: string; firstName: string; lastName: string };
+  /** Who takes the meeting, and who rings the lead; null when unassigned. */
+  closerId?: string | null;
+  closer?: { id: string; firstName: string; lastName: string } | null;
+  callerId?: string | null;
+  caller?: { id: string; firstName: string; lastName: string } | null;
   deals?: Array<{ id: string; title: string; stage?: string; value?: number }>;
   customFields?: any;
   createdAt: string;

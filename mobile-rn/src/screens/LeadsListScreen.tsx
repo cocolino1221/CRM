@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, FlatList,
-  ScrollView, RefreshControl,
+  ScrollView, RefreshControl, Alert,
 } from 'react-native';
 import { Search, Plus, X, Phone, Mail, ChevronRight, WifiOff, RefreshCw, User } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -9,7 +9,9 @@ import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useLeadsStore } from '../stores/leads-store';
 import { useAuthStore } from '../stores/auth-store';
-import { SOURCE_OPTIONS } from '../lib/lead-filters';
+import { LEAD_TABS, SOURCE_OPTIONS } from '../lib/lead-filters';
+import { TEAM_SLOT_LABEL, UNASSIGNED, assigneeLabel, type TeamSlot } from '../lib/lead-team';
+import AssignSheet from '../components/AssignSheet';
 import { leadStage } from '../lib/lead-stage';
 import LeadSheet from '../components/LeadSheet';
 import Avatar from '../components/Avatar';
@@ -46,8 +48,10 @@ export default function LeadsListScreen() {
   const {
     contacts, isLoading, fetchError, total, hasMore, loadMore, bookedIds,
     search, setSearch, source, setSource, month, setMonth, year,
+    bucket, setBucket, users, fetchUsers, assignTeam,
     fetchContacts,
   } = useLeadsStore();
+  const [assignFor, setAssignFor] = useState<{ contact: Contact; slot: TeamSlot } | null>(null);
   const currentUserId = useAuthStore((state) => state.user?.id);
   const [dispositionFor, setDispositionFor] = useState<any | null>(null);
   const [showSearch, setShowSearch] = useState(false);
@@ -56,13 +60,15 @@ export default function LeadsListScreen() {
 
   useEffect(() => {
     fetchContacts();
+    // The team, for the closer and caller pickers on each row.
+    fetchUsers();
   }, []);
 
   useEffect(() => {
     // Every filter is applied on the server, so the list is the whole
     // workspace narrowed — not 200 rows narrowed in the phone.
     fetchContacts();
-  }, [search, source, month, year]);
+  }, [search, source, month, year, bucket]);
 
   const onRefresh = useCallback(() => {
     fetchContacts();
@@ -78,7 +84,6 @@ export default function LeadsListScreen() {
     // answered a question nobody was asking, and meant nothing once the list
     // stopped being scoped to one pipeline.
     const stage = leadStage(contact as any, bookedIds);
-    const ownerName = `${asText(contact.owner?.firstName)} ${asText(contact.owner?.lastName)}`.trim();
     const tags: string[] = Array.isArray(contact.tags)
       ? contact.tags
       : typeof contact.tags === 'string'
@@ -135,14 +140,31 @@ export default function LeadsListScreen() {
               </Text>
             )}
           </View>
-          {ownerName && (
-            <View className="flex-row items-center gap-1 mt-1.5">
-              <User size={11} color="#0284c7" />
-              <Text className="text-[11px] text-sky-700 font-medium" numberOfLines={1}>
-                Assigned: {ownerName}
-              </Text>
-            </View>
-          )}
+          {/* Closer and caller: tap either tag to set it right here. */}
+          <View className="flex-row flex-wrap gap-1.5 mt-1.5">
+            {(['closer', 'caller'] as TeamSlot[]).map((slot) => {
+              const label = assigneeLabel(contact, slot);
+              const empty = label === UNASSIGNED;
+              return (
+                <TouchableOpacity
+                  key={slot}
+                  onPress={() => setAssignFor({ contact, slot })}
+                  hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
+                  className={`flex-row items-center gap-1 rounded-full border px-2 py-0.5 ${
+                    empty ? 'border-dashed border-slate-300 bg-white' : 'border-sky-200 bg-sky-50'
+                  }`}
+                >
+                  <User size={10} color={empty ? '#94a3b8' : '#0284c7'} />
+                  <Text
+                    className={`text-[10px] font-semibold ${empty ? 'text-slate-400' : 'text-sky-700'}`}
+                    numberOfLines={1}
+                  >
+                    {TEAM_SLOT_LABEL[slot]}: {label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
           {tags.length > 0 && (
             <View className="flex-row gap-1 mt-1.5">
               {tags.slice(0, 3).map(tag => (
@@ -210,6 +232,30 @@ export default function LeadsListScreen() {
             className="mt-3 px-3.5 py-2.5 rounded-xl bg-white/15 border border-white/25 text-white text-sm"
           />
         )}
+        {/* Where the lead stands — decided on the server, so paging stays right. */}
+        <View className="mt-3 -mx-4">
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ paddingHorizontal: 16, gap: 6 }}
+          >
+            {LEAD_TABS.map((tab) => {
+              const isActive = tab.value === bucket;
+              return (
+                <TouchableOpacity
+                  key={tab.value || 'all'}
+                  onPress={() => setBucket(tab.value)}
+                  className={`px-4 py-2 rounded-xl ${isActive ? 'bg-white' : 'bg-white/10'}`}
+                >
+                  <Text className={`text-sm font-bold ${isActive ? 'text-sky-900' : 'text-white/90'}`}>
+                    {tab.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        </View>
+
         {/* Source filter — the same list the web uses. */}
         <View className="mt-3 -mx-4">
           <ScrollView
@@ -316,6 +362,22 @@ export default function LeadsListScreen() {
           ) : null
         }
       />
+
+      {assignFor && (
+        <AssignSheet
+          slot={assignFor.slot}
+          leadName={`${asText(assignFor.contact.firstName)} ${asText(assignFor.contact.lastName)}`.trim()}
+          currentId={assignFor.slot === 'closer' ? assignFor.contact.closerId : assignFor.contact.callerId}
+          users={users}
+          onClose={() => setAssignFor(null)}
+          onPick={async (userId) => {
+            const { contact, slot } = assignFor;
+            setAssignFor(null);
+            const error = await assignTeam(contact.id, slot === 'closer' ? { closerId: userId } : { callerId: userId });
+            if (error) Alert.alert('Nu s-a salvat', error);
+          }}
+        />
+      )}
 
       {dispositionFor && (
         <LeadSheet

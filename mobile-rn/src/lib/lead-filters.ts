@@ -21,6 +21,8 @@ export interface LeadFilterState {
   year?: number;
   page?: number;
   limit?: number;
+  /** Which tab is open: '' for all, else one of LEAD_TABS. */
+  bucket?: string;
 }
 
 export interface ContactQuery {
@@ -33,9 +35,20 @@ export interface ContactQuery {
   excludeSource?: string;
   createdFrom?: string;
   createdTo?: string;
+  bucket?: string;
 }
 
 const DEFAULT_LIMIT = 50;
+
+/** The tabs at the top of the lead list; the server decides who is in each. */
+export const LEAD_TABS: Array<{ value: string; label: string }> = [
+  { value: '', label: 'Toți' },
+  { value: 'new', label: 'Noi' },
+  { value: 'scheduled', label: 'Programați' },
+  { value: 'follow_up', label: 'Revenire' },
+  { value: 'won', label: 'Vândut' },
+  { value: 'lost', label: 'Pierdut' },
+];
 
 /** The sources these leads actually arrive from, in the order a caller scans. */
 export const SOURCE_OPTIONS: Array<{ value: string; label: string }> = [
@@ -88,6 +101,8 @@ export function buildContactQuery(state: LeadFilterState): ContactQuery {
   if (search) query.search = search;
 
   if (state.source && state.source !== 'all') query.source = state.source;
+
+  if (state.bucket) query.bucket = state.bucket;
 
   if (state.month !== null && state.month !== undefined) {
     const { createdFrom, createdTo } = monthRange(state.year ?? new Date().getFullYear(), state.month);
