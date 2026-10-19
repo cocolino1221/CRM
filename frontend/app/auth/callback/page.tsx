@@ -4,6 +4,7 @@ import { Suspense, useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Loader2 } from 'lucide-react';
 import api from '@/lib/api';
+import { takeOAuthBinding } from '@/lib/google-login';
 
 type WorkspaceOption = { workspaceId: string; workspaceName: string; role: string };
 
@@ -56,7 +57,9 @@ function AuthCallbackContent() {
     if (code) {
       const completeWithCode = async () => {
         try {
-          const response = await api.post('/auth/oauth/exchange', { code });
+          // The binding this tab kept when it started the login; the API
+          // still falls back to its cookie when there is none.
+          const response = await api.post('/auth/oauth/exchange', { code, binding: takeOAuthBinding() });
 
           // Email exists in multiple teams → let the user pick which one.
           if (response.data?.requiresWorkspaceSelection) {
