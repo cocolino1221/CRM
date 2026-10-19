@@ -13,6 +13,11 @@ export class DispositionFollowUpDto {
   @IsString()
   @MaxLength(255)
   title?: string;
+
+  @ApiPropertyOptional({ description: 'Who rings back — a colleague in this workspace; the caller when omitted' })
+  @IsOptional()
+  @IsUUID()
+  assigneeId?: string;
 }
 
 export class DispositionDealDto {

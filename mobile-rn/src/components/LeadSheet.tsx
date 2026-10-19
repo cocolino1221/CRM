@@ -12,7 +12,14 @@ import {
 } from 'react-native';
 import { Mail, MessageCircle, Phone } from 'lucide-react-native';
 import api from '../lib/api';
-import { LEAD_MOVES, buildMovePayloads, moveById, type LeadMoveId } from '../lib/lead-moves';
+import {
+  LEAD_MOVES,
+  MEETING_KINDS,
+  buildMovePayloads,
+  moveById,
+  type LeadMoveId,
+  type MeetingKind,
+} from '../lib/lead-moves';
 import {
   OWN_HOURS,
   OWN_MINUTES,
@@ -25,6 +32,9 @@ import {
   type TeamSlot,
 } from '../lib/slot-picking';
 import { useAuthStore } from '../stores/auth-store';
+import { useLeadsStore } from '../stores/leads-store';
+import DateTimeChips, { type DayTime } from './DateTimeChips';
+import PersonChips from './PersonChips';
 import { SOURCE_OPTIONS } from '../lib/lead-filters';
 import { leadStage } from '../lib/lead-stage';
 import { whatsappDigits } from '../lib/whatsapp-phone';
@@ -73,15 +83,6 @@ function nextDays(count: number): string[] {
   return days;
 }
 
-/** "Azi", "Mâine", then "lun. 27 oct." for the own-hour day chips. */
-function formatDay(offset: number): string {
-  if (offset === 0) return 'Azi';
-  if (offset === 1) return 'Mâine';
-  const d = new Date();
-  d.setDate(d.getDate() + offset);
-  return new Intl.DateTimeFormat('ro-RO', { weekday: 'short', day: 'numeric', month: 'short' }).format(d);
-}
-
 export default function LeadSheet({
   contact,
   bookedIds,
@@ -118,12 +119,24 @@ export default function LeadSheet({
   const role = useAuthStore((state) => state.user?.role);
   const ownHourAllowed = canPickOwnHour(role) && !!currentUserId;
   const [ownHourMode, setOwnHourMode] = useState(false);
-  const [own, setOwn] = useState({ day: 0, hour: 10, minute: 0 });
-  const pickOwn = (next: { day: number; hour: number; minute: number }) => {
+  const [own, setOwn] = useState<DayTime>({ day: 0, hour: 10, minute: 0 });
+  const pickOwn = (next: DayTime) => {
     setOwn(next);
     setAt(ownHourIso(next.day, next.hour, next.minute));
     setChosenHostId(currentUserId ?? null);
   };
+
+  // Programat splits in two: a phone call at a time agreed between people,
+  // or a Zoom meeting booked into a closer's free hours (the calendar).
+  const [meetingKind, setMeetingKind] = useState<MeetingKind | null>(null);
+  const [callTime, setCallTime] = useState<DayTime>({ day: 1, hour: 10, minute: 0 });
+  const [callPerson, setCallPerson] = useState<string | null>(currentUserId ?? null);
+
+  // Revenire: any day and hour, and whoever is to ring back.
+  const [backTime, setBackTime] = useState<DayTime>({ day: 1, hour: 10, minute: 0 });
+  const [backPerson, setBackPerson] = useState<string | null>(currentUserId ?? null);
+
+  const users = useLeadsStore((state) => state.users);
 
   const stage = useMemo(() => leadStage(contact, bookedIds), [contact, bookedIds]);
   const name =
@@ -142,8 +155,18 @@ export default function LeadSheet({
       contact,
       notes,
       amount,
-      at: at ?? undefined,
-      hostId: move === 'scheduled' ? chosenHostId ?? undefined : currentUserId,
+      at:
+        move === 'callback'
+          ? ownHourIso(backTime.day, backTime.hour, backTime.minute)
+          : move === 'scheduled' && meetingKind === 'call'
+            ? ownHourIso(callTime.day, callTime.hour, callTime.minute)
+            : at ?? undefined,
+      hostId:
+        move === 'scheduled'
+          ? (meetingKind === 'call' ? callPerson : chosenHostId) ?? undefined
+          : currentUserId,
+      meetingKind,
+      assigneeId: move === 'callback' ? backPerson ?? undefined : undefined,
       clientRequestId: clientRequestId.current,
     });
 
@@ -173,7 +196,7 @@ export default function LeadSheet({
   // loadingSlots stays out of the dependencies: setting it re-ran this effect,
   // whose cleanup cancelled the request in flight, so the spinner never ended.
   useEffect(() => {
-    if (move !== 'scheduled' || days.length) return;
+    if (move !== 'scheduled' || meetingKind !== 'zoom' || days.length) return;
 
     let cancelled = false;
     setLoadingSlots(true);
@@ -205,7 +228,7 @@ export default function LeadSheet({
     return () => {
       cancelled = true;
     };
-  }, [move, days.length]);
+  }, [move, meetingKind, days.length]);
 
   const selectedSlot = days.flatMap((d) => d.slots).find((sl) => sl.startTime === at) ?? null;
   const hostChoice = hostChoiceFor(selectedSlot);
@@ -310,9 +333,59 @@ export default function LeadSheet({
               </View>
             )}
 
-            {selected?.needs === 'datetime' && move === 'scheduled' && (
+            {move === 'scheduled' && (
               <View className="mt-4">
-                <Text className="text-sm font-medium text-slate-700 mb-1.5">Când e întâlnirea</Text>
+                <Text className="text-sm font-medium text-slate-700 mb-1.5">Ce fel de programare</Text>
+                <View className="flex-row gap-2">
+                  {MEETING_KINDS.map((kind) => {
+                    const on = meetingKind === kind.id;
+                    return (
+                      <TouchableOpacity
+                        key={kind.id}
+                        onPress={() => {
+                          setMeetingKind(kind.id);
+                          setError('');
+                          // The two pick a time differently; a time from one
+                          // must not leak into the other.
+                          setAt(null);
+                          setChosenHostId(null);
+                          setOwnHourMode(false);
+                        }}
+                        className={`flex-1 rounded-xl border px-4 py-3 ${
+                          on ? 'border-indigo-500 bg-indigo-50' : 'border-gray-200'
+                        }`}
+                      >
+                        <Text className={`text-base font-semibold ${on ? 'text-indigo-800' : 'text-slate-900'}`}>
+                          {kind.id === 'zoom' ? '🎥 ' : '📞 '}
+                          {kind.label}
+                        </Text>
+                        <Text className="text-xs text-slate-500">{kind.hint}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+            )}
+
+            {move === 'scheduled' && meetingKind === 'call' && (
+              <View className="mt-4">
+                <Text className="text-sm font-medium text-slate-700 mb-1.5">Când e apelul</Text>
+                <DateTimeChips value={callTime} onChange={setCallTime} />
+                <Text className="text-sm font-medium text-slate-700 mt-4 mb-1.5">Cine sună</Text>
+                <PersonChips
+                  value={callPerson}
+                  onChange={setCallPerson}
+                  currentUserId={currentUserId}
+                  closer={contact.closer}
+                  caller={contact.caller}
+                  users={users}
+                />
+              </View>
+            )}
+
+            {selected?.needs === 'datetime' && move === 'scheduled' && meetingKind === 'zoom' && (
+              <View className="mt-4">
+                <Text className="text-sm font-medium text-slate-700 mb-1.5">Când e întâlnirea Zoom</Text>
 
                 {loadingSlots && (
                   <View className="py-4 items-center">
@@ -383,66 +456,8 @@ export default function LeadSheet({
                     </TouchableOpacity>
 
                     {ownHourMode && (
-                      <View className="mt-3 gap-3">
-                        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                          <View className="flex-row gap-2">
-                            {Array.from({ length: 21 }, (_, day) => {
-                              const on = own.day === day;
-                              const label = formatDay(day);
-                              return (
-                                <TouchableOpacity
-                                  key={day}
-                                  onPress={() => pickOwn({ ...own, day })}
-                                  className={`rounded-full border px-3 py-2 ${
-                                    on ? 'border-indigo-500 bg-indigo-50' : 'border-gray-300'
-                                  }`}
-                                >
-                                  <Text className={`text-sm ${on ? 'text-indigo-800' : 'text-slate-700'}`}>{label}</Text>
-                                </TouchableOpacity>
-                              );
-                            })}
-                          </View>
-                        </ScrollView>
-                        <View className="flex-row flex-wrap gap-2">
-                          {OWN_HOURS.map((hour) => {
-                            const on = own.hour === hour;
-                            return (
-                              <TouchableOpacity
-                                key={hour}
-                                onPress={() => pickOwn({ ...own, hour })}
-                                className={`w-12 items-center rounded-lg border py-2 ${
-                                  on ? 'border-indigo-500 bg-indigo-50' : 'border-gray-300'
-                                }`}
-                              >
-                                <Text className={`text-sm ${on ? 'text-indigo-800' : 'text-slate-700'}`}>
-                                  {String(hour).padStart(2, '0')}
-                                </Text>
-                              </TouchableOpacity>
-                            );
-                          })}
-                        </View>
-                        <View className="flex-row gap-2">
-                          {OWN_MINUTES.map((minute) => {
-                            const on = own.minute === minute;
-                            return (
-                              <TouchableOpacity
-                                key={minute}
-                                onPress={() => pickOwn({ ...own, minute })}
-                                className={`flex-1 items-center rounded-lg border py-2 ${
-                                  on ? 'border-indigo-500 bg-indigo-50' : 'border-gray-300'
-                                }`}
-                              >
-                                <Text className={`text-sm ${on ? 'text-indigo-800' : 'text-slate-700'}`}>
-                                  :{String(minute).padStart(2, '0')}
-                                </Text>
-                              </TouchableOpacity>
-                            );
-                          })}
-                        </View>
-                        <Text className="text-sm text-indigo-800">
-                          {formatDay(own.day)}, ora {String(own.hour).padStart(2, '0')}:
-                          {String(own.minute).padStart(2, '0')} — cu tine
-                        </Text>
+                      <View className="mt-3">
+                        <DateTimeChips value={own} onChange={pickOwn} days={21} summarySuffix="cu tine" />
                       </View>
                     )}
                   </View>
@@ -475,36 +490,19 @@ export default function LeadSheet({
               </View>
             )}
 
-            {selected?.needs === 'datetime' && move !== 'scheduled' && (
+            {move === 'callback' && (
               <View className="mt-4">
                 <Text className="text-sm font-medium text-slate-700 mb-1.5">Când revii</Text>
-                <View className="flex-row flex-wrap gap-2">
-                  {[
-                    { label: 'Mâine 10:00', days: 1, hour: 10 },
-                    { label: 'Mâine 17:00', days: 1, hour: 17 },
-                    { label: 'Poimâine 10:00', days: 2, hour: 10 },
-                    { label: 'În 7 zile', days: 7, hour: 10 },
-                  ].map((choice) => {
-                    const when = new Date();
-                    when.setDate(when.getDate() + choice.days);
-                    when.setHours(choice.hour, 0, 0, 0);
-                    const iso = when.toISOString();
-                    const on = at === iso;
-                    return (
-                      <TouchableOpacity
-                        key={choice.label}
-                        onPress={() => setAt(iso)}
-                        className={`rounded-full border px-4 py-2 ${
-                          on ? 'border-indigo-500 bg-indigo-50' : 'border-gray-300'
-                        }`}
-                      >
-                        <Text className={`text-sm ${on ? 'text-indigo-800' : 'text-slate-700'}`}>
-                          {choice.label}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
+                <DateTimeChips value={backTime} onChange={setBackTime} />
+                <Text className="text-sm font-medium text-slate-700 mt-4 mb-1.5">Cine revine</Text>
+                <PersonChips
+                  value={backPerson}
+                  onChange={setBackPerson}
+                  currentUserId={currentUserId}
+                  closer={contact.closer}
+                  caller={contact.caller}
+                  users={users}
+                />
               </View>
             )}
 

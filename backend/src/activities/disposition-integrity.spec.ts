@@ -4,6 +4,7 @@ import { Activity } from '../database/entities/activity.entity';
 import { Contact } from '../database/entities/contact.entity';
 import { Task } from '../database/entities/task.entity';
 import { Deal, DealStage } from '../database/entities/deal.entity';
+import { User } from '../database/entities/user.entity';
 
 const WORKSPACE = 'ws-1';
 const USER = 'user-1';
@@ -16,7 +17,7 @@ const CONTACT = 'c-1';
  * task, un-scheduling left the old one armed, and contactId was trusted
  * straight off the wire.
  */
-function buildHarness(options: { existingByRequestId?: any; contact?: any; existingTask?: any } = {}) {
+function buildHarness(options: { existingByRequestId?: any; contact?: any; existingTask?: any; colleague?: any } = {}) {
   const saved: Record<string, any[]> = { tasks: [], deals: [], activities: [], contacts: [] };
 
   const contact =
@@ -54,6 +55,7 @@ function buildHarness(options: { existingByRequestId?: any; contact?: any; exist
     [Contact, repoFor('contacts', contact)],
     [Task, taskRepo],
     [Deal, repoFor('deals', null)],
+    [User, { findOne: jest.fn().mockResolvedValue(options.colleague ?? null) }],
   ]);
 
   const manager = { getRepository: jest.fn((entity: any) => repos.get(entity)) };
@@ -206,5 +208,40 @@ describe('the deal a disposition closes', () => {
 
     expect(saved.deals[0].stage).toBe(DealStage.CLOSED_WON);
     expect(saved.deals[0].actualCloseDate).toBeInstanceOf(Date);
+  });
+});
+
+describe('createAndDisposition — who rings back', () => {
+  it('gives the reminder to the colleague picked on the sheet', async () => {
+    const { service, saved } = buildHarness({ colleague: { id: 'closer-9', workspaceId: WORKSPACE } });
+
+    await service.createAndDisposition(WORKSPACE, USER, CONTACT, dto({
+      outcome: 'no_answer',
+      followUp: { at: '2026-10-21T08:00:00.000Z', assigneeId: 'closer-9' },
+    }) as any);
+
+    expect(saved.tasks[0].assigneeId).toBe('closer-9');
+  });
+
+  it('keeps it with the caller when nobody else is picked', async () => {
+    const { service, saved } = buildHarness();
+
+    await service.createAndDisposition(WORKSPACE, USER, CONTACT, dto({
+      outcome: 'no_answer',
+      followUp: { at: '2026-10-21T08:00:00.000Z' },
+    }) as any);
+
+    expect(saved.tasks[0].assigneeId).toBe(USER);
+  });
+
+  it('refuses a colleague from another workspace', async () => {
+    const { service } = buildHarness({ colleague: null });
+
+    await expect(
+      service.createAndDisposition(WORKSPACE, USER, CONTACT, dto({
+        outcome: 'no_answer',
+        followUp: { at: '2026-10-21T08:00:00.000Z', assigneeId: 'stranger-1' },
+      }) as any),
+    ).rejects.toThrow('Colegul ales nu a fost găsit');
   });
 });

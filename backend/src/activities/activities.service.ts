@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { User } from '../database/entities/user.entity';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, FindOptionsWhere, Repository } from 'typeorm';
 import {
@@ -159,6 +160,17 @@ export class ActivitiesService {
 
     if (dto.followUp) {
       const dueDate = new Date(dto.followUp.at);
+      // Who rings back: a colleague picked on the sheet (the lead's closer, say),
+      // or whoever logged the call. Checked against this workspace so a stray
+      // id cannot hand the reminder to someone in another tenant.
+      let assigneeId = userId;
+      if (dto.followUp.assigneeId && dto.followUp.assigneeId !== userId) {
+        const colleague = await manager.getRepository(User).findOne({
+          where: { id: dto.followUp.assigneeId, workspaceId },
+        });
+        if (!colleague) throw new NotFoundException('Colegul ales nu a fost găsit');
+        assigneeId = colleague.id;
+      }
       activity.followUpRequired = true;
       activity.followUpDate = dueDate;
 
@@ -171,6 +183,7 @@ export class ActivitiesService {
         if (existing) {
           existing.title = dto.followUp.title || existing.title;
           existing.dueDate = dueDate;
+          existing.assigneeId = assigneeId;
           existing.status = TaskStatus.PENDING;
           // Clear the marker so the cron treats the new date as unnotified.
           existing.customFields = { ...(existing.customFields ?? {}), reminderNotifiedAt: null };
@@ -182,7 +195,7 @@ export class ActivitiesService {
           title: dto.followUp.title || 'Revenire apel',
           dueDate,
           status: TaskStatus.PENDING,
-          assigneeId: userId,
+          assigneeId,
           contactId: activity.contactId,
           customFields: { origin: 'disposition' },
         });

@@ -63,8 +63,19 @@ export interface MoveInput {
   /** ISO, for a booking or a follow-up. */
   at?: string;
   hostId?: string;
+  /** Programat only: a phone call, or a Zoom meeting with a link. */
+  meetingKind?: MeetingKind | null;
+  /** Revenire only: who rings back; the caller when omitted. */
+  assigneeId?: string;
   clientRequestId: string;
 }
+
+export type MeetingKind = 'call' | 'zoom';
+
+export const MEETING_KINDS: Array<{ id: MeetingKind; label: string; hint: string }> = [
+  { id: 'call', label: 'Apel', hint: 'Sunați la ora stabilită, fără link.' },
+  { id: 'zoom', label: 'Zoom', hint: 'Cu link Zoom trimis pe email.' },
+];
 
 export interface MovePayloads {
   disposition: Record<string, any>;
@@ -95,6 +106,9 @@ export function buildMovePayloads(input: MoveInput): MovePayloads {
   switch (input.move) {
     case 'scheduled': {
       disposition.outcome = 'scheduled';
+      if (!input.meetingKind) {
+        return { disposition, booking: null, error: 'Alege dacă e apel sau Zoom.' };
+      }
       if (!input.at) {
         return { disposition, booking: null, error: 'Alege data și ora programării.' };
       }
@@ -113,6 +127,8 @@ export function buildMovePayloads(input: MoveInput): MovePayloads {
           startTime: input.at,
           duration: DEFAULT_BOOKING_MINUTES,
           notes: notes || undefined,
+          // "phone" tells the server not to create a meeting link.
+          meetingProvider: input.meetingKind === 'zoom' ? 'zoom' : 'phone',
         },
       };
     }
@@ -141,6 +157,7 @@ export function buildMovePayloads(input: MoveInput): MovePayloads {
         return { disposition, booking: null, error: 'Alege când revii.' };
       }
       disposition.followUp = { at: input.at, title: `Revenire — ${contactName(input.contact)}` };
+      if (input.assigneeId) disposition.followUp.assigneeId = input.assigneeId;
       return { disposition, booking: null };
     }
 

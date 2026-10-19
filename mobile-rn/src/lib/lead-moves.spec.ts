@@ -39,6 +39,7 @@ describe('buildMovePayloads', () => {
     const out = buildMovePayloads({
       ...base,
       move: 'scheduled',
+      meetingKind: 'zoom',
       at: '2026-10-20T09:00:00.000Z',
       hostId: 'user-1',
     });
@@ -49,19 +50,40 @@ describe('buildMovePayloads', () => {
       startTime: '2026-10-20T09:00:00.000Z',
       duration: 30,
       notes: undefined,
+      meetingProvider: 'zoom',
     });
     expect(out.disposition.outcome).toBe('scheduled');
   });
 
+  // A phone appointment must not make the server create a Zoom or Meet link.
+  it('books a phone call without a meeting link', () => {
+    const out = buildMovePayloads({
+      ...base,
+      move: 'scheduled',
+      meetingKind: 'call',
+      at: '2026-10-20T09:00:00.000Z',
+      hostId: 'user-1',
+    });
+
+    expect(out.booking?.meetingProvider).toBe('phone');
+  });
+
+  it('asks whether it is a call or Zoom before anything else', () => {
+    const out = buildMovePayloads({ ...base, move: 'scheduled', at: '2026-10-20T09:00:00.000Z', hostId: 'user-1' });
+
+    expect(out.booking).toBeNull();
+    expect(out.error).toMatch(/apel sau Zoom/);
+  });
+
   it('refuses to book without a time', () => {
-    const out = buildMovePayloads({ ...base, move: 'scheduled', hostId: 'user-1' });
+    const out = buildMovePayloads({ ...base, move: 'scheduled', meetingKind: 'call', hostId: 'user-1' });
 
     expect(out.booking).toBeNull();
     expect(out.error).toBeTruthy();
   });
 
   it('refuses to book without a host, rather than inventing one', () => {
-    const out = buildMovePayloads({ ...base, move: 'scheduled', at: '2026-10-20T09:00:00.000Z' });
+    const out = buildMovePayloads({ ...base, move: 'scheduled', meetingKind: 'call', at: '2026-10-20T09:00:00.000Z' });
 
     expect(out.booking).toBeNull();
     expect(out.error).toBeTruthy();
@@ -107,6 +129,17 @@ describe('buildMovePayloads', () => {
       at: '2026-10-19T14:00:00.000Z',
       title: 'Revenire — Ionela Pop',
     });
+  });
+
+  it('hands the callback to the colleague picked', () => {
+    const out = buildMovePayloads({
+      ...base,
+      move: 'callback',
+      at: '2026-10-19T14:00:00.000Z',
+      assigneeId: 'closer-9',
+    });
+
+    expect(out.disposition.followUp.assigneeId).toBe('closer-9');
   });
 
   // A note is the one move that changes no state, so it must still be
