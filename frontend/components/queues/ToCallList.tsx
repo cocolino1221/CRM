@@ -10,11 +10,13 @@
  * placed from a handset.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { CalendarPlus, Loader2, MessageCircle, Phone, PhoneOff, RefreshCw } from 'lucide-react';
 import api from '@/lib/api';
 import { MONTH_NAMES, periodRange, type PeriodKind } from '@/lib/lead-filters';
 import {
+  appendUnique,
+  hasMorePages,
   QUEUE_SOURCE_OPTIONS,
   contactDisplayName,
   formatQueueTime,
@@ -37,6 +39,8 @@ interface Row {
   recordingUrl?: string;
 }
 
+const PAGE_SIZE = 50;
+
 export default function ToCallList({
   timeZone = 'Europe/Bucharest',
   onOpenContact,
@@ -58,31 +62,80 @@ export default function ToCallList({
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
 
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const sentinel = useRef<HTMLDivElement>(null);
+
+  const fetchPage = useCallback(
+    async (pageNumber: number) => {
+      const { createdFrom, createdTo } = periodRange({ kind: periodKind, year, month, from, to });
+      const res = await api.get('/activities/queues/to-call', {
+        params: {
+          page: pageNumber,
+          limit: PAGE_SIZE,
+          ...(source ? { source } : {}),
+          ...(createdFrom ? { createdFrom } : {}),
+          ...(createdTo ? { createdTo } : {}),
+        },
+      });
+      return { data: (res.data?.data ?? []) as Row[], total: Number(res.data?.total ?? 0) };
+    },
+    [source, periodKind, month, year, from, to],
+  );
+
+  // Filters changed, or a call outcome was saved: start again from page 1.
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
-      const { createdFrom, createdTo } = periodRange({ kind: periodKind, year, month, from, to });
-      const params = {
-        ...(source ? { source } : {}),
-        ...(createdFrom ? { createdFrom } : {}),
-        ...(createdTo ? { createdTo } : {}),
-      };
-      const res = await api.get('/activities/queues/to-call', {
-        params: Object.keys(params).length ? params : undefined,
-      });
-      setRows(res.data?.data ?? []);
-      setTotal(res.data?.total ?? 0);
+      const { data, total: count } = await fetchPage(1);
+      setRows(data);
+      setTotal(count);
+      setPage(1);
+      setHasMore(hasMorePages(data.length, count, data.length, PAGE_SIZE));
     } catch (err: any) {
       setError(err?.response?.data?.message || 'Nu s-a putut încărca lista.');
     } finally {
       setLoading(false);
     }
-  }, [source, periodKind, month, year, from, to]);
+  }, [fetchPage]);
+
+  const loadMore = useCallback(async () => {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    try {
+      const next = page + 1;
+      const { data, total: count } = await fetchPage(next);
+      const merged = appendUnique(rows, data);
+      setRows(merged);
+      setHasMore(hasMorePages(merged.length, count, data.length, PAGE_SIZE));
+      setTotal(count);
+      setPage(next);
+    } catch {
+      // Leave the button up so the caller can try again.
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [fetchPage, hasMore, loadingMore, page, rows]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Reaching the bottom of the list loads the next page by itself.
+  useEffect(() => {
+    const el = sentinel.current;
+    if (!el || !hasMore || typeof IntersectionObserver === 'undefined') return;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) void loadMore();
+      },
+      { rootMargin: '400px' },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [hasMore, loadMore]);
 
   // The header stays up while loading or empty, so the source filter can
   // always be changed back.
@@ -300,6 +353,19 @@ export default function ToCallList({
             </li>
           ))}
         </ul>
+        )}
+        {!body && (hasMore || loadingMore) && (
+          <div ref={sentinel} className="flex justify-center border-t border-gray-100 px-4 py-3 dark:border-gray-700">
+            <button
+              type="button"
+              onClick={() => void loadMore()}
+              disabled={loadingMore}
+              className="inline-flex items-center gap-2 rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-60 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700"
+            >
+              {loadingMore && <Loader2 className="h-4 w-4 animate-spin" />}
+              {loadingMore ? 'Se încarcă…' : `Încarcă mai multe (${rows.length} din ${total})`}
+            </button>
+          </div>
         )}
       </div>
 

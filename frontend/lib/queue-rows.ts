@@ -112,3 +112,18 @@ export function queueSourceLabel(source?: string | null): string | null {
   if (!source) return null;
   return SOURCE_LABELS[source] ?? source;
 }
+
+/**
+ * Add the next page to what is already on screen. The queue shifts while a
+ * caller works it (someone booked drops out), so an offset page can repeat a
+ * row that was already shown — keep the first copy.
+ */
+export function appendUnique<T extends { id: string }>(current: T[], next: T[]): T[] {
+  const seen = new Set(current.map((r) => r.id));
+  return [...current, ...next.filter((r) => !seen.has(r.id))];
+}
+
+/** Whether another page is worth asking for. */
+export function hasMorePages(loaded: number, total: number, lastPageSize: number, pageSize: number): boolean {
+  return loaded < total && lastPageSize >= pageSize;
+}

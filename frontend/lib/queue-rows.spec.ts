@@ -1,5 +1,25 @@
 import { describe, expect, it } from 'vitest';
-import { contactDisplayName, formatQueueTime, whatsappDigits } from './queue-rows';
+import {
+  appendUnique,
+  contactDisplayName,
+  formatQueueTime,
+  hasMorePages,
+  whatsappDigits,
+} from './queue-rows';
+
+describe('paging the call queue', () => {
+  it('appends the next page without repeating rows already shown', () => {
+    const first = [{ id: 'a' }, { id: 'b' }];
+    expect(appendUnique(first, [{ id: 'b' }, { id: 'c' }]).map((r) => r.id)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('asks for more only while rows are missing and the last page was full', () => {
+    expect(hasMorePages(50, 160, 50, 50)).toBe(true);
+    expect(hasMorePages(160, 160, 10, 50)).toBe(false);
+    // The queue shrank while working it: a short page means the end.
+    expect(hasMorePages(120, 160, 20, 50)).toBe(false);
+  });
+});
 
 describe('contactDisplayName', () => {
   it('uses the full name when there is one', () => {
