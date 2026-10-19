@@ -48,7 +48,9 @@ export class ReminderDispatchService {
       .andWhere('task.deletedAt IS NULL')
       // The marker is what stops a five-minute poll from pushing forever: a
       // task due at 10:00 is still due at 10:05.
-      .andWhere(`COALESCE(task.customFields->>'reminderNotifiedAt', '') = ''`)
+      // Quoted by hand: TypeORM left this one bare, and Postgres folded it to
+      // task.customfields — the job failed every run and no reminder went out.
+      .andWhere(`COALESCE("task"."customFields"->>'reminderNotifiedAt', '') = ''`)
       .orderBy('task.dueDate', 'ASC')
       .take(BATCH_SIZE)
       .getMany();

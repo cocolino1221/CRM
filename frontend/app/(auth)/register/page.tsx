@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Building2, Mail, Lock, User, Eye, EyeOff, ArrowRight, Check, AlertCircle, Loader2, KeyRound, Clock } from 'lucide-react';
 import { authService } from '@/lib/auth';
+import { startGoogleLogin } from '@/lib/google-login';
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -339,10 +340,7 @@ export default function RegisterPage() {
             <button
               type="button"
               disabled={isLoading}
-              onClick={() => {
-                const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000/api/v1';
-                window.location.href = `${apiUrl}/auth/google`;
-              }}
+              onClick={() => void startGoogleLogin()}
               className="flex items-center justify-center gap-2 py-3 px-4 border border-gray-300 rounded-xl hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <svg className="h-5 w-5" viewBox="0 0 24 24">

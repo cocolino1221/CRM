@@ -388,10 +388,15 @@ export class AuthController {
     // login with their own account and push the resulting code into someone
     // else's client, which would accept it for having no binding to check.
     const { binding, bindingHash } = this.authService.createOAuthBinding();
+    // SameSite=None in production: the exchange is a cross-site request from
+    // the frontend's domain, and a Lax cookie is never sent on it — every web
+    // Google login failed with "missing or wrong binding". The web now uses
+    // /auth/oauth/start instead; this stays for links already out there.
+    const production = this.configService.get('NODE_ENV') === 'production';
     res.cookie('oauth_binding', binding, {
       httpOnly: true,
-      secure: this.configService.get('NODE_ENV') === 'production',
-      sameSite: 'lax',
+      secure: production,
+      sameSite: production ? 'none' : 'lax',
       maxAge: 10 * 60 * 1000,
       path: '/',
     });
@@ -417,14 +422,17 @@ export class AuthController {
   @Public()
   @Post('oauth/start')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Begin a bound OAuth login (mobile)' })
-  async startOAuth(): Promise<{ authUrl: string; binding: string }> {
+  @ApiOperation({ summary: 'Begin a bound OAuth login (mobile app, or the web)' })
+  async startOAuth(@Body('source') source?: string): Promise<{ authUrl: string; binding: string }> {
     // The binding goes to the client over TLS and never through the browser;
     // only its hash rides along inside the signed state. The exchange demands
     // it back, which is what stops a code from someone else's login being
     // injected into this app's deep link.
     const { binding, bindingHash } = this.authService.createOAuthBinding();
-    const state = this.authService.generateOAuthState('mobile', bindingHash);
+    // The web asks for this too: a binding it keeps in its own tab survives
+    // browsers that drop cross-site cookies (Safari), where the cookie route
+    // could never work. Anything but "web" stays the app's deep-link flow.
+    const state = this.authService.generateOAuthState(source === 'web' ? 'web' : 'mobile', bindingHash);
 
     return { authUrl: this.buildGoogleAuthUrl(state), binding };
   }
