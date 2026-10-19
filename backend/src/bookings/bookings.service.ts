@@ -330,6 +330,8 @@ export class BookingsService {
     const from = booking.startTime;
     booking.startTime = startTime;
     booking.endTime = endTime;
+    // A new time deserves its own reminder.
+    booking.hostRemindedAt = null;
     await this.bookingRepository.save(booking);
     await this.meetings?.moveMeeting(booking);
     this.logger.log(`Booking ${id} moved from ${new Date(from).toISOString()} to ${startTime.toISOString()} by ${actor.id}`);

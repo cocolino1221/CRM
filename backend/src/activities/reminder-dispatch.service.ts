@@ -3,6 +3,8 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Task, TaskStatus } from '../database/entities/task.entity';
+import { Booking, BookingStatus } from '../database/entities/booking.entity';
+import { MAX_REMINDER_MINUTES, inHowLong, reminderDue, reminderLeadMinutes } from './reminder-lead';
 import { NotificationType } from '../database/entities/notification.entity';
 import { PushNotificationService } from '../notifications/push-notification.service';
 
@@ -23,21 +25,31 @@ export class ReminderDispatchService {
   constructor(
     @InjectRepository(Task)
     private readonly taskRepository: Repository<Task>,
+    @InjectRepository(Booking)
+    private readonly bookingRepository: Repository<Booking>,
     private readonly pushNotificationService: PushNotificationService,
   ) {}
 
   @Cron(CronExpression.EVERY_5_MINUTES)
   async handleCron(): Promise<void> {
-    const sent = await this.dispatchDue(new Date());
+    const now = new Date();
+    const sent = await this.dispatchDue(now);
     if (sent) this.logger.log(`Sent ${sent} task reminder(s)`);
+    // Same tick on purpose: a second poll would wake the database twice as
+    // often for nothing (Neon bills by the hour it is awake).
+    const meetings = await this.dispatchMeetingReminders(now);
+    if (meetings) this.logger.log(`Sent ${meetings} meeting reminder(s)`);
   }
 
   /** @returns how many reminders were delivered. */
   async dispatchDue(now: Date): Promise<number> {
     const due = await this.taskRepository
       .createQueryBuilder('task')
+      // Whose reminder it is decides how early it goes, so the person comes along.
+      .leftJoinAndSelect('task.assignee', 'assignee')
       .where('task.dueDate IS NOT NULL')
-      .andWhere('task.dueDate <= :now', { now })
+      // As far ahead as anyone may ask; each row is then held to its own person's choice.
+      .andWhere('task.dueDate <= :horizon', { horizon: new Date(now.getTime() + MAX_REMINDER_MINUTES * 60_000) })
       // Without a floor, the first run after deploy drains every overdue task
       // ever written — oldest first, 200 at a time — so a reminder set today
       // waits behind hours of back-dated pushes.
@@ -64,6 +76,16 @@ export class ReminderDispatchService {
       // from being lost.
       if ((task.customFields as any)?.reminderNotifiedAt) continue;
 
+      const lead = reminderLeadMinutes(task.assignee?.preferences);
+      if (lead === 0) {
+        // Switched off: settled once, so the row stops being looked at.
+        task.customFields = { ...(task.customFields ?? {}), reminderNotifiedAt: 'off' };
+        await this.taskRepository.save(task);
+        continue;
+      }
+      // An overdue one goes now; a future one waits for its person's lead time.
+      if (task.dueDate && !reminderDue(new Date(task.dueDate), lead, now)) continue;
+
       try {
         // sendPushToUser resolves without throwing when there is nothing to
         // deliver to — push not configured, no registered device, the
@@ -71,7 +93,7 @@ export class ReminderDispatchService {
         // web-only caller's reminder fired never, while the log counted it.
         const delivered = await this.pushNotificationService.sendPushToUser(task.assigneeId, {
           type: NotificationType.TASK,
-          title: 'Memento',
+          title: task.dueDate && new Date(task.dueDate) > now ? `Revenire ${inHowLong(new Date(task.dueDate), now)}` : 'Memento',
           message: task.title,
           link: task.contactId ? `/leads?contactId=${task.contactId}` : '/tasks',
           category: 'task:reminder',
@@ -100,6 +122,66 @@ export class ReminderDispatchService {
       }
     }
 
+    return sent;
+  }
+
+  /**
+   * The closer's push before a booking — as long before as they set in the
+   * app (one hour unless they chose otherwise, never if they switched it off).
+   * hostRemindedAt is the marker; moving a booking clears it.
+   *
+   * @returns how many reminders were delivered.
+   */
+  async dispatchMeetingReminders(now: Date): Promise<number> {
+    const upcoming = await this.bookingRepository
+      .createQueryBuilder('booking')
+      .leftJoinAndSelect('booking.host', 'host')
+      .leftJoinAndSelect('booking.contact', 'contact')
+      .where('booking.startTime > :now', { now })
+      .andWhere('booking.startTime <= :horizon', { horizon: new Date(now.getTime() + MAX_REMINDER_MINUTES * 60_000) })
+      .andWhere('booking.status IN (:...live)', { live: [BookingStatus.CONFIRMED, BookingStatus.PENDING] })
+      .andWhere('booking.deletedAt IS NULL')
+      .andWhere('booking.hostRemindedAt IS NULL')
+      .orderBy('booking.startTime', 'ASC')
+      .take(BATCH_SIZE)
+      .getMany();
+
+    let sent = 0;
+    for (const booking of upcoming) {
+      if (!booking.hostId || booking.hostRemindedAt) continue;
+      const lead = reminderLeadMinutes(booking.host?.preferences);
+      if (!reminderDue(new Date(booking.startTime), lead, now)) continue;
+
+      const who =
+        `${booking.contact?.firstName ?? ''} ${booking.contact?.lastName ?? ''}`.trim() ||
+        booking.guestName ||
+        'un lead';
+      const time = new Intl.DateTimeFormat('ro-RO', {
+        timeZone: 'Europe/Bucharest',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      }).format(new Date(booking.startTime));
+
+      try {
+        const delivered = await this.pushNotificationService.sendPushToUser(booking.hostId, {
+          type: NotificationType.MEETING,
+          title: `Întâlnire ${inHowLong(new Date(booking.startTime), now)}`,
+          message: `${who} la ${time}`,
+          link: booking.contactId ? `/leads?contactId=${booking.contactId}` : '/calendar',
+          category: 'meeting:reminder',
+          metadata: { bookingId: booking.id, contactId: booking.contactId },
+        });
+        if (delivered === false) {
+          this.logger.warn(`Meeting reminder for booking ${booking.id} had nowhere to go; leaving it for the next run`);
+          continue;
+        }
+        await this.bookingRepository.update({ id: booking.id }, { hostRemindedAt: new Date() });
+        sent += 1;
+      } catch (error: any) {
+        this.logger.warn(`Meeting reminder for booking ${booking.id} failed: ${error?.message}`);
+      }
+    }
     return sent;
   }
 }

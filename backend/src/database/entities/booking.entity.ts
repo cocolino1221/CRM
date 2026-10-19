@@ -157,6 +157,13 @@ export class Booking extends WorkspaceEntity {
   customAnswers?: Record<string, any>;
 
   @Column({
+    type: 'timestamptz',
+    nullable: true,
+    comment: 'When the host was pushed a reminder for this booking; cleared when it moves',
+  })
+  hostRemindedAt?: Date | null;
+
+  @Column({
     type: 'text',
     nullable: true,
     comment: 'Cancellation reason',
