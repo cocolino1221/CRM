@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import {
   View, Text, TouchableOpacity, FlatList, RefreshControl,
-  ActivityIndicator, Modal, TextInput, ScrollView, KeyboardAvoidingView, Platform,
+  ActivityIndicator, Modal, TextInput, ScrollView, KeyboardAvoidingView, Platform, Linking,
 } from 'react-native';
 import {
   Calendar, ChevronLeft, ChevronRight, CheckCircle, Clock,
-  AlertTriangle, Plus, X,
+  AlertTriangle, Plus, X, Video, User,
 } from 'lucide-react-native';
+import { toCalendarBookings, type CalendarBooking } from '../lib/calendar-bookings';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import api from '../lib/api';
 import { useToastStore } from '../stores/toast-store';
@@ -76,6 +77,7 @@ const normalizeTask = (raw: unknown): CalendarTask | null => {
 export default function CalendarScreen() {
   const [monthDate, setMonthDate] = useState(new Date());
   const [tasks, setTasks] = useState<CalendarTask[]>([]);
+  const [bookings, setBookings] = useState<CalendarBooking[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const insets = useSafeAreaInsets();
@@ -161,6 +163,18 @@ export default function CalendarScreen() {
         .map(normalizeTask)
         .filter((task): task is CalendarTask => Boolean(task));
       setTasks(nextTasks);
+      // Bookings are their own table. A failure here must not hide the tasks.
+      try {
+        const bookingRes = await api.get('/bookings', {
+          params: {
+            startDate: startOfMonth(refDate).toISOString(),
+            endDate: endOfMonth(refDate).toISOString(),
+          },
+        });
+        setBookings(toCalendarBookings(bookingRes.data));
+      } catch {
+        setBookings([]);
+      }
     } catch (err: any) {
       setError(err?.response?.data?.message || 'Failed to load tasks');
       setTasks([]);
@@ -181,18 +195,32 @@ export default function CalendarScreen() {
       prev.push(task);
       map.set(key, prev);
     });
+    // A day with only a booking still needs its header.
+    bookings.forEach(booking => {
+      const key = new Date(booking.startTime).toDateString();
+      if (!map.has(key)) map.set(key, []);
+    });
     return Array.from(map.entries())
       .map(([dayKey, dayTasks]) => ({ day: new Date(dayKey), items: dayTasks }))
       .sort((a, b) => a.day.getTime() - b.day.getTime());
-  }, [tasks]);
+  }, [tasks, bookings]);
 
   const pendingCount = tasks.filter(t => t.status !== 'completed').length;
   const onRefresh = useCallback(() => { loadMonth(monthDate); }, [monthDate]);
 
-  type FlatItem = { type: 'dayHeader'; day: Date; key: string } | { type: 'task'; task: CalendarTask; key: string };
+  type FlatItem =
+    | { type: 'dayHeader'; day: Date; key: string }
+    | { type: 'task'; task: CalendarTask; key: string }
+    | { type: 'booking'; booking: CalendarBooking; key: string };
   const flatItems: FlatItem[] = [];
   for (const g of groupedTasks) {
     flatItems.push({ type: 'dayHeader', day: g.day, key: `day-${g.day.getTime()}` });
+    const dayKey = g.day.toDateString();
+    for (const b of bookings) {
+      if (new Date(b.startTime).toDateString() === dayKey) {
+        flatItems.push({ type: 'booking', booking: b, key: `booking-${b.id}` });
+      }
+    }
     for (const t of g.items) {
       flatItems.push({ type: 'task', task: t, key: t.id });
     }
@@ -236,6 +264,9 @@ export default function CalendarScreen() {
             <Text className="text-[11px] font-semibold text-white">{tasks.length} tasks</Text>
           </View>
           <View className="bg-white/15 border border-white/20 px-2.5 py-1 rounded-full">
+            <Text className="text-[11px] font-semibold text-white">{bookings.length} programări</Text>
+          </View>
+          <View className="bg-white/15 border border-white/20 px-2.5 py-1 rounded-full">
             <Text className="text-[11px] font-semibold text-white">{pendingCount} pending</Text>
           </View>
         </View>
@@ -263,6 +294,41 @@ export default function CalendarScreen() {
                 <Text className="text-xs font-semibold text-slate-500 px-1 mb-2 mt-3">
                   {formatDayLabel(item.day)}
                 </Text>
+              );
+            }
+            if (item.type === 'booking') {
+              const b = item.booking;
+              return (
+                <View className="bg-violet-50 rounded-2xl p-3 mb-2.5 border border-violet-200">
+                  <View className="flex-row items-center justify-between gap-2">
+                    <Text className="text-sm font-semibold text-violet-900 flex-1" numberOfLines={1}>
+                      Programare: {b.leadName}
+                    </Text>
+                    <View className="flex-row items-center gap-1">
+                      <Clock size={12} color="#6d28d9" />
+                      <Text className="text-[11px] font-semibold text-violet-700">
+                        {new Date(b.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </Text>
+                    </View>
+                  </View>
+                  {!!b.hostName && (
+                    <View className="flex-row items-center gap-1 mt-1">
+                      <User size={12} color="#7c3aed" />
+                      <Text className="text-[11px] text-violet-700">{b.hostName}</Text>
+                    </View>
+                  )}
+                  {b.link ? (
+                    <TouchableOpacity
+                      onPress={() => { void Linking.openURL(b.link!); }}
+                      className="flex-row items-center justify-center gap-1.5 mt-2 rounded-xl bg-violet-600 py-2"
+                    >
+                      <Video size={14} color="#fff" />
+                      <Text className="text-xs font-semibold text-white">Intră pe {b.platform}</Text>
+                    </TouchableOpacity>
+                  ) : (
+                    <Text className="text-[11px] text-violet-500 mt-1">Fără link de întâlnire</Text>
+                  )}
+                </View>
               );
             }
             const task = item.task;

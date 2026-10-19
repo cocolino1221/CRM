@@ -60,9 +60,13 @@ export class BookingsController {
     @Query('status') status?: BookingStatus,
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
+    @Req() req?: any,
   ) {
+    // A closer's calendar is their own diary; setters and managers book for
+    // others and see the whole team.
+    const ownOnly = req?.user?.role === 'closer';
     return this.bookingsService.findAll(workspaceId, {
-      hostId,
+      hostId: ownOnly ? req.user.id : hostId,
       status,
       startDate: startDate ? new Date(startDate) : undefined,
       endDate: endDate ? new Date(endDate) : undefined,

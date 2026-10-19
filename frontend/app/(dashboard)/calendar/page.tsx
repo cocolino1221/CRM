@@ -4,6 +4,8 @@ import { useState, useEffect } from 'react';
 import { ChevronLeft, ChevronRight, Plus, Clock, MapPin, Users, Video, Phone, Mail, Calendar as CalendarIcon, Filter, Search, X, Edit, Trash2, CheckCircle, Loader2, AlertCircle } from 'lucide-react';
 import api from '@/lib/api';
 
+import { toCalendarBookings, type CalendarBooking } from '@/lib/calendar-bookings';
+
 interface Event {
   id: string;
   title: string;
@@ -83,6 +85,7 @@ export default function CalendarPage() {
   const [showEventModal, setShowEventModal] = useState(false);
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [events, setEvents] = useState<Event[]>([]);
+  const [bookings, setBookings] = useState<CalendarBooking[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -167,6 +170,16 @@ export default function CalendarPage() {
 
       setEvents(response.data);
       setError(null);
+      // Bookings are their own table; a failure there must not hide the events.
+      api
+        .get('/bookings', {
+          params: {
+            startDate: startOfMonth.toISOString(),
+            endDate: new Date(endOfMonth.getTime() + 86_399_999).toISOString(),
+          },
+        })
+        .then((res) => setBookings(toCalendarBookings(res.data)))
+        .catch(() => setBookings([]));
     } catch (err: any) {
       console.error('Failed to fetch events:', err);
       setError('Failed to load events');
@@ -534,6 +547,10 @@ export default function CalendarPage() {
     for (let day = 1; day <= days; day++) {
       const date = new Date(currentDate.getFullYear(), currentDate.getMonth(), day);
       const dayEvents = getEventsForDate(date);
+      const dayBookings = bookings.filter((b) => {
+        const d = new Date(b.startTime);
+        return d.getDate() === date.getDate() && d.getMonth() === date.getMonth() && d.getFullYear() === date.getFullYear();
+      });
       const isCurrentDay = isToday(date);
 
       cells.push(
@@ -557,6 +574,19 @@ export default function CalendarPage() {
             {!isCurrentDay && day}
           </div>
           <div className="space-y-1">
+            {dayBookings.map((b) => (
+              <a
+                key={`booking-${b.id}`}
+                href={b.link || undefined}
+                target="_blank"
+                rel="noreferrer"
+                title={`Programare cu ${b.leadName}${b.hostName ? ` — ${b.hostName}` : ''}${b.link ? ` (${b.platform})` : ''}`}
+                onClick={(e) => { e.stopPropagation(); if (!b.link) e.preventDefault(); }}
+                className="block truncate rounded bg-violet-600 px-2 py-1 text-xs text-white hover:opacity-80"
+              >
+                {formatTime(b.startTime)} - {b.leadName}
+              </a>
+            ))}
             {dayEvents.slice(0, 3).map((event) => (
               <div
                 key={event.id}
