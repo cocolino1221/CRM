@@ -10,19 +10,42 @@ export class ZoomIntegrationHandler implements IntegrationHandler {
 
   constructor(private httpService: HttpService) {}
 
+  /**
+   * The Server-to-Server trio. The Integrations form files only the secret
+   * under credentials — Account ID and Client ID are not secret-looking names,
+   * so they land in config — and reading credentials alone found nothing, so
+   * every Zoom connection was marked failed and asked for the data again.
+   */
+  static serverToServer(integration: Pick<Integration, 'credentials' | 'config'>): {
+    accountId?: string;
+    clientId?: string;
+    clientSecret?: string;
+    accessToken?: string;
+  } {
+    const creds: Record<string, any> = (integration.credentials as any) || {};
+    const config: Record<string, any> = (integration.config as any) || {};
+    const pick = (key: string) => {
+      const value = creds[key] ?? config[key];
+      return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+    };
+    return {
+      accountId: pick('accountId'),
+      clientId: pick('clientId'),
+      clientSecret: pick('clientSecret'),
+      accessToken: pick('accessToken'),
+    };
+  }
+
   async testConnection(integration: Integration): Promise<{ success: boolean; message?: string; data?: any }> {
     try {
-      // Get access token (either stored or generate new one)
-      let accessToken = integration.credentials?.accessToken;
+      const { accountId, clientId, clientSecret, accessToken: storedToken } =
+        ZoomIntegrationHandler.serverToServer(integration);
+      let accessToken = storedToken;
 
-      // If no access token, try to get one using Server-to-Server OAuth
-      if (!accessToken && integration.credentials?.accountId && integration.credentials?.clientId && integration.credentials?.clientSecret) {
+      // Server-to-Server first: a stored token from an old OAuth connect expires within the hour.
+      if (accountId && clientId && clientSecret) {
         try {
-          accessToken = await this.getServerToServerToken(
-            integration.credentials.accountId,
-            integration.credentials.clientId,
-            integration.credentials.clientSecret
-          );
+          accessToken = await this.getServerToServerToken(accountId, clientId, clientSecret);
         } catch (tokenError) {
           this.logger.error(`Failed to get Zoom access token: ${tokenError.message}`);
           return {
@@ -55,7 +78,7 @@ export class ZoomIntegrationHandler implements IntegrationHandler {
         }
       };
     } catch (error) {
-      this.logger.error(`Zoom test connection failed: ${error.response?.data || error.message}`);
+      this.logger.error(`Zoom test connection failed: ${JSON.stringify(error.response?.data ?? error.message)}`);
       return {
         success: false,
         message: `Zoom connection failed: ${error.response?.data?.message || error.message}`
@@ -74,7 +97,8 @@ export class ZoomIntegrationHandler implements IntegrationHandler {
     integration: Integration,
     meetingData: Parameters<ZoomIntegrationHandler['createMeeting']>[1],
   ): Promise<any> {
-    const { accountId, clientId, clientSecret, accessToken: storedToken } = integration.credentials || {};
+    const { accountId, clientId, clientSecret, accessToken: storedToken } =
+      ZoomIntegrationHandler.serverToServer(integration);
     let accessToken = storedToken;
     if (accountId && clientId && clientSecret) {
       accessToken = await this.getServerToServerToken(accountId, clientId, clientSecret);
@@ -87,7 +111,8 @@ export class ZoomIntegrationHandler implements IntegrationHandler {
 
   /** Delete a meeting created by createMeetingForIntegration. */
   async deleteMeetingForIntegration(integration: Integration, meetingId: string): Promise<void> {
-    const { accountId, clientId, clientSecret, accessToken: storedToken } = integration.credentials || {};
+    const { accountId, clientId, clientSecret, accessToken: storedToken } =
+      ZoomIntegrationHandler.serverToServer(integration);
     const accessToken = accountId && clientId && clientSecret
       ? await this.getServerToServerToken(accountId, clientId, clientSecret)
       : storedToken;
@@ -118,7 +143,7 @@ export class ZoomIntegrationHandler implements IntegrationHandler {
 
       return response.data.access_token;
     } catch (error) {
-      this.logger.error(`Failed to get Zoom S2S token: ${error.response?.data || error.message}`);
+      this.logger.error(`Failed to get Zoom S2S token: ${JSON.stringify(error.response?.data ?? error.message)}`);
       throw new Error(error.response?.data?.reason || 'Failed to authenticate with Zoom');
     }
   }

@@ -1428,6 +1428,12 @@ export default function IntegrationsPage() {
       // Show success message with unique webhook URL
       const createdIntegration = response.data?.integration || response.data;
       const createdIntegrationId = createdIntegration?.id || connectedIntegrations[integrationId]?.id;
+
+      // The server checks Zoom on save; say why it refused instead of just
+      // showing the card unconnected again.
+      if (selectedIntegration.id === 'zoom' && String(createdIntegration?.status).toLowerCase() === 'error') {
+        alert(`Zoom nu s-a conectat:\n${createdIntegration?.lastError || 'Datele nu au fost acceptate de Zoom.'}\n\nVerifică Account ID, Client ID, Client Secret și că aplicația e activată în Zoom.`);
+      }
       const apiUrl = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api/v1').replace('/api/v1', '');
       const needsWebhook = ['typeform', 'calendly', 'manychat'].includes(selectedIntegration.id);
 
