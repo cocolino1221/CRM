@@ -55,8 +55,8 @@ function TemplateCard({
       className={[
         'absolute left-1/2 top-1/2 w-[300px] rounded-2xl border p-4 text-left transition-all duration-300 ease-out',
         active
-          ? 'z-20 border-orange-500 bg-[#151521] shadow-[0_0_60px_-10px_rgba(249,115,22,0.55)]'
-          : 'z-10 border-white/5 bg-[#12121c]',
+          ? 'z-20 border-indigo-500 bg-white shadow-xl shadow-indigo-500/15 ring-1 ring-indigo-500 dark:bg-gray-800'
+          : 'z-10 border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800',
         // Neighbours only on wider screens; a phone shows one card at a time.
         !active ? 'max-sm:pointer-events-none max-sm:invisible' : '',
         Math.abs(offset) > 2 ? 'pointer-events-none opacity-0' : '',
@@ -67,7 +67,7 @@ function TemplateCard({
       }}
     >
       <div
-        className="relative mx-auto overflow-hidden rounded-xl bg-black/40"
+        className="relative mx-auto overflow-hidden rounded-xl border border-gray-100 bg-gray-50 dark:border-gray-700 dark:bg-gray-900"
         style={{ width: PREVIEW_WIDTH, height: PREVIEW_HEIGHT }}
       >
         {near ? (
@@ -90,11 +90,11 @@ function TemplateCard({
         )}
       </div>
       <div className="mt-4">
-        <span className="inline-block rounded-full bg-orange-500/15 px-2.5 py-0.5 text-[11px] font-medium text-orange-400">
+        <span className="inline-block rounded-full bg-indigo-50 px-2.5 py-0.5 text-[11px] font-medium text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300">
           {categoryLabel(template.category)}
         </span>
-        <p className="mt-1.5 text-[15px] font-semibold text-white">{template.name}</p>
-        <p className="mt-0.5 line-clamp-2 text-xs text-white/50">{template.description}</p>
+        <p className="mt-1.5 text-[15px] font-semibold text-gray-900 dark:text-white">{template.name}</p>
+        <p className="mt-0.5 line-clamp-2 text-xs text-gray-500 dark:text-gray-400">{template.description}</p>
       </div>
     </button>
   );
@@ -152,21 +152,21 @@ export default function TemplateGallery({
   const categories = TEMPLATE_CATEGORIES.filter((c) => c.key === 'all' || templatesFor(c.key).length > 0);
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col overflow-hidden bg-[#0b0b12] text-white" role="dialog" aria-modal="true" aria-label="Alege un șablon">
+    <div className="fixed inset-0 z-50 flex flex-col overflow-hidden bg-gray-50 text-gray-900 dark:bg-gray-900 dark:text-white" role="dialog" aria-modal="true" aria-label="Alege un șablon">
       {/* Header */}
       <div className="flex items-start justify-between gap-4 px-4 pt-4 sm:px-6 sm:pt-5">
         <div>
           <h2 className="text-lg font-semibold sm:text-xl">Alege un șablon</h2>
-          <p className="text-xs text-white/50">{templates.length} șabloane disponibile</p>
+          <p className="text-xs text-gray-500 dark:text-gray-400">{templates.length} șabloane disponibile</p>
         </div>
         <div className="flex items-center gap-3">
-          <div className="hidden items-center rounded-xl border border-white/10 bg-white/5 p-1 sm:flex">
-            <span className="rounded-lg bg-orange-500 px-3 py-1.5 text-xs font-medium">Șablon</span>
-            <button onClick={onBlank} className="rounded-lg px-3 py-1.5 text-xs text-white/60 transition hover:text-white">
+          <div className="hidden items-center rounded-xl border border-gray-200 bg-white p-1 sm:flex dark:border-gray-700 dark:bg-gray-800">
+            <span className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white">Șablon</span>
+            <button onClick={onBlank} className="rounded-lg px-3 py-1.5 text-xs text-gray-600 transition hover:text-gray-900 dark:text-gray-300 dark:hover:text-white">
               De la zero
             </button>
           </div>
-          <button onClick={onClose} aria-label="Închide" className="rounded-lg p-2 text-white/60 transition hover:bg-white/10 hover:text-white">
+          <button onClick={onClose} aria-label="Închide" className="rounded-lg p-2 text-gray-500 transition hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-white">
             <X className="h-5 w-5" />
           </button>
         </div>
@@ -174,13 +174,13 @@ export default function TemplateGallery({
 
       {/* Categories */}
       <div className="mt-4 overflow-x-auto px-4 [scrollbar-width:none] sm:px-6">
-        <div className="mx-auto flex w-max gap-5 border-b border-white/5">
+        <div className="mx-auto flex w-max gap-5 border-b border-gray-200 dark:border-gray-700">
           {categories.map((c) => (
             <button
               key={c.key}
               onClick={() => setCategory(c.key)}
               className={`whitespace-nowrap border-b-2 pb-2 text-sm transition ${
-                category === c.key ? 'border-orange-500 text-white' : 'border-transparent text-white/50 hover:text-white/80'
+                category === c.key ? 'border-indigo-600 font-medium text-indigo-700 dark:text-indigo-300' : 'border-transparent text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'
               }`}
             >
               {c.label}
@@ -215,7 +215,7 @@ export default function TemplateGallery({
           onClick={() => go(-1)}
           disabled={index === 0}
           aria-label="Șablonul anterior"
-          className="absolute left-3 top-1/2 z-30 -translate-y-1/2 rounded-full border border-white/10 bg-white/5 p-3 text-white transition hover:bg-white/10 disabled:opacity-20 sm:left-6"
+          className="absolute left-3 top-1/2 z-30 -translate-y-1/2 rounded-full border border-gray-200 bg-white p-3 text-gray-700 shadow-sm transition hover:bg-gray-50 disabled:opacity-30 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700 sm:left-6"
         >
           <ChevronLeft className="h-5 w-5" />
         </button>
@@ -223,7 +223,7 @@ export default function TemplateGallery({
           onClick={() => go(1)}
           disabled={index >= templates.length - 1}
           aria-label="Șablonul următor"
-          className="absolute right-3 top-1/2 z-30 -translate-y-1/2 rounded-full border border-white/10 bg-white/5 p-3 text-white transition hover:bg-white/10 disabled:opacity-20 sm:right-6"
+          className="absolute right-3 top-1/2 z-30 -translate-y-1/2 rounded-full border border-gray-200 bg-white p-3 text-gray-700 shadow-sm transition hover:bg-gray-50 disabled:opacity-30 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700 sm:right-6"
         >
           <ChevronRight className="h-5 w-5" />
         </button>
@@ -237,7 +237,7 @@ export default function TemplateGallery({
               key={t.key}
               onClick={() => setIndex(i)}
               aria-label={`Mergi la ${t.name}`}
-              className={`h-1.5 rounded-full transition-all ${i === index ? 'w-6 bg-orange-500' : 'w-1.5 bg-white/25 hover:bg-white/50'}`}
+              className={`h-1.5 rounded-full transition-all ${i === index ? 'w-6 bg-indigo-600' : 'w-1.5 bg-gray-300 hover:bg-gray-400 dark:bg-gray-600 dark:hover:bg-gray-500'}`}
             />
           ))}
         </div>
@@ -245,7 +245,7 @@ export default function TemplateGallery({
           <button
             onClick={() => current && onPick(current)}
             disabled={!current}
-            className="inline-flex w-full items-center justify-center gap-2 whitespace-nowrap rounded-xl bg-orange-500 px-6 py-3 text-sm font-semibold text-white shadow-[0_8px_30px_-8px_rgba(249,115,22,0.7)] transition hover:bg-orange-400 disabled:opacity-50 sm:w-auto"
+            className="inline-flex w-full items-center justify-center gap-2 whitespace-nowrap rounded-xl bg-indigo-600 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-indigo-500/25 transition hover:bg-indigo-700 disabled:opacity-50 sm:w-auto"
           >
             Folosește șablonul <ArrowRight className="h-4 w-4" />
           </button>
@@ -254,14 +254,14 @@ export default function TemplateGallery({
               href={`/p/template/${current.key}`}
               target="_blank"
               rel="noreferrer"
-              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs text-white/60 transition hover:text-white"
+              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs text-gray-600 transition hover:text-indigo-700 dark:text-gray-400 dark:hover:text-white"
             >
               <ExternalLink className="h-3.5 w-3.5" /> Previzualizare completă
             </a>
           )}
           <button
             onClick={onBlank}
-            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs text-white/60 transition hover:text-white sm:hidden"
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs text-gray-600 transition hover:text-indigo-700 dark:text-gray-400 dark:hover:text-white sm:hidden"
           >
             <FilePlus2 className="h-3.5 w-3.5" /> De la zero
           </button>
