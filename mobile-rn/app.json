@@ -16,7 +16,7 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.primafisoft.etcrm",
-      "buildNumber": "202610191539",
+      "buildNumber": "202610191614",
       "infoPlist": {
         "NSMicrophoneUsageDescription": "EasyTeam CRM uses your microphone to record and send audio messages and to make voice calls in WhatsApp, Messenger and Instagram.",
         "NSCameraUsageDescription": "EasyTeam CRM uses your camera to attach photos and videos to WhatsApp, Messenger and Instagram conversations.",
