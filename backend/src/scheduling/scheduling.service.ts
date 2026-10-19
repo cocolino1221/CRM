@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException, Logger, Optional } from '@nestjs/common';
 import { BookingMeetingsService } from '../bookings/booking-meetings.service';
-import { isSlotBookable } from './booking-lead-time';
+import { isSlotBookable, LEAD_BOOKING, LEAD_MIN_NOTICE_HOURS, type LeadTimeOptions } from './booking-lead-time';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Between, LessThan, MoreThan, Not } from 'typeorm';
 import { Availability, DayOfWeek } from '../database/entities/availability.entity';
@@ -155,9 +155,11 @@ export class SchedulingService {
 
   // ========== Available Slots ==========
 
-  async getAvailableSlots(slug: string, date: Date, timezone: string = 'UTC') {
+  async getAvailableSlots(slug: string, date: Date, timezone: string = 'UTC', now: Date = new Date()) {
     const meetingType = await this.getMeetingTypeBySlug(slug);
-    return this.slotsForMeetingType(meetingType, date);
+    const slots = await this.slotsForMeetingType(meetingType, date);
+    // Public page: the lead needs to leave the team three hours' warning.
+    return slots.filter((slot) => isSlotBookable(new Date(slot.startTime), now, undefined, LEAD_BOOKING));
   }
 
   /**
@@ -171,7 +173,7 @@ export class SchedulingService {
    */
   async getTeamSlots(slug: string, date: Date, now: Date = new Date()) {
     const entry = await this.getMeetingTypeBySlug(slug);
-    return this.getTeamSlotsForWorkspace(entry.workspaceId, date, now);
+    return this.getTeamSlotsForWorkspace(entry.workspaceId, date, now, LEAD_BOOKING);
   }
 
   /**
@@ -182,7 +184,12 @@ export class SchedulingService {
    * hidden: a client is free to ignore a flag, and the booking endpoint would
    * then accept what the screen should never have offered.
    */
-  async getTeamSlotsForWorkspace(workspaceId: string, date: Date, now: Date = new Date()) {
+  async getTeamSlotsForWorkspace(
+    workspaceId: string,
+    date: Date,
+    now: Date = new Date(),
+    leadTime: LeadTimeOptions = {},
+  ) {
     const meetingTypes = await this.meetingTypeRepository.find({
       where: { workspaceId, isActive: true, isPublic: true, deletedAt: null as any },
       relations: ['user'],
@@ -212,7 +219,7 @@ export class SchedulingService {
     }
 
     return [...byStart.values()]
-      .filter((slot) => isSlotBookable(new Date(slot.startTime), now))
+      .filter((slot) => isSlotBookable(new Date(slot.startTime), now, undefined, leadTime))
       .sort((a, b) => a.startTime.localeCompare(b.startTime));
   }
 
@@ -422,6 +429,14 @@ export class SchedulingService {
     const startTime = new Date(dto.startTime);
     const endTime = new Date(startTime.getTime() + meetingType.duration * 60000);
 
+    // The page only offers hours far enough ahead, but the request can name
+    // any hour — hold it to the same rule here.
+    if (!isSlotBookable(startTime, new Date(), undefined, LEAD_BOOKING)) {
+      throw new BadRequestException(
+        `Programarea se poate face cu cel puțin ${LEAD_MIN_NOTICE_HOURS} ore înainte. Alege o oră mai târzie.`,
+      );
+    }
+
     // Check if slot is still available
     const existingBooking = await this.bookingRepository.findOne({
       where: {
@@ -586,6 +601,12 @@ export class SchedulingService {
 
     if (booking.status === BookingStatus.CANCELLED) {
       throw new BadRequestException('Cannot reschedule a cancelled booking');
+    }
+
+    if (!isSlotBookable(newStartTime, new Date(), undefined, LEAD_BOOKING)) {
+      throw new BadRequestException(
+        `Programarea se poate muta doar cu cel puțin ${LEAD_MIN_NOTICE_HOURS} ore înainte de noua oră.`,
+      );
     }
 
     const endTime = new Date(newStartTime.getTime() + booking.duration * 60000);

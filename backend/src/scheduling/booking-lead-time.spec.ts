@@ -1,4 +1,40 @@
-import { earliestBookableFrom, isSlotBookable } from './booking-lead-time';
+import { earliestBookableFrom, isSlotBookable, LEAD_BOOKING } from './booking-lead-time';
+
+describe('three hours of warning for a lead booking themselves', () => {
+  const at = (iso: string) => new Date(iso);
+  const lead = (slot: string, now: string) => isSlotBookable(at(slot), at(now), undefined, LEAD_BOOKING);
+
+  it('at 9:00 the first hour is 12:00', () => {
+    expect(lead('2026-10-19T12:00:00+03:00', '2026-10-19T09:00:00+03:00')).toBe(true);
+    expect(lead('2026-10-19T11:30:00+03:00', '2026-10-19T09:00:00+03:00')).toBe(false);
+  });
+
+  it('at 10:00 the first hour is 13:00', () => {
+    expect(lead('2026-10-19T13:00:00+03:00', '2026-10-19T10:00:00+03:00')).toBe(true);
+    expect(lead('2026-10-19T12:59:00+03:00', '2026-10-19T10:00:00+03:00')).toBe(false);
+  });
+
+  it('at 10:01, 13:00 is gone and 13:30 or 14:00 is next', () => {
+    expect(lead('2026-10-19T13:00:00+03:00', '2026-10-19T10:01:00+03:00')).toBe(false);
+    expect(lead('2026-10-19T13:30:00+03:00', '2026-10-19T10:01:00+03:00')).toBe(true);
+    expect(lead('2026-10-19T14:00:00+03:00', '2026-10-19T10:01:00+03:00')).toBe(true);
+  });
+
+  it('keeps the evening rule: at 19:00 tomorrow still opens at midday', () => {
+    expect(earliestBookableFrom(at('2026-10-19T19:00:00+03:00'), undefined, LEAD_BOOKING).toISOString()).toBe(
+      at('2026-10-20T12:00:00+03:00').toISOString(),
+    );
+  });
+
+  it('at 16:30 the three hours run past 18:00 into the evening that same day', () => {
+    expect(lead('2026-10-19T19:30:00+03:00', '2026-10-19T16:30:00+03:00')).toBe(true);
+    expect(lead('2026-10-19T19:00:00+03:00', '2026-10-19T16:30:00+03:00')).toBe(false);
+  });
+
+  it('does not hold a setter in the app to it', () => {
+    expect(isSlotBookable(at('2026-10-19T10:30:00+03:00'), at('2026-10-19T10:00:00+03:00'))).toBe(true);
+  });
+});
 
 /**
  * Booking late in the evening for first thing the next morning leaves nobody

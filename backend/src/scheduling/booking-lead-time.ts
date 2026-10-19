@@ -15,6 +15,22 @@ const EVENING_FROM = 18;
 /** How early tomorrow may start when booked in the evening. */
 const NEXT_DAY_OPENS_AT = 12;
 
+/**
+ * A lead booking themselves must leave the team this much warning: at 10:01
+ * the first hour on offer is 13:01 or later (13:30 on a half-hour grid).
+ * A setter booking from the app is not held to it — they are booking the
+ * hour the lead just agreed to on the phone.
+ */
+export const LEAD_MIN_NOTICE_HOURS = 3;
+
+export interface LeadTimeOptions {
+  /** Hours of warning required on top of the evening rule. */
+  minNoticeHours?: number;
+}
+
+/** The rule for a lead booking from the public page. */
+export const LEAD_BOOKING: LeadTimeOptions = { minNoticeHours: LEAD_MIN_NOTICE_HOURS };
+
 function partsIn(date: Date, timeZone: string) {
   const formatter = new Intl.DateTimeFormat('en-GB', {
     timeZone,
@@ -53,18 +69,26 @@ function instantAt(
 }
 
 /** The first instant a new booking may be placed at. */
-export function earliestBookableFrom(now: Date, timeZone = 'Europe/Bucharest'): Date {
+export function earliestBookableFrom(
+  now: Date,
+  timeZone = 'Europe/Bucharest',
+  options: LeadTimeOptions = {},
+): Date {
   const { hour } = partsIn(now, timeZone);
-  if (hour < EVENING_FROM) return now;
-  return instantAt(now, timeZone, 1, NEXT_DAY_OPENS_AT);
+  const eveningRule = hour < EVENING_FROM ? now : instantAt(now, timeZone, 1, NEXT_DAY_OPENS_AT);
+  const notice = new Date(now.getTime() + Math.max(0, options.minNoticeHours ?? 0) * 3_600_000);
+  // Whichever is later: an evening booking for tomorrow midday already
+  // leaves far more than three hours.
+  return notice.getTime() > eveningRule.getTime() ? notice : eveningRule;
 }
 
 export function isSlotBookable(
   slotStart: Date,
   now: Date = new Date(),
   timeZone = 'Europe/Bucharest',
+  options: LeadTimeOptions = {},
 ): boolean {
   // An hour that has already passed is never bookable, whatever the rule.
   if (slotStart.getTime() <= now.getTime()) return false;
-  return slotStart.getTime() >= earliestBookableFrom(now, timeZone).getTime();
+  return slotStart.getTime() >= earliestBookableFrom(now, timeZone, options).getTime();
 }
