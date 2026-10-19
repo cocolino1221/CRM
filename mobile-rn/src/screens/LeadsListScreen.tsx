@@ -12,7 +12,7 @@ import { useAuthStore } from '../stores/auth-store';
 import { LEAD_TABS, SOURCE_OPTIONS } from '../lib/lead-filters';
 import { TEAM_SLOT_LABEL, UNASSIGNED, assigneeLabel, type TeamSlot } from '../lib/lead-team';
 import AssignSheet from '../components/AssignSheet';
-import { leadStage } from '../lib/lead-stage';
+import { leadStage, stageForTab } from '../lib/lead-stage';
 import LeadSheet from '../components/LeadSheet';
 import Avatar from '../components/Avatar';
 import type { LeadsStackParams } from '../navigation/LeadsStack';
@@ -83,7 +83,7 @@ export default function LeadsListScreen() {
     // list actually uses. The pipeline stage that used to be here ("Contacted")
     // answered a question nobody was asking, and meant nothing once the list
     // stopped being scoped to one pipeline.
-    const stage = leadStage(contact as any, bookedIds);
+    const stage = stageForTab(leadStage(contact as any, bookedIds), bucket);
     const tags: string[] = Array.isArray(contact.tags)
       ? contact.tags
       : typeof contact.tags === 'string'

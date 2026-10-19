@@ -1,5 +1,22 @@
 import { describe, expect, it } from 'vitest';
-import { bookedContactIds, leadStage } from './lead-stage';
+import { bookedContactIds, leadStage, stageForTab } from './lead-stage';
+
+describe('stageForTab', () => {
+  const unscheduled = leadStage({ id: 'c1', lastContactedAt: '2026-10-14' }, new Set());
+
+  it('says Pierdut under Pierdut instead of Neprogramat', () => {
+    expect(stageForTab(unscheduled, 'lost').label).toBe('Pierdut');
+  });
+
+  it('says Vândut under Vândut', () => {
+    expect(stageForTab(unscheduled, 'won').label).toBe('Vândut');
+  });
+
+  it('keeps the usual badge everywhere else', () => {
+    expect(stageForTab(unscheduled, 'new').label).toBe('Neprogramat');
+    expect(stageForTab(unscheduled, '').label).toBe('Neprogramat');
+  });
+});
 
 describe('leadStage', () => {
   // The three words a caller cares about. "Contacted" — the pipeline stage

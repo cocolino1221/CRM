@@ -43,7 +43,7 @@ const DEFAULT_LIMIT = 50;
 /** The tabs at the top of the lead list; the server decides who is in each. */
 export const LEAD_TABS: Array<{ value: string; label: string }> = [
   { value: '', label: 'Toți' },
-  { value: 'new', label: 'Noi' },
+  { value: 'new', label: 'De sunat' },
   { value: 'scheduled', label: 'Programați' },
   { value: 'follow_up', label: 'Revenire' },
   { value: 'won', label: 'Vândut' },

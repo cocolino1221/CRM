@@ -18,10 +18,14 @@ const WON = `("pipelineStage"."isClosedWon" = true OR EXISTS (
   SELECT 1 FROM deals d
   WHERE d."contactId" = "contact".id AND d."deletedAt" IS NULL AND d.stage = 'closed_won'))`;
 
-// The latest recorded outcome, so a lead marked lost and then won is not both.
+// The latest call outcome, so a lead marked lost and then won is not both.
+// Calls only: "A răspuns — refuz" is recorded as a call that failed, while a
+// WhatsApp template that failed to send is also outcome 'failed' and says
+// nothing about the lead — 199 of those had put people to call under Pierdut.
 const LATEST_OUTCOME = `(
   SELECT a.outcome::text FROM activities a
   WHERE a."contactId" = "contact".id AND a."deletedAt" IS NULL AND a.outcome IS NOT NULL
+    AND a.type = 'call'
   ORDER BY a."occurredAt" DESC NULLS LAST, a."createdAt" DESC LIMIT 1)`;
 
 const LOST = `("pipelineStage"."isClosedLost" = true OR ${LATEST_OUTCOME} = 'failed')`;
@@ -49,7 +53,9 @@ export function applyLeadBucket(qb: SelectQueryBuilder<any>, bucket?: LeadBucket
       qb.andWhere(`${FOLLOW_UP} AND NOT ${BOOKED} AND NOT ${CLOSED}`);
       return;
     case 'new':
-      qb.andWhere(`"contact"."lastContactedAt" IS NULL AND NOT ${BOOKED} AND NOT ${CLOSED}`);
+      // "De sunat": everyone still to be won over — never called or called
+      // and not booked yet — but not those already sold or lost.
+      qb.andWhere(`NOT ${BOOKED} AND NOT ${CLOSED}`);
       return;
     default:
       return;

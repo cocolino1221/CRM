@@ -48,3 +48,14 @@ export function bookedContactIds(bookings: unknown): Set<string> {
 
   return new Set(ids);
 }
+
+/**
+ * The badge on a row inside a tab. Pierdut and Vândut are decided by the
+ * server, which the booked/contacted guess above cannot see, so a lost lead
+ * would otherwise read "Neprogramat" under Pierdut.
+ */
+export function stageForTab(stage: LeadStage, bucket?: string): LeadStage {
+  if (bucket === 'lost') return { key: stage.key, label: 'Pierdut', color: '#dc2626' };
+  if (bucket === 'won') return { key: stage.key, label: 'Vândut', color: '#059669' };
+  return stage;
+}
