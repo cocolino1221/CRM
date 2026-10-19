@@ -9,12 +9,16 @@ function qb(result: any, raw?: any) {
     andWhere: jest.fn().mockReturnThis(),
     leftJoin: jest.fn().mockReturnThis(),
     leftJoinAndSelect: jest.fn().mockReturnThis(),
+    innerJoinAndMapOne: jest.fn().mockReturnThis(),
+    groupBy: jest.fn().mockReturnThis(),
+    setParameter: jest.fn().mockReturnThis(),
     orderBy: jest.fn().mockReturnThis(),
     addOrderBy: jest.fn().mockReturnThis(),
     skip: jest.fn().mockReturnThis(),
     take: jest.fn().mockReturnThis(),
     select: jest.fn().mockReturnThis(),
     addSelect: jest.fn().mockReturnThis(),
+    getCount: jest.fn().mockResolvedValue(0),
     getMany: jest.fn().mockResolvedValue(result ?? []),
     getManyAndCount: jest.fn().mockResolvedValue([result ?? [], (result ?? []).length]),
     getRawMany: jest.fn().mockResolvedValue(raw ?? []),
@@ -27,22 +31,28 @@ function build(options: {
   bookings?: any[];
   leads?: any[];
   latestRecordings?: any[];
+  deals?: any[];
 } = {}) {
   const activityBuilder = qb(options.followUps, options.latestRecordings);
   const bookingBuilder = qb(options.bookings);
   const contactBuilder = qb(options.leads);
+  const dealBuilder = qb([], options.deals);
 
   const activityRepository = { createQueryBuilder: jest.fn(() => activityBuilder) };
   const bookingRepository = { createQueryBuilder: jest.fn(() => bookingBuilder) };
   const contactRepository = { createQueryBuilder: jest.fn(() => contactBuilder) };
+  const dealRepository = { createQueryBuilder: jest.fn(() => dealBuilder) };
+  const workspaceRepository = { findOne: jest.fn().mockResolvedValue({ settings: {} }) };
 
   const service = new WorkQueuesService(
     activityRepository as any,
     bookingRepository as any,
     contactRepository as any,
+    dealRepository as any,
+    workspaceRepository as any,
   );
 
-  return { service, activityBuilder, bookingBuilder, contactBuilder };
+  return { service, activityBuilder, bookingBuilder, contactBuilder, dealBuilder };
 }
 
 describe('WorkQueuesService.findFollowUpsDue', () => {
@@ -115,7 +125,11 @@ describe('WorkQueuesService.findUnbookedLeads', () => {
     const leads = [{ id: 'c1', source: 'typeform' }];
     const { service } = build({ leads });
 
-    await expect(service.findUnbookedLeads(WORKSPACE)).resolves.toEqual({ data: leads, total: 1 });
+    await expect(service.findUnbookedLeads(WORKSPACE)).resolves.toEqual({
+      data: leads,
+      total: 1,
+      waiting: 0,
+    });
   });
 
   // A NOT IN subquery over tens of thousands of contacts is the slow way; the
@@ -144,8 +158,21 @@ describe('WorkQueuesService.findUnbookedLeads', () => {
 });
 
 describe('Queue source filter', () => {
-  const sourceParams = (builder: any) =>
-    builder.andWhere.mock.calls.map((c: any[]) => c[1]).filter((p: any) => p && ('source' in p || 'sources' in p));
+  // De sunat now runs two queries against the same mock builder — the page
+  // and the "waiting" count — so an identical filter legitimately shows up
+  // twice. Which sources are asked for is still what this checks.
+  const sourceParams = (builder: any) => {
+    const seen = new Set<string>();
+    return builder.andWhere.mock.calls
+      .map((c: any[]) => c[1])
+      .filter((p: any) => p && ('source' in p || 'sources' in p))
+      .filter((p: any) => {
+        const key = JSON.stringify(p);
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+  };
 
   it('De sunat covers Typeform, WooCommerce and manual by default', async () => {
     const { service, contactBuilder } = build();

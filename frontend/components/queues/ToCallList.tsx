@@ -47,6 +47,9 @@ export default function ToCallList({
 }) {
   const [rows, setRows] = useState<Row[]>([]);
   const [total, setTotal] = useState(0);
+  // Leads still inside their source's grace period: hidden from the list on
+  // purpose, counted so nobody thinks they went missing.
+  const [waiting, setWaiting] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [dispositionFor, setDispositionFor] = useState<Row | null>(null);
@@ -73,6 +76,7 @@ export default function ToCallList({
       });
       setRows(res.data?.data ?? []);
       setTotal(res.data?.total ?? 0);
+      setWaiting(res.data?.waiting ?? 0);
     } catch (err: any) {
       setError(err?.response?.data?.message || 'Nu s-a putut încărca lista.');
     } finally {
@@ -119,9 +123,19 @@ export default function ToCallList({
     <>
       <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-200 px-4 py-3 dark:border-gray-700">
-          <span className="text-sm font-semibold text-gray-700 dark:text-gray-200">
-            {loading ? '…' : total} de sunat
-          </span>
+          <div className="flex items-baseline gap-3">
+            <span className="text-sm font-semibold text-gray-700 dark:text-gray-200">
+              {loading ? '…' : total} de sunat
+            </span>
+            {!loading && waiting > 0 && (
+              <span
+                className="text-sm font-medium text-gray-500"
+                title="Intrate de curând — li se lasă câteva minute să se programeze singure"
+              >
+                {waiting} în așteptare
+              </span>
+            )}
+          </div>
           <div className="flex items-center gap-3">
           <select
             value={periodKind}

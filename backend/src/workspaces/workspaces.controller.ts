@@ -1,6 +1,6 @@
 import { Body, Controller, Get, Put, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiBody, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
-import { WorkspacesService } from './workspaces.service';
+import { LeadGrace, WorkspacesService } from './workspaces.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { WorkspaceGuard } from '../auth/guards/workspace.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -44,6 +44,38 @@ export class WorkspacesController {
     // The definitions travel with the config so the screen never has to guess
     // a label or a unit for a key it was handed.
     return { ...config, definitions: KPI_DEFINITIONS };
+  }
+
+  @Get('current/lead-grace')
+  @ApiOperation({ summary: 'How long a fresh lead is left alone before it reaches De sunat' })
+  @ApiResponse({ status: 200, description: 'Wait per source, in minutes' })
+  // Any caller may read it: it explains why a lead they can see in WooCommerce
+  // is not in their queue yet.
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'caller', 'support_agent')
+  async getLeadGrace(@CurrentWorkspace('id') workspaceId: string) {
+    return this.workspacesService.getLeadGrace(workspaceId);
+  }
+
+  @Put('current/lead-grace')
+  @ApiOperation({ summary: 'Set the wait per source before a lead becomes callable' })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        typeform: { type: 'number' },
+        woocommerce: { type: 'number' },
+        manual: { type: 'number' },
+      },
+    },
+  })
+  @ApiResponse({ status: 200, description: 'Updated waits' })
+  @ApiResponse({ status: 400, description: 'A wait outside 0–1440 minutes' })
+  @Roles('admin', 'manager')
+  async setLeadGrace(
+    @CurrentWorkspace('id') workspaceId: string,
+    @Body() body: Partial<LeadGrace>,
+  ) {
+    return this.workspacesService.setLeadGrace(workspaceId, body);
   }
 
   @Put('current/kpis')

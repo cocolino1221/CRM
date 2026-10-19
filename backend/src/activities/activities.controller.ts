@@ -78,7 +78,7 @@ export class ActivitiesController {
       throw new BadRequestException('createdFrom must not be later than createdTo');
     }
 
-    const { data, total } = await this.workQueues.findUnbookedLeads(
+    const { data, total, waiting } = await this.workQueues.findUnbookedLeads(
       workspaceId,
       page ? Number(page) : undefined,
       limit ? Number(limit) : undefined,
@@ -88,7 +88,57 @@ export class ActivitiesController {
     );
     // Each row carries the last call recording so a caller can listen before dialling.
     const enriched = await this.workQueues.attachLatestRecordings(workspaceId, data as any);
+    return { data: enriched, total, waiting };
+  }
+
+  @Get('queues/follow-ups')
+  @ApiOperation({ summary: 'Every follow-up on the books, overdue and future — the Follow up list' })
+  @Roles(...CALLING_ROLES)
+  async allFollowUps(
+    @CurrentWorkspace('id') workspaceId: string,
+    @CurrentUser() user: any,
+  ) {
+    const scoped = ['admin', 'manager'].includes(user?.role) ? undefined : user?.id;
+    return this.workQueues.findAllFollowUps(workspaceId, scoped);
+  }
+
+  @Get('queues/won')
+  @ApiOperation({ summary: 'Contacts in a closed-won stage, with what they paid — the Win list' })
+  @Roles(...CALLING_ROLES)
+  async won(
+    @CurrentWorkspace('id') workspaceId: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('source') source?: string,
+  ) {
+    const { data, total } = await this.workQueues.findClosed(
+      workspaceId,
+      true,
+      parseQueueSource(source),
+      page ? Number(page) : undefined,
+      limit ? Number(limit) : undefined,
+    );
+    // Only the won list carries money; Lost has nothing to total up.
+    const enriched = await this.workQueues.attachPaymentSummaries(workspaceId, data as any);
     return { data: enriched, total };
+  }
+
+  @Get('queues/lost')
+  @ApiOperation({ summary: 'Contacts in a closed-lost stage — the Lost list' })
+  @Roles(...CALLING_ROLES)
+  async lost(
+    @CurrentWorkspace('id') workspaceId: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('source') source?: string,
+  ) {
+    return this.workQueues.findClosed(
+      workspaceId,
+      false,
+      parseQueueSource(source),
+      page ? Number(page) : undefined,
+      limit ? Number(limit) : undefined,
+    );
   }
 
   @Get(':id')

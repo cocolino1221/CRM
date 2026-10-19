@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { Search, Check, ExternalLink, Zap, Settings, Webhook, X, Copy, Key, Lock, Link as LinkIcon, AlertCircle, Loader2, Plus, Trash2, FileText, Edit, ChevronDown, Wrench, RefreshCw } from 'lucide-react';
 import { BillingAccess, PLAN_NAMES, fetchBillingOverview, integrationLock } from '@/lib/billing';
 import PayflowConnect from '@/components/integrations/PayflowConnect';
+import LeadGraceSettings from '@/components/integrations/LeadGraceSettings';
 import api from '@/lib/api';
 import { integrationIcons } from '@/lib/integration-icons';
 import GoogleSheetsSync from '@/components/integrations/GoogleSheetsSync';
@@ -1606,6 +1607,10 @@ export default function IntegrationsPage() {
           Connect your favorite tools and apps to automate your workflow
         </p>
       </div>
+
+      {/* Lives here rather than on a lead screen: it is a per-source rule
+          about how leads arrive, which is what this page is about. */}
+      <LeadGraceSettings />
 
       {billingAccess?.requiresPlan && !billingAccess.active && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-indigo-200 bg-indigo-50 p-5">

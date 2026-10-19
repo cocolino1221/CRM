@@ -7,12 +7,13 @@ import { Contact } from '../database/entities/contact.entity';
 import { Deal } from '../database/entities/deal.entity';
 import { Task } from '../database/entities/task.entity';
 import { Booking } from '../database/entities/booking.entity';
+import { Workspace } from '../database/entities/workspace.entity';
 import { WorkQueuesService } from './work-queues.service';
 import { ReminderDispatchService } from './reminder-dispatch.service';
 import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Activity, Contact, Deal, Task, Booking]), NotificationsModule],
+  imports: [TypeOrmModule.forFeature([Activity, Contact, Deal, Task, Booking, Workspace]), NotificationsModule],
   controllers: [ActivitiesController],
   providers: [ActivitiesService, WorkQueuesService, ReminderDispatchService],
   exports: [ActivitiesService, WorkQueuesService],
