@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import {
   Calendar, ChevronLeft, ChevronRight, CheckCircle, Clock,
-  AlertTriangle, Plus, X, Video, User,
+  AlertTriangle, Plus, X, Video, User, Phone,
 } from 'lucide-react-native';
 import { toCalendarBookings, type CalendarBooking } from '../lib/calendar-bookings';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -316,6 +316,21 @@ export default function CalendarScreen() {
                       <User size={12} color="#7c3aed" />
                       <Text className="text-[11px] text-violet-700">{b.hostName}</Text>
                     </View>
+                  )}
+                  {!!b.phone && (
+                    <TouchableOpacity
+                      onPress={() => { void Linking.openURL(`tel:${b.phone}`); }}
+                      className="flex-row items-center gap-1 mt-1"
+                    >
+                      <Phone size={12} color="#2563eb" />
+                      <Text className="text-[12px] font-semibold text-blue-600">{b.phone}</Text>
+                    </TouchableOpacity>
+                  )}
+                  {!!b.email && (
+                    <Text className="text-[11px] text-violet-700 mt-0.5" numberOfLines={1}>{b.email}</Text>
+                  )}
+                  {!!b.notes && (
+                    <Text className="text-[11px] text-slate-600 mt-1" numberOfLines={3}>{b.notes}</Text>
                   )}
                   {b.link ? (
                     <TouchableOpacity

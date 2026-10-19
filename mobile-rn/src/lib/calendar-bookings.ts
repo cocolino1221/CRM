@@ -12,6 +12,18 @@ export interface CalendarBooking {
   hostName: string;
   link?: string;
   platform: 'Zoom' | 'Google Meet' | null;
+  phone?: string;
+  email?: string;
+  contactId?: string;
+  notes?: string;
+  meetingName?: string;
+}
+
+/** Leads from Meta/WhatsApp carry a made-up address; it is not worth showing. */
+function realEmail(value: unknown): string | undefined {
+  const e = String(value || '').trim();
+  if (!e || /placeholder|\.invalid$/i.test(e)) return undefined;
+  return e;
 }
 
 function fullName(person: any): string {
@@ -40,6 +52,11 @@ export function toCalendarBooking(row: any): CalendarBooking | null {
     hostName: fullName(row.host),
     link,
     platform,
+    phone: String(row.guestPhone || row.contact?.phone || '').trim() || undefined,
+    email: realEmail(row.guestEmail) || realEmail(row.contact?.email),
+    contactId: row.contactId || row.contact?.id || undefined,
+    notes: String(row.notes || '').trim() || undefined,
+    meetingName: row.meetingType?.name || undefined,
   };
 }
 

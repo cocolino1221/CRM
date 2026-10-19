@@ -5,6 +5,7 @@ import { ChevronLeft, ChevronRight, Plus, Clock, MapPin, Users, Video, Phone, Ma
 import api from '@/lib/api';
 
 import { toCalendarBookings, type CalendarBooking } from '@/lib/calendar-bookings';
+import BookingDetailsModal from '@/components/bookings/BookingDetailsModal';
 
 interface Event {
   id: string;
@@ -86,6 +87,7 @@ export default function CalendarPage() {
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [events, setEvents] = useState<Event[]>([]);
   const [bookings, setBookings] = useState<CalendarBooking[]>([]);
+  const [openBooking, setOpenBooking] = useState<CalendarBooking | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -575,17 +577,15 @@ export default function CalendarPage() {
           </div>
           <div className="space-y-1">
             {dayBookings.map((b) => (
-              <a
+              <button
+                type="button"
                 key={`booking-${b.id}`}
-                href={b.link || undefined}
-                target="_blank"
-                rel="noreferrer"
-                title={`Programare cu ${b.leadName}${b.hostName ? ` — ${b.hostName}` : ''}${b.link ? ` (${b.platform})` : ''}`}
-                onClick={(e) => { e.stopPropagation(); if (!b.link) e.preventDefault(); }}
-                className="block truncate rounded bg-violet-600 px-2 py-1 text-xs text-white hover:opacity-80"
+                title={`Programare cu ${b.leadName}${b.hostName ? ` — ${b.hostName}` : ''}`}
+                onClick={(e) => { e.stopPropagation(); setOpenBooking(b); }}
+                className="block w-full truncate rounded bg-violet-600 px-2 py-1 text-left text-xs text-white hover:opacity-80"
               >
                 {formatTime(b.startTime)} - {b.leadName}
-              </a>
+              </button>
             ))}
             {dayEvents.slice(0, 3).map((event) => (
               <div
@@ -622,6 +622,7 @@ export default function CalendarPage() {
 
   return (
     <div className="space-y-6">
+      {openBooking && <BookingDetailsModal booking={openBooking} onClose={() => setOpenBooking(null)} />}
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>

@@ -23,6 +23,8 @@ export class BookingsService {
 
   async findAll(workspaceId: string, filters?: {
     hostId?: string;
+    /** Only bookings of leads this caller/setter is tagged on (or hosts). */
+    assignedTo?: string;
     status?: BookingStatus;
     startDate?: Date;
     endDate?: Date;
@@ -37,6 +39,13 @@ export class BookingsService {
 
     if (filters?.hostId) {
       queryBuilder.andWhere('booking.hostId = :hostId', { hostId: filters.hostId });
+    }
+
+    if (filters?.assignedTo) {
+      queryBuilder.andWhere(
+        '(contact.callerId = :me OR contact.setterId = :me OR booking.hostId = :me)',
+        { me: filters.assignedTo },
+      );
     }
 
     if (filters?.status) {

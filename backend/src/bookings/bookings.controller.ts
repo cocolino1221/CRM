@@ -62,11 +62,13 @@ export class BookingsController {
     @Query('endDate') endDate?: string,
     @Req() req?: any,
   ) {
-    // A closer's calendar is their own diary; setters and managers book for
-    // others and see the whole team.
-    const ownOnly = req?.user?.role === 'closer';
+    // A closer sees the meetings they hold; a caller the meetings of the
+    // leads they are tagged on. Setters and managers book for others and see
+    // the whole team.
+    const role = req?.user?.role;
     return this.bookingsService.findAll(workspaceId, {
-      hostId: ownOnly ? req.user.id : hostId,
+      hostId: role === 'closer' ? req.user.id : hostId,
+      assignedTo: role === 'caller' ? req.user.id : undefined,
       status,
       startDate: startDate ? new Date(startDate) : undefined,
       endDate: endDate ? new Date(endDate) : undefined,

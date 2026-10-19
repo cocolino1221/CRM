@@ -45,4 +45,16 @@ describe('bookings in the calendar', () => {
     const later = { ...row, id: 'b2', startTime: '2026-10-19T15:00:00.000Z' };
     expect(toCalendarBookings([later, row]).map((b) => b.id)).toEqual(['b1', 'b2']);
   });
+
+  it('carries the details the popup shows, without placeholder emails', () => {
+    const b = toCalendarBooking({
+      ...row,
+      guestPhone: '',
+      contactId: 'c1',
+      contact: { id: 'c1', phone: '+40722000000', email: 'm.1@meta.placeholder.invalid' },
+      notes: ' vrea dimineața ',
+    });
+    expect(b).toMatchObject({ phone: '+40722000000', email: undefined, contactId: 'c1', notes: 'vrea dimineața' });
+    expect(toCalendarBooking({ ...row, guestEmail: 'ana@client.ro' })?.email).toBe('ana@client.ro');
+  });
 });
