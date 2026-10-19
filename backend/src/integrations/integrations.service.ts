@@ -178,7 +178,7 @@ export class IntegrationsService implements OnModuleInit {
         timestamp: new Date(),
       } as IntegrationEvent);
 
-      return updated;
+      return this.verifyOnSave(updated, workspaceId);
     }
 
     // Get integration metadata
@@ -239,7 +239,24 @@ export class IntegrationsService implements OnModuleInit {
       timestamp: new Date(),
     } as IntegrationEvent);
 
-    return saved;
+    return this.verifyOnSave(saved, workspaceId);
+  }
+
+  /**
+   * Zoom is saved from a form, not an OAuth redirect, so nothing else ever
+   * tests it: it stayed PENDING, the page kept showing it unconnected and
+   * asked for the same three values again. Testing on save settles it to
+   * ACTIVE or ERROR (with Zoom's reason) right away.
+   */
+  private async verifyOnSave(integration: Integration, workspaceId: string): Promise<Integration> {
+    if (integration.type !== IntegrationType.ZOOM) return integration;
+    try {
+      await this.testConnection(integration.id, workspaceId);
+      return await this.findOne(integration.id, workspaceId);
+    } catch (error) {
+      this.logger.warn(`Zoom check on save failed for ${integration.id}: ${error.message}`);
+      return integration;
+    }
   }
 
   /**
