@@ -1,4 +1,5 @@
-import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Logger, Optional } from '@nestjs/common';
+import { BookingMeetingsService } from '../bookings/booking-meetings.service';
 import { isSlotBookable } from './booking-lead-time';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Between, LessThan, MoreThan, Not } from 'typeorm';
@@ -33,6 +34,7 @@ export class SchedulingService {
     private readonly contactRepository: Repository<Contact>,
     private readonly notificationsService: NotificationsService,
     private readonly contactsService: ContactsService,
+    @Optional() private readonly meetings?: BookingMeetingsService,
   ) {}
 
   // ========== Availability Management ==========
@@ -463,7 +465,9 @@ export class SchedulingService {
 
     const saved = await this.bookingRepository.save(booking);
     await this.notifyHostOfBooking(saved, meetingType, dto);
-    return saved;
+    // Meet/Zoom link, emailed to the lead and the closer.
+    const meeting = await this.meetings?.setUpMeeting(saved.id);
+    return meeting?.link ? { ...saved, location: meeting.link, locationType: meeting.provider } : saved;
   }
 
   /**
@@ -572,7 +576,9 @@ export class SchedulingService {
     booking.cancellationReason = reason;
     booking.cancelledAt = new Date();
 
-    return this.bookingRepository.save(booking);
+    const cancelled = await this.bookingRepository.save(booking);
+    await this.meetings?.cancelMeeting(cancelled);
+    return cancelled;
   }
 
   async rescheduleBooking(confirmationCode: string, newStartTime: Date) {
@@ -605,7 +611,9 @@ export class SchedulingService {
     booking.startTime = newStartTime;
     booking.endTime = endTime;
 
-    return this.bookingRepository.save(booking);
+    const moved = await this.bookingRepository.save(booking);
+    await this.meetings?.moveMeeting(moved);
+    return moved;
   }
 
   // ========== Helper Methods ==========

@@ -11,6 +11,7 @@ import { Workspace } from '../database/entities/workspace.entity';
 import { BookingBrandingService } from './booking-branding.service';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { ContactsModule } from '../contacts/contacts.module';
+import { BookingsModule } from '../bookings/bookings.module';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { ContactsModule } from '../contacts/contacts.module';
     ]),
     NotificationsModule,
     ContactsModule,
+    BookingsModule,
   ],
   controllers: [SchedulingController],
   providers: [SchedulingService, BookingBrandingService],

@@ -1,10 +1,11 @@
-import { Injectable, NotFoundException, BadRequestException, ForbiddenException, Logger } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ForbiddenException, Logger, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Between } from 'typeorm';
 import { Booking, BookingStatus } from '../database/entities/booking.entity';
 import { Availability } from '../database/entities/availability.entity';
 import { User } from '../database/entities/user.entity';
 import { canManageBooking } from './booking-permissions';
+import { BookingMeetingsService } from './booking-meetings.service';
 
 @Injectable()
 export class BookingsService {
@@ -17,6 +18,7 @@ export class BookingsService {
     private availabilityRepository: Repository<Availability>,
     @InjectRepository(User)
     private userRepository: Repository<User>,
+    @Optional() private readonly meetings?: BookingMeetingsService,
   ) {}
 
   async findAll(workspaceId: string, filters?: {
@@ -140,6 +142,8 @@ export class BookingsService {
       guestPhone?: string;
       notes?: string;
       timezone?: string;
+      /** 'google_meet' | 'zoom' | 'none'; empty = the closer's preference. */
+      meetingProvider?: string;
     },
   ) {
     // Validate that booker has permission
@@ -191,8 +195,9 @@ export class BookingsService {
     }
 
     // Create booking
+    const { meetingProvider, ...bookingFields } = dto;
     const booking = this.bookingRepository.create({
-      ...dto,
+      ...bookingFields,
       workspaceId,
       startTime,
       endTime,
@@ -204,10 +209,14 @@ export class BookingsService {
 
     this.logger.log(`Booking created: ${saved.id} for host ${dto.hostId} by ${bookedBy.id}`);
 
-    return this.bookingRepository.findOne({
+    // Meet/Zoom link + email to the lead and the closer. Never fails the booking.
+    const meeting = await this.meetings?.setUpMeeting(saved.id, meetingProvider);
+
+    const created = await this.bookingRepository.findOne({
       where: { id: saved.id },
       relations: ['host', 'contact', 'meetingType'],
     });
+    return meeting ? { ...created, meeting } : created;
   }
 
   async cancel(workspaceId: string, id: string, userId: string, reason?: string) {
@@ -230,6 +239,7 @@ export class BookingsService {
     booking.cancelledAt = new Date();
 
     await this.bookingRepository.save(booking);
+    await this.meetings?.cancelMeeting(booking);
 
     this.logger.log(`Booking ${id} cancelled by ${userId}`);
 
@@ -252,6 +262,7 @@ export class BookingsService {
 
     booking.status = status;
     await this.bookingRepository.save(booking);
+    if (status === BookingStatus.CANCELLED) await this.meetings?.cancelMeeting(booking);
 
     this.logger.log(`Booking ${id} status updated to ${status}`);
 
@@ -311,6 +322,7 @@ export class BookingsService {
     booking.startTime = startTime;
     booking.endTime = endTime;
     await this.bookingRepository.save(booking);
+    await this.meetings?.moveMeeting(booking);
     this.logger.log(`Booking ${id} moved from ${new Date(from).toISOString()} to ${startTime.toISOString()} by ${actor.id}`);
 
     return this.bookingRepository.findOne({

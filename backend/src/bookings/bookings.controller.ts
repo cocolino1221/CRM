@@ -20,6 +20,7 @@ import {
   ApiQuery,
 } from '@nestjs/swagger';
 import { BookingsService } from './bookings.service';
+import { BookingMeetingsService, normalizeProvider } from './booking-meetings.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { WorkspaceGuard } from '../auth/guards/workspace.guard';
@@ -32,7 +33,18 @@ import { BookingStatus } from '../database/entities/booking.entity';
 @UseGuards(JwtAuthGuard, WorkspaceGuard, RolesGuard)
 @ApiBearerAuth()
 export class BookingsController {
-  constructor(private readonly bookingsService: BookingsService) {}
+  constructor(
+    private readonly bookingsService: BookingsService,
+    private readonly meetings: BookingMeetingsService,
+  ) {}
+
+  @Get('meeting-providers')
+  @ApiOperation({ summary: 'Which meeting platforms (Google Meet, Zoom) are connected, and the caller\'s preference' })
+  @Roles('admin', 'manager', 'closer', 'setter', 'caller', 'sales_rep')
+  async meetingProviders(@CurrentWorkspace('id') workspaceId: string, @Req() req: any) {
+    const available = await this.meetings.availableProviders(workspaceId);
+    return { ...available, preference: normalizeProvider(req.user?.preferences?.meetingProvider) ?? null };
+  }
 
   @Get()
   @ApiOperation({ summary: 'Get all bookings' })
@@ -94,6 +106,7 @@ export class BookingsController {
       guestPhone?: string;
       notes?: string;
       timezone?: string;
+      meetingProvider?: string;
     },
   ) {
     return this.bookingsService.create(workspaceId, req.user, dto);
