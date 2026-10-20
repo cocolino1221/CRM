@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { answersError, customAnswersFor, formOf, newQuestion, prefillQuery, wooOrderFromQuery } from './booking-form';
+import { answersError, customAnswersFor, formOf, newQuestion, prefillQuery, variantIdFrom, variantLink, wooOrderFromQuery } from './booking-form';
 
 const form = formOf({
   ageGate: { enabled: true, minAge: 18 },
@@ -57,3 +57,15 @@ describe('newQuestion', () => {
     expect(newQuestion([{ id: 'q2', label: 'a', type: 'text', required: true }]).id).toBe('q3');
   });
 });
+
+describe('variants', () => {
+  it('makes the same readable id the server makes', () => {
+    expect(variantIdFrom('Cumpărători carte!')).toBe('cumparatori-carte');
+  });
+
+  it('builds the link for a variant, and the plain link for the main page', () => {
+    expect(variantLink('https://x.ro/book/c-1', 'carte')).toBe('https://x.ro/book/c-1?v=carte');
+    expect(variantLink('https://x.ro/book/c-1', null)).toBe('https://x.ro/book/c-1');
+  });
+});
+

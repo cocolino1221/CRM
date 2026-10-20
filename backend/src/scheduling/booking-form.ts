@@ -112,3 +112,50 @@ export function answersAsNotes(form: BookingForm, answers: Record<string, any> |
   if (form.ageGate.enabled && given.ageConfirmed === true) lines.unshift(`Vârstă: ${form.ageGate.minAge}+ confirmat`);
   return lines.join('\n');
 }
+
+/**
+ * Named versions of the booking page: the same team calendar, each with its
+ * own questions and age check — e.g. "Carte" with questions for book buyers,
+ * while the main page (no variant) goes straight to the calendar for Typeform.
+ * Picked by `?v=<id>` on the booking link.
+ */
+export interface BookingVariant {
+  id: string;
+  name: string;
+  form: BookingForm;
+}
+
+export const MAX_VARIANTS = 10;
+
+/** "Cumpărători carte!" → "cumparatori-carte". */
+export function variantIdFrom(name: string): string {
+  return String(name || '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 30);
+}
+
+export function normalizeBookingVariants(input: unknown): BookingVariant[] {
+  const list: any[] = Array.isArray(input) ? input : [];
+  const seen = new Set<string>();
+  const out: BookingVariant[] = [];
+  for (const raw of list) {
+    const name = String(raw?.name ?? '').trim().slice(0, 60);
+    if (!name) continue;
+    let id = variantIdFrom(raw?.id || name) || 'varianta';
+    while (seen.has(id)) id = `${id}-2`.slice(0, 34);
+    seen.add(id);
+    out.push({ id, name, form: normalizeBookingForm(raw?.form) });
+    if (out.length >= MAX_VARIANTS) break;
+  }
+  return out;
+}
+
+/** The form a link asks for: its variant's, or the main one when there is no such variant. */
+export function formForVariant(main: BookingForm, variants: BookingVariant[], variantId?: string | null): BookingForm {
+  const id = String(variantId || '').trim();
+  return (id && variants.find((v) => v.id === id)?.form) || main;
+}

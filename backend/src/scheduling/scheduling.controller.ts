@@ -50,6 +50,23 @@ export class SchedulingController {
     return this.bookingFormService.set(workspaceId, body);
   }
 
+  @Get('booking-variants')
+  @UseGuards(JwtAuthGuard, WorkspaceGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Named versions of the booking page, each with its own questions' })
+  async getBookingVariants(@CurrentWorkspace('id') workspaceId: string) {
+    return this.bookingFormService.getVariants(workspaceId);
+  }
+
+  @Put('booking-variants')
+  @UseGuards(JwtAuthGuard, WorkspaceGuard, RolesGuard)
+  @ApiBearerAuth()
+  @Roles('admin', 'manager', 'closer')
+  @ApiOperation({ summary: 'Replace the named versions of the booking page' })
+  async setBookingVariants(@CurrentWorkspace('id') workspaceId: string, @Body() body: unknown) {
+    return this.bookingFormService.setVariants(workspaceId, body);
+  }
+
   @Get('booking-page')
   @UseGuards(JwtAuthGuard, WorkspaceGuard, RolesGuard)
   @ApiBearerAuth()
@@ -184,7 +201,8 @@ export class SchedulingController {
   @Get('public/:slug')
   @ApiOperation({ summary: 'Get public meeting type by slug' })
   @ApiParam({ name: 'slug', description: 'Meeting type URL slug' })
-  async getPublicMeetingType(@Param('slug') slug: string) {
+  @ApiQuery({ name: 'v', description: 'Booking page variant id', required: false })
+  async getPublicMeetingType(@Param('slug') slug: string, @Query('v') variant?: string) {
     const meetingType = await this.schedulingService.getMeetingTypeBySlug(slug);
     // Anyone on the internet calls this. The entity carries its owner's full
     // user row — password hash and email included — so only what the page
@@ -199,7 +217,7 @@ export class SchedulingController {
         : undefined,
       branding: await this.brandingService.get(meetingType.workspaceId),
       // The age check and the questions asked before the calendar.
-      form: await this.bookingFormService.get(meetingType.workspaceId),
+      form: await this.bookingFormService.getForLink(meetingType.workspaceId, variant),
     };
   }
 
