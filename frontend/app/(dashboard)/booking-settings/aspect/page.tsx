@@ -155,8 +155,8 @@ export default function BookingAppearancePage() {
     <div className="mx-auto max-w-6xl space-y-6 px-4 py-6">
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <Link href="/booking-settings" className="inline-flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700">
-            <ArrowLeft className="h-3.5 w-3.5" /> Disponibilitate
+          <Link href="/booking-page" className="inline-flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700">
+            <ArrowLeft className="h-3.5 w-3.5" /> Pagina de programare
           </Link>
           <h1 className="mt-1 flex items-center gap-2 text-2xl font-bold text-gray-900 dark:text-white">
             <Palette className="h-6 w-6 text-indigo-600" /> Aspectul paginii de programare

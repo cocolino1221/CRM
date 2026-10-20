@@ -11,7 +11,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import MeetingPreferenceCard from '@/components/bookings/MeetingPreferenceCard';
-import BookingFormCard from '@/components/bookings/BookingFormCard';
 import { Calendar, Check, Copy, Eraser, ExternalLink, Loader2, Palette, Save } from 'lucide-react';
 import api from '@/lib/api';
 import {
@@ -292,10 +291,10 @@ export default function BookingSettingsPage() {
         </p>
         </div>
         <Link
-          href="/booking-settings/aspect"
+          href="/booking-page"
           className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700"
         >
-          <Palette className="h-4 w-4" /> Aspectul paginii
+          <Palette className="h-4 w-4" /> Pagina de programare
         </Link>
       </header>
 
@@ -304,8 +303,6 @@ export default function BookingSettingsPage() {
       )}
 
       <MeetingPreferenceCard />
-
-      <BookingFormCard />
 
       <section className="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-800">
         <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-200">Tipul întâlnirii</h2>
