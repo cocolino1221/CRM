@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AnalyticsController } from './analytics.controller';
 import { AnalyticsService } from './analytics.service';
+import { UserReportService } from './user-report.service';
 import { Contact } from '../database/entities/contact.entity';
 import { Deal } from '../database/entities/deal.entity';
 import { Task } from '../database/entities/task.entity';
@@ -22,7 +23,7 @@ import { IntegrationLog } from '../database/entities/integration.entity';
       IntegrationLog,]),
   ],
   controllers: [AnalyticsController],
-  providers: [AnalyticsService],
+  providers: [AnalyticsService, UserReportService],
   exports: [AnalyticsService],
 })
 export class AnalyticsModule {}

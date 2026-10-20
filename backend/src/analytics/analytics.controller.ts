@@ -1,4 +1,6 @@
-import { BadRequestException, Controller, Get, ParseIntPipe, Query, UseGuards, ValidationPipe } from '@nestjs/common';
+import { UserReportService } from './user-report.service';
+import { MAX_REPORT_DAYS } from './user-report';
+import { BadRequestException, Controller, Get, ParseIntPipe, Query, UseGuards, ValidationPipe, Optional } from '@nestjs/common';
 import {
   ApiTags,
   ApiOperation,
@@ -24,7 +26,9 @@ const MAX_TREND_DAYS = 120;
 @UseGuards(JwtAuthGuard, WorkspaceGuard, RolesGuard)
 @ApiBearerAuth()
 export class AnalyticsController {
-  constructor(private readonly analyticsService: AnalyticsService) {}
+  constructor(private readonly analyticsService: AnalyticsService,
+    @Optional() private readonly userReportService?: UserReportService,
+  ) {}
 
   @Get('dashboard')
   @ApiOperation({ summary: 'Get dashboard overview with key metrics' })
@@ -266,6 +270,35 @@ export class AnalyticsController {
       throw new BadRequestException(`${field} is not a valid date`);
     }
     return date;
+  }
+
+  @Get('user-report')
+  @ApiOperation({ summary: 'Per-person KPIs (calls, bookings, sales, follow-ups) over a period' })
+  @ApiQuery({ name: 'from', required: true, type: String, description: 'ISO start of the period' })
+  @ApiQuery({ name: 'to', required: true, type: String, description: 'ISO end of the period' })
+  @ApiQuery({ name: 'userId', required: false, type: String, description: 'One person (managers only)' })
+  @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'caller', 'support_agent')
+  async getUserReport(
+    @CurrentWorkspace('id') workspaceId: string,
+    @CurrentUser() user: any,
+    @Query('from') from: string,
+    @Query('to') to: string,
+    @Query('userId') userId?: string,
+  ) {
+    const start = this.parseReportDate(from, 'from');
+    const end = this.parseReportDate(to, 'to');
+    if (start.getTime() > end.getTime()) {
+      throw new BadRequestException('from must not be later than to');
+    }
+    const days = (end.getTime() - start.getTime()) / 86_400_000;
+    if (days > MAX_REPORT_DAYS) {
+      throw new BadRequestException(`Intervalul este prea mare. Maxim ${MAX_REPORT_DAYS} de zile.`);
+    }
+    // A manager may look at anyone or the whole team; everyone else gets
+    // their own numbers whatever they ask for.
+    const isManager = ['admin', 'manager'].includes(user?.role);
+    const scoped = isManager ? userId || undefined : user?.id;
+    return this.userReportService!.getReport(workspaceId, start, end, scoped);
   }
 
   @Get('eod-report')

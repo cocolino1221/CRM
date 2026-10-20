@@ -36,7 +36,7 @@ type WorkspaceCard = {
   subtitle: string;
   icon: typeof FolderKanban;
   accent: string;
-  route: 'Analytics' | 'Calendar' | 'Documents' | 'Payments' | 'Automations' | 'Availability';
+  route: 'Analytics' | 'Calendar' | 'Documents' | 'Payments' | 'Automations' | 'Availability' | 'Reports';
 };
 
 const asNumber = (value: unknown, fallback = 0): number => {
@@ -53,6 +53,14 @@ export default function WorkspaceHubScreen() {
   const [error, setError] = useState('');
 
   const cards = useMemo<WorkspaceCard[]>(() => [
+    {
+      id: 'reports',
+      title: 'Rapoarte',
+      subtitle: 'KPI pe om: apeluri, programări, vândut, pierdut, follow-up',
+      icon: BarChart3,
+      accent: '#4338ca',
+      route: 'Reports',
+    },
     {
       id: 'analytics',
       title: 'Analytics',

@@ -23,6 +23,7 @@ import {
   TrendingUp,
 } from 'lucide-react';
 import api from '@/lib/api';
+import UserReportPanel from '@/components/reports/UserReportPanel';
 import { KpiDefinition, formatKpiValue, kpiProgress, visibleKpis } from '@/lib/kpi-view';
 
 interface KpiConfigResponse {
@@ -133,6 +134,8 @@ export default function RapoartePage() {
           )}
         </div>
       </div>
+
+      <UserReportPanel />
 
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-2">
