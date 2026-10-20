@@ -8,6 +8,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { useKeyboardSheet } from '../lib/use-keyboard-sheet';
 import { Audio } from 'expo-av';
 import { Pause, Play, Phone } from 'lucide-react-native';
 import api from '../lib/api';
@@ -196,10 +197,16 @@ export default function DispositionDialog({
       ? `${Math.floor(durationSeconds / 60)}:${String(durationSeconds % 60).padStart(2, '0')}`
       : null;
 
+  const scrollRef = useRef<ScrollView>(null);
+  const { keyboardHeight, sheetMaxHeight } = useKeyboardSheet();
+
   return (
     <Modal visible animationType="slide" transparent onRequestClose={onClose}>
-      <View className="flex-1 bg-black/60 justify-end">
-        <View className="bg-white rounded-t-3xl max-h-[92%]">
+      {/* The sheet sits above the keyboard. Android does not resize a Modal's
+          content for the keyboard, so on a phone the note field and the
+          Salvează button were hidden behind it while someone typed. */}
+      <View className="flex-1 bg-black/60 justify-end" style={{ paddingBottom: keyboardHeight }}>
+        <View className="bg-white rounded-t-3xl" style={{ maxHeight: sheetMaxHeight }}>
           <View className="px-5 pt-5 pb-3 border-b border-gray-100">
             <Text className="text-lg font-bold text-gray-900">
               Cum a mers apelul cu {contactName}?
@@ -220,7 +227,7 @@ export default function DispositionDialog({
             </View>
           </View>
 
-          <ScrollView className="px-5" keyboardShouldPersistTaps="handled">
+          <ScrollView ref={scrollRef} className="px-5" keyboardShouldPersistTaps="handled">
             {recordingUrl && (
               <TouchableOpacity
                 onPress={toggleRecording}
@@ -334,6 +341,8 @@ export default function DispositionDialog({
               <TextInput
                 value={notes}
                 onChangeText={setNotes}
+                // Bring the field into view above the keyboard once it opens.
+                onFocus={() => setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 250)}
                 multiline
                 numberOfLines={3}
                 textAlignVertical="top"

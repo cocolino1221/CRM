@@ -10,6 +10,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { useKeyboardSheet } from '../lib/use-keyboard-sheet';
 import { Mail, MessageCircle, Phone } from 'lucide-react-native';
 import api from '../lib/api';
 import {
@@ -235,10 +236,13 @@ export default function LeadSheet({
 
   const wa = whatsappDigits(contact.phone);
 
+  const { keyboardHeight, sheetMaxHeight } = useKeyboardSheet();
+
   return (
     <Modal visible animationType="slide" transparent onRequestClose={onClose}>
-      <View className="flex-1 bg-black/60 justify-end">
-        <View className="bg-white rounded-t-3xl max-h-[92%]">
+      {/* Kept above the keyboard: on Android a Modal is not resized for it. */}
+      <View className="flex-1 bg-black/60 justify-end" style={{ paddingBottom: keyboardHeight }}>
+        <View className="bg-white rounded-t-3xl" style={{ maxHeight: sheetMaxHeight }}>
           {/* Who this is */}
           <View className="px-5 pt-5 pb-3 border-b border-gray-100">
             <View className="flex-row items-start gap-2">
