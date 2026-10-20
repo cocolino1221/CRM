@@ -4,6 +4,12 @@ import { bookedContactIds } from '../lib/lead-stage';
 import api from '../lib/api';
 import type { Contact, Pipeline, User } from '../types';
 
+/** Why a lead was not created; a duplicate says who already has the phone/email. */
+export interface CreateContactError {
+  message: string;
+  existingContact?: { id: string; firstName?: string; lastName?: string; phone?: string; email?: string };
+}
+
 interface LeadsState {
   contacts: Contact[];
   pipelines: Pipeline[];
@@ -38,7 +44,7 @@ interface LeadsState {
   fetchUsers: () => Promise<void>;
   selectPipeline: (p: Pipeline) => void;
   selectStage: (s: string) => void;
-  createContact: (data: Partial<Contact>) => Promise<string | null>;
+  createContact: (data: Partial<Contact>) => Promise<CreateContactError | null>;
   updateContact: (id: string, data: Partial<Contact>) => Promise<string | null>;
   deleteContact: (id: string) => Promise<string | null>;
   assignContact: (id: string, ownerId: string) => Promise<string | null>;
@@ -231,7 +237,12 @@ export const useLeadsStore = create<LeadsState>((set, get) => ({
       get().fetchContacts();
       return null;
     } catch (err: any) {
-      return err?.response?.data?.message || 'Failed to create lead';
+      const body = err?.response?.data;
+      const message = Array.isArray(body?.message) ? body.message.join(', ') : body?.message;
+      return {
+        message: message || 'Leadul nu a putut fi creat.',
+        existingContact: body?.existingContact,
+      };
     }
   },
 

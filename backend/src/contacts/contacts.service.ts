@@ -413,11 +413,24 @@ export class ContactsService {
         }
         const matchedPhone =
           !!normalizedPhone && existingByPhone.phoneNormalized === normalizedPhone;
-        throw new ConflictException(
-          matchedPhone
-            ? `A contact with phone "${dto.phone}" already exists`
-            : `A contact with email "${dto.email}" already exists`,
-        );
+        // Say who it is: the person is often already here under another
+        // name (a WhatsApp "Contact", an email-derived Typeform name), and
+        // "already exists" alone leaves the user searching for a name that
+        // isn't there.
+        throw new ConflictException({
+          statusCode: 409,
+          message: matchedPhone
+            ? `Există deja un contact cu telefonul ${dto.phone}`
+            : `Există deja un contact cu emailul ${dto.email}`,
+          matchedOn: matchedPhone ? 'phone' : 'email',
+          existingContact: {
+            id: existingByPhone.id,
+            firstName: existingByPhone.firstName,
+            lastName: existingByPhone.lastName,
+            phone: existingByPhone.phone,
+            email: existingByPhone.email,
+          },
+        });
       }
     }
 
@@ -878,10 +891,14 @@ export class ContactsService {
       const searchParams: Record<string, string> = {
         search: `%${trimmedSearch}%`,
       };
+      // The full name too, both ways round: "Iris Simon" never matched a
+      // first name of "Iris" and a last name of "Simon" one column at a time.
       let searchCondition = `
         (
           contact.firstName ILIKE :search
           OR contact.lastName ILIKE :search
+          OR (COALESCE(contact.firstName, '') || ' ' || COALESCE(contact.lastName, '')) ILIKE :search
+          OR (COALESCE(contact.lastName, '') || ' ' || COALESCE(contact.firstName, '')) ILIKE :search
           OR contact.email ILIKE :search
           OR contact.phone ILIKE :search
           OR contact.phoneNormalized ILIKE :search

@@ -7,6 +7,7 @@ import { X, UserPlus, Check } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import { useLeadsStore } from '../stores/leads-store';
+import type { CreateContactError } from '../stores/leads-store';
 import { useAuthStore } from '../stores/auth-store';
 import { assignableAs, defaultSetterFor } from '../lib/team-roles';
 import { useToastStore } from '../stores/toast-store';
@@ -70,6 +71,7 @@ export default function LeadFormScreen() {
   const [showSetterPicker, setShowSetterPicker] = useState(false);
   const [showUserPicker, setShowUserPicker] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [formError, setFormError] = useState<CreateContactError | null>(null);
 
   const eligibleSetters = assignableAs(users as any, 'setter');
   const setterUser = users.find((u) => u.id === setterId);
@@ -127,17 +129,25 @@ export default function LeadFormScreen() {
       setterId: setterId || undefined,
     };
 
-    const error = isEdit
+    setFormError(null);
+    const result = isEdit
       ? await updateContact(contact!.id, data)
       : await createContact(data);
 
     setIsSaving(false);
-    if (error) {
-      showToast(error, 'error');
+    if (result) {
+      // Shown in the form itself: a toast lands on the list behind this
+      // modal, where nobody sees it until they close the form.
+      setFormError(typeof result === 'string' ? { message: result } : result);
     } else {
       showToast(isEdit ? 'Lead updated' : 'Lead created', 'success');
       navigation.goBack();
     }
+  };
+
+  const openExisting = (id: string) => {
+    // Replace the form with the lead that already has this phone/email.
+    (navigation as any).replace('LeadDetail', { contactId: id });
   };
 
   return (
@@ -338,6 +348,29 @@ export default function LeadFormScreen() {
             className="px-3 py-2.5 rounded-xl border border-slate-200 bg-white text-sm text-slate-900 min-h-[80px]"
           />
         </View>
+
+        {formError && (
+          <View className="mb-3 rounded-xl border border-rose-200 bg-rose-50 p-3">
+            <Text className="text-sm font-semibold text-rose-700">{formError.message}</Text>
+            {formError.existingContact && (
+              <>
+                <Text className="text-xs text-rose-700 mt-1">
+                  Este deja în CRM ca{' '}
+                  <Text className="font-bold">
+                    {`${formError.existingContact.firstName || ''} ${formError.existingContact.lastName || ''}`.trim() || 'contact fără nume'}
+                  </Text>
+                  {formError.existingContact.phone ? ` · ${formError.existingContact.phone}` : ''}
+                </Text>
+                <TouchableOpacity
+                  onPress={() => openExisting(formError.existingContact!.id)}
+                  className="mt-2 self-start rounded-lg bg-rose-600 px-3 py-1.5"
+                >
+                  <Text className="text-xs font-semibold text-white">Deschide lead-ul existent</Text>
+                </TouchableOpacity>
+              </>
+            )}
+          </View>
+        )}
 
         {/* Save */}
         <TouchableOpacity

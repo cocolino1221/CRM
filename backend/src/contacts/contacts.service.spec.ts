@@ -306,6 +306,24 @@ describe('ContactsService', () => {
       expect(contactRepository.create).not.toHaveBeenCalled();
     });
 
+    it('names the contact that already has the email, so the user can find it', async () => {
+      const existingContact = createMockContact({
+        email: createContactDto.email,
+        firstName: 'Simona',
+        lastName: 'Contact',
+      });
+      contactRepository.createQueryBuilder
+        .mockReturnValueOnce({ ...qbBase(), getOne: jest.fn().mockResolvedValue(null) } as any)
+        .mockReturnValueOnce({ ...qbBase(), getOne: jest.fn().mockResolvedValue(existingContact) } as any);
+
+      const error: any = await service.create(mockWorkspaceId, createContactDto).catch((e) => e);
+      expect(error).toBeInstanceOf(ConflictException);
+      expect(error.getResponse()).toMatchObject({
+        matchedOn: 'email',
+        existingContact: { id: existingContact.id, firstName: 'Simona', lastName: 'Contact' },
+      });
+    });
+
     it('should throw BadRequestException when owner not found', async () => {
       contactRepository.findOne.mockResolvedValue(null);
       userRepository.findOne.mockResolvedValue(null);
