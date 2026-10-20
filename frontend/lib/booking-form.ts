@@ -69,6 +69,18 @@ export function wooOrderFromQuery(params: URLSearchParams): { order: string; key
   return { order, key };
 }
 
+/**
+ * How the booking page can ask the CRM who the lead is, if the link allows:
+ * a WooCommerce order (`order` + `key`) or a signed pass from a form the CRM
+ * served (`t`). Null when the link carries neither.
+ */
+export function prefillQuery(params: URLSearchParams): URLSearchParams | null {
+  const token = (params.get('t') || '').trim();
+  if (/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(token)) return new URLSearchParams({ t: token });
+  const woo = wooOrderFromQuery(params);
+  return woo ? new URLSearchParams({ order: woo.order, key: woo.key }) : null;
+}
+
 /** A new question with an id nobody else in the list has. */
 export function newQuestion(existing: BookingQuestion[]): BookingQuestion {
   let n = existing.length + 1;

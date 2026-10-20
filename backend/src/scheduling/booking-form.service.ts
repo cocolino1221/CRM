@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { Workspace } from '../database/entities/workspace.entity';
 import { Contact } from '../database/entities/contact.entity';
 import { BookingForm, normalizeBookingForm } from './booking-form';
+import { readBookingLinkToken } from './booking-link-token';
 
 /** Who the order was for, as much as the booking form needs. */
 export interface BookingPrefill {
@@ -48,6 +49,25 @@ export class BookingFormService {
    * their name and email, which would then sit in browser history and logs.
    * Only an order in this workspace answers, and only with what the form shows.
    */
+  /** The contact a CRM-served form just created, from the signed pass it redirected with. */
+  async prefillFromToken(workspaceId: string, token: string): Promise<BookingPrefill | null> {
+    const pass = readBookingLinkToken(token, process.env.JWT_SECRET || '');
+    if (!pass || pass.workspaceId !== workspaceId) return null;
+    const contact = await this.contactRepository.findOne({ where: { id: pass.contactId, workspaceId } });
+    return contact ? this.toPrefill(contact) : null;
+  }
+
+  private toPrefill(contact: Contact): BookingPrefill {
+    const email = String(contact.email || '');
+    const name = `${contact.firstName || ''} ${contact.lastName && contact.lastName !== '-' ? contact.lastName : ''}`.trim();
+    return {
+      name,
+      // A placeholder address (no email given) is not shown; the lead types theirs.
+      email: email.endsWith('.invalid') ? '' : email,
+      phone: String(contact.phone || ''),
+    };
+  }
+
   async prefillFromWooOrder(workspaceId: string, orderId: string, orderKey: string): Promise<BookingPrefill | null> {
     const id = String(orderId || '').replace(/\D/g, '');
     const key = String(orderKey || '').trim();
@@ -62,15 +82,6 @@ export class BookingFormService {
       })
       .orderBy('contact.updatedAt', 'DESC')
       .getOne();
-    if (!contact) return null;
-
-    const email = String(contact.email || '');
-    const name = `${contact.firstName || ''} ${contact.lastName && contact.lastName !== '-' ? contact.lastName : ''}`.trim();
-    return {
-      name,
-      // An order without an email got a placeholder address; the lead types theirs.
-      email: email.endsWith('.invalid') ? '' : email,
-      phone: String(contact.phone || ''),
-    };
+    return contact ? this.toPrefill(contact) : null;
   }
 }

@@ -29,7 +29,7 @@ import {
   answersError,
   customAnswersFor,
   formOf,
-  wooOrderFromQuery,
+  prefillQuery,
   type BookingForm,
 } from '@/lib/booking-form';
 
@@ -87,18 +87,17 @@ export default function PublicBookingPage() {
     setGuest(fromLink);
     setKnown(complete);
 
-    // From a WooCommerce thank-you page: the link carries the order and its
-    // key, and the CRM answers with the buyer. The order webhook can land a
-    // few seconds after the thank-you page loads, so it asks a few times.
-    const woo = wooOrderFromQuery(params);
-    if (!woo || !slug) return;
+    // From a WooCommerce thank-you page (order + key) or a form the CRM
+    // served (signed pass): the CRM answers with who it is. The order webhook
+    // can land a few seconds after the thank-you page, so it asks a few times.
+    const lookup = prefillQuery(params);
+    if (!lookup || !slug) return;
     let cancelled = false;
     (async () => {
       for (let attempt = 0; attempt < 4 && !cancelled; attempt += 1) {
         if (attempt) await new Promise((r) => setTimeout(r, 2000));
         try {
-          const qs = new URLSearchParams({ order: woo.order, key: woo.key });
-          const res = await fetch(`${API_BASE}/scheduling/public/${encodeURIComponent(slug)}/prefill?${qs}`, {
+          const res = await fetch(`${API_BASE}/scheduling/public/${encodeURIComponent(slug)}/prefill?${lookup}`, {
             cache: 'no-store',
           });
           const found = res.ok ? await res.json() : {};

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { answersError, customAnswersFor, formOf, newQuestion, wooOrderFromQuery } from './booking-form';
+import { answersError, customAnswersFor, formOf, newQuestion, prefillQuery, wooOrderFromQuery } from './booking-form';
 
 const form = formOf({
   ageGate: { enabled: true, minAge: 18 },
@@ -37,6 +37,17 @@ describe('wooOrderFromQuery', () => {
   it('ignores an order without a proper key', () => {
     expect(wooOrderFromQuery(new URLSearchParams('order=4892'))).toBeNull();
     expect(wooOrderFromQuery(new URLSearchParams('order=4892&key=abc'))).toBeNull();
+  });
+});
+
+describe('prefillQuery', () => {
+  it('prefers the signed pass from a CRM form', () => {
+    expect(prefillQuery(new URLSearchParams('t=abc.def&order=1&key=wc_order_x'))?.toString()).toBe('t=abc.def');
+  });
+
+  it('falls back to a WooCommerce order, and to nothing', () => {
+    expect(prefillQuery(new URLSearchParams('order=7&key=wc_order_x'))?.get('order')).toBe('7');
+    expect(prefillQuery(new URLSearchParams('name=Ana'))).toBeNull();
   });
 });
 

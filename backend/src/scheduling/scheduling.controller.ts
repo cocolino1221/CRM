@@ -43,7 +43,8 @@ export class SchedulingController {
   @Put('booking-form')
   @UseGuards(JwtAuthGuard, WorkspaceGuard, RolesGuard)
   @ApiBearerAuth()
-  @Roles('admin', 'manager')
+  // Closers too: they are the ones who take these calls and know what to ask.
+  @Roles('admin', 'manager', 'closer')
   @ApiOperation({ summary: 'Set the questions and age check shown before the booking calendar' })
   async setBookingForm(@CurrentWorkspace('id') workspaceId: string, @Body() body: unknown) {
     return this.bookingFormService.set(workspaceId, body);
@@ -203,14 +204,24 @@ export class SchedulingController {
   }
 
   @Get('public/:slug/prefill')
-  @ApiOperation({ summary: 'Name, email and phone of the WooCommerce order a thank-you page links from' })
-  @ApiQuery({ name: 'order', description: 'WooCommerce order id', required: true })
-  @ApiQuery({ name: 'key', description: 'WooCommerce order key (wc_order_…)', required: true })
-  async prefill(@Param('slug') slug: string, @Query('order') order: string, @Query('key') key: string) {
+  @ApiOperation({ summary: 'Name, email and phone for a booking page reached from a WooCommerce order or a CRM form' })
+  @ApiQuery({ name: 'order', description: 'WooCommerce order id', required: false })
+  @ApiQuery({ name: 'key', description: 'WooCommerce order key (wc_order_…)', required: false })
+  @ApiQuery({ name: 't', description: 'Signed pass from a form the CRM served', required: false })
+  async prefill(
+    @Param('slug') slug: string,
+    @Query('order') order?: string,
+    @Query('key') key?: string,
+    @Query('t') token?: string,
+  ) {
     const meetingType = await this.schedulingService.getMeetingTypeBySlug(slug);
+    const workspaceId = meetingType.workspaceId;
     // An empty answer rather than a 404: the order may simply not have
     // reached the CRM yet, and the page retries.
-    return (await this.bookingFormService.prefillFromWooOrder(meetingType.workspaceId, order, key)) ?? {};
+    const found = token
+      ? await this.bookingFormService.prefillFromToken(workspaceId, token)
+      : await this.bookingFormService.prefillFromWooOrder(workspaceId, order ?? '', key ?? '');
+    return found ?? {};
   }
 
   @Get('public/:slug/slots')
