@@ -14,6 +14,7 @@ import { useNavigation, useRoute, type RouteProp } from '@react-navigation/nativ
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import api from '../lib/api';
 import { useLeadsStore } from '../stores/leads-store';
+import { activityHeadline, activityNote, activityTone, parseActivityList, type ActivityRow } from '../lib/activity-view';
 import { useWhatsAppStore } from '../stores/whatsapp-store';
 import { useToastStore } from '../stores/toast-store';
 import Avatar from '../components/Avatar';
@@ -57,13 +58,7 @@ const normalizeContact = (raw: unknown): Contact | null => {
   };
 };
 
-interface Activity {
-  id: string;
-  type: string;
-  title: string;
-  description?: string;
-  occurredAt: string;
-}
+type Activity = ActivityRow;
 
 interface CallRecordingActivity {
   id: string;
@@ -157,10 +152,9 @@ export default function LeadDetailScreen() {
   const fetchActivities = async () => {
     try {
       const res = await api.get(`/activities`, {
-        params: { contactId: route.params.contactId, limit: 10, sort: 'occurredAt', order: 'DESC' },
+        params: { contactId: route.params.contactId, limit: 20 },
       });
-      const list = Array.isArray(res.data) ? res.data : Array.isArray(res.data?.activities) ? res.data.activities : [];
-      setActivities(list);
+      setActivities(parseActivityList(res.data));
     } catch {
       // non-critical
     }
@@ -494,22 +488,31 @@ export default function LeadDetailScreen() {
         {activities.length > 0 && (
           <View className="bg-white rounded-2xl p-4 mt-3 border border-slate-100">
             <Text className="text-[11px] font-semibold text-slate-400 uppercase tracking-widest mb-3">Recent Activity</Text>
-            {activities.map((act, i) => (
-              <View key={act.id} className={`flex-row gap-3 ${i > 0 ? 'mt-3 pt-3 border-t border-slate-50' : ''}`}>
-                <View className="w-7 h-7 rounded-full bg-sky-50 items-center justify-center mt-0.5">
-                  <Clock size={14} color="#0284c7" />
+            {activities.map((act, i) => {
+              const tone = activityTone(act);
+              const toneText = { red: 'text-rose-700', green: 'text-emerald-700', amber: 'text-amber-700', slate: 'text-slate-800' }[tone];
+              const toneBg = { red: 'bg-rose-50', green: 'bg-emerald-50', amber: 'bg-amber-50', slate: 'bg-sky-50' }[tone];
+              const toneIcon = { red: '#be123c', green: '#047857', amber: '#b45309', slate: '#0284c7' }[tone];
+              const note = activityNote(act);
+              const who = act.userId ? users.find((u) => u.id === act.userId) : undefined;
+              const whoName = who ? `${(who as any).firstName || ''} ${(who as any).lastName || ''}`.trim() : '';
+              return (
+                <View key={act.id} className={`flex-row gap-3 ${i > 0 ? 'mt-3 pt-3 border-t border-slate-50' : ''}`}>
+                  <View className={`w-7 h-7 rounded-full ${toneBg} items-center justify-center mt-0.5`}>
+                    <Clock size={14} color={toneIcon} />
+                  </View>
+                  <View className="flex-1">
+                    <Text className={`text-sm font-semibold ${toneText}`}>{activityHeadline(act)}</Text>
+                    {/* The whole note: it is what the next caller needs to read. */}
+                    {note && <Text className="text-sm text-slate-700 mt-0.5">{note}</Text>}
+                    <Text className="text-[10px] text-slate-400 mt-1">
+                      {new Date(act.occurredAt).toLocaleDateString()} {new Date(act.occurredAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      {whoName ? ` · ${whoName}` : ''}
+                    </Text>
+                  </View>
                 </View>
-                <View className="flex-1">
-                  <Text className="text-sm font-medium text-slate-800">{act.title}</Text>
-                  {act.description && (
-                    <Text className="text-xs text-slate-500 mt-0.5" numberOfLines={2}>{act.description}</Text>
-                  )}
-                  <Text className="text-[10px] text-slate-400 mt-1">
-                    {new Date(act.occurredAt).toLocaleDateString()} {new Date(act.occurredAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                  </Text>
-                </View>
-              </View>
-            ))}
+              );
+            })}
           </View>
         )}
 
