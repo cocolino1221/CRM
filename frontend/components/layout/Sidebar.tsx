@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { LayoutDashboard, Users, Building2, Briefcase, CheckSquare, BarChart3, Settings, MessageSquare, MessageCircle, Zap, ChevronRight, Sparkles, Bot, Calendar, Shield, FileText, Menu, X, ChevronLeft, KanbanSquare, FolderOpen, ScrollText, Mail, CreditCard, Layout, Radio, Target, CalendarClock } from 'lucide-react';
+import { LayoutDashboard, Users, Building2, Briefcase, CheckSquare, BarChart3, Settings, MessageSquare, MessageCircle, Zap, ChevronRight, Sparkles, Bot, Calendar, Shield, FileText, Menu, X, ChevronLeft, KanbanSquare, FolderOpen, ScrollText, Mail, CreditCard, Layout, Radio, Target, CalendarClock, CalendarCheck } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { authService, User } from '@/lib/auth';
 import { hasChannelAccess } from '@/lib/channel-access';
@@ -26,6 +26,7 @@ const allNavigation: NavigationItem[] = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, color: 'from-blue-500 to-cyan-500' },
   { name: 'Calendar', href: '/calendar', icon: Calendar, color: 'from-cyan-500 to-teal-500' },
   { name: 'Disponibilitate', href: '/booking-settings', icon: CalendarClock, color: 'from-teal-500 to-emerald-500' },
+  { name: 'Pagina de programare', href: '/booking-page', icon: CalendarCheck, color: 'from-emerald-500 to-teal-500' },
   { name: 'Forms', href: '/forms', icon: FileText, color: 'from-emerald-500 to-green-500' },
   { name: 'Team', href: '/users', icon: Shield, color: 'from-teal-500 to-cyan-500' },
   { name: 'Tasks', href: '/tasks', icon: CheckSquare, color: 'from-yellow-500 to-orange-500' },
