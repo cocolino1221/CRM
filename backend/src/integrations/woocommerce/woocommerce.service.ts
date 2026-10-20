@@ -252,6 +252,7 @@ export class WooCommerceService {
         products: verdict.paidItems.map((i) => `${i.quantity}× ${i.name}`),
         ownerId: integration.userId || undefined,
         pipelineId: contact.pipelineId || integration.config?.pipelineId,
+        orderedAt: order.date_created_gmt ? `${order.date_created_gmt}Z` : order.date_created,
       });
     } catch (error: any) {
       // The contact is already saved; a failed deal must not lose the order.
@@ -271,6 +272,8 @@ export class WooCommerceService {
       products: string[];
       ownerId?: string;
       pipelineId?: string;
+      /** When the order was placed; finds a sale already typed in by hand for it. */
+      orderedAt?: string | Date;
     },
   ): Promise<'created' | 'exists'> {
     const already = await this.dealRepository
@@ -280,6 +283,32 @@ export class WooCommerceService {
       .andWhere(`"deal"."customFields" @> CAST(:key AS jsonb)`, { key: JSON.stringify({ wooOrderKey: sale.orderKey }) })
       .getCount();
     if (already) return 'exists';
+
+    // The same purchase may already be in as a sale a caller recorded from
+    // the app ("Vanzare din apel", same amount, around the order date).
+    // Counting it twice would double the revenue — link it to the order instead.
+    const placed = sale.orderedAt ? new Date(sale.orderedAt) : new Date();
+    const manual = await this.dealRepository
+      .createQueryBuilder('deal')
+      .where('deal.workspaceId = :workspaceId', { workspaceId })
+      .andWhere('deal.contactId = :contactId', { contactId: contact.id })
+      .andWhere('deal.stage = :won', { won: DealStage.CLOSED_WON })
+      .andWhere('deal.deletedAt IS NULL')
+      .andWhere('ROUND(deal.value::numeric, 2) = ROUND(CAST(:amount AS numeric), 2)', { amount: sale.amount })
+      .andWhere(`COALESCE("deal"."customFields"->>'wooOrderKey', '') = ''`)
+      .andWhere('deal.createdAt BETWEEN :from AND :to', {
+        from: new Date(placed.getTime() - 2 * 86_400_000),
+        to: new Date(placed.getTime() + 7 * 86_400_000),
+      })
+      .getOne();
+    if (manual) {
+      await this.dealRepository.update(
+        { id: manual.id },
+        { customFields: { ...((manual.customFields as any) ?? {}), wooOrderKey: sale.orderKey } },
+      );
+      this.logger.log(`[woocommerce] order ${sale.orderKey} matched existing sale ${manual.id}; not counted twice`);
+      return 'exists';
+    }
 
     await this.dealRepository.save(
       this.dealRepository.create({
@@ -385,6 +414,7 @@ export class WooCommerceService {
             products: verdict.paidItems.map((i) => `${i.quantity}× ${i.name}`),
             ownerId: integration.userId || undefined,
             pipelineId: contact.pipelineId || integration.config?.pipelineId,
+            orderedAt: order.date_created_gmt ? `${order.date_created_gmt}Z` : order.date_created,
           });
           if (outcome === 'created') result.won += 1;
           else result.alreadyWon += 1;
