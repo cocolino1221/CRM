@@ -138,7 +138,7 @@ export class PayflowService {
     const pipelineStageId = dto.pipelineStageId || undefined;
     if (pipelineId) await this.assertPipeline(workspaceId, pipelineId, pipelineStageId);
 
-    let contact = await this.contactRepository.findOne({ where: { workspaceId, email } });
+    let contact = await this.findContact(workspaceId, email, dto.customer.phone);
     let contactCreated = false;
     if (!contact) {
       const [firstName, ...rest] = String(dto.customer.name || email.split('@')[0]).trim().split(/\s+/);
@@ -190,10 +190,62 @@ export class PayflowService {
       }
     }
 
+    // A lead who pays becomes a customer and moves to the won stage of their
+    // own pipeline, so the board agrees with Win — unless Payflow named a stage.
+    if (!contactCreated && dto.status !== 'lost' && dto.amount != null) {
+      await this.promoteToWon(workspaceId, contact!, Boolean(pipelineStageId));
+    }
+
     integration.config = { ...(integration.config || {}), payflowLastSyncAt: new Date().toISOString() };
     await this.integrationRepository.save(integration);
     this.logger.log(`[payflow] synced ${email} → contact ${contact!.id}${dealId ? `, deal ${dealId}` : ''}`);
     return { ok: true, contactId: contact!.id, contactCreated, dealId };
+  }
+
+  /**
+   * The lead a payment belongs to: same email in any case, else the same
+   * phone however it was typed (last nine digits). A payer is almost always
+   * someone who came in through a form or the shop first.
+   */
+  private async findContact(workspaceId: string, email: string, phone?: string): Promise<Contact | null> {
+    const byEmail = await this.contactRepository
+      .createQueryBuilder('contact')
+      .where('contact.workspaceId = :workspaceId', { workspaceId })
+      .andWhere('contact.deletedAt IS NULL')
+      .andWhere('LOWER(contact.email) = :email', { email })
+      .orderBy('contact.createdAt', 'ASC')
+      .getOne();
+    if (byEmail) return byEmail;
+
+    const digits = String(phone || '').replace(/\D/g, '');
+    if (digits.length < 9) return null;
+    return this.contactRepository
+      .createQueryBuilder('contact')
+      .where('contact.workspaceId = :workspaceId', { workspaceId })
+      .andWhere('contact.deletedAt IS NULL')
+      .andWhere(`regexp_replace(contact.phone, '\\D', '', 'g') LIKE :tail`, { tail: `%${digits.slice(-9)}` })
+      .orderBy('contact.createdAt', 'ASC')
+      .getOne();
+  }
+
+  private async promoteToWon(workspaceId: string, contact: Contact, stageGiven: boolean): Promise<void> {
+    try {
+      const change: Record<string, any> = {};
+      if (contact.status !== ContactStatus.CUSTOMER) change.status = ContactStatus.CUSTOMER;
+      if (!stageGiven && contact.pipelineId) {
+        const pipeline: any = await this.pipelineRepository.findOne({
+          where: { id: contact.pipelineId, workspaceId },
+          relations: ['stages'],
+        });
+        const won = (pipeline?.stages ?? []).find((s: any) => s.isClosedWon && !s.deletedAt);
+        if (won && won.id !== contact.pipelineStageId) change.pipelineStageId = won.id;
+      }
+      // Through ContactsService so stage-change automations still fire.
+      if (Object.keys(change).length) await this.contactsService.update(workspaceId, contact.id, change as any);
+    } catch (error: any) {
+      // The payment is recorded already; a failed move must not lose it.
+      this.logger.warn(`[payflow] could not move contact ${contact.id} to won: ${error?.message}`);
+    }
   }
 
   private async assertPipeline(workspaceId: string, pipelineId: string, stageId?: string) {
