@@ -154,8 +154,27 @@ export function normalizeBookingVariants(input: unknown): BookingVariant[] {
   return out;
 }
 
+/**
+ * The variant a link asks for, or none.
+ *
+ * Exact id first. Failing that, the longest id the value starts with: a
+ * Typeform redirect written as `?v=carte{{field:…}}` (answers pasted on with
+ * no `&name=`) arrives as `v=carteAna Pop…`, and that lead still belongs on
+ * "carte", not on the main page.
+ */
+export function findVariant(variants: BookingVariant[], variantId?: string | null): BookingVariant | null {
+  const id = String(variantId || '').trim().toLowerCase();
+  if (!id) return null;
+  const exact = variants.find((v) => v.id === id);
+  if (exact) return exact;
+  return (
+    variants
+      .filter((v) => id.startsWith(v.id))
+      .sort((a, b) => b.id.length - a.id.length)[0] ?? null
+  );
+}
+
 /** The form a link asks for: its variant's, or the main one when there is no such variant. */
 export function formForVariant(main: BookingForm, variants: BookingVariant[], variantId?: string | null): BookingForm {
-  const id = String(variantId || '').trim();
-  return (id && variants.find((v) => v.id === id)?.form) || main;
+  return findVariant(variants, variantId)?.form ?? main;
 }
