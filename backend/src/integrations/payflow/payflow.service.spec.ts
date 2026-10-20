@@ -26,7 +26,25 @@ describe('PayflowService', () => {
         return x;
       }),
     };
-    contactRepository = { findOne: jest.fn().mockResolvedValue(null) };
+    // findContact goes through a query builder: by email first, then by phone.
+    contactRepository = {
+      found: null as any,
+      lookups: [] as string[],
+      createQueryBuilder: jest.fn(function (this: any) {
+        const repo = contactRepository;
+        const sql: string[] = [];
+        const qb: any = {
+          where: jest.fn(() => qb),
+          andWhere: jest.fn((clause: string) => (sql.push(clause), qb)),
+          orderBy: jest.fn(() => qb),
+          getOne: jest.fn(async () => {
+            repo.lookups.push(sql.join(' '));
+            return repo.found;
+          }),
+        };
+        return qb;
+      }),
+    };
     dealRepository = {
       createQueryBuilder: jest.fn(() => ({
         where: jest.fn().mockReturnThis(),
@@ -83,7 +101,7 @@ describe('PayflowService', () => {
   it('does not duplicate a deal for a transaction already synced', async () => {
     const { key } = await service.connect('ws1', 'u1');
     const integration = await service.authenticate(`Bearer ${key}`);
-    contactRepository.findOne.mockResolvedValue({ id: 'c9', pipelineStageId: null });
+    contactRepository.found = { id: 'c9', pipelineStageId: null, status: 'customer' };
     existingDeal = { id: 'd-existing' };
 
     const result = await service.sync(integration, {
@@ -91,5 +109,35 @@ describe('PayflowService', () => {
     } as any);
     expect(result).toMatchObject({ contactId: 'c9', contactCreated: false, dealId: 'd-existing' });
     expect(dealsService.create).not.toHaveBeenCalled();
+  });
+
+  // Typeform lead Ana pays on Payflow: she moves to Win as the same contact.
+  it('turns an existing lead into a customer on the won stage of her pipeline', async () => {
+    const { key } = await service.connect('ws1', 'u1');
+    const integration = await service.authenticate(`Bearer ${key}`);
+    contactRepository.found = { id: 'c7', status: 'lead', pipelineId: 'p1', pipelineStageId: 's-new' };
+    pipelineRepository.findOne.mockResolvedValue({
+      id: 'p1',
+      stages: [{ id: 's-new' }, { id: 's-won', isClosedWon: true }],
+    });
+
+    const result = await service.sync(integration, {
+      customer: { email: 'Ana@Example.com' }, amount: 300, currency: 'ron', transactionId: 'tx7',
+    } as any);
+
+    expect(result).toMatchObject({ contactId: 'c7', contactCreated: false, dealId: 'd1' });
+    expect(contactsService.update).toHaveBeenCalledWith('ws1', 'c7', { status: 'customer', pipelineStageId: 's-won' });
+    expect(contactRepository.lookups[0]).toContain('LOWER(contact.email)');
+  });
+
+  it('leaves the stage alone when Payflow names one, and does nothing for a lost payment', async () => {
+    const { key } = await service.connect('ws1', 'u1');
+    const integration = await service.authenticate(`Bearer ${key}`);
+    contactRepository.found = { id: 'c8', status: 'lead', pipelineId: 'p1', pipelineStageId: 's1' };
+
+    await service.sync(integration, {
+      customer: { email: 'x@y.ro' }, amount: 10, transactionId: 'tx8', status: 'lost',
+    } as any);
+    expect(contactsService.update).not.toHaveBeenCalledWith('ws1', 'c8', expect.objectContaining({ status: 'customer' }));
   });
 });
