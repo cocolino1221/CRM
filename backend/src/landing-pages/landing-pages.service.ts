@@ -19,7 +19,7 @@ import { FunnelsService } from '../funnels/funnels.service';
 import { CreateLandingPageDto } from './dto/create-landing-page.dto';
 import { UpdateLandingPageDto } from './dto/update-landing-page.dto';
 import { SubmitLandingPageDto } from './dto/submit-landing-page.dto';
-import { createBookingLinkToken, withBookingLinkToken } from '../scheduling/booking-link-token';
+import { createBookingLinkToken, submittedOnly, withBookingLinkToken } from '../scheduling/booking-link-token';
 
 export interface LandingPageSubmitResult {
   success: boolean;
@@ -275,12 +275,17 @@ export class LandingPagesService {
       });
     }
 
-    // Sent on to a booking page: a signed pass for the contact just created,
-    // so the page fills in their details without them riding in the URL.
+    // Sent on to a booking page: an encrypted pass holding only what this
+    // visitor typed, so the page fills it back in without it being readable
+    // in the URL — and without revealing anything about a matched contact.
     const secret = process.env.JWT_SECRET || '';
     const redirectUrl =
-      contact?.id && secret
-        ? withBookingLinkToken(page.postSubmit?.redirectUrl, createBookingLinkToken(contact.id, page.workspaceId, secret))
+      contact && secret
+        ? withBookingLinkToken(
+            page.postSubmit?.redirectUrl,
+            createBookingLinkToken(submittedOnly(contact, dto.data as any), page.workspaceId, secret),
+            process.env.FRONTEND_URL,
+          )
         : page.postSubmit?.redirectUrl;
 
     return {

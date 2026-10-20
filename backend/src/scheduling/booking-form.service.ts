@@ -49,12 +49,14 @@ export class BookingFormService {
    * their name and email, which would then sit in browser history and logs.
    * Only an order in this workspace answers, and only with what the form shows.
    */
-  /** The contact a CRM-served form just created, from the signed pass it redirected with. */
-  async prefillFromToken(workspaceId: string, token: string): Promise<BookingPrefill | null> {
+  /**
+   * What the visitor typed into a CRM-served form, from the encrypted pass it
+   * redirected with. Read from the pass alone — never from a contact record.
+   */
+  prefillFromToken(workspaceId: string, token: string): BookingPrefill | null {
     const pass = readBookingLinkToken(token, process.env.JWT_SECRET || '');
     if (!pass || pass.workspaceId !== workspaceId) return null;
-    const contact = await this.contactRepository.findOne({ where: { id: pass.contactId, workspaceId } });
-    return contact ? this.toPrefill(contact) : null;
+    return pass.prefill.name || pass.prefill.email || pass.prefill.phone ? pass.prefill : null;
   }
 
   private toPrefill(contact: Contact): BookingPrefill {
