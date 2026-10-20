@@ -11,7 +11,7 @@
 
 import { useCallback, useEffect, useState, type CSSProperties } from 'react';
 import { useParams } from 'next/navigation';
-import { Calendar, CheckCircle2, Clock, Loader2, PhoneCall, User } from 'lucide-react';
+import { Calendar, CheckCircle2, Clock, Loader2, PhoneCall } from 'lucide-react';
 import {
   WORKSPACE_TIMEZONE,
   buildBookingPayload,
@@ -319,7 +319,6 @@ export default function PublicBookingPage() {
     );
   }
 
-  const hostName = `${meeting.user?.firstName ?? ''} ${meeting.user?.lastName ?? ''}`.trim();
 
   return (
     <div style={frame} className="min-h-screen">
@@ -340,11 +339,8 @@ export default function PublicBookingPage() {
           <span className="inline-flex items-center gap-1">
             <Clock className="h-4 w-4" /> {meeting.duration} minute
           </span>
-          {hostName && (
-            <span className="inline-flex items-center gap-1">
-              <User className="h-4 w-4" /> {hostName}
-            </span>
-          )}
+          {/* No host here: this is the team's page, and who takes the call is
+              decided by the hour picked — not by whose link was shared. */}
         </p>
         {meeting.description && (
           <p className={`mt-3 text-sm ${onBg.text}`}>{meeting.description}</p>

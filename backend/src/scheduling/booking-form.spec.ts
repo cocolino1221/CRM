@@ -87,4 +87,10 @@ describe('booking variants', () => {
     expect(formForVariant(main, variants, 'nu-exista')).toBe(main);
     expect(formForVariant(main, variants, undefined)).toBe(main);
   });
+
+  // Typeform answers pasted straight after the id, with no `&name=`.
+  it('still finds the variant when answers were glued onto it', () => {
+    expect(formForVariant(main, variants, 'cumparatori-carte-2Ana Popana@x.ro').ageGate.enabled).toBe(false);
+    expect(formForVariant(main, variants, 'cumparatori-carteAna Pop').ageGate.minAge).toBe(16);
+  });
 });
