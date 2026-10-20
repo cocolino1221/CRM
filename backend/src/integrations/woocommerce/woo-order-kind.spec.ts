@@ -30,6 +30,12 @@ describe('classifyWooOrder', () => {
     expect(classifyWooOrder([{ ...book, productId: '1', variationId: '4610' }], ['4610'], '69').kind).toBe('lead');
   });
 
+  // WooCommerce keeps tax apart from the line total; the sale is what was paid.
+  it('counts the tax in, as the customer paid it', () => {
+    const r = classifyWooOrder([{ ...course, total: '1432.43', totalTax: '157.57' }], ['4604'], '1590');
+    expect(r.amount).toBe(1590);
+  });
+
   it('falls back to the order total when the items carry none', () => {
     expect(classifyWooOrder([{ ...course, total: undefined }], ['4604'], '350.5').amount).toBe(350.5);
   });

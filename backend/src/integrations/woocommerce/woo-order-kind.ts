@@ -38,7 +38,8 @@ export function classifyWooOrder(
   const paidItems = items.filter((item) => !isLead(item));
   if (paidItems.length === 0) return { kind: 'lead', paidItems: [], amount: 0 };
 
-  const itemsTotal = paidItems.reduce((sum, item) => sum + money(item.total), 0);
+  // What the customer paid for them: the line total plus its tax.
+  const itemsTotal = paidItems.reduce((sum, item) => sum + money(item.total) + money(item.totalTax), 0);
   const amount = Math.round((itemsTotal > 0 ? itemsTotal : money(orderTotal)) * 100) / 100;
   return { kind: 'won', paidItems, amount };
 }

@@ -30,7 +30,9 @@ export interface WooLineItem {
   name: string;
   sku?: string;
   quantity: number;
+  /** After discounts, before tax — WooCommerce keeps the tax apart. */
   total?: string;
+  totalTax?: string;
 }
 
 @Injectable()
@@ -135,6 +137,7 @@ export class WooCommerceService {
       sku: String(item.sku || '').trim() || undefined,
       quantity: Number(item.quantity) || 1,
       total: item.total != null ? String(item.total) : undefined,
+      totalTax: item.total_tax != null ? String(item.total_tax) : undefined,
     }));
   }
 
@@ -260,6 +263,60 @@ export class WooCommerceService {
     }
   }
 
+  /**
+   * A sale already written for this order: bring its amount up to what the
+   * customer actually paid (the first run saved prices before tax), and if a
+   * caller also typed the same purchase in by hand, keep theirs — linked to
+   * the order — and retire the automatic one, so it is counted once.
+   */
+  private async reconcileExistingSale(
+    workspaceId: string,
+    contact: Contact,
+    sale: { orderKey: string; amount: number; orderedAt?: string | Date },
+  ): Promise<void> {
+    const auto = await this.dealRepository
+      .createQueryBuilder('deal')
+      .where('deal.workspaceId = :workspaceId', { workspaceId })
+      .andWhere('deal.contactId = :contactId', { contactId: contact.id })
+      .andWhere('deal.deletedAt IS NULL')
+      .andWhere(`"deal"."customFields" @> CAST(:key AS jsonb)`, {
+        key: JSON.stringify({ source: 'woocommerce', wooOrderKey: sale.orderKey }),
+      })
+      .getOne();
+    if (!auto) return; // the order is already on a hand-recorded sale
+
+    if (Math.abs(Number(auto.value) - sale.amount) > 0.009) {
+      await this.dealRepository.update({ id: auto.id }, { value: sale.amount });
+      this.logger.log(`[woocommerce] sale ${auto.id} corrected ${auto.value} → ${sale.amount}`);
+    }
+
+    const placed = sale.orderedAt ? new Date(sale.orderedAt) : new Date(auto.createdAt);
+    const manual = await this.dealRepository
+      .createQueryBuilder('deal')
+      .where('deal.workspaceId = :workspaceId', { workspaceId })
+      .andWhere('deal.contactId = :contactId', { contactId: contact.id })
+      .andWhere('deal.id <> :autoId', { autoId: auto.id })
+      .andWhere('deal.stage = :won', { won: DealStage.CLOSED_WON })
+      .andWhere('deal.deletedAt IS NULL')
+      .andWhere('ROUND(deal.value::numeric, 2) = ROUND(CAST(:amount AS numeric), 2)', { amount: sale.amount })
+      .andWhere(`COALESCE("deal"."customFields"->>'wooOrderKey', '') = ''`)
+      .andWhere(`COALESCE("deal"."customFields"->>'source', '') NOT IN ('payflow', 'woocommerce')`)
+      .andWhere('deal.createdAt BETWEEN :from AND :to', {
+        from: new Date(placed.getTime() - 2 * 86_400_000),
+        to: new Date(placed.getTime() + 7 * 86_400_000),
+      })
+      .getOne();
+    if (manual) {
+      await this.dealRepository.update(
+        { id: manual.id },
+        { customFields: { ...((manual.customFields as any) ?? {}), wooOrderKey: sale.orderKey } },
+      );
+      // Soft delete: the row stays and can be restored.
+      await this.dealRepository.softDelete({ id: auto.id });
+      this.logger.log(`[woocommerce] order ${sale.orderKey}: kept hand-recorded sale ${manual.id}, retired duplicate ${auto.id}`);
+    }
+  }
+
   /** Writes the sale; one deal per order however often it is called. */
   async markWon(
     workspaceId: string,
@@ -282,7 +339,10 @@ export class WooCommerceService {
       .andWhere('deal.contactId = :contactId', { contactId: contact.id })
       .andWhere(`"deal"."customFields" @> CAST(:key AS jsonb)`, { key: JSON.stringify({ wooOrderKey: sale.orderKey }) })
       .getCount();
-    if (already) return 'exists';
+    if (already) {
+      await this.reconcileExistingSale(workspaceId, contact, sale);
+      return 'exists';
+    }
 
     // The same purchase may already be in as a sale a caller recorded from
     // the app ("Vanzare din apel", same amount, around the order date).

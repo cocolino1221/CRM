@@ -276,6 +276,9 @@ export class WorkQueuesService {
    * never sends a total, only the instalment that just cleared. Where no such
    * deal exists the sale was paid in one go and the total is what came in.
    */
+  private static readonly PAID_DEAL_SQL = `COALESCE(deal."customFields" ->> 'source', '') IN ('payflow', 'woocommerce')
+      OR COALESCE(deal."customFields" ->> 'wooOrderKey', '') <> ''`;
+
   async attachPaymentSummaries<T extends { id: string; payment?: PaymentSummary }>(
     workspaceId: string,
     rows: T[],
@@ -285,13 +288,15 @@ export class WorkQueuesService {
     const raw = await this.dealRepository
       .createQueryBuilder('deal')
       .select('deal.contactId', 'contactid')
+      // Money that actually came in: a Payflow transaction, or a WooCommerce
+      // order (paid in the shop, or a hand-recorded sale matched to one).
       .addSelect(
-        `COALESCE(SUM(CASE WHEN deal.stage = :won AND deal."customFields" ->> 'source' = 'payflow'
+        `COALESCE(SUM(CASE WHEN deal.stage = :won AND (${WorkQueuesService.PAID_DEAL_SQL})
                            THEN deal.value ELSE 0 END), 0)`,
         'paid',
       )
       .addSelect(
-        `COALESCE(MAX(CASE WHEN COALESCE(deal."customFields" ->> 'source', '') <> 'payflow'
+        `COALESCE(MAX(CASE WHEN NOT (${WorkQueuesService.PAID_DEAL_SQL})
                            THEN deal.value ELSE 0 END), 0)`,
         'contracted',
       )
