@@ -78,6 +78,8 @@ export function buildBookingPayload(input: {
   guest: Guest;
   notes?: string;
   timeZone?: string;
+  /** Answers to the questions before the calendar, and the age confirmation. */
+  customAnswers?: Record<string, string | boolean>;
 }) {
   return {
     meetingTypeId: input.meetingTypeId,
@@ -88,6 +90,7 @@ export function buildBookingPayload(input: {
     guestPhone: input.guest.phone?.trim() || undefined,
     notes: input.notes?.trim() || undefined,
     timezone: input.timeZone || WORKSPACE_TIMEZONE,
+    ...(input.customAnswers && Object.keys(input.customAnswers).length ? { customAnswers: input.customAnswers } : {}),
   };
 }
 
