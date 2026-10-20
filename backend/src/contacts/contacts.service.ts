@@ -166,6 +166,7 @@ export class ContactsService {
     queryBuilder.skip(offset).take(limit);
 
     const [contacts, total] = await queryBuilder.getManyAndCount();
+    await this.attachNextFollowUps(workspaceId, contacts);
 
     return {
       contacts,
@@ -174,6 +175,28 @@ export class ContactsService {
       limit,
       totalPages: Math.ceil(total / limit),
     };
+  }
+
+  /**
+   * The next open call-back for each contact on the page, so a row can say
+   * "Revenire 16:00" instead of "Neprogramat" after a caller scheduled one.
+   * One query for the whole page.
+   */
+  private async attachNextFollowUps(workspaceId: string, contacts: Contact[]): Promise<void> {
+    if (!contacts.length) return;
+    const ids = contacts.map((c) => c.id);
+    const rows: Array<{ contactId: string; dueDate: Date }> = await this.contactRepository.manager.query(
+      `SELECT DISTINCT ON ("contactId") "contactId", "dueDate"
+         FROM tasks
+        WHERE "workspaceId" = $1 AND "deletedAt" IS NULL AND "contactId" = ANY($2::uuid[])
+          AND status::text IN ('pending', 'in_progress', 'overdue') AND "dueDate" IS NOT NULL
+        ORDER BY "contactId", "dueDate" ASC`,
+      [workspaceId, ids],
+    );
+    const byContact = new Map(rows.map((r) => [r.contactId, r.dueDate]));
+    for (const c of contacts) {
+      (c as any).nextFollowUpAt = byContact.get(c.id) ?? null;
+    }
   }
 
   async findOne(workspaceId: string, id: string, relations: string[] = []): Promise<Contact> {

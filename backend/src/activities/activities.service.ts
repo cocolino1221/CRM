@@ -196,6 +196,26 @@ export class ActivitiesService {
           await taskRepository.save(existing);
         }
       } else {
+        // One open call-back per lead: saving again (a caller who thought the
+        // first save did nothing) moves the existing reminder instead of
+        // adding a second one that rings twice.
+        const open = await taskRepository
+          .createQueryBuilder('task')
+          .where('task.workspaceId = :workspaceId', { workspaceId })
+          .andWhere('task.contactId = :contactId', { contactId: activity.contactId })
+          .andWhere(`task.status IN ('pending', 'in_progress', 'overdue')`)
+          .andWhere(`task."customFields"->>'origin' = 'disposition'`)
+          .orderBy('task.createdAt', 'DESC')
+          .getOne();
+        if (open) {
+          open.title = dto.followUp.title || open.title;
+          open.dueDate = dueDate;
+          open.assigneeId = assigneeId;
+          open.status = TaskStatus.PENDING;
+          open.customFields = { ...(open.customFields ?? {}), reminderNotifiedAt: null };
+          await taskRepository.save(open);
+          metadata.dispositionTaskId = (open as any).id;
+        } else {
         const task = taskRepository.create({
           workspaceId,
           title: dto.followUp.title || 'Revenire apel',
@@ -207,6 +227,7 @@ export class ActivitiesService {
         });
         const savedTask = await taskRepository.save(task);
         metadata.dispositionTaskId = (savedTask as any).id;
+        }
       }
     } else if (existingTaskId) {
       // The caller corrected the outcome and dropped the follow-up. Leaving

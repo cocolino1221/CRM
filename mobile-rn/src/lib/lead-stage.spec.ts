@@ -1,5 +1,28 @@
 import { describe, expect, it } from 'vitest';
-import { bookedContactIds, leadStage, stageForTab } from './lead-stage';
+import { bookedContactIds, followUpLabel, leadStage, stageForTab } from './lead-stage';
+
+describe('a lead with a call-back', () => {
+  const now = new Date(2026, 9, 20, 13, 0);
+
+  it('reads Revenire, not Neprogramat', () => {
+    const later = new Date(Date.now() + 3 * 3600 * 1000).toISOString();
+    const stage = leadStage({ id: 'c1', lastContactedAt: '2026-10-20', nextFollowUpAt: later }, new Set());
+    expect(stage.key).toBe('follow_up');
+    expect(stage.label.startsWith('Revenire')).toBe(true);
+  });
+
+  it('a booking still outranks a call-back', () => {
+    const stage = leadStage({ id: 'c1', nextFollowUpAt: '2030-01-01' }, new Set(['c1']));
+    expect(stage.label).toBe('Programat');
+  });
+
+  it('says when', () => {
+    expect(followUpLabel(new Date(2026, 9, 20, 16, 0), now)).toBe('Revenire 16:00');
+    expect(followUpLabel(new Date(2026, 9, 21, 10, 0), now)).toBe('Revenire mâine 10:00');
+    expect(followUpLabel(new Date(2026, 9, 27, 10, 0), now)).toBe('Revenire 27 oct.');
+    expect(followUpLabel(new Date(2026, 9, 19, 10, 0), now)).toBe('Revenire întârziată');
+  });
+});
 
 describe('stageForTab', () => {
   const unscheduled = leadStage({ id: 'c1', lastContactedAt: '2026-10-14' }, new Set());

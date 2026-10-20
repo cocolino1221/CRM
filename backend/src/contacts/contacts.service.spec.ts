@@ -116,6 +116,8 @@ describe('ContactsService', () => {
 
     service = module.get<ContactsService>(ContactsService);
     contactRepository = module.get(getRepositoryToken(Contact)) as jest.Mocked<Repository<Contact>>;
+    // findAll attaches each contact's next follow-up with one raw query.
+    (contactRepository as any).manager = { query: jest.fn().mockResolvedValue([]) };
     userRepository = module.get(getRepositoryToken(User)) as jest.Mocked<Repository<User>>;
     companyRepository = module.get(getRepositoryToken(Company)) as jest.Mocked<Repository<Company>>;
   });

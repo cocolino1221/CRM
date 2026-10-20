@@ -15,7 +15,7 @@ const CONTACT = 'contact-1';
  * The disposition runs entirely through the transaction manager's repositories,
  * so the test mocks the manager rather than individual injected repositories.
  */
-function buildHarness(options: { activity?: Partial<Activity> | null; role?: string; contact?: Partial<Contact> } = {}) {
+function buildHarness(options: { activity?: Partial<Activity> | null; role?: string; contact?: Partial<Contact>; openTask?: any } = {}) {
   const activity = options.activity === null
     ? null
     : Object.assign(new Activity(), {
@@ -42,6 +42,7 @@ function buildHarness(options: { activity?: Partial<Activity> | null; role?: str
       const qb: any = {
         where: jest.fn((_sql: string, p?: any) => (Object.assign(params, p), qb)),
         andWhere: jest.fn((_sql: string, p?: any) => (Object.assign(params, p), qb)),
+        orderBy: jest.fn(() => qb),
         getOne: jest.fn(() => (repo.lookups.push(params), Promise.resolve(findOneResult))),
       };
       return qb;
@@ -57,7 +58,7 @@ function buildHarness(options: { activity?: Partial<Activity> | null; role?: str
   const repos = new Map<any, any>([
     [Activity, repoFor('activities', activity)],
     [Contact, repoFor('contacts', contact)],
-    [Task, repoFor('tasks', null)],
+    [Task, repoFor('tasks', options.openTask ?? null)],
     [Deal, repoFor('deals', null)],
     [User, repoFor('contacts', { id: USER, role: options.role ?? 'closer' })],
   ]);
@@ -109,6 +110,19 @@ describe('ActivitiesService.applyDisposition', () => {
     });
     expect(new Date(saved.tasks[0].dueDate).toISOString()).toBe(at);
     expect(saved.activities[0]).toMatchObject({ followUpRequired: true });
+  });
+
+  it('moves the lead\'s open call-back instead of adding a second one', async () => {
+    const openTask = { id: 'task-open', status: 'pending', dueDate: new Date('2026-10-20T13:00:00Z'), customFields: { origin: 'disposition' } };
+    const { service, saved } = buildHarness({ openTask });
+    const at = '2026-10-21T08:00:00.000Z';
+
+    await service.applyDisposition(WORKSPACE, USER, ACTIVITY, { ...baseDto, followUp: { at } });
+
+    expect(saved.tasks).toHaveLength(1);
+    expect(saved.tasks[0].id).toBe('task-open');
+    expect(new Date(saved.tasks[0].dueDate).toISOString()).toBe(at);
+    expect(saved.activities[0].metadata.dispositionTaskId).toBe('task-open');
   });
 
   it('creates a Deal with the given value', async () => {

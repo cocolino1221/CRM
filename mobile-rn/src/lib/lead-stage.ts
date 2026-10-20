@@ -11,7 +11,7 @@
  * so nothing here needed a change on the server.
  */
 
-export type LeadStageKey = 'new' | 'scheduled' | 'unscheduled';
+export type LeadStageKey = 'new' | 'scheduled' | 'unscheduled' | 'follow_up';
 
 export interface LeadStage {
   key: LeadStageKey;
@@ -24,15 +24,35 @@ const STAGES: Record<LeadStageKey, LeadStage> = {
   scheduled: { key: 'scheduled', label: 'Programat', color: '#059669' },
   unscheduled: { key: 'unscheduled', label: 'Neprogramat', color: '#d97706' },
   new: { key: 'new', label: 'Nou', color: '#2563eb' },
+  follow_up: { key: 'follow_up', label: 'Revenire', color: '#7c3aed' },
 };
 
+/** "Revenire 16:00" today, "Revenire mâine 10:00", else "Revenire 22 oct.". */
+export function followUpLabel(at: string | Date, now: Date = new Date()): string {
+  const d = new Date(at);
+  if (Number.isNaN(d.getTime())) return 'Revenire';
+  const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  const day = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const diff = Math.round((day(d) - day(now)) / 86_400_000);
+  if (diff === 0) return `Revenire ${hm}`;
+  if (diff === 1) return `Revenire mâine ${hm}`;
+  if (diff < 0) return 'Revenire întârziată';
+  const months = ['ian', 'feb', 'mar', 'apr', 'mai', 'iun', 'iul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+  return `Revenire ${d.getDate()} ${months[d.getMonth()]}.`;
+}
+
 export function leadStage(
-  contact: { id?: string; lastContactedAt?: string | Date | null } | null | undefined,
+  contact: { id?: string; lastContactedAt?: string | Date | null; nextFollowUpAt?: string | Date | null } | null | undefined,
   booked: Set<string>,
 ): LeadStage {
   // Being booked outranks everything: someone with an appointment is booked
   // whether or not anybody recorded the call that got them there.
   if (contact?.id && booked.has(contact.id)) return STAGES.scheduled;
+  // A call-back set by a caller is a plan, not "unscheduled".
+  if (contact?.nextFollowUpAt) {
+    const overdue = new Date(contact.nextFollowUpAt).getTime() < Date.now();
+    return { ...STAGES.follow_up, label: followUpLabel(contact.nextFollowUpAt), color: overdue ? '#dc2626' : STAGES.follow_up.color };
+  }
   if (contact?.lastContactedAt) return STAGES.unscheduled;
   return STAGES.new;
 }
