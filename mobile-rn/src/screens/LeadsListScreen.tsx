@@ -83,7 +83,9 @@ export default function LeadsListScreen() {
     // list actually uses. The pipeline stage that used to be here ("Contacted")
     // answered a question nobody was asking, and meant nothing once the list
     // stopped being scoped to one pipeline.
-    const stage = stageForTab(leadStage(contact as any, bookedIds), bucket);
+    // A won or lost lead says so in every tab, not only inside Vândut/Pierdut:
+    // the server sends each row's outcome by the same rule as those tabs.
+    const stage = stageForTab(leadStage(contact as any, bookedIds), bucket || (contact as any).outcome || undefined);
     const tags: string[] = Array.isArray(contact.tags)
       ? contact.tags
       : typeof contact.tags === 'string'
