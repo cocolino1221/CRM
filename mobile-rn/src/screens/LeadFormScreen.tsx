@@ -16,7 +16,21 @@ import type { LeadsStackParams } from '../navigation/LeadsStack';
 
 type FormRoute = RouteProp<LeadsStackParams, 'LeadForm'>;
 
-const SOURCES = ['Website', 'Referral', 'Social Media', 'Cold Call', 'Typeform', 'WhatsApp', 'Other'];
+// value is what the API stores; label is what the chip says. The chips used
+// to send their labels ("Social Media"), which the API rejected.
+const SOURCES: Array<{ value: string; label: string }> = [
+  { value: 'manual', label: 'Manual' },
+  { value: 'woocommerce', label: 'WooCommerce' },
+  { value: 'typeform', label: 'Typeform' },
+  { value: 'facebook', label: 'Facebook' },
+  { value: 'instagram', label: 'Instagram' },
+  { value: 'whatsapp', label: 'WhatsApp' },
+  { value: 'website', label: 'Website' },
+  { value: 'referral', label: 'Recomandare' },
+  { value: 'social_media', label: 'Social Media' },
+  { value: 'cold_outreach', label: 'Cold Call' },
+  { value: 'other', label: 'Altă sursă' },
+];
 
 const asText = (value: unknown): string => {
   if (typeof value === 'string') return value;
@@ -267,14 +281,14 @@ export default function LeadFormScreen() {
             <View className="flex-row gap-2">
               {SOURCES.map(s => (
                 <TouchableOpacity
-                  key={s}
-                  onPress={() => setSource(source === s ? '' : s)}
+                  key={s.value}
+                  onPress={() => setSource(source === s.value ? '' : s.value)}
                   className={`px-3 py-2 rounded-xl border ${
-                    source === s ? 'bg-sky-900 border-sky-900' : 'bg-white border-slate-200'
+                    source === s.value ? 'bg-sky-900 border-sky-900' : 'bg-white border-slate-200'
                   }`}
                 >
-                  <Text className={`text-xs font-semibold ${source === s ? 'text-white' : 'text-slate-600'}`}>
-                    {s}
+                  <Text className={`text-xs font-semibold ${source === s.value ? 'text-white' : 'text-slate-600'}`}>
+                    {s.label}
                   </Text>
                 </TouchableOpacity>
               ))}

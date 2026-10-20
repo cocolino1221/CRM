@@ -15,6 +15,7 @@ import {
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 import { ContactStatus, ContactSource } from '../../database/entities/contact.entity';
+import { normalizeContactSource } from './contact-source.util';
 
 export class CreateContactDto {
   @IsString()
@@ -56,6 +57,7 @@ export class CreateContactDto {
   status?: ContactStatus;
 
   @IsOptional()
+  @Transform(({ value }) => normalizeContactSource(value))
   @IsEnum(ContactSource)
   source?: ContactSource;
 
