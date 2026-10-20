@@ -223,7 +223,9 @@ export class WorkQueuesService {
     return {
       graceTypeform: minutes(configured.typeform, 10),
       graceWoocommerce: minutes(configured.woocommerce, 10),
-      graceManual: minutes(configured.manual, 0),
+      // Never a wait: a lead typed in by a setter or caller is booked by them,
+      // not by the lead, so there is nothing to wait for — whatever was saved.
+      graceManual: 0,
     };
   }
 

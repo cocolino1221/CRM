@@ -51,13 +51,19 @@ describe('WorkQueuesService.graceMinutes', () => {
   });
 
   it('takes the configured wait per source', async () => {
-    const { service } = build({ leadGrace: { typeform: 2, woocommerce: 15, manual: 1 } });
+    const { service } = build({ leadGrace: { typeform: 2, woocommerce: 15 } });
 
-    await expect(service.graceMinutes(WORKSPACE)).resolves.toEqual({
+    await expect(service.graceMinutes(WORKSPACE)).resolves.toMatchObject({
       graceTypeform: 2,
       graceWoocommerce: 15,
-      graceManual: 1,
     });
+  });
+
+  // The setter or caller who typed the lead in books it; nobody waits for it.
+  it('never holds back a lead added by hand, even if a wait was saved', async () => {
+    const { service } = build({ leadGrace: { manual: 30 } });
+
+    await expect(service.graceMinutes(WORKSPACE)).resolves.toMatchObject({ graceManual: 0 });
   });
 
   it('accepts zero as "call them straight away"', async () => {

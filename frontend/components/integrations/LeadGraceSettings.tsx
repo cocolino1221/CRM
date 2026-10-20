@@ -23,7 +23,6 @@ interface LeadGrace {
 const SOURCES: Array<{ key: keyof LeadGrace; label: string; hint: string }> = [
   { key: 'woocommerce', label: 'WooCommerce', hint: 'Cumpără o carte, apoi se programează' },
   { key: 'typeform', label: 'Typeform', hint: 'Completează formularul' },
-  { key: 'manual', label: 'Adăugat manual', hint: 'Îl introduce cineva din echipă' },
 ];
 
 export default function LeadGraceSettings() {
@@ -74,6 +73,7 @@ export default function LeadGraceSettings() {
       <p className="mb-4 text-sm text-gray-500">
         Câte minute lăsăm un lead nou să se programeze singur înainte să apară în lista de sunat.
         Dacă se programează între timp, trece direct în „Programați". 0 înseamnă imediat.
+        Leadurile adăugate manual apar imediat: le programează setterul sau callerul care le-a introdus.
       </p>
 
       {!grace && !error ? (
