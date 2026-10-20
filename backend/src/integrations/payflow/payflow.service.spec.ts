@@ -140,4 +140,24 @@ describe('PayflowService', () => {
     } as any);
     expect(contactsService.update).not.toHaveBeenCalledWith('ws1', 'c8', expect.objectContaining({ status: 'customer' }));
   });
+
+  // Payflow reports the shop's orders too; WooCommerce already records them.
+  it('skips a shop order when WooCommerce is connected, so it is not counted twice', async () => {
+    const { key } = await service.connect('ws1', 'u1');
+    const integration = await service.authenticate(`Bearer ${key}`);
+    integrationRepository.createQueryBuilder = jest.fn(() => ({
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      getCount: jest.fn().mockResolvedValue(1),
+    }));
+
+    const result = await service.sync(integration, {
+      customer: { email: 'a@b.ro' }, amount: 2500, transactionId: 'tx9', title: 'Order #4879 — TEAMRA2',
+    } as any);
+
+    expect(result).toMatchObject({ skipped: 'woocommerce-order', dealId: null });
+    expect(dealsService.create).not.toHaveBeenCalled();
+    expect(contactsService.create).not.toHaveBeenCalled();
+  });
 });
+
