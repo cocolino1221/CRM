@@ -1,4 +1,4 @@
-import { answersAsNotes, bookingFormError, normalizeBookingForm, DEFAULT_BLOCKED_MESSAGE } from './booking-form';
+import { answersAsNotes, bookingFormError, formForVariant, normalizeBookingForm, normalizeBookingVariants, DEFAULT_BLOCKED_MESSAGE } from './booking-form';
 
 describe('normalizeBookingForm', () => {
   it('starts with the gate off and no questions', () => {
@@ -67,5 +67,24 @@ describe('answersAsNotes', () => {
   it('writes the answers as lines for the closer', () => {
     const form = normalizeBookingForm({ ageGate: { enabled: true, minAge: 16 }, questions: [{ id: 'goal', label: 'Obiectiv' }] });
     expect(answersAsNotes(form, { ageConfirmed: true, goal: 'Slăbire' })).toBe('Vârstă: 16+ confirmat\nObiectiv: Slăbire');
+  });
+});
+
+describe('booking variants', () => {
+  const main = normalizeBookingForm({});
+  const variants = normalizeBookingVariants([
+    { name: 'Cumpărători carte', form: { ageGate: { enabled: true, minAge: 16 } } },
+    { name: 'Cumpărători carte', form: {} },
+    { name: '' },
+  ]);
+
+  it('derives readable, unique ids and drops nameless ones', () => {
+    expect(variants.map((v) => v.id)).toEqual(['cumparatori-carte', 'cumparatori-carte-2']);
+  });
+
+  it('gives a link its variant form, and the main form otherwise', () => {
+    expect(formForVariant(main, variants, 'cumparatori-carte').ageGate.minAge).toBe(16);
+    expect(formForVariant(main, variants, 'nu-exista')).toBe(main);
+    expect(formForVariant(main, variants, undefined)).toBe(main);
   });
 });

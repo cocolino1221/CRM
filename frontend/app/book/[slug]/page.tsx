@@ -138,7 +138,10 @@ export default function PublicBookingPage() {
     if (!slug) return;
     (async () => {
       try {
-        const res = await fetch(`${API_BASE}/scheduling/public/${encodeURIComponent(slug)}`, {
+        // `?v=` picks a version of the page, with its own questions.
+        const variant = new URLSearchParams(window.location.search).get('v');
+        const qs = variant ? `?v=${encodeURIComponent(variant)}` : '';
+        const res = await fetch(`${API_BASE}/scheduling/public/${encodeURIComponent(slug)}${qs}`, {
           cache: 'no-store',
         });
         if (!res.ok) throw new Error('not found');
@@ -200,6 +203,7 @@ export default function PublicBookingPage() {
             guest,
             notes,
             customAnswers: customAnswersFor(form, answers, age === 'ok'),
+            variant: new URLSearchParams(window.location.search).get('v') || undefined,
           }),
         ),
       });

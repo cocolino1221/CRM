@@ -431,7 +431,9 @@ export class SchedulingService {
 
     // The age check and the questions: enforced here too, since the request
     // can be sent without the page.
-    const form = this.bookingForms ? await this.bookingForms.get(meetingType.workspaceId) : null;
+    const form = this.bookingForms
+      ? await this.bookingForms.getForLink(meetingType.workspaceId, dto.variant)
+      : null;
     if (form) {
       const formError = bookingFormError(form, dto.customAnswers);
       if (formError) throw new BadRequestException(formError);
@@ -480,8 +482,10 @@ export class SchedulingService {
     const answered = form ? answersAsNotes(form, dto.customAnswers) : '';
     const notes = [answered, dto.notes?.trim()].filter(Boolean).join('\n\n') || undefined;
 
+    // `variant` only chose the form above; it is not a column.
+    const { variant: _variant, ...fields } = dto;
     const booking = this.bookingRepository.create({
-      ...dto,
+      ...fields,
       notes,
       workspaceId: meetingType.workspaceId,
       hostId: meetingType.userId,

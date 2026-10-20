@@ -9,7 +9,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { CalendarCheck, Check, ChevronRight, Copy, ExternalLink, Link2, Loader2, Palette } from 'lucide-react';
 import api from '@/lib/api';
-import BookingFormCard from '@/components/bookings/BookingFormCard';
+import BookingPagesCard from '@/components/bookings/BookingPagesCard';
 
 export default function BookingPageSettings() {
   const [slug, setSlug] = useState<string | null>(null);
@@ -98,7 +98,7 @@ export default function BookingPageSettings() {
         <ChevronRight className="h-5 w-5 text-gray-400" />
       </Link>
 
-      <BookingFormCard />
+      <BookingPagesCard baseLink={link} />
     </div>
   );
 }

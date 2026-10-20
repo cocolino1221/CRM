@@ -7,6 +7,7 @@ import {
   IsObject,
   Length,
   Matches,
+  MaxLength,
 } from 'class-validator';
 
 export class CreateBookingDto {
@@ -38,4 +39,10 @@ export class CreateBookingDto {
   @IsOptional()
   @IsObject()
   customAnswers?: Record<string, any>;
+
+  /** Which version of the booking page it came from (`?v=`); decides the questions checked. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  variant?: string;
 }

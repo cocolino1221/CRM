@@ -3,7 +3,13 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Workspace } from '../database/entities/workspace.entity';
 import { Contact } from '../database/entities/contact.entity';
-import { BookingForm, normalizeBookingForm } from './booking-form';
+import {
+  BookingForm,
+  BookingVariant,
+  formForVariant,
+  normalizeBookingForm,
+  normalizeBookingVariants,
+} from './booking-form';
 import { readBookingLinkToken } from './booking-link-token';
 
 /** Who the order was for, as much as the booking form needs. */
@@ -26,6 +32,38 @@ export class BookingFormService {
     const workspace = await this.workspaceRepository.findOne({ where: { id: workspaceId } });
     if (!workspace) throw new NotFoundException('Workspace not found');
     return normalizeBookingForm((workspace.settings as any)?.bookingForm);
+  }
+
+  async getVariants(workspaceId: string): Promise<BookingVariant[]> {
+    const workspace = await this.workspaceRepository.findOne({ where: { id: workspaceId } });
+    if (!workspace) throw new NotFoundException('Workspace not found');
+    return normalizeBookingVariants((workspace.settings as any)?.bookingVariants);
+  }
+
+  /** The form a booking link asks for — its variant's (`?v=`), or the main one. */
+  async getForLink(workspaceId: string, variantId?: string | null): Promise<BookingForm> {
+    const workspace = await this.workspaceRepository.findOne({ where: { id: workspaceId } });
+    if (!workspace) throw new NotFoundException('Workspace not found');
+    const settings: any = workspace.settings ?? {};
+    return formForVariant(
+      normalizeBookingForm(settings.bookingForm),
+      normalizeBookingVariants(settings.bookingVariants),
+      variantId,
+    );
+  }
+
+  /** Replaces the list of variants; settings.bookingVariants only. */
+  async setVariants(workspaceId: string, input: unknown): Promise<BookingVariant[]> {
+    const variants = normalizeBookingVariants(input);
+    const result = await this.workspaceRepository.query(
+      `UPDATE "workspaces"
+          SET "settings" = jsonb_set(COALESCE("settings", '{}'::jsonb), '{bookingVariants}', $1::jsonb, true)
+        WHERE "id" = $2`,
+      [JSON.stringify(variants), workspaceId],
+    );
+    const affected = Array.isArray(result) ? result[1] : undefined;
+    if (affected === 0) throw new NotFoundException('Workspace not found');
+    return variants;
   }
 
   /** Writes only settings.bookingForm, like the page look does for bookingPage. */

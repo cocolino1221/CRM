@@ -88,3 +88,29 @@ export function newQuestion(existing: BookingQuestion[]): BookingQuestion {
   while (ids.has(`q${n}`)) n += 1;
   return { id: `q${n}`, label: '', type: 'text', required: true };
 }
+
+/** A named version of the booking page, with its own questions (`?v=<id>`). */
+export interface BookingVariant {
+  id: string;
+  name: string;
+  form: BookingForm;
+}
+
+export const MAX_VARIANTS = 10;
+
+/** "Cumpărători carte!" → "cumparatori-carte" — the same rule the server uses. */
+export function variantIdFrom(name: string): string {
+  return String(name || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 30);
+}
+
+/** The booking link for a variant; the main page when there is none. */
+export function variantLink(base: string, variantId?: string | null): string {
+  return variantId ? `${base}?v=${encodeURIComponent(variantId)}` : base;
+}
+

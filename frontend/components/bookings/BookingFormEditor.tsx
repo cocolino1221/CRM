@@ -1,17 +1,13 @@
 'use client';
 
 /**
- * What the public booking page asks before the calendar: an age check and up
- * to five questions. One set for the whole workspace — the page is the team's.
+ * The age check and the questions for one version of the booking page.
+ * Controlled: the parent holds the value and saves it.
  */
 
-import { useEffect, useState } from 'react';
-import { Check, ListChecks, Loader2, Plus, Save, ShieldCheck, Trash2 } from 'lucide-react';
-import api from '@/lib/api';
+import { Plus, ShieldCheck, Trash2 } from 'lucide-react';
 import {
-  EMPTY_BOOKING_FORM,
   MAX_QUESTIONS,
-  formOf,
   newQuestion,
   type BookingForm,
   type BookingQuestion,
@@ -24,61 +20,22 @@ const TYPES: Array<{ value: BookingQuestionType; label: string }> = [
   { value: 'yesno', label: 'Da / Nu' },
 ];
 
-export default function BookingFormCard() {
-  const [form, setForm] = useState<BookingForm>(EMPTY_BOOKING_FORM);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
-  const [error, setError] = useState('');
-
-  useEffect(() => {
-    api
-      .get('/scheduling/booking-form')
-      .then((res) => setForm(formOf(res.data)))
-      .catch(() => setError('Nu s-au putut încărca întrebările.'))
-      .finally(() => setLoading(false));
-  }, []);
-
+export default function BookingFormEditor({
+  value,
+  onChange,
+}: {
+  value: BookingForm;
+  onChange: (next: BookingForm) => void;
+}) {
+  const form = value;
+  const setForm = (update: (f: BookingForm) => BookingForm) => onChange(update(form));
   const patchGate = (change: Partial<BookingForm['ageGate']>) =>
     setForm((f) => ({ ...f, ageGate: { ...f.ageGate, ...change } }));
   const patchQuestion = (id: string, change: Partial<BookingQuestion>) =>
     setForm((f) => ({ ...f, questions: f.questions.map((q) => (q.id === id ? { ...q, ...change } : q)) }));
 
-  const save = async () => {
-    setSaving(true);
-    setSaved(false);
-    setError('');
-    try {
-      // Options are typed one per line; the server keeps the clean list.
-      const res = await api.put('/scheduling/booking-form', form);
-      setForm(formOf(res.data));
-      setSaved(true);
-    } catch (err: any) {
-      setError(err?.response?.data?.message || 'Salvarea a eșuat.');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  if (loading) {
-    return (
-      <section className="flex justify-center rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-800">
-        <Loader2 className="h-5 w-5 animate-spin text-gray-400" />
-      </section>
-    );
-  }
-
   return (
-    <section className="space-y-5 rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-800">
-      <div>
-        <h2 className="flex items-center gap-2 text-sm font-semibold text-gray-700 dark:text-gray-200">
-          <ListChecks className="h-4 w-4 text-indigo-600" /> Înainte de calendar
-        </h2>
-        <p className="mt-1 text-xs text-gray-500">
-          Ce vede leadul pe pagina de programare înainte să aleagă ora. Răspunsurile apar la notițele programării.
-        </p>
-      </div>
-
+    <div className="space-y-5">
       {/* Age */}
       <div className="rounded-xl border border-gray-100 p-4 dark:border-gray-700">
         <label className="flex items-center gap-2 text-sm font-medium text-gray-900 dark:text-white">
@@ -200,22 +157,6 @@ export default function BookingFormCard() {
         )}
       </div>
 
-      <div className="flex items-center gap-3">
-        <button
-          onClick={() => void save()}
-          disabled={saving}
-          className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
-        >
-          {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-          Salvează întrebările
-        </button>
-        {saved && !saving && (
-          <span className="inline-flex items-center gap-1 text-sm text-green-600">
-            <Check className="h-4 w-4" /> Salvat
-          </span>
-        )}
-        {error && <span className="text-sm text-red-600">{error}</span>}
-      </div>
-    </section>
+    </div>
   );
 }
