@@ -38,6 +38,7 @@ import DateTimeChips, { type DayTime } from './DateTimeChips';
 import PersonChips from './PersonChips';
 import { SOURCE_OPTIONS } from '../lib/lead-filters';
 import { leadStage } from '../lib/lead-stage';
+import { activityHeadline, activityNote, activityTone, parseActivityList, type ActivityRow } from '../lib/activity-view';
 import { whatsappDigits } from '../lib/whatsapp-phone';
 
 /**
@@ -140,6 +141,20 @@ export default function LeadSheet({
   const users = useLeadsStore((state) => state.users);
 
   const stage = useMemo(() => leadStage(contact, bookedIds), [contact, bookedIds]);
+
+  // What was said before, so whoever opens the lead next can read it here
+  // instead of only in the full record.
+  const [pastCalls, setPastCalls] = useState<ActivityRow[]>([]);
+  useEffect(() => {
+    let alive = true;
+    api
+      .get('/activities', { params: { contactId: contact.id, type: 'call', limit: 5 } })
+      .then((res) => alive && setPastCalls(parseActivityList(res.data)))
+      .catch(() => alive && setPastCalls([]));
+    return () => {
+      alive = false;
+    };
+  }, [contact.id]);
   const name =
     `${contact.firstName ?? ''} ${contact.lastName ?? ''}`.trim() ||
     contact.phone ||
@@ -294,6 +309,36 @@ export default function LeadSheet({
                 </TouchableOpacity>
               )}
             </View>
+
+            {pastCalls.length > 0 && (
+              <View className="mt-5">
+                <Text className="text-sm font-semibold text-slate-900 mb-2">Ultimele apeluri</Text>
+                <View className="gap-2">
+                  {pastCalls.map((call) => {
+                    const tone = activityTone(call);
+                    const color = { red: '#be123c', green: '#047857', amber: '#b45309', slate: '#334155' }[tone];
+                    const note = activityNote(call);
+                    const who = (users || []).find((u: any) => u.id === call.userId) as any;
+                    const whoName = who ? `${who.firstName || ''} ${who.lastName || ''}`.trim() : '';
+                    return (
+                      <View key={call.id} className="rounded-xl bg-slate-50 px-3 py-2.5">
+                        <View className="flex-row items-center justify-between gap-2">
+                          <Text className="text-sm font-semibold" style={{ color }}>{activityHeadline(call)}</Text>
+                          <Text className="text-[11px] text-slate-400">
+                            {formatDate(call.occurredAt)}{whoName ? ` · ${whoName}` : ''}
+                          </Text>
+                        </View>
+                        {note ? (
+                          <Text className="text-sm text-slate-700 mt-1">{note}</Text>
+                        ) : (
+                          <Text className="text-xs text-slate-400 mt-1">Fără notiță</Text>
+                        )}
+                      </View>
+                    );
+                  })}
+                </View>
+              </View>
+            )}
 
             {/* Where it goes next */}
             <Text className="text-sm font-semibold text-slate-900 mt-5 mb-2">Mută leadul la</Text>
