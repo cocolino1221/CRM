@@ -42,7 +42,8 @@ describe('wooOrderFromQuery', () => {
 
 describe('prefillQuery', () => {
   it('prefers the signed pass from a CRM form', () => {
-    expect(prefillQuery(new URLSearchParams('t=abc.def&order=1&key=wc_order_x'))?.toString()).toBe('t=abc.def');
+    expect(prefillQuery(new URLSearchParams('t=iv.body.tag&order=1&key=wc_order_x'))?.toString()).toBe('t=iv.body.tag');
+    expect(prefillQuery(new URLSearchParams('t=not-a-pass'))).toBeNull();
   });
 
   it('falls back to a WooCommerce order, and to nothing', () => {

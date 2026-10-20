@@ -76,7 +76,7 @@ export function wooOrderFromQuery(params: URLSearchParams): { order: string; key
  */
 export function prefillQuery(params: URLSearchParams): URLSearchParams | null {
   const token = (params.get('t') || '').trim();
-  if (/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(token)) return new URLSearchParams({ t: token });
+  if (/^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+){2}$/.test(token)) return new URLSearchParams({ t: token });
   const woo = wooOrderFromQuery(params);
   return woo ? new URLSearchParams({ order: woo.order, key: woo.key }) : null;
 }
