@@ -18,7 +18,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { buildLeadNotification, shouldNotifyLeadSource } from './lead-notification.util';
 import { GoogleSheetsService } from '../integrations/google-sheets/google-sheets.service';
 import { MetaConversionsService } from '../integrations/meta-conversions/meta-conversions.service';
-import { applyLeadBucket } from './lead-bucket';
+import { applyLeadBucket, outcomesFor } from './lead-bucket';
 
 export interface ContactsListResult {
   contacts: Contact[];
@@ -167,6 +167,12 @@ export class ContactsService {
 
     const [contacts, total] = await queryBuilder.getManyAndCount();
     await this.attachNextFollowUps(workspaceId, contacts);
+
+    // Each row carries won/lost, so a badge reads Vândut wherever the lead shows.
+    const outcomes = await outcomesFor(this.contactRepository, workspaceId, contacts.map((c) => c.id));
+    for (const contact of contacts) {
+      (contact as any).outcome = outcomes.get(contact.id) ?? null;
+    }
 
     return {
       contacts,

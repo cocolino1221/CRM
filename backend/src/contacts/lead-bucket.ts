@@ -1,4 +1,4 @@
-import { SelectQueryBuilder } from 'typeorm';
+import { Repository, SelectQueryBuilder } from 'typeorm';
 
 /**
  * The tabs at the top of the app's lead list: where a lead stands, not which
@@ -36,6 +36,33 @@ const FOLLOW_UP = `EXISTS (
     AND t.status IN ('pending', 'overdue') AND t."dueDate" IS NOT NULL)`;
 
 const CLOSED = `(${WON} OR ${LOST})`;
+
+/**
+ * Won or lost, for each of these contacts — the same rule as the tabs, so a
+ * row's badge says Vândut in "Toți" too, not only inside the Vândut tab.
+ */
+export async function outcomesFor(
+  repository: Repository<any>,
+  workspaceId: string,
+  ids: string[],
+): Promise<Map<string, 'won' | 'lost'>> {
+  const outcomes = new Map<string, 'won' | 'lost'>();
+  if (!ids.length) return outcomes;
+  const rows: Array<{ id: string; won: boolean; lost: boolean }> = await repository
+    .createQueryBuilder('contact')
+    .leftJoin('contact.pipelineStage', 'pipelineStage')
+    .select('contact.id', 'id')
+    .addSelect(WON, 'won')
+    .addSelect(LOST, 'lost')
+    .where('contact.workspaceId = :workspaceId', { workspaceId })
+    .andWhere('contact.id IN (:...ids)', { ids })
+    .getRawMany();
+  for (const row of rows) {
+    if (row.won) outcomes.set(row.id, 'won');
+    else if (row.lost) outcomes.set(row.id, 'lost');
+  }
+  return outcomes;
+}
 
 /** Requires the `pipelineStage` join, which findAll always adds. */
 export function applyLeadBucket(qb: SelectQueryBuilder<any>, bucket?: LeadBucket | string): void {
