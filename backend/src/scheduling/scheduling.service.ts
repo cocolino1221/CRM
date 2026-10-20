@@ -16,6 +16,8 @@ import { NotificationType } from '../database/entities/notification.entity';
 import { ContactsService } from '../contacts/contacts.service';
 import { ContactSource, ContactStatus } from '../database/entities/contact.entity';
 import { UserRole, UserStatus } from '../database/entities/user.entity';
+import { BookingFormService } from './booking-form.service';
+import { answersAsNotes, bookingFormError } from './booking-form';
 
 @Injectable()
 export class SchedulingService {
@@ -35,6 +37,7 @@ export class SchedulingService {
     private readonly notificationsService: NotificationsService,
     private readonly contactsService: ContactsService,
     @Optional() private readonly meetings?: BookingMeetingsService,
+    @Optional() private readonly bookingForms?: BookingFormService,
   ) {}
 
   // ========== Availability Management ==========
@@ -426,6 +429,14 @@ export class SchedulingService {
       throw new NotFoundException('Meeting type not found or not available');
     }
 
+    // The age check and the questions: enforced here too, since the request
+    // can be sent without the page.
+    const form = this.bookingForms ? await this.bookingForms.get(meetingType.workspaceId) : null;
+    if (form) {
+      const formError = bookingFormError(form, dto.customAnswers);
+      if (formError) throw new BadRequestException(formError);
+    }
+
     const startTime = new Date(dto.startTime);
     const endTime = new Date(startTime.getTime() + meetingType.duration * 60000);
 
@@ -464,8 +475,14 @@ export class SchedulingService {
     );
     const contactId = existingContact?.id ?? null;
 
+    // The answers go into the notes as plain lines, so the closer reads them
+    // wherever the booking shows its notes.
+    const answered = form ? answersAsNotes(form, dto.customAnswers) : '';
+    const notes = [answered, dto.notes?.trim()].filter(Boolean).join('\n\n') || undefined;
+
     const booking = this.bookingRepository.create({
       ...dto,
+      notes,
       workspaceId: meetingType.workspaceId,
       hostId: meetingType.userId,
       meetingTypeId: meetingType.id,

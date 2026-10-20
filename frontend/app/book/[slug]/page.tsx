@@ -25,6 +25,13 @@ import {
   type Guest,
 } from '@/lib/public-booking';
 import { accentOf, backgroundStyle, toneOf, type BookingBranding } from '@/lib/booking-branding';
+import {
+  answersError,
+  customAnswersFor,
+  formOf,
+  wooOrderFromQuery,
+  type BookingForm,
+} from '@/lib/booking-form';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'https://slackcrm-backend.fly.dev/api/v1';
 const DAYS_OFFERED = 14;
@@ -37,6 +44,8 @@ interface MeetingType {
   user?: { firstName?: string; lastName?: string };
   /** Logo, background, colours and texts set in Aspect pagină. */
   branding?: BookingBranding;
+  /** The age check and the questions asked before the calendar. */
+  form?: BookingForm;
 }
 
 interface Host {
@@ -73,10 +82,50 @@ export default function PublicBookingPage() {
   // Read once on arrival. useSearchParams would force a Suspense boundary for
   // a value that never changes while the page is open.
   useEffect(() => {
-    const { guest: fromLink, complete } = guestFromQuery(new URLSearchParams(window.location.search));
+    const params = new URLSearchParams(window.location.search);
+    const { guest: fromLink, complete } = guestFromQuery(params);
     setGuest(fromLink);
     setKnown(complete);
-  }, []);
+
+    // From a WooCommerce thank-you page: the link carries the order and its
+    // key, and the CRM answers with the buyer. The order webhook can land a
+    // few seconds after the thank-you page loads, so it asks a few times.
+    const woo = wooOrderFromQuery(params);
+    if (!woo || !slug) return;
+    let cancelled = false;
+    (async () => {
+      for (let attempt = 0; attempt < 4 && !cancelled; attempt += 1) {
+        if (attempt) await new Promise((r) => setTimeout(r, 2000));
+        try {
+          const qs = new URLSearchParams({ order: woo.order, key: woo.key });
+          const res = await fetch(`${API_BASE}/scheduling/public/${encodeURIComponent(slug)}/prefill?${qs}`, {
+            cache: 'no-store',
+          });
+          const found = res.ok ? await res.json() : {};
+          if (found?.name || found?.email) {
+            if (cancelled) return;
+            const next: Guest = { name: found.name || '', email: found.email || '', phone: found.phone || '' };
+            setGuest(next);
+            setKnown(!!next.name && !!next.email && guestError(next) === null);
+            return;
+          }
+        } catch {
+          // Try again; in the end the lead simply types their details.
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [slug]);
+
+  // Before the calendar: the age check, then the workspace's own questions.
+  const form = formOf(meeting?.form);
+  const [age, setAge] = useState<'unknown' | 'ok' | 'under'>('unknown');
+  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [questionsDone, setQuestionsDone] = useState(false);
+  const gatePassed = !form.ageGate.enabled || age === 'ok';
+  const ready = gatePassed && (form.questions.length === 0 || questionsDone);
   const askDetails = !known || editing;
   const canCallBack = !!guest.name.trim() && !!guest.phone?.trim();
 
@@ -151,6 +200,7 @@ export default function PublicBookingPage() {
             startTime: chosen.startTime,
             guest,
             notes,
+            customAnswers: customAnswersFor(form, answers, age === 'ok'),
           }),
         ),
       });
@@ -298,6 +348,89 @@ export default function PublicBookingPage() {
         )}
       </header>
 
+      {form.ageGate.enabled && age !== 'ok' && (
+        <section className="mx-auto mt-8 max-w-md rounded-2xl border border-gray-200 bg-white p-6 text-center">
+          {age === 'under' ? (
+            <p className="whitespace-pre-line text-sm text-gray-700">{form.ageGate.blockedMessage}</p>
+          ) : (
+            <>
+              <p className="text-base font-semibold text-gray-900">Ai cel puțin {form.ageGate.minAge} ani?</p>
+              <div className="mt-4 flex justify-center gap-3">
+                <button
+                  onClick={() => setAge('ok')}
+                  className="rounded-xl bg-[var(--accent)] px-6 py-2.5 text-sm font-semibold text-white hover:opacity-90"
+                >
+                  Da, am {form.ageGate.minAge}+ ani
+                </button>
+                <button
+                  onClick={() => setAge('under')}
+                  className="rounded-xl border border-gray-300 px-6 py-2.5 text-sm text-gray-700 hover:bg-gray-50"
+                >
+                  Nu
+                </button>
+              </div>
+            </>
+          )}
+        </section>
+      )}
+
+      {gatePassed && form.questions.length > 0 && !questionsDone && (
+        <section className="mx-auto mt-8 max-w-md space-y-4 rounded-2xl border border-gray-200 bg-white p-6">
+          {form.questions.map((q) => (
+            <div key={q.id}>
+              <p className="text-sm font-medium text-gray-900">
+                {q.label}
+                {q.required && <span className="text-red-500"> *</span>}
+              </p>
+              {q.type === 'text' ? (
+                <textarea
+                  value={answers[q.id] ?? ''}
+                  onChange={(e) => setAnswers((a) => ({ ...a, [q.id]: e.target.value }))}
+                  rows={2}
+                  className="mt-1.5 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900"
+                />
+              ) : (
+                <div className="mt-1.5 flex flex-wrap gap-2">
+                  {(q.type === 'yesno' ? ['Da', 'Nu'] : q.options ?? []).map((option) => {
+                    const on = answers[q.id] === option;
+                    return (
+                      <button
+                        key={option}
+                        type="button"
+                        onClick={() => setAnswers((a) => ({ ...a, [q.id]: option }))}
+                        className={`rounded-xl border px-4 py-2 text-sm ${
+                          on
+                            ? 'border-[var(--accent)] bg-[var(--accent)] text-white'
+                            : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
+                        }`}
+                      >
+                        {option}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          ))}
+          {error && <p className="text-sm text-red-600">{error}</p>}
+          <button
+            onClick={() => {
+              const problem = answersError(form, answers);
+              if (problem) {
+                setError(problem);
+                return;
+              }
+              setError('');
+              setQuestionsDone(true);
+            }}
+            className="w-full rounded-xl bg-[var(--accent)] px-4 py-2.5 text-sm font-semibold text-white hover:opacity-90"
+          >
+            Continuă spre calendar
+          </button>
+        </section>
+      )}
+
+      {ready && (<>
       <section className="mt-8">
         <h2 className={`flex items-center gap-2 text-sm font-semibold ${onBg.text}`}>
           <Calendar className="h-4 w-4" /> Alege ziua
@@ -489,6 +622,7 @@ export default function PublicBookingPage() {
           </div>
         )}
       </section>
+      </>)}
     </main>
     </div>
   );

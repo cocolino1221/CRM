@@ -157,6 +157,16 @@ export class WooCommerceService {
       lineItems,
     };
 
+    // WooCommerce's own order key (wc_order_…) is what the thank-you page
+    // carries; kept as "<orderId>:<key>" so the booking page can find the buyer
+    // from the link without their name or email in it.
+    const wcKey = String(order.order_key || '').trim();
+    const wooOrderToken = /^wc_order_[A-Za-z0-9]+$/.test(wcKey) ? `${order.id}:${wcKey}` : null;
+    const withToken = (tokens: unknown): string[] => {
+      const list = Array.isArray(tokens) ? (tokens as string[]) : [];
+      return wooOrderToken && !list.includes(wooOrderToken) ? [...list, wooOrderToken].slice(-50) : list;
+    };
+
     const existing = await this.findExistingContact(workspaceId, email, phoneNormalized);
 
     if (existing) {
@@ -164,6 +174,7 @@ export class WooCommerceService {
       custom.wooOrder = wooOrder;
       custom.wooOrderKeys = [...(Array.isArray(custom.wooOrderKeys) ? custom.wooOrderKeys : []), orderKey];
       custom.wooProductsPurchased = this.mergeProducts(custom.wooProductsPurchased, lineItems);
+      custom.wooOrderTokens = withToken(custom.wooOrderTokens);
       existing.customFields = custom;
       if (!existing.phone && rawPhone) {
         existing.phone = rawPhone;
@@ -203,6 +214,7 @@ export class WooCommerceService {
         wooOrder,
         wooOrderKeys: [orderKey],
         wooProductsPurchased: this.mergeProducts([], lineItems),
+        wooOrderTokens: withToken([]),
       },
     } as any);
     // ContactsService.create emits contact.created → WhatsApp auto-send rules.

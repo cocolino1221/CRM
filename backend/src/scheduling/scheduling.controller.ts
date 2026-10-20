@@ -9,6 +9,7 @@ import {
 } from '@nestjs/swagger';
 import { SchedulingService } from './scheduling.service';
 import { BookingBrandingService } from './booking-branding.service';
+import { BookingFormService } from './booking-form.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { WorkspaceGuard } from '../auth/guards/workspace.guard';
@@ -26,9 +27,27 @@ export class SchedulingController {
   constructor(
     private readonly schedulingService: SchedulingService,
     private readonly brandingService: BookingBrandingService,
+    private readonly bookingFormService: BookingFormService,
   ) {}
 
   // ========== Booking page look ==========
+
+  @Get('booking-form')
+  @UseGuards(JwtAuthGuard, WorkspaceGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Questions and age check shown before the booking calendar' })
+  async getBookingForm(@CurrentWorkspace('id') workspaceId: string) {
+    return this.bookingFormService.get(workspaceId);
+  }
+
+  @Put('booking-form')
+  @UseGuards(JwtAuthGuard, WorkspaceGuard, RolesGuard)
+  @ApiBearerAuth()
+  @Roles('admin', 'manager')
+  @ApiOperation({ summary: 'Set the questions and age check shown before the booking calendar' })
+  async setBookingForm(@CurrentWorkspace('id') workspaceId: string, @Body() body: unknown) {
+    return this.bookingFormService.set(workspaceId, body);
+  }
 
   @Get('booking-page')
   @UseGuards(JwtAuthGuard, WorkspaceGuard, RolesGuard)
@@ -178,7 +197,20 @@ export class SchedulingController {
         ? { firstName: meetingType.user.firstName, lastName: meetingType.user.lastName }
         : undefined,
       branding: await this.brandingService.get(meetingType.workspaceId),
+      // The age check and the questions asked before the calendar.
+      form: await this.bookingFormService.get(meetingType.workspaceId),
     };
+  }
+
+  @Get('public/:slug/prefill')
+  @ApiOperation({ summary: 'Name, email and phone of the WooCommerce order a thank-you page links from' })
+  @ApiQuery({ name: 'order', description: 'WooCommerce order id', required: true })
+  @ApiQuery({ name: 'key', description: 'WooCommerce order key (wc_order_…)', required: true })
+  async prefill(@Param('slug') slug: string, @Query('order') order: string, @Query('key') key: string) {
+    const meetingType = await this.schedulingService.getMeetingTypeBySlug(slug);
+    // An empty answer rather than a 404: the order may simply not have
+    // reached the CRM yet, and the page retries.
+    return (await this.bookingFormService.prefillFromWooOrder(meetingType.workspaceId, order, key)) ?? {};
   }
 
   @Get('public/:slug/slots')

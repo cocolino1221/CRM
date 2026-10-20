@@ -9,6 +9,7 @@ import { User } from '../database/entities/user.entity';
 import { Contact } from '../database/entities/contact.entity';
 import { Workspace } from '../database/entities/workspace.entity';
 import { BookingBrandingService } from './booking-branding.service';
+import { BookingFormService } from './booking-form.service';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { ContactsModule } from '../contacts/contacts.module';
 import { BookingsModule } from '../bookings/bookings.module';
@@ -28,7 +29,7 @@ import { BookingsModule } from '../bookings/bookings.module';
     BookingsModule,
   ],
   controllers: [SchedulingController],
-  providers: [SchedulingService, BookingBrandingService],
+  providers: [SchedulingService, BookingBrandingService, BookingFormService],
   exports: [SchedulingService],
 })
 export class SchedulingModule {}
