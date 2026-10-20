@@ -134,6 +134,16 @@ export class PayflowService {
     const email = String(dto.customer?.email || '').trim().toLowerCase();
     if (!email || !email.includes('@')) throw new BadRequestException('customer.email is required');
 
+    // Payflow also reports the shop's own orders ("Order #4879 — TEAMRA2").
+    // The WooCommerce integration already records those — and knows a book
+    // (a lead) from a guide (a sale) — so recording them here as well made
+    // every shop sale count twice and put book buyers under Win.
+    const shopOrder = /^\s*order\s*#\s*\d+/i.test(String(dto.title || ''));
+    if (shopOrder && (await this.hasActiveWooCommerce(workspaceId))) {
+      this.logger.log(`[payflow] ${email}: "${dto.title}" is a WooCommerce order, recorded there — skipped`);
+      return { ok: true, skipped: 'woocommerce-order' as const, contactId: null, contactCreated: false, dealId: null };
+    }
+
     const pipelineId = dto.pipelineId || undefined;
     const pipelineStageId = dto.pipelineStageId || undefined;
     if (pipelineId) await this.assertPipeline(workspaceId, pipelineId, pipelineStageId);
@@ -200,6 +210,16 @@ export class PayflowService {
     await this.integrationRepository.save(integration);
     this.logger.log(`[payflow] synced ${email} → contact ${contact!.id}${dealId ? `, deal ${dealId}` : ''}`);
     return { ok: true, contactId: contact!.id, contactCreated, dealId };
+  }
+
+  private async hasActiveWooCommerce(workspaceId: string): Promise<boolean> {
+    const count = await this.integrationRepository
+      .createQueryBuilder('integration')
+      .where('integration.workspaceId = :workspaceId', { workspaceId })
+      .andWhere(`integration.config ->> 'provider' = 'woocommerce'`)
+      .andWhere('integration.status = :active', { active: IntegrationStatus.ACTIVE })
+      .getCount();
+    return count > 0;
   }
 
   /**
