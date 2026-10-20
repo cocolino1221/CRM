@@ -7,6 +7,7 @@ import { Search, Check, ExternalLink, Zap, Settings, Webhook, X, Copy, Key, Lock
 import { BillingAccess, PLAN_NAMES, fetchBillingOverview, integrationLock } from '@/lib/billing';
 import PayflowConnect from '@/components/integrations/PayflowConnect';
 import LeadGraceSettings from '@/components/integrations/LeadGraceSettings';
+import WooLeadProducts from '@/components/integrations/WooLeadProducts';
 import api from '@/lib/api';
 import { integrationIcons } from '@/lib/integration-icons';
 import GoogleSheetsSync from '@/components/integrations/GoogleSheetsSync';
@@ -2585,6 +2586,15 @@ export default function IntegrationsPage() {
                   💡 <strong>Tip:</strong> In ManyChat External Request, use merge tags like <code className="bg-white px-1 rounded">{'{{first name}}'}</code> for subscriber data.
                 </p>
               </div>
+            )}
+
+            {/* WooCommerce: which products make a lead; the rest go to Win */}
+            {managingIntegration.id === 'woocommerce' && connectedIntegrations[managingIntegration.id]?.id && (
+              <WooLeadProducts
+                integrationId={connectedIntegrations[managingIntegration.id].id}
+                config={connectedIntegrations[managingIntegration.id].config}
+                onSaved={() => void refreshIntegrationCatalog()}
+              />
             )}
 
             {/* Typeform Forms Management */}

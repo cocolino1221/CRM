@@ -6,6 +6,9 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { Integration, IntegrationStatus, IntegrationType } from '../../database/entities/integration.entity';
 import { Contact, ContactSource, ContactStatus } from '../../database/entities/contact.entity';
+import { Deal, DealStage } from '../../database/entities/deal.entity';
+import { PipelineStage } from '../../database/entities/pipeline-stage.entity';
+import { classifyWooOrder } from './woo-order-kind';
 import { ContactsService } from '../../contacts/contacts.service';
 import { normalizePhoneE164 } from '../../common/utils/phone.util';
 
@@ -41,6 +44,8 @@ export class WooCommerceService {
   constructor(
     @InjectRepository(Integration) private readonly integrationRepository: Repository<Integration>,
     @InjectRepository(Contact) private readonly contactRepository: Repository<Contact>,
+    @InjectRepository(Deal) private readonly dealRepository: Repository<Deal>,
+    @InjectRepository(PipelineStage) private readonly stageRepository: Repository<PipelineStage>,
     private readonly contactsService: ContactsService,
     private readonly eventEmitter: EventEmitter2,
     private readonly httpService: HttpService,
@@ -194,6 +199,7 @@ export class WooCommerceService {
         occurredAt: new Date().toISOString(),
       });
       this.logger.log(`[woocommerce] order ${orderKey} → existing contact ${saved.id}`);
+      await this.recordSaleIfPaid(integration, order, lineItems, wooOrder, saved);
       return;
     }
 
@@ -219,6 +225,92 @@ export class WooCommerceService {
     } as any);
     // ContactsService.create emits contact.created → WhatsApp auto-send rules.
     this.logger.log(`[woocommerce] order ${orderKey} → new contact ${contact.id}`);
+    await this.recordSaleIfPaid(integration, order, lineItems, wooOrder, contact as Contact);
+  }
+
+  /**
+   * An order with anything but the lead products in it is a sale: a closed-won
+   * deal for what was paid, the contact a customer, and the pipeline stage
+   * moved to the won one — so the buyer shows under Win, whether they came in
+   * with this order or had been a lead for weeks.
+   */
+  private async recordSaleIfPaid(
+    integration: Integration,
+    order: any,
+    lineItems: WooLineItem[],
+    wooOrder: { orderKey: string; orderNumber: string; currency: string; total: string },
+    contact: Contact,
+  ): Promise<void> {
+    const verdict = classifyWooOrder(lineItems, integration.config?.leadProductIds, order.total);
+    if (verdict.kind !== 'won') return;
+    try {
+      await this.markWon(integration.workspaceId, contact, {
+        orderKey: wooOrder.orderKey,
+        orderNumber: wooOrder.orderNumber,
+        currency: wooOrder.currency || 'RON',
+        amount: verdict.amount,
+        products: verdict.paidItems.map((i) => `${i.quantity}× ${i.name}`),
+        ownerId: integration.userId || undefined,
+        pipelineId: contact.pipelineId || integration.config?.pipelineId,
+      });
+    } catch (error: any) {
+      // The contact is already saved; a failed deal must not lose the order.
+      this.logger.error(`[woocommerce] could not record sale for ${wooOrder.orderKey}: ${error?.message}`);
+    }
+  }
+
+  /** Writes the sale; one deal per order however often it is called. */
+  async markWon(
+    workspaceId: string,
+    contact: Contact,
+    sale: {
+      orderKey: string;
+      orderNumber: string;
+      currency: string;
+      amount: number;
+      products: string[];
+      ownerId?: string;
+      pipelineId?: string;
+    },
+  ): Promise<'created' | 'exists'> {
+    const already = await this.dealRepository
+      .createQueryBuilder('deal')
+      .where('deal.workspaceId = :workspaceId', { workspaceId })
+      .andWhere('deal.contactId = :contactId', { contactId: contact.id })
+      .andWhere(`"deal"."customFields" @> CAST(:key AS jsonb)`, { key: JSON.stringify({ wooOrderKey: sale.orderKey }) })
+      .getCount();
+    if (already) return 'exists';
+
+    await this.dealRepository.save(
+      this.dealRepository.create({
+        workspaceId,
+        title: `WooCommerce #${sale.orderNumber}: ${sale.products.join(', ')}`.slice(0, 250),
+        value: sale.amount,
+        currency: sale.currency,
+        contactId: contact.id,
+        ownerId: sale.ownerId,
+        stage: DealStage.CLOSED_WON,
+        probability: 100,
+        actualCloseDate: new Date(),
+        customFields: { source: 'woocommerce', wooOrderKey: sale.orderKey },
+      } as Partial<Deal>),
+    );
+
+    // The won stage of the contact's own pipeline, so the board agrees with Win.
+    const wonStage = sale.pipelineId
+      ? await this.stageRepository.findOne({
+          where: { workspaceId, pipelineId: sale.pipelineId, isClosedWon: true } as any,
+        })
+      : null;
+    await this.contactRepository.update(
+      { id: contact.id, workspaceId },
+      {
+        status: ContactStatus.CUSTOMER,
+        ...(wonStage ? { pipelineStageId: wonStage.id, pipelineId: wonStage.pipelineId } : {}),
+      },
+    );
+    this.logger.log(`[woocommerce] order ${sale.orderKey} → sale of ${sale.amount} ${sale.currency} for contact ${contact.id}`);
+    return 'created';
   }
 
   private mergeProducts(existing: any, items: WooLineItem[]): Array<{ productId: string; name: string; sku?: string }> {
@@ -240,6 +332,70 @@ export class WooCommerceService {
       return this.contactRepository.findOne({ where: { workspaceId, email } });
     }
     return null;
+  }
+
+  /**
+   * The lead-products rule, applied to orders the CRM received before it was
+   * set. Each order is read back from the store — the CRM only kept the latest
+   * one per contact — so the amount at Win is what that order actually paid.
+   * Safe to run again: a deal is written once per order.
+   */
+  async applyLeadProductsToPastOrders(
+    integration: Integration,
+  ): Promise<{ checkedContacts: number; ordersRead: number; won: number; alreadyWon: number; failed: number }> {
+    const leadIds = (integration.config?.leadProductIds as unknown[]) ?? [];
+    if (!Array.isArray(leadIds) || leadIds.length === 0) {
+      throw new BadRequestException('Alege întâi produsele care rămân lead (ex. cartea).');
+    }
+    const prefix = `${integration.id}:`;
+    const contacts = await this.contactRepository
+      .createQueryBuilder('contact')
+      .where('contact.workspaceId = :workspaceId', { workspaceId: integration.workspaceId })
+      .andWhere('contact.deletedAt IS NULL')
+      .andWhere(`jsonb_typeof("contact"."customFields"->'wooOrderKeys') = 'array'`)
+      .getMany();
+
+    const { request } = this.storeApi(integration);
+    const result = { checkedContacts: 0, ordersRead: 0, won: 0, alreadyWon: 0, failed: 0 };
+
+    for (const contact of contacts) {
+      const custom: any = contact.customFields ?? {};
+      // Only contacts that bought something besides the lead products can turn into a sale.
+      const products: any[] = Array.isArray(custom.wooProductsPurchased) ? custom.wooProductsPurchased : [];
+      const leadSet = new Set(leadIds.map(String));
+      if (!products.some((p) => !leadSet.has(String(p?.productId)))) continue;
+      result.checkedContacts += 1;
+
+      const orderIds = (custom.wooOrderKeys as string[])
+        .filter((k) => typeof k === 'string' && k.startsWith(prefix))
+        .map((k) => k.slice(prefix.length));
+      for (const orderId of orderIds) {
+        try {
+          const order = (await request('get', `orders/${encodeURIComponent(orderId)}`)).data;
+          result.ordersRead += 1;
+          if (NEVER_PROCESS_STATUSES.has(String(order?.status || '').toLowerCase())) continue;
+          const items = this.parseLineItems(order);
+          const verdict = classifyWooOrder(items, leadIds, order.total);
+          if (verdict.kind !== 'won') continue;
+          const outcome = await this.markWon(integration.workspaceId, contact, {
+            orderKey: `${prefix}${orderId}`,
+            orderNumber: String(order.number || orderId),
+            currency: String(order.currency || 'RON'),
+            amount: verdict.amount,
+            products: verdict.paidItems.map((i) => `${i.quantity}× ${i.name}`),
+            ownerId: integration.userId || undefined,
+            pipelineId: contact.pipelineId || integration.config?.pipelineId,
+          });
+          if (outcome === 'created') result.won += 1;
+          else result.alreadyWon += 1;
+        } catch (error: any) {
+          result.failed += 1;
+          this.logger.warn(`[woocommerce] past order ${orderId} for ${contact.id}: ${error?.message}`);
+        }
+      }
+    }
+    this.logger.log(`[woocommerce] lead-products rule applied for ${integration.id}: ${JSON.stringify(result)}`);
+    return result;
   }
 
   // ── store API helpers ──

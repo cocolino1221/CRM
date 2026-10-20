@@ -1,4 +1,4 @@
-import { Controller, Get, Headers, HttpCode, HttpStatus, Logger, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { Controller, ForbiddenException, Get, Headers, HttpCode, HttpStatus, Logger, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Request } from 'express';
 import { Public } from '../../common/decorators/public.decorator';
@@ -64,5 +64,18 @@ export class WooCommerceController {
   ) {
     const integration = await this.wooCommerceService.getIntegration(integrationId, req.user.workspaceId);
     return { products: await this.wooCommerceService.listProducts(integration, search) };
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @Post(':integrationId/apply-lead-products')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Apply the lead-products rule to orders already in the CRM: buyers of anything else go to Win' })
+  async applyLeadProducts(@Param('integrationId') integrationId: string, @Req() req: any) {
+    if (!['admin', 'manager', 'super_admin'].includes(String(req.user?.role))) {
+      throw new ForbiddenException('Doar adminii și managerii pot muta clienții în Win.');
+    }
+    const integration = await this.wooCommerceService.getIntegration(integrationId, req.user.workspaceId);
+    return this.wooCommerceService.applyLeadProductsToPastOrders(integration);
   }
 }
