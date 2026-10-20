@@ -153,7 +153,13 @@ export class ActivitiesService {
     }
 
     activity.outcome = dto.outcome;
-    if (dto.notes !== undefined) activity.followUpNotes = dto.notes;
+    if (dto.notes !== undefined) {
+      activity.followUpNotes = dto.notes;
+      // The lead's history on the web and in the app shows the activity's
+      // description; a note kept only in followUpNotes was saved but never
+      // shown, and read as "Salvează does nothing".
+      activity.description = String(dto.notes || '').trim() || activity.description;
+    }
 
     const taskRepository = manager.getRepository(Task);
     const existingTaskId = metadata.dispositionTaskId;
@@ -256,6 +262,13 @@ export class ActivitiesService {
       });
       if (contact) {
         contact.lastContactedAt = new Date();
+        // Whoever worked the lead is put on it when that seat is empty: a
+        // closer who called someone found them still "Closer: Neasignat"
+        // afterwards. An existing assignment is never overwritten.
+        const caller = await manager.getRepository(User).findOne({ where: { id: userId, workspaceId } });
+        const role = String((caller as any)?.role || '').toLowerCase();
+        if (role === 'closer' && !contact.closerId) contact.closerId = userId;
+        if ((role === 'caller' || role === 'setter') && !contact.callerId) contact.callerId = userId;
         await contactRepository.save(contact);
       }
     }

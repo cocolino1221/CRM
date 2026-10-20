@@ -4,6 +4,7 @@ import { Activity, ActivityOutcome } from '../database/entities/activity.entity'
 import { Contact } from '../database/entities/contact.entity';
 import { Task } from '../database/entities/task.entity';
 import { Deal, DealStage } from '../database/entities/deal.entity';
+import { User } from '../database/entities/user.entity';
 
 const WORKSPACE = 'workspace-1';
 const USER = 'user-1';
@@ -14,7 +15,7 @@ const CONTACT = 'contact-1';
  * The disposition runs entirely through the transaction manager's repositories,
  * so the test mocks the manager rather than individual injected repositories.
  */
-function buildHarness(options: { activity?: Partial<Activity> | null } = {}) {
+function buildHarness(options: { activity?: Partial<Activity> | null; role?: string; contact?: Partial<Contact> } = {}) {
   const activity = options.activity === null
     ? null
     : Object.assign(new Activity(), {
@@ -25,7 +26,7 @@ function buildHarness(options: { activity?: Partial<Activity> | null } = {}) {
         ...options.activity,
       });
 
-  const contact = Object.assign(new Contact(), { id: CONTACT, workspaceId: WORKSPACE });
+  const contact = Object.assign(new Contact(), { id: CONTACT, workspaceId: WORKSPACE, ...options.contact });
 
   const saved: { tasks: any[]; deals: any[]; activities: any[]; contacts: any[] } = {
     tasks: [], deals: [], activities: [], contacts: [],
@@ -58,6 +59,7 @@ function buildHarness(options: { activity?: Partial<Activity> | null } = {}) {
     [Contact, repoFor('contacts', contact)],
     [Task, repoFor('tasks', null)],
     [Deal, repoFor('deals', null)],
+    [User, repoFor('contacts', { id: USER, role: options.role ?? 'closer' })],
   ]);
 
   const manager = { getRepository: jest.fn((entity: any) => repos.get(entity)) };
@@ -134,6 +136,40 @@ describe('ActivitiesService.applyDisposition', () => {
     await service.applyDisposition(WORKSPACE, USER, ACTIVITY, baseDto);
 
     expect(saved.contacts[0].lastContactedAt).toBeInstanceOf(Date);
+  });
+
+  it('shows the note in the lead history, not only in followUpNotes', async () => {
+    const { service, saved } = buildHarness();
+
+    await service.applyDisposition(WORKSPACE, USER, ACTIVITY, { ...baseDto, notes: 'Anul viitor' });
+
+    expect(saved.activities[0]).toMatchObject({ followUpNotes: 'Anul viitor', description: 'Anul viitor' });
+  });
+
+  it('puts the closer who called on a lead that had no closer', async () => {
+    const { service, saved } = buildHarness({ role: 'closer' });
+    await service.applyDisposition(WORKSPACE, USER, ACTIVITY, baseDto);
+    expect(saved.contacts[0].closerId).toBe(USER);
+  });
+
+  it('puts a caller on as caller, not closer', async () => {
+    const { service, saved } = buildHarness({ role: 'caller' });
+    await service.applyDisposition(WORKSPACE, USER, ACTIVITY, baseDto);
+    expect(saved.contacts[0]).toMatchObject({ callerId: USER });
+    expect(saved.contacts[0].closerId).toBeUndefined();
+  });
+
+  it('never replaces someone already assigned', async () => {
+    const { service, saved } = buildHarness({ role: 'closer', contact: { closerId: 'someone-else' } });
+    await service.applyDisposition(WORKSPACE, USER, ACTIVITY, baseDto);
+    expect(saved.contacts[0].closerId).toBe('someone-else');
+  });
+
+  it('does not assign an admin who logs a call', async () => {
+    const { service, saved } = buildHarness({ role: 'admin' });
+    await service.applyDisposition(WORKSPACE, USER, ACTIVITY, baseDto);
+    expect(saved.contacts[0].closerId).toBeUndefined();
+    expect(saved.contacts[0].callerId).toBeUndefined();
   });
 
   // Review Focus 1 — a caller on bad signal submits, times out, and retries.
