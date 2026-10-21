@@ -11,6 +11,7 @@ import { Task, TaskStatus } from '../database/entities/task.entity';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { QueryTasksDto } from './dto/query-tasks.dto';
+import { normalizeTagFilter, tagsOverlapCondition } from '../common/utils/simple-array-tags.util';
 
 @Injectable()
 export class TasksService {
@@ -64,7 +65,10 @@ export class TasksService {
     if (assigneeId) queryBuilder.andWhere('task.assigneeId = :assigneeId', { assigneeId });
     if (contactId) queryBuilder.andWhere('task.contactId = :contactId', { contactId });
     if (dealId) queryBuilder.andWhere('task.dealId = :dealId', { dealId });
-    if (tag) queryBuilder.andWhere(':tag = ANY(task.tags)', { tag });
+    const tagFilter = normalizeTagFilter(tag);
+    if (tagFilter.length > 0) {
+      queryBuilder.andWhere(tagsOverlapCondition('task.tags'), { tags: tagFilter });
+    }
 
     if (dueDateFrom) queryBuilder.andWhere('task.dueDate >= :dueDateFrom', { dueDateFrom });
     if (dueDateTo) queryBuilder.andWhere('task.dueDate <= :dueDateTo', { dueDateTo });
