@@ -167,6 +167,18 @@ describe('setting up a booking meeting', () => {
     expect(emailService.sendEmail).not.toHaveBeenCalled();
   });
 
+  // The quiet failure: book without naming a platform while none is
+  // connected, and the booking used to come back clean — no link, no email
+  // to either side, and nothing on screen to say so.
+  it('warns when nothing is connected and no platform was asked for', async () => {
+    const { service, emailService } = build();
+    const out = await service.setUpMeeting('b1');
+    expect(out.provider).toBe('none');
+    expect(out.link).toBeUndefined();
+    expect(out.warning).toContain('Nicio platformă');
+    expect(emailService.sendEmail).not.toHaveBeenCalled();
+  });
+
   it('uses a meeting type\'s fixed link instead of creating one', async () => {
     const { service, zoomHandler, emailService } = build({
       zoom: true,

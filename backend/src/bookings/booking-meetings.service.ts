@@ -142,9 +142,14 @@ export class BookingMeetingsService {
       outcome.provider = provider;
 
       if (provider === 'none') {
-        if (normalizeProvider(requested) && normalizeProvider(requested) !== 'none') {
-          outcome.warning = 'Platforma aleasă nu e conectată la Integrations, așa că nu s-a creat link.';
-        }
+        // Both halves matter. Asking for Zoom and not getting it is obvious
+        // enough, but the quiet case was worse: book without naming a
+        // platform while none is connected and there was no link, no email
+        // to either side, and nothing said — the dialog simply closed.
+        outcome.warning =
+          normalizeProvider(requested) && normalizeProvider(requested) !== 'none'
+            ? 'Platforma aleasă nu e conectată la Integrations, așa că nu s-a creat link.'
+            : 'Nicio platformă de întâlniri nu e conectată la Integrations: nu s-a creat link și nu s-a trimis niciun email.';
       } else {
         const lead = this.leadOf(booking);
         const created = await this.createMeeting(booking, provider, lead.email);
