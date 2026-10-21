@@ -290,10 +290,38 @@ export class ActivitiesService {
         const role = String((caller as any)?.role || '').toLowerCase();
         if (role === 'closer' && !contact.closerId) contact.closerId = userId;
         if ((role === 'caller' || role === 'setter') && !contact.callerId) contact.callerId = userId;
+        this.appendCallNote(contact, dto.notes);
         await contactRepository.save(contact);
       }
     }
 
     return saved as Activity;
+  }
+
+  /**
+   * What the caller typed about the person goes on the lead, newest first.
+   *
+   * It used to live only on the activity, so the "Notițe" box on the lead
+   * showed whatever an import had put there — a WooCommerce order line, most
+   * often — and the closer's own note read as lost. The activity keeps its
+   * copy; this is the one a human looks for.
+   */
+  private appendCallNote(contact: Contact, notes?: string): void {
+    const note = String(notes ?? '').trim();
+    if (!note) return;
+
+    const existing = String(contact.notes ?? '').trim();
+    // Saving the same call again — a correction, or a caller who thought the
+    // first save did nothing — must not stack the same sentence twice.
+    if (existing.includes(note)) return;
+
+    const day = new Intl.DateTimeFormat('ro-RO', {
+      timeZone: 'Europe/Bucharest',
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+    }).format(new Date());
+    const entry = `${day} — ${note}`;
+    contact.notes = existing ? `${entry}\n\n${existing}` : entry;
   }
 }

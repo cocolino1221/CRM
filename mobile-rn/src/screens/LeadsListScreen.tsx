@@ -17,6 +17,7 @@ import LeadSheet from '../components/LeadSheet';
 import Avatar from '../components/Avatar';
 import type { LeadsStackParams } from '../navigation/LeadsStack';
 import type { Contact } from '../types';
+import { parseTags } from '../lib/tags';
 
 type Nav = NativeStackNavigationProp<LeadsStackParams, 'LeadsList'>;
 
@@ -86,11 +87,7 @@ export default function LeadsListScreen() {
     // A won or lost lead says so in every tab, not only inside Vândut/Pierdut:
     // the server sends each row's outcome by the same rule as those tabs.
     const stage = stageForTab(leadStage(contact as any, bookedIds), bucket || (contact as any).outcome || undefined);
-    const tags: string[] = Array.isArray(contact.tags)
-      ? contact.tags
-      : typeof contact.tags === 'string'
-        ? (contact.tags as string).split(',').map((t: string) => t.trim()).filter(Boolean)
-        : [];
+    const tags = parseTags(contact.tags);
 
     return (
       <TouchableOpacity

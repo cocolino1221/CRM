@@ -21,6 +21,7 @@ import Avatar from '../components/Avatar';
 import DispositionDialog from '../components/DispositionDialog';
 import type { LeadsStackParams } from '../navigation/LeadsStack';
 import type { Contact, User } from '../types';
+import { parseTags } from '../lib/tags';
 
 type DetailRoute = RouteProp<LeadsStackParams, 'LeadDetail'>;
 type Nav = NativeStackNavigationProp<LeadsStackParams, 'LeadDetail'>;
@@ -249,11 +250,7 @@ export default function LeadDetailScreen() {
   const stageName = asStageName(contact.pipelineStage);
   const email = asText(contact.email);
   const phone = asText(contact.phone);
-  const tags: string[] = Array.isArray(contact.tags)
-    ? contact.tags
-    : typeof contact.tags === 'string'
-      ? (contact.tags as string).split(',').map((t: string) => t.trim()).filter(Boolean)
-      : [];
+  const tags = parseTags(contact.tags);
 
   // Typeform Q&A from customFields
   const customFields = contact.customFields as Record<string, unknown> | undefined;
