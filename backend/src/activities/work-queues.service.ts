@@ -5,7 +5,7 @@ import { Activity } from '../database/entities/activity.entity';
 import { Booking, BookingStatus } from '../database/entities/booking.entity';
 import { Contact, ContactSource } from '../database/entities/contact.entity';
 import { Deal, DealStage } from '../database/entities/deal.entity';
-import { applyLeadBucket } from '../contacts/lead-bucket';
+import { applyLeadBucket, applyNotClosed } from '../contacts/lead-bucket';
 import { Workspace } from '../database/entities/workspace.entity';
 
 const DEFAULT_LIMIT = 50;
@@ -165,15 +165,30 @@ export class WorkQueuesService {
         // a lead who booked and then cancelled vanished from both lists at once:
         // excluded from Programați by its status, and excluded from De sunat
         // because a row existed. Nobody ever called them again.
+        //
+        // A left join rather than a NOT IN subquery: this table holds tens of
+        // thousands of contacts and the join uses the index on
+        // bookings.contactId.
         .leftJoin(
           Booking,
           'booking',
           'booking.contactId = contact.id AND booking.status NOT IN (:...ignored)',
           { ignored: [BookingStatus.CANCELLED, BookingStatus.NO_SHOW] },
         )
-        .andWhere('booking.id IS NULL');
+        .andWhere('booking.id IS NULL')
+        .leftJoin('contact.pipelineStage', 'pipelineStage');
 
-    const [data, total] = await base()
+    // Whether a lead is won or lost is decided in one place for the whole
+    // app. This endpoint used to judge it by bookings alone, so a lead the
+    // web list already showed as Vândut was still queued to be rung — 29 of
+    // them were, several already paid.
+    const withBucket = () => {
+      const query = base();
+      applyNotClosed(query);
+      return query;
+    };
+
+    const [data, total] = await withBucket()
       .andWhere(`NOT ${WorkQueuesService.RIPE_SQL}`, grace)
       .orderBy('contact.createdAt', 'DESC')
       .skip((page - 1) * limit)
@@ -182,7 +197,7 @@ export class WorkQueuesService {
 
     // Shown as "N în așteptare" rather than hidden outright, so nobody thinks
     // the lead they just saw in WooCommerce went missing.
-    const waiting = await base().andWhere(WorkQueuesService.RIPE_SQL, grace).getCount();
+    const waiting = await withBucket().andWhere(WorkQueuesService.RIPE_SQL, grace).getCount();
 
     return { data, total, waiting };
   }

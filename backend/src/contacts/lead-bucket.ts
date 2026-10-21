@@ -64,6 +64,18 @@ export async function outcomesFor(
   return outcomes;
 }
 
+/**
+ * "Not sold and not lost", for callers that build their own query but must
+ * agree with the tabs on what closed means. The calling queue uses it: it
+ * keeps its own booking join, which is a left join on purpose because the
+ * contacts table is large, and takes only this part from here.
+ *
+ * Requires the `pipelineStage` join, as everything else in this file does.
+ */
+export function applyNotClosed(qb: SelectQueryBuilder<any>): void {
+  qb.andWhere(`NOT ${CLOSED}`);
+}
+
 /** Requires the `pipelineStage` join, which findAll always adds. */
 export function applyLeadBucket(qb: SelectQueryBuilder<any>, bucket?: LeadBucket | string): void {
   switch (bucket) {
