@@ -253,6 +253,22 @@ export default function LeadSheet({
 
   const { keyboardHeight, sheetMaxHeight } = useKeyboardSheet();
 
+  // The sheet rises above the keyboard, but Notițe is the last thing in the
+  // scroll and the sheet shrinks by exactly the keyboard's height — so the
+  // field you just tapped ends up below the fold. It looked like the sheet
+  // was not rising at all; it was, and typing happened out of sight.
+  const scrollRef = useRef<ScrollView>(null);
+  const [notesFocused, setNotesFocused] = useState(false);
+
+  useEffect(() => {
+    if (!notesFocused) return;
+    // Both the focus and the keyboard's arrival move the layout, and the
+    // second one lands after this runs — hence keyboardHeight as a dependency
+    // rather than scrolling once on focus.
+    const id = requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true }));
+    return () => cancelAnimationFrame(id);
+  }, [notesFocused, keyboardHeight]);
+
   return (
     <Modal visible animationType="slide" transparent onRequestClose={onClose}>
       {/* Kept above the keyboard: on Android a Modal is not resized for it. */}
@@ -276,7 +292,7 @@ export default function LeadSheet({
             </Text>
           </View>
 
-          <ScrollView className="px-5" keyboardShouldPersistTaps="handled">
+          <ScrollView ref={scrollRef} className="px-5" keyboardShouldPersistTaps="handled">
             {/* How to reach them */}
             <View className="flex-row flex-wrap gap-2 mt-4">
               {contact.phone && (
@@ -560,6 +576,8 @@ export default function LeadSheet({
               <TextInput
                 value={notes}
                 onChangeText={setNotes}
+                onFocus={() => setNotesFocused(true)}
+                onBlur={() => setNotesFocused(false)}
                 multiline
                 numberOfLines={3}
                 textAlignVertical="top"
