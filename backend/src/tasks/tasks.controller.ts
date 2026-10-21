@@ -35,6 +35,7 @@ import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { QueryTasksDto } from './dto/query-tasks.dto';
 import { TaskStatus } from '../database/entities/task.entity';
+import { taskAssigneeScope } from './task-scope';
 
 @ApiTags('Tasks')
 @Controller('tasks')
@@ -50,16 +51,26 @@ export class TasksController {
   async findAll(
     @CurrentWorkspace('id') workspaceId: string,
     @Query(ValidationPipe) query: QueryTasksDto,
+    @CurrentUser() user?: { id: string; role?: string },
   ) {
-    return this.tasksService.findAll(workspaceId, query);
+    // A closer asking for the list gets their own, whatever assigneeId the
+    // client sent.
+    return this.tasksService.findAll(workspaceId, {
+      ...query,
+      assigneeId: taskAssigneeScope(user, query.assigneeId),
+    });
   }
 
   @Get('stats')
   @ApiOperation({ summary: 'Get task statistics for workspace' })
   @ApiResponse({ status: 200, description: 'Task statistics retrieved successfully' })
   @Roles('admin', 'manager', 'sales_rep', 'closer', 'setter', 'caller', 'support_agent')
-  async getStats(@CurrentWorkspace('id') workspaceId: string) {
-    return this.tasksService.getStats(workspaceId);
+  async getStats(
+    @CurrentWorkspace('id') workspaceId: string,
+    @CurrentUser() user?: { id: string; role?: string },
+  ) {
+    // The counters must agree with the list under them.
+    return this.tasksService.getStats(workspaceId, taskAssigneeScope(user));
   }
 
   @Get('calendar')
@@ -72,6 +83,7 @@ export class TasksController {
     @CurrentWorkspace('id') workspaceId: string,
     @Query('startDate') startDate: string,
     @Query('endDate') endDate: string,
+    @CurrentUser() user?: { id: string; role?: string },
   ) {
     if (!startDate || !endDate) {
       throw new BadRequestException('Start date and end date are required');
@@ -80,6 +92,7 @@ export class TasksController {
       workspaceId,
       new Date(startDate),
       new Date(endDate),
+      taskAssigneeScope(user),
     );
   }
 

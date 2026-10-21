@@ -6,7 +6,7 @@ import { Task, TaskStatus } from '../database/entities/task.entity';
 import { Booking, BookingStatus } from '../database/entities/booking.entity';
 import { MAX_REMINDER_MINUTES, inHowLong, reminderDue, reminderLeadMinutes } from './reminder-lead';
 import { NotificationType } from '../database/entities/notification.entity';
-import { PushNotificationService } from '../notifications/push-notification.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 /** A single run never handles more than this, so one backlog cannot stall the job. */
 const BATCH_SIZE = 200;
@@ -27,7 +27,7 @@ export class ReminderDispatchService {
     private readonly taskRepository: Repository<Task>,
     @InjectRepository(Booking)
     private readonly bookingRepository: Repository<Booking>,
-    private readonly pushNotificationService: PushNotificationService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   @Cron(CronExpression.EVERY_5_MINUTES)
@@ -87,12 +87,14 @@ export class ReminderDispatchService {
       if (task.dueDate && !reminderDue(new Date(task.dueDate), lead, now)) continue;
 
       try {
-        // sendPushToUser resolves without throwing when there is nothing to
-        // deliver to — push not configured, no registered device, the
-        // category switched off, quiet hours. Marking those as sent meant a
-        // web-only caller's reminder fired never, while the log counted it.
-        const delivered = await this.pushNotificationService.sendPushToUser(task.assigneeId, {
+        // The in-app row is the delivery. A push on its own reached only a
+        // phone with a live token — a web-only caller saw nothing, and the
+        // notifications table held no `task` row at all for a due follow-up.
+        // create() writes the row and fires the push off the back of it, so
+        // a dead device costs the caller a buzz, not the reminder.
+        await this.notificationsService.create(task.workspaceId, {
           type: NotificationType.TASK,
+          userId: task.assigneeId,
           title: task.dueDate && new Date(task.dueDate) > now ? `Revenire ${inHowLong(new Date(task.dueDate), now)}` : 'Memento',
           message: task.title,
           link: task.contactId ? `/leads?contactId=${task.contactId}` : '/tasks',
@@ -100,15 +102,8 @@ export class ReminderDispatchService {
           metadata: { taskId: task.id, contactId: task.contactId },
         });
 
-        if (delivered === false) {
-          // Left unmarked on purpose: the next run tries again rather than
-          // silently dropping the reminder.
-          this.logger.warn(
-            `Reminder for task ${task.id} had nowhere to go; leaving it for the next run`,
-          );
-          continue;
-        }
-
+        // Only now, with the row written: the marker says what was delivered,
+        // not what was attempted.
         // customFields replaces wholesale, so carry the existing keys forward.
         task.customFields = {
           ...(task.customFields ?? {}),
@@ -117,7 +112,9 @@ export class ReminderDispatchService {
         await this.taskRepository.save(task);
         sent += 1;
       } catch (error: any) {
-        // One undelivered push must not cost every other caller their reminder.
+        // Unmarked on purpose: the next run tries again rather than silently
+        // dropping the reminder. One failure must not cost every other
+        // caller theirs.
         this.logger.warn(`Reminder for task ${task.id} failed: ${error?.message}`);
       }
     }
@@ -126,7 +123,7 @@ export class ReminderDispatchService {
   }
 
   /**
-   * The closer's push before a booking — as long before as they set in the
+   * The closer's reminder before a booking — as long before as they set in the
    * app (one hour unless they chose otherwise, never if they switched it off).
    * hostRemindedAt is the marker; moving a booking clears it.
    *
@@ -164,18 +161,17 @@ export class ReminderDispatchService {
       }).format(new Date(booking.startTime));
 
       try {
-        const delivered = await this.pushNotificationService.sendPushToUser(booking.hostId, {
+        // Same as the task reminder above: the row is the delivery, the push
+        // is the nudge on top of it.
+        await this.notificationsService.create(booking.workspaceId, {
           type: NotificationType.MEETING,
+          userId: booking.hostId,
           title: `Întâlnire ${inHowLong(new Date(booking.startTime), now)}`,
           message: `${who} la ${time}`,
           link: booking.contactId ? `/leads?contactId=${booking.contactId}` : '/calendar',
           category: 'meeting:reminder',
           metadata: { bookingId: booking.id, contactId: booking.contactId },
         });
-        if (delivered === false) {
-          this.logger.warn(`Meeting reminder for booking ${booking.id} had nowhere to go; leaving it for the next run`);
-          continue;
-        }
         await this.bookingRepository.update({ id: booking.id }, { hostRemindedAt: new Date() });
         sent += 1;
       } catch (error: any) {

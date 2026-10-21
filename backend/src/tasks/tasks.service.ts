@@ -193,12 +193,23 @@ export class TasksService {
     return this.findOne(workspaceId, id, ['assignee', 'contact', 'deal']);
   }
 
-  async getCalendar(workspaceId: string, startDate: Date, endDate: Date) {
+  /**
+   * `assigneeId` narrows the month to one person's work. The calendar in the
+   * app used to show the whole workspace, so a closer scrolled through
+   * colleagues' call-backs to find their own.
+   */
+  async getCalendar(
+    workspaceId: string,
+    startDate: Date,
+    endDate: Date,
+    assigneeId?: string,
+  ) {
     const tasks = await this.taskRepository.find({
       where: {
         workspaceId,
         dueDate: Between(startDate, endDate),
         deletedAt: null,
+        ...(assigneeId ? { assigneeId } : {}),
       },
       relations: ['assignee', 'contact', 'deal'],
       order: { dueDate: 'ASC' },
@@ -220,19 +231,21 @@ export class TasksService {
     };
   }
 
-  async getStats(workspaceId: string) {
+  /** `assigneeId` counts one person's tasks, so the figures match their list. */
+  async getStats(workspaceId: string, assigneeId?: string) {
+    const mine = assigneeId ? { assigneeId } : {};
     const [
       totalTasks,
       pendingTasks,
       completedTasks,
       overdueTasks,
     ] = await Promise.all([
-      this.taskRepository.count({ where: { workspaceId, deletedAt: null } }),
+      this.taskRepository.count({ where: { workspaceId, deletedAt: null, ...mine } }),
       this.taskRepository.count({
-        where: { workspaceId, status: TaskStatus.PENDING, deletedAt: null },
+        where: { workspaceId, status: TaskStatus.PENDING, deletedAt: null, ...mine },
       }),
       this.taskRepository.count({
-        where: { workspaceId, status: TaskStatus.COMPLETED, deletedAt: null },
+        where: { workspaceId, status: TaskStatus.COMPLETED, deletedAt: null, ...mine },
       }),
       this.taskRepository.count({
         where: {
@@ -240,6 +253,7 @@ export class TasksService {
           dueDate: LessThan(new Date()),
           status: TaskStatus.PENDING,
           deletedAt: null,
+          ...mine,
         },
       }),
     ]);
