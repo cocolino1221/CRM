@@ -1,4 +1,4 @@
-import { Controller, ForbiddenException, Get, Headers, HttpCode, HttpStatus, Logger, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { ConflictException, Controller, ForbiddenException, Get, Headers, HttpCode, HttpStatus, Logger, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Request } from 'express';
 import { Public } from '../../common/decorators/public.decorator';
@@ -64,6 +64,37 @@ export class WooCommerceController {
   ) {
     const integration = await this.wooCommerceService.getIntegration(integrationId, req.user.workspaceId);
     return { products: await this.wooCommerceService.listProducts(integration, search) };
+  }
+
+  @Public()
+  @Post('thankyou/:integrationId')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Receive the buyer\'s answer from the TeamRa2 Thank You plugin; adds it to the contact\'s Notes' })
+  async thankYou(
+    @Param('integrationId') integrationId: string,
+    @Headers('x-tr2-timestamp') timestamp: string | undefined,
+    @Headers('x-tr2-signature') signature: string | undefined,
+    @Req() req: Request & { rawBody?: Buffer },
+  ) {
+    const integration = await this.wooCommerceService.getIntegration(integrationId);
+    this.wooCommerceService.verifyThankYouSignature(integration, req.rawBody, timestamp, signature);
+    const outcome = await this.wooCommerceService.recordThankYouAnswer(integration, req.body);
+    // Not a 2xx, so the plugin retries (up to 5 times over ~30 min) once
+    // the order itself has arrived.
+    if (outcome === 'retry') throw new ConflictException('Order not in the CRM yet; retry later');
+    return { received: true, outcome };
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @Get(':integrationId/thankyou-setup')
+  @ApiOperation({ summary: 'URL and secret to paste into the TeamRa2 Thank You plugin' })
+  async thankYouSetup(@Param('integrationId') integrationId: string, @Req() req: any) {
+    if (!['admin', 'manager', 'super_admin'].includes(String(req.user?.role))) {
+      throw new ForbiddenException('Doar adminii și managerii pot vedea secretul.');
+    }
+    const integration = await this.wooCommerceService.getIntegration(integrationId, req.user.workspaceId);
+    return this.wooCommerceService.thankYouSetup(integration);
   }
 
   @UseGuards(JwtAuthGuard)
