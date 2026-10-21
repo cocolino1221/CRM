@@ -56,8 +56,8 @@ describe('SchedulingService — getTeamSlots only offers people who are still he
 
   it('lists everyone whose owner is still around', async () => {
     meetingTypes = [
-      { id: 'a', userId: 'u1', user: { firstName: 'Ana', lastName: 'Pop' } },
-      { id: 'b', userId: 'u2', user: { firstName: 'Ion', lastName: 'Rus' } },
+      { id: 'a', userId: 'u1', user: { firstName: 'Ana', lastName: 'Pop', role: 'closer' } },
+      { id: 'b', userId: 'u2', user: { firstName: 'Ion', lastName: 'Rus', role: 'caller' } },
     ];
 
     const [hour] = await service.getTeamSlots('s', new Date('2026-10-19'), new Date('2026-10-18T09:00:00+03:00'));
@@ -67,7 +67,7 @@ describe('SchedulingService — getTeamSlots only offers people who are still he
 
   it('skips a meeting type whose owner was deleted', async () => {
     meetingTypes = [
-      { id: 'a', userId: 'u1', user: { firstName: 'Ana', lastName: 'Pop' } },
+      { id: 'a', userId: 'u1', user: { firstName: 'Ana', lastName: 'Pop', role: 'closer' } },
       // A soft-deleted user does not come back through the relation.
       { id: 'b', userId: 'u2', user: undefined },
     ];
@@ -85,8 +85,8 @@ describe('SchedulingService — getTeamSlots only offers people who are still he
 
   it('gathers several people onto the same hour', async () => {
     meetingTypes = [
-      { id: 'a', userId: 'u1', user: { firstName: 'Ana', lastName: 'Pop' } },
-      { id: 'b', userId: 'u2', user: { firstName: 'Ion', lastName: 'Rus' } },
+      { id: 'a', userId: 'u1', user: { firstName: 'Ana', lastName: 'Pop', role: 'closer' } },
+      { id: 'b', userId: 'u2', user: { firstName: 'Ion', lastName: 'Rus', role: 'caller' } },
     ];
 
     const hours = await service.getTeamSlots('s', new Date('2026-10-19'), new Date('2026-10-18T09:00:00+03:00'));

@@ -67,7 +67,11 @@ describe('BookingsService — manual bookings respect the host’s hours', () =>
         },
         {
           provide: getRepositoryToken(User),
-          useValue: { findOne: jest.fn().mockResolvedValue({ id: HOST, workspaceId: WORKSPACE }) },
+          // The host now has to be someone who works the calendar, so the
+          // mock says which role this closer holds.
+          useValue: {
+            findOne: jest.fn().mockResolvedValue({ id: HOST, workspaceId: WORKSPACE, role: 'closer' }),
+          },
         },
       ],
     }).compile();

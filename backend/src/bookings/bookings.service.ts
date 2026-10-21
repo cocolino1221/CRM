@@ -5,6 +5,7 @@ import { Booking, BookingStatus } from '../database/entities/booking.entity';
 import { Availability } from '../database/entities/availability.entity';
 import { User } from '../database/entities/user.entity';
 import { canManageBooking } from './booking-permissions';
+import { CALENDAR_ROLES, canHostMeetings, hasTimeOfDay } from './calendar-access';
 import { BookingMeetingsService } from './booking-meetings.service';
 
 @Injectable()
@@ -166,6 +167,13 @@ export class BookingsService {
       throw new BadRequestException('startTime is not a valid date');
     }
 
+    // A date with no hour ("2026-10-24") passes every date check and stores
+    // midnight UTC, which the app shows as 03:00 Bucharest: an appointment
+    // nobody chose, indistinguishable from one somebody did.
+    if (!(dto.startTime instanceof Date) && !hasTimeOfDay(dto.startTime as any)) {
+      throw new BadRequestException('startTime must include the hour of the meeting');
+    }
+
     // Validate host exists
     const host = await this.userRepository.findOne({
       where: { id: dto.hostId, workspaceId },
@@ -173,6 +181,15 @@ export class BookingsService {
 
     if (!host) {
       throw new NotFoundException('Host not found');
+    }
+
+    // Only the people who work the calendar may be put in it. An account that
+    // administers the workspace takes no meetings, so a lead booked with one
+    // is a lead nobody turns up for.
+    if (!canHostMeetings(host)) {
+      throw new BadRequestException(
+        `That colleague does not work the calendar. Only ${CALENDAR_ROLES.join(', ')} can be booked.`,
+      );
     }
 
     // Calculate end time
