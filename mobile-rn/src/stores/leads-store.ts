@@ -27,7 +27,10 @@ interface LeadsState {
   bucket: string;
   setBucket: (b: string) => void;
   /** Sets the lead's closer or caller; null clears it. */
-  assignTeam: (id: string, change: { closerId?: string | null; callerId?: string | null }) => Promise<string | null>;
+  assignTeam: (
+    id: string,
+    change: { closerId?: string | null; setterId?: string | null; callerId?: string | null },
+  ) => Promise<string | null>;
   /** 0-indexed; null means every month. */
   month: number | null;
   year: number;
@@ -281,6 +284,10 @@ export const useLeadsStore = create<LeadsState>((set, get) => ({
     if (change.callerId !== undefined) {
       patch.callerId = change.callerId;
       patch.caller = pick(change.callerId);
+    }
+    if (change.setterId !== undefined) {
+      patch.setterId = change.setterId;
+      patch.setter = pick(change.setterId);
     }
     // Shown at once: the tag is what the person just tapped.
     set({ contacts: get().contacts.map((c) => (c.id === id ? { ...c, ...patch } : c)) });

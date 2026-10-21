@@ -145,7 +145,7 @@ export class PipelineController {
 
   @Put('contacts/:contactId')
   @ApiOperation({ summary: 'Update contact pipeline and assignments' })
-  @Roles('admin', 'manager', 'closer', 'setter', 'caller', 'sales_rep')
+  @Roles('super_admin', 'admin', 'manager', 'closer', 'setter', 'caller', 'sales_rep')
   async updateContactPipeline(
     @CurrentWorkspace('id') workspaceId: string,
     @Param('contactId', ParseUUIDPipe) contactId: string,

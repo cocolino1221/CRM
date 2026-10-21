@@ -100,8 +100,10 @@ export interface Contact {
   company?: { id: string; name: string };
   owner?: { id: string; firstName: string; lastName: string };
   /** Who booked this lead — the setter credited with it. */
-  setterId?: string;
-  setter?: { id: string; firstName: string; lastName: string };
+  setterId?: string | null;
+  setter?: { id: string; firstName: string; lastName: string } | null;
+  /** The latest note written after a call, from the list endpoint. */
+  lastNote?: { text: string; at: string; by?: string | null } | null;
   /** Who takes the meeting, and who rings the lead; null when unassigned. */
   closerId?: string | null;
   closer?: { id: string; firstName: string; lastName: string } | null;

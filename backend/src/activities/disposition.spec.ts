@@ -173,6 +173,15 @@ describe('ActivitiesService.applyDisposition', () => {
     expect(saved.contacts[0].closerId).toBeUndefined();
   });
 
+  // The report counts setters by setterId: a setter put on as caller was
+  // invisible in their own numbers.
+  it('puts a setter on as setter', async () => {
+    const { service, saved } = buildHarness({ role: 'setter' });
+    await service.applyDisposition(WORKSPACE, USER, ACTIVITY, baseDto);
+    expect(saved.contacts[0]).toMatchObject({ setterId: USER });
+    expect(saved.contacts[0].callerId).toBeUndefined();
+  });
+
   it('never replaces someone already assigned', async () => {
     const { service, saved } = buildHarness({ role: 'closer', contact: { closerId: 'someone-else' } });
     await service.applyDisposition(WORKSPACE, USER, ACTIVITY, baseDto);

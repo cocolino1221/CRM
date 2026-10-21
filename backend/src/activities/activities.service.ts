@@ -289,7 +289,8 @@ export class ActivitiesService {
         const caller = await manager.getRepository(User).findOne({ where: { id: userId, workspaceId } });
         const role = String((caller as any)?.role || '').toLowerCase();
         if (role === 'closer' && !contact.closerId) contact.closerId = userId;
-        if ((role === 'caller' || role === 'setter') && !contact.callerId) contact.callerId = userId;
+        if (role === 'caller' && !contact.callerId) contact.callerId = userId;
+        if (role === 'setter' && !contact.setterId) contact.setterId = userId;
         await contactRepository.save(contact);
       }
     }

@@ -21,6 +21,7 @@ import Avatar from '../components/Avatar';
 import DispositionDialog from '../components/DispositionDialog';
 import type { LeadsStackParams } from '../navigation/LeadsStack';
 import type { Contact, User } from '../types';
+import TeamChips from '../components/TeamChips';
 
 type DetailRoute = RouteProp<LeadsStackParams, 'LeadDetail'>;
 type Nav = NativeStackNavigationProp<LeadsStackParams, 'LeadDetail'>;
@@ -420,6 +421,12 @@ export default function LeadDetailScreen() {
               <Text className="text-sm text-slate-700">Source: {contact.source}</Text>
             </View>
           )}
+        </View>
+
+        {/* The team on the lead: closer, setter, caller. */}
+        <View className="bg-white rounded-2xl p-4 mt-3 border border-slate-100">
+          <Text className="text-[11px] font-semibold text-slate-400 uppercase tracking-widest mb-2">Echipă</Text>
+          <TeamChips contact={contact} size="md" />
         </View>
 
         {/* Tags */}

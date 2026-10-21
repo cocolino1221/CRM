@@ -10,7 +10,16 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useLeadsStore } from '../stores/leads-store';
 import { useAuthStore } from '../stores/auth-store';
 import { LEAD_TABS, SOURCE_OPTIONS } from '../lib/lead-filters';
-import { TEAM_SLOT_LABEL, UNASSIGNED, assigneeLabel, type TeamSlot } from '../lib/lead-team';
+import {
+  TEAM_FIELD,
+  TEAM_SLOTS,
+  TEAM_SLOT_LABEL,
+  UNASSIGNED,
+  assigneeId,
+  assigneeLabel,
+  lastNoteLine,
+  type TeamSlot,
+} from '../lib/lead-team';
 import AssignSheet from '../components/AssignSheet';
 import { leadStage, stageForTab } from '../lib/lead-stage';
 import LeadSheet from '../components/LeadSheet';
@@ -144,7 +153,7 @@ export default function LeadsListScreen() {
           </View>
           {/* Closer and caller: tap either tag to set it right here. */}
           <View className="flex-row flex-wrap gap-1.5 mt-1.5">
-            {(['closer', 'caller'] as TeamSlot[]).map((slot) => {
+            {TEAM_SLOTS.map((slot) => {
               const label = assigneeLabel(contact, slot);
               const empty = label === UNASSIGNED;
               return (
@@ -167,6 +176,12 @@ export default function LeadsListScreen() {
               );
             })}
           </View>
+          {/* What was said on the last call, so the next person sees it here. */}
+          {lastNoteLine(contact.lastNote) && (
+            <Text className="text-[11px] text-slate-600 mt-1.5" numberOfLines={2}>
+              📝 {lastNoteLine(contact.lastNote)}
+            </Text>
+          )}
           {tags.length > 0 && (
             <View className="flex-row gap-1 mt-1.5">
               {tags.slice(0, 3).map(tag => (
@@ -369,13 +384,13 @@ export default function LeadsListScreen() {
         <AssignSheet
           slot={assignFor.slot}
           leadName={`${asText(assignFor.contact.firstName)} ${asText(assignFor.contact.lastName)}`.trim()}
-          currentId={assignFor.slot === 'closer' ? assignFor.contact.closerId : assignFor.contact.callerId}
+          currentId={assigneeId(assignFor.contact, assignFor.slot)}
           users={users}
           onClose={() => setAssignFor(null)}
           onPick={async (userId) => {
             const { contact, slot } = assignFor;
             setAssignFor(null);
-            const error = await assignTeam(contact.id, slot === 'closer' ? { closerId: userId } : { callerId: userId });
+            const error = await assignTeam(contact.id, { [TEAM_FIELD[slot]]: userId });
             if (error) Alert.alert('Nu s-a salvat', error);
           }}
         />

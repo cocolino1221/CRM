@@ -40,6 +40,7 @@ import { SOURCE_OPTIONS } from '../lib/lead-filters';
 import { leadStage } from '../lib/lead-stage';
 import { activityHeadline, activityNote, activityTone, parseActivityList, type ActivityRow } from '../lib/activity-view';
 import { whatsappDigits } from '../lib/whatsapp-phone';
+import TeamChips from './TeamChips';
 
 /**
  * What a caller sees when they tap a lead.
@@ -308,6 +309,11 @@ export default function LeadSheet({
                   </Text>
                 </TouchableOpacity>
               )}
+            </View>
+
+            {/* Who holds the lead — what the reports count by. */}
+            <View className="mt-4">
+              <TeamChips contact={contact} size="md" />
             </View>
 
             {pastCalls.length > 0 && (

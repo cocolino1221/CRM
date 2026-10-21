@@ -217,8 +217,14 @@ describe('ContactsService', () => {
         ...mockQueryBuilder.andWhere.mock.calls,
       ].some(([, params]: any[]) => params?.id === mockContact.id);
       expect(idScoped).toBe(true);
-      expect(mockQueryBuilder.leftJoinAndSelect).toHaveBeenCalledWith('contact.owner', 'owner');
+      // Users are joined with only the columns a screen shows: never the
+      // password hash, which a full join put in every response.
+      expect(mockQueryBuilder.leftJoin).toHaveBeenCalledWith('contact.owner', 'owner');
+      expect(mockQueryBuilder.leftJoin).toHaveBeenCalledWith('contact.closer', 'closer');
       expect(mockQueryBuilder.leftJoinAndSelect).toHaveBeenCalledWith('contact.company', 'company');
+      const selected = mockQueryBuilder.addSelect.mock.calls.flat(2).map(String);
+      expect(selected).toContain('owner.firstName');
+      expect(selected.some((c: string) => c.endsWith('.password'))).toBe(false);
     });
 
     it('should throw NotFoundException when contact not found', async () => {

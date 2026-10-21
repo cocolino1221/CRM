@@ -63,6 +63,24 @@ function parseRangeBound(
   return date;
 }
 
+const TEAM_RELATIONS = ['setter', 'caller', 'closer'] as const;
+
+/**
+ * Joins a user relation with only what a screen shows. leftJoinAndSelect
+ * brought the whole user row — password hash included — into every contact
+ * response any logged-in teammate could read.
+ */
+function joinPerson(qb: SelectQueryBuilder<Contact>, relation: string): void {
+  qb.leftJoin(`contact.${relation}`, relation).addSelect([
+    `${relation}.id`,
+    `${relation}.firstName`,
+    `${relation}.lastName`,
+    `${relation}.email`,
+    `${relation}.role`,
+    `${relation}.avatar`,
+  ]);
+}
+
 @Injectable()
 export class ContactsService {
   private readonly logger = new Logger(ContactsService.name);
@@ -118,7 +136,7 @@ export class ContactsService {
       queryBuilder.leftJoinAndSelect('contact.company', 'company');
     }
     if (includeOwner) {
-      queryBuilder.leftJoinAndSelect('contact.owner', 'owner');
+      joinPerson(queryBuilder, 'owner');
     }
     if (includeDeals) {
       queryBuilder.leftJoinAndSelect('contact.deals', 'deals');
@@ -134,9 +152,7 @@ export class ContactsService {
     queryBuilder.leftJoinAndSelect('contact.pipelineStage', 'pipelineStage');
 
     // Always include team member relations for leads page
-    queryBuilder.leftJoinAndSelect('contact.setter', 'setter');
-    queryBuilder.leftJoinAndSelect('contact.caller', 'caller');
-    queryBuilder.leftJoinAndSelect('contact.closer', 'closer');
+    for (const member of TEAM_RELATIONS) joinPerson(queryBuilder, member);
 
     // Apply filters
     this.applyFilters(queryBuilder, {
@@ -167,6 +183,7 @@ export class ContactsService {
 
     const [contacts, total] = await queryBuilder.getManyAndCount();
     await this.attachNextFollowUps(workspaceId, contacts);
+    await this.attachLastNotes(workspaceId, contacts);
 
     // Each row carries won/lost, so a badge reads Vândut wherever the lead shows.
     const outcomes = await outcomesFor(this.contactRepository, workspaceId, contacts.map((c) => c.id));
@@ -205,13 +222,49 @@ export class ContactsService {
     }
   }
 
+  /**
+   * The latest thing someone wrote after a call, for each contact on the page:
+   * the list shows it under the name, so the next person to ring sees what was
+   * said without opening the lead. One query for the whole page.
+   */
+  private async attachLastNotes(workspaceId: string, contacts: Contact[]): Promise<void> {
+    if (!contacts.length) return;
+    const ids = contacts.map((c) => c.id);
+    const rows: Array<{ contactId: string; text: string; at: Date; firstName: string | null; lastName: string | null }> =
+      await this.contactRepository.manager.query(
+        `SELECT DISTINCT ON (a."contactId") a."contactId",
+                COALESCE(NULLIF(trim(a."followUpNotes"), ''), NULLIF(trim(a.description), '')) AS text,
+                COALESCE(a."occurredAt", a."createdAt") AS at, u."firstName", u."lastName"
+           FROM activities a
+           LEFT JOIN users u ON u.id = a."userId"
+          WHERE a."workspaceId" = $1 AND a."deletedAt" IS NULL AND a."contactId" = ANY($2::uuid[])
+            AND a.type::text IN ('call', 'note')
+            AND COALESCE(NULLIF(trim(a."followUpNotes"), ''), NULLIF(trim(a.description), '')) IS NOT NULL
+          ORDER BY a."contactId", COALESCE(a."occurredAt", a."createdAt") DESC`,
+        [workspaceId, ids],
+      );
+    const byContact = new Map(rows.map((r) => [r.contactId, r]));
+    for (const c of contacts) {
+      const r = byContact.get(c.id);
+      (c as any).lastNote = r
+        ? { text: r.text, at: r.at, by: `${r.firstName ?? ''} ${r.lastName ?? ''}`.trim() || null }
+        : null;
+    }
+  }
+
   async findOne(workspaceId: string, id: string, relations: string[] = []): Promise<Contact> {
     const queryBuilder = this.createBaseQuery(workspaceId).andWhere('contact.id = :id', { id });
 
+    // The team on the lead, always: the record shows and edits it.
+    for (const member of TEAM_RELATIONS) joinPerson(queryBuilder, member);
+
     // Add requested relations
-    relations.forEach(relation => {
-      queryBuilder.leftJoinAndSelect(`contact.${relation}`, relation);
-    });
+    relations
+      .filter((relation) => !(TEAM_RELATIONS as readonly string[]).includes(relation))
+      .forEach((relation) => {
+        if (relation === 'owner') joinPerson(queryBuilder, 'owner');
+        else queryBuilder.leftJoinAndSelect(`contact.${relation}`, relation);
+      });
 
     const contact = await queryBuilder.getOne();
 
