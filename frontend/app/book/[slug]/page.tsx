@@ -32,6 +32,7 @@ import {
   prefillQuery,
   type BookingForm,
 } from '@/lib/booking-form';
+import { unglueBookingLink } from '@/lib/glued-link';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'https://slackcrm-backend.fly.dev/api/v1';
 const DAYS_OFFERED = 14;
@@ -145,7 +146,14 @@ export default function PublicBookingPage() {
           cache: 'no-store',
         });
         if (!res.ok) throw new Error('not found');
-        setMeeting(await res.json());
+        const found = await res.json();
+        // The answers came glued onto the slug: reload the link done right.
+        const fixed = unglueBookingLink(slug, String(found?.slug || ''), window.location.search);
+        if (fixed) {
+          window.location.replace(fixed);
+          return;
+        }
+        setMeeting(found);
         setDay(days[0]?.param || '');
       } catch {
         setError('Pagina de programare nu există sau nu mai este activă.');

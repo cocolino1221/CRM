@@ -146,10 +146,23 @@ export class SchedulingService {
   }
 
   async getMeetingTypeBySlug(slug: string) {
-    const meetingType = await this.meetingTypeRepository.findOne({
+    let meetingType = await this.meetingTypeRepository.findOne({
       where: { slug, isActive: true, isPublic: true, deletedAt: null as any },
       relations: ['user'],
     });
+
+    // A form redirect written as ".../book/consultatie-h5fxc0{{email}}{{phone}}"
+    // (no "?email=") glues the answers onto the slug. Slugs are [a-z0-9-] only,
+    // so anything else marks the glue: find the real slug it starts with.
+    if (!meetingType && /[^a-z0-9-]/.test(slug)) {
+      meetingType = await this.meetingTypeRepository
+        .createQueryBuilder('mt')
+        .leftJoinAndSelect('mt.user', 'user')
+        .where('mt.isActive = true AND mt.isPublic = true AND mt.deletedAt IS NULL')
+        .andWhere(`:raw LIKE mt.slug || '%'`, { raw: slug })
+        .orderBy('length(mt.slug)', 'DESC')
+        .getOne();
+    }
 
     if (!meetingType) {
       throw new NotFoundException('Meeting type not found');

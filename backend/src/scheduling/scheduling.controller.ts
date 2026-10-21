@@ -236,6 +236,8 @@ export class SchedulingController {
     // shows goes out.
     return {
       id: meetingType.id,
+      // The real slug: differs from the path when a form glued answers onto it.
+      slug: meetingType.slug,
       name: meetingType.name,
       description: meetingType.description,
       duration: meetingType.duration,
