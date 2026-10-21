@@ -7,14 +7,47 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { CalendarCheck, Check, ChevronRight, Copy, ExternalLink, Link2, Loader2, Palette } from 'lucide-react';
 import api from '@/lib/api';
+import { authService } from '@/lib/auth';
 import BookingPagesCard from '@/components/bookings/BookingPagesCard';
 
+/** Who may change the page the whole team books through. */
+const ALLOWED_ROLES = ['admin', 'super_admin', 'manager'];
+
 export default function BookingPageSettings() {
+  const router = useRouter();
+  // The sidebar hides this entry, which stops nobody from typing the URL.
+  // The endpoints behind it refuse the write anyway; turning people away
+  // here saves them filling in a form that was never going to save.
+  const [allowed, setAllowed] = useState<boolean | null>(null);
   const [slug, setSlug] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void authService
+      .getCurrentUser()
+      .catch(() => authService.getUser())
+      .then((user) => {
+        if (cancelled) return;
+        const ok = ALLOWED_ROLES.includes(String(user?.role ?? ''));
+        setAllowed(ok);
+        if (!ok) router.replace('/dashboard');
+      })
+      .catch(() => {
+        // Who they are could not be established; assume they may not.
+        if (!cancelled) {
+          setAllowed(false);
+          router.replace('/dashboard');
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [router]);
 
   useEffect(() => {
     // Any public meeting type in the workspace opens the same team page, so
@@ -30,6 +63,17 @@ export default function BookingPageSettings() {
   }, []);
 
   const link = slug ? `${window.location.origin}/book/${slug}` : '';
+
+  // Nothing of the page until the role is known: rendering it first and
+  // redirecting after would flash the team's settings at someone who may
+  // not see them.
+  if (allowed !== true) {
+    return (
+      <div className="flex items-center justify-center py-24 text-gray-400">
+        <Loader2 className="h-6 w-6 animate-spin" />
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto max-w-4xl space-y-6 px-4 py-6">

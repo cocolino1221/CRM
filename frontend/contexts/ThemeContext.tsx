@@ -104,6 +104,15 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     const root = document.documentElement;
     const colors = theme.colors;
 
+    // What actually drives the dark styling: Tailwind's dark: utilities key
+    // off this class (darkMode: 'class'), and most of the app is written in
+    // them rather than in the variables below.
+    //
+    // Only the 'dark' preset counts. A custom palette can be dark to the eye
+    // without this knowing it — judging that from the background colour is
+    // guesswork, so a custom dark theme still needs an explicit flag.
+    root.classList.toggle('dark', theme.id === 'dark');
+
     // Apply CSS custom properties
     root.style.setProperty('--color-primary', colors.primary);
     root.style.setProperty('--color-primary-light', colors.primaryLight);
