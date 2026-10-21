@@ -23,6 +23,10 @@ export default defineConfig({
     // below. Inlining it puts the import through vite instead.
     server: { deps: { inline: [/@testing-library/] } },
   },
+  // Next.js compiles JSX with the automatic runtime, so components here do not
+  // import React. Without this, vite's classic default makes every rendered
+  // component throw "React is not defined".
+  esbuild: { jsx: 'automatic' },
   resolve: {
     dedupe: ['react', 'react-dom'],
     alias: {

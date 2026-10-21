@@ -11,6 +11,7 @@ import { Task, TaskStatus } from '../database/entities/task.entity';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { QueryTasksDto } from './dto/query-tasks.dto';
+import { normalizeTagFilter, normalizeTags, tagsOverlapCondition } from '../common/utils/simple-array-tags.util';
 
 @Injectable()
 export class TasksService {
@@ -64,7 +65,10 @@ export class TasksService {
     if (assigneeId) queryBuilder.andWhere('task.assigneeId = :assigneeId', { assigneeId });
     if (contactId) queryBuilder.andWhere('task.contactId = :contactId', { contactId });
     if (dealId) queryBuilder.andWhere('task.dealId = :dealId', { dealId });
-    if (tag) queryBuilder.andWhere(':tag = ANY(task.tags)', { tag });
+    const tagFilter = normalizeTagFilter(tag);
+    if (tagFilter.length > 0) {
+      queryBuilder.andWhere(tagsOverlapCondition('task.tags'), { tags: tagFilter });
+    }
 
     if (dueDateFrom) queryBuilder.andWhere('task.dueDate >= :dueDateFrom', { dueDateFrom });
     if (dueDateTo) queryBuilder.andWhere('task.dueDate <= :dueDateTo', { dueDateTo });
@@ -126,6 +130,8 @@ export class TasksService {
     try {
       const task = this.taskRepository.create({
         ...createTaskDto,
+        // A tag may not hold a comma: the column joins its values with one.
+        ...(createTaskDto.tags === undefined ? {} : { tags: normalizeTags(createTaskDto.tags) }),
         workspaceId,
         creatorId,
       });
@@ -153,6 +159,9 @@ export class TasksService {
 
     try {
       Object.assign(task, updateTaskDto);
+      if (updateTaskDto.tags !== undefined) {
+        task.tags = normalizeTags(updateTaskDto.tags);
+      }
       const updatedTask = await this.taskRepository.save(task);
 
       this.logger.log(`Task updated: ${id} in workspace ${workspaceId}`);
@@ -193,12 +202,23 @@ export class TasksService {
     return this.findOne(workspaceId, id, ['assignee', 'contact', 'deal']);
   }
 
-  async getCalendar(workspaceId: string, startDate: Date, endDate: Date) {
+  /**
+   * `assigneeId` narrows the month to one person's work. The calendar in the
+   * app used to show the whole workspace, so a closer scrolled through
+   * colleagues' call-backs to find their own.
+   */
+  async getCalendar(
+    workspaceId: string,
+    startDate: Date,
+    endDate: Date,
+    assigneeId?: string,
+  ) {
     const tasks = await this.taskRepository.find({
       where: {
         workspaceId,
         dueDate: Between(startDate, endDate),
         deletedAt: null,
+        ...(assigneeId ? { assigneeId } : {}),
       },
       relations: ['assignee', 'contact', 'deal'],
       order: { dueDate: 'ASC' },
@@ -220,19 +240,21 @@ export class TasksService {
     };
   }
 
-  async getStats(workspaceId: string) {
+  /** `assigneeId` counts one person's tasks, so the figures match their list. */
+  async getStats(workspaceId: string, assigneeId?: string) {
+    const mine = assigneeId ? { assigneeId } : {};
     const [
       totalTasks,
       pendingTasks,
       completedTasks,
       overdueTasks,
     ] = await Promise.all([
-      this.taskRepository.count({ where: { workspaceId, deletedAt: null } }),
+      this.taskRepository.count({ where: { workspaceId, deletedAt: null, ...mine } }),
       this.taskRepository.count({
-        where: { workspaceId, status: TaskStatus.PENDING, deletedAt: null },
+        where: { workspaceId, status: TaskStatus.PENDING, deletedAt: null, ...mine },
       }),
       this.taskRepository.count({
-        where: { workspaceId, status: TaskStatus.COMPLETED, deletedAt: null },
+        where: { workspaceId, status: TaskStatus.COMPLETED, deletedAt: null, ...mine },
       }),
       this.taskRepository.count({
         where: {
@@ -240,6 +262,7 @@ export class TasksService {
           dueDate: LessThan(new Date()),
           status: TaskStatus.PENDING,
           deletedAt: null,
+          ...mine,
         },
       }),
     ]);

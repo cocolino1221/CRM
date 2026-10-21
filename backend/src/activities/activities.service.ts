@@ -8,6 +8,7 @@ import {
   ActivityType,
 } from '../database/entities/activity.entity';
 import { Contact } from '../database/entities/contact.entity';
+import { appendDatedNote } from '../common/utils/lead-notes.util';
 import { Deal, DealStage } from '../database/entities/deal.entity';
 import { Task, TaskPriority, TaskStatus, TaskType } from '../database/entities/task.entity';
 import { QueryActivitiesDto } from './dto/query-activities.dto';
@@ -291,10 +292,25 @@ export class ActivitiesService {
         if (role === 'closer' && !contact.closerId) contact.closerId = userId;
         if (role === 'caller' && !contact.callerId) contact.callerId = userId;
         if (role === 'setter' && !contact.setterId) contact.setterId = userId;
+        this.appendCallNote(contact, dto.notes);
         await contactRepository.save(contact);
       }
     }
 
     return saved as Activity;
+  }
+
+  /**
+   * What the caller typed about the person goes on the lead, newest first.
+   *
+   * It used to live only on the activity, so the "Notițe" box on the lead
+   * showed whatever an import had put there — a WooCommerce order line, most
+   * often — and the closer's own note read as lost. The activity keeps its
+   * copy; this is the one a human looks for. Shared with the Sheets sync,
+   * which had the same problem with the sheet's own notes column.
+   */
+  private appendCallNote(contact: Contact, notes?: string): void {
+    const next = appendDatedNote(contact.notes, notes);
+    if (next !== null) contact.notes = next;
   }
 }

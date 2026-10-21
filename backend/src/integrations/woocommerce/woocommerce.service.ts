@@ -12,6 +12,7 @@ import { classifyWooOrder } from './woo-order-kind';
 import { withAnswerNotes } from '../../contacts/contact-notes';
 import { ContactsService } from '../../contacts/contacts.service';
 import { normalizePhoneE164 } from '../../common/utils/phone.util';
+import { mergeTags } from '../../common/utils/simple-array-tags.util';
 
 // WooCommerce is stored as a generic `type: api` integration with
 // config.provider = 'woocommerce' (that's what the Integrations page's
@@ -189,7 +190,7 @@ export class WooCommerceService {
         existing.phone = rawPhone;
         existing.phoneNormalized = phoneNormalized || undefined;
       }
-      existing.tags = Array.from(new Set([...(existing.tags || []), 'woocommerce']));
+      existing.tags = mergeTags(existing.tags, ['woocommerce']);
       const saved = await this.contactRepository.save(existing);
 
       // Repeat customer: reuse the same event the WhatsApp auto-send engine

@@ -277,3 +277,84 @@ describe('ActivitiesService.createAndDisposition', () => {
     });
   });
 });
+
+/**
+ * A closer writes what she learned about someone and expects to find it on the
+ * lead. It only ever reached the activity, so the "Notițe" box on the lead
+ * showed whatever the WooCommerce ingest had put there and her note looked
+ * lost. Reported from the field on 21.10.2026.
+ */
+describe('ActivitiesService — the call note reaches the lead\'s Notes', () => {
+  it('writes the note the caller typed into the lead\'s Notes', async () => {
+    const { service, saved } = buildHarness();
+
+    await service.applyDisposition(WORKSPACE, USER, ACTIVITY, {
+      ...baseDto,
+      notes: 'Perioadă aglomerată, revine după divorț',
+    });
+
+    expect(saved.contacts[0].notes).toContain('Perioadă aglomerată, revine după divorț');
+  });
+
+  it('keeps what the Notes already held', async () => {
+    const { service, saved } = buildHarness({
+      contact: { notes: 'WooCommerce order #4967: 1× Ghid pentru sportivi' },
+    });
+
+    await service.applyDisposition(WORKSPACE, USER, ACTIVITY, { ...baseDto, notes: 'E deja in echipa' });
+
+    expect(saved.contacts[0].notes).toContain('E deja in echipa');
+    expect(saved.contacts[0].notes).toContain('WooCommerce order #4967');
+  });
+
+  it('puts the newest note first, so the lead opens on what was just said', async () => {
+    const { service, saved } = buildHarness({ contact: { notes: 'Nota veche' } });
+
+    await service.applyDisposition(WORKSPACE, USER, ACTIVITY, { ...baseDto, notes: 'Nota nouă' });
+
+    const notes: string = saved.contacts[0].notes;
+    expect(notes).toContain('Nota nouă');
+    expect(notes).toContain('Nota veche');
+    expect(notes.indexOf('Nota nouă')).toBeLessThan(notes.indexOf('Nota veche'));
+  });
+
+  it('dates the entry so a long lead history stays readable', async () => {
+    const { service, saved } = buildHarness();
+
+    await service.applyDisposition(WORKSPACE, USER, ACTIVITY, { ...baseDto, notes: 'Revine marti' });
+
+    expect(saved.contacts[0].notes).toMatch(/^\d{2}\.\d{2}\.\d{4} — Revine marti/);
+  });
+
+  // Saving the same call again (a correction, or a caller who thought the
+  // first save did nothing) must not stack the same sentence twice.
+  it('does not write the same note twice when the call is saved again', async () => {
+    const { service, saved } = buildHarness({
+      contact: { notes: '20.10.2026 — E deja in echipa' },
+    });
+
+    await service.applyDisposition(WORKSPACE, USER, ACTIVITY, { ...baseDto, notes: 'E deja in echipa' });
+
+    const occurrences = saved.contacts[0].notes.split('E deja in echipa').length - 1;
+    expect(occurrences).toBe(1);
+  });
+
+  it('leaves the Notes alone when the caller typed no note', async () => {
+    const { service, saved } = buildHarness({ contact: { notes: 'Nota existenta' } });
+
+    await service.applyDisposition(WORKSPACE, USER, ACTIVITY, { ...baseDto });
+
+    expect(saved.contacts[0].notes).toBe('Nota existenta');
+  });
+
+  it('writes the note from a call logged on the phone too', async () => {
+    const { service, saved } = buildHarness({ activity: null });
+
+    await service.createAndDisposition(WORKSPACE, USER, CONTACT, {
+      ...baseDto,
+      notes: 'Sunat de pe mobil',
+    });
+
+    expect(saved.contacts[0].notes).toContain('Sunat de pe mobil');
+  });
+});

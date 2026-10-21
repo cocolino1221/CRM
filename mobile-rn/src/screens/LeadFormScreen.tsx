@@ -10,6 +10,7 @@ import { useLeadsStore } from '../stores/leads-store';
 import type { CreateContactError } from '../stores/leads-store';
 import { useAuthStore } from '../stores/auth-store';
 import { assignableAs, defaultSetterFor } from '../lib/team-roles';
+import { addTags, parseTags, removeTag } from '../lib/tags';
 import { useToastStore } from '../stores/toast-store';
 import Avatar from '../components/Avatar';
 import type { LeadsStackParams } from '../navigation/LeadsStack';
@@ -65,6 +66,8 @@ export default function LeadFormScreen() {
   );
   const [phone, setPhone] = useState(contact?.phone || '');
   const [notes, setNotes] = useState(contact?.notes || '');
+  const [tags, setTags] = useState<string[]>(parseTags((contact as any)?.tags));
+  const [tagDraft, setTagDraft] = useState('');
   // Editing an existing lead must default to ITS pipeline, not whichever
   // pipeline board happens to be selected in the list view — otherwise
   // saving would silently move the lead to the wrong pipeline.
@@ -127,6 +130,18 @@ export default function LeadFormScreen() {
     }
   };
 
+  /**
+   * A tag typed and then left alone — Save pressed with the keyboard still up —
+   * would otherwise be dropped, which is how "nu se pun tag-urile" reads on a
+   * phone. Returns the list to send, draft included.
+   */
+  const commitTagDraft = (): string[] => {
+    const next = addTags(tags, [tagDraft]);
+    if (next.length !== tags.length) setTags(next);
+    setTagDraft('');
+    return next;
+  };
+
   const handleSave = async () => {
     if (!firstName.trim()) return;
     setIsSaving(true);
@@ -136,6 +151,8 @@ export default function LeadFormScreen() {
       phone: phone.trim() || undefined,
       email: email.trim() || undefined,
       notes: notes.trim() || undefined,
+      // Sent even when empty: that is how a tag gets removed.
+      tags: commitTagDraft(),
       pipelineStage: stage || undefined,
       pipelineId: formPipeline?.id,
       source: source || undefined,
@@ -349,6 +366,37 @@ export default function LeadFormScreen() {
             </TouchableOpacity>
           </View>
         )}
+
+        {/* Tags */}
+        <View className="mb-4">
+          <Text className="text-xs font-semibold text-slate-500 mb-1">Tags</Text>
+          {tags.length > 0 && (
+            <View className="flex-row flex-wrap gap-1.5 mb-2">
+              {tags.map(tag => (
+                <TouchableOpacity
+                  key={tag}
+                  onPress={() => setTags(removeTag(tags, tag))}
+                  accessibilityLabel={`Remove ${tag}`}
+                  className="flex-row items-center gap-1 rounded-full bg-blue-50 px-2.5 py-1"
+                >
+                  <Text className="text-xs font-semibold text-blue-700">{tag}</Text>
+                  <X size={12} color="#1d4ed8" />
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+          <TextInput
+            value={tagDraft}
+            onChangeText={setTagDraft}
+            onSubmitEditing={commitTagDraft}
+            onBlur={commitTagDraft}
+            returnKeyType="done"
+            autoCapitalize="none"
+            placeholder="Adaugă un tag"
+            placeholderTextColor="#94a3b8"
+            className="px-3 py-2.5 rounded-xl border border-slate-200 bg-white text-sm text-slate-900"
+          />
+        </View>
 
         {/* Notes */}
         <View className="mb-6">

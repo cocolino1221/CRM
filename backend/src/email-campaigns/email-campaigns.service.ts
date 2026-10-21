@@ -5,6 +5,7 @@ import { EmailCampaign, EmailCampaignStatus } from '../database/entities/email-c
 import { Contact } from '../database/entities/contact.entity';
 import { EmailService } from '../email/email.service';
 import { CampaignDispatchService } from '../scheduler/campaign-dispatch.service';
+import { normalizeTagFilter, tagsOverlapCondition } from '../common/utils/simple-array-tags.util';
 
 @Injectable()
 export class EmailCampaignsService {
@@ -215,8 +216,9 @@ export class EmailCampaignsService {
 
   private applyFilters(qb: any, filters?: EmailCampaign['filters']) {
     if (!filters) return;
-    if (filters.tags?.length) {
-      qb.andWhere('c.tags && :tags', { tags: filters.tags });
+    const tagFilter = normalizeTagFilter(filters.tags);
+    if (tagFilter.length > 0) {
+      qb.andWhere(tagsOverlapCondition('c.tags'), { tags: tagFilter });
     }
     if (filters.statuses?.length) {
       qb.andWhere('c.status IN (:...statuses)', { statuses: filters.statuses });

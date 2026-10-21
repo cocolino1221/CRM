@@ -145,6 +145,21 @@ describe('WorkQueuesService.findUnbookedLeads', () => {
     expect(clauses.some((c) => /NOT IN/i.test(c))).toBe(false);
   });
 
+  // The web list showed a lead as Vândut while De sunat still queued it to
+  // be rung: this endpoint judged the queue by bookings alone and knew
+  // nothing about a sale. 29 leads were sitting there, several already paid.
+  it('leaves out leads already won or lost', async () => {
+    const { service, contactBuilder } = build();
+
+    await service.findUnbookedLeads(WORKSPACE);
+
+    const clauses = contactBuilder.andWhere.mock.calls.map((c: any[]) => String(c[0]));
+    expect(clauses.some((c) => /isClosedWon/i.test(c) && /^NOT /i.test(c.trim()))).toBe(true);
+    // Won from the phone writes a deal, not a stage change, so the rule has
+    // to read both or every sale made on a call stays on the calling list.
+    expect(clauses.some((c) => /closed_won/i.test(c))).toBe(true);
+  });
+
   it('scopes to the workspace', async () => {
     const { service, contactBuilder } = build();
 

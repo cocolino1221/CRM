@@ -5,6 +5,7 @@ import { Company } from '../database/entities/company.entity';
 import { CreateCompanyDto } from './dto/create-company.dto';
 import { UpdateCompanyDto } from './dto/update-company.dto';
 import { QueryCompaniesDto } from './dto/query-companies.dto';
+import { normalizeTagFilter, tagsOverlapCondition } from '../common/utils/simple-array-tags.util';
 
 @Injectable()
 export class CompaniesService {
@@ -73,9 +74,9 @@ export class CompaniesService {
       queryBuilder.andWhere('company.city ILIKE :city', { city: `%${city}%` });
     }
 
-    if (tags) {
-      const tagArray = tags.split(',').map(tag => tag.trim());
-      queryBuilder.andWhere('company.tags && :tags', { tags: tagArray });
+    const tagFilter = normalizeTagFilter(tags?.split(','));
+    if (tagFilter.length > 0) {
+      queryBuilder.andWhere(tagsOverlapCondition('company.tags'), { tags: tagFilter });
     }
 
     const allowedSortFields = ['name', 'createdAt', 'updatedAt', 'employeeCount'];

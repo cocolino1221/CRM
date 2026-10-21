@@ -7,6 +7,7 @@ import api from '@/lib/api';
 import { assignableAs, defaultSetterFor } from '@/lib/team-roles';
 import { DispositionDialog } from '@/components/calls/DispositionDialog';
 import LeadsList from '@/components/leads/LeadsList';
+import { TagInput } from '@/components/leads/TagInput';
 import BookedList from '@/components/queues/BookedList';
 import ToCallList from '@/components/queues/ToCallList';
 import ScheduleDialog from '@/components/bookings/ScheduleDialog';
@@ -491,6 +492,9 @@ export default function LeadsPage() {
         email: formData.email,
         status: formData.status,
         source: formData.source,
+        // Sent even when empty: that is how a tag gets removed. Leaving it out
+        // meant an edited tag was simply dropped on save.
+        tags: formData.tags ?? [],
       };
 
       if (formData.phone?.trim()) {
@@ -1862,6 +1866,14 @@ export default function LeadsPage() {
                       <option value="other">Other</option>
                     </select>
                   </div>
+                  {/* Tags */}
+                  <div className="col-span-2">
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">Tags</label>
+                    <TagInput
+                      value={formData.tags ?? []}
+                      onChange={(tags) => setFormData({ ...formData, tags })}
+                    />
+                  </div>
                   {/* Notes */}
                   <div className="col-span-2">
                     <label className="block text-sm font-semibold text-gray-700 mb-2">Notes</label>
@@ -2160,6 +2172,14 @@ export default function LeadsPage() {
                     <option value="typeform">Typeform</option>
                     <option value="other">Other</option>
                   </select>
+                </div>
+
+                <div className="col-span-2">
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">Tags</label>
+                  <TagInput
+                    value={formData.tags ?? []}
+                    onChange={(tags) => setFormData({ ...formData, tags })}
+                  />
                 </div>
 
                 <div className="col-span-2">

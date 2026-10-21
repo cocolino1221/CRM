@@ -19,6 +19,12 @@ type NavigationItem = {
   color: string;
   adminOnly?: boolean;
   superAdminOnly?: boolean;
+  /**
+   * Exactly which roles see this entry. Use it where adminOnly is the wrong
+   * shape — that one means admin and super_admin, and says nothing about a
+   * manager.
+   */
+  roles?: string[];
   matchPaths?: string[];
 };
 
@@ -26,7 +32,9 @@ const allNavigation: NavigationItem[] = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, color: 'from-blue-500 to-cyan-500' },
   { name: 'Calendar', href: '/calendar', icon: Calendar, color: 'from-cyan-500 to-teal-500' },
   { name: 'Disponibilitate', href: '/booking-settings', icon: CalendarClock, color: 'from-teal-500 to-emerald-500' },
-  { name: 'Pagina de programare', href: '/booking-page', icon: CalendarCheck, color: 'from-emerald-500 to-teal-500' },
+  // The public booking page is a workspace-wide setting — its slug, its
+  // copy, its branding. A closer changing it would change it for everyone.
+  { name: 'Pagina de programare', href: '/booking-page', icon: CalendarCheck, color: 'from-emerald-500 to-teal-500', roles: ['admin', 'super_admin', 'manager'] },
   { name: 'Forms', href: '/forms', icon: FileText, color: 'from-emerald-500 to-green-500' },
   { name: 'Team', href: '/users', icon: Shield, color: 'from-teal-500 to-cyan-500' },
   { name: 'Tasks', href: '/tasks', icon: CheckSquare, color: 'from-yellow-500 to-orange-500' },
@@ -114,6 +122,10 @@ const groupedNavigationHrefs = new Set([
 function canViewNavigationItem(item: NavigationItem, role: string) {
   if (item.superAdminOnly) {
     return role === 'super_admin';
+  }
+
+  if (item.roles) {
+    return item.roles.includes(role);
   }
 
   if (item.adminOnly) {

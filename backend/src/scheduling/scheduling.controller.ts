@@ -43,8 +43,11 @@ export class SchedulingController {
   @Put('booking-form')
   @UseGuards(JwtAuthGuard, WorkspaceGuard, RolesGuard)
   @ApiBearerAuth()
-  // Closers too: they are the ones who take these calls and know what to ask.
-  @Roles('admin', 'manager', 'closer')
+  // Closers used to edit these, on the grounds that they take the calls and
+  // know what to ask. The page is now admin and manager only, and a write
+  // left open to a role that cannot reach the screen is a door with no
+  // handle on the inside.
+  @Roles('admin', 'manager')
   @ApiOperation({ summary: 'Set the questions and age check shown before the booking calendar' })
   async setBookingForm(@CurrentWorkspace('id') workspaceId: string, @Body() body: unknown) {
     return this.bookingFormService.set(workspaceId, body);
@@ -61,7 +64,7 @@ export class SchedulingController {
   @Put('booking-variants')
   @UseGuards(JwtAuthGuard, WorkspaceGuard, RolesGuard)
   @ApiBearerAuth()
-  @Roles('admin', 'manager', 'closer')
+  @Roles('admin', 'manager')
   @ApiOperation({ summary: 'Replace the named versions of the booking page' })
   async setBookingVariants(@CurrentWorkspace('id') workspaceId: string, @Body() body: unknown) {
     return this.bookingFormService.setVariants(workspaceId, body);
