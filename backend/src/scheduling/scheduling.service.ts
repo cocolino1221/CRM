@@ -18,7 +18,8 @@ import { ContactsService } from '../contacts/contacts.service';
 import { ContactSource, ContactStatus } from '../database/entities/contact.entity';
 import { UserRole, UserStatus } from '../database/entities/user.entity';
 import { BookingFormService } from './booking-form.service';
-import { answersAsNotes, bookingFormError } from './booking-form';
+import { answeredPairs, answersAsNotes, bookingFormError } from './booking-form';
+import { withAnswerNotes } from '../contacts/contact-notes';
 
 @Injectable()
 export class SchedulingService {
@@ -507,6 +508,13 @@ export class SchedulingService {
     });
 
     const saved = await this.bookingRepository.save(booking);
+
+    // The answers also go on the lead's own Notes, as bullet points, so the
+    // caller sees them on the contact card — not only inside the booking.
+    if (contactId && form) {
+      const notes = withAnswerNotes(existingContact?.notes, 'Răspunsuri la programare', answeredPairs(form, dto.customAnswers));
+      if (notes) await this.contactRepository.update({ id: contactId }, { notes });
+    }
     await this.notifyHostOfBooking(saved, meetingType, dto);
     // Meet/Zoom link, emailed to the lead and the closer.
     const meeting = await this.meetings?.setUpMeeting(saved.id);

@@ -3,12 +3,13 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { HttpService } from '@nestjs/axios';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { createHmac, timingSafeEqual } from 'crypto';
+import { createHmac, randomBytes, timingSafeEqual } from 'crypto';
 import { Integration, IntegrationStatus, IntegrationType } from '../../database/entities/integration.entity';
 import { Contact, ContactSource, ContactStatus } from '../../database/entities/contact.entity';
 import { Deal, DealStage } from '../../database/entities/deal.entity';
 import { PipelineStage } from '../../database/entities/pipeline-stage.entity';
 import { classifyWooOrder } from './woo-order-kind';
+import { withAnswerNotes } from '../../contacts/contact-notes';
 import { ContactsService } from '../../contacts/contacts.service';
 import { normalizePhoneE164 } from '../../common/utils/phone.util';
 
@@ -486,6 +487,95 @@ export class WooCommerceService {
     }
     this.logger.log(`[woocommerce] lead-products rule applied for ${integration.id}: ${JSON.stringify(result)}`);
     return result;
+  }
+
+  // ── thank-you page answer (TeamRa2 Thank You plugin) ──
+
+  thankYouUrl(integration: Integration): string {
+    const appUrl = String(process.env.APP_URL || 'https://slackcrm-backend.fly.dev').replace(/\/+$/, '').replace(/\/api\/v1$/, '');
+    return `${appUrl}/api/v1/integrations/woocommerce/thankyou/${integration.id}`;
+  }
+
+  /** The URL and secret to paste into the plugin; the secret is made on first ask. */
+  async thankYouSetup(integration: Integration): Promise<{ url: string; secret: string }> {
+    let secret = String(integration.config?.thankyouSecret || '');
+    if (secret.length < 32) {
+      secret = randomBytes(32).toString('hex');
+      integration.config = { ...(integration.config as any), thankyouSecret: secret };
+      await this.integrationRepository.save(integration);
+    }
+    return { url: this.thankYouUrl(integration), secret };
+  }
+
+  /**
+   * The plugin signs `"<timestamp>.<raw body>"` with HMAC-SHA256 and sends
+   * `X-TR2-Signature: sha256=<hex>` and `X-TR2-Timestamp`. A stale timestamp
+   * is refused so a captured request cannot be replayed later.
+   */
+  verifyThankYouSignature(
+    integration: Integration,
+    rawBody: Buffer | undefined,
+    timestamp: string | undefined,
+    signature: string | undefined,
+  ): void {
+    const secret = String(integration.config?.thankyouSecret || '');
+    if (secret.length < 32) throw new UnauthorizedException('Thank-you page not set up for this integration');
+    const ts = Number(timestamp);
+    if (!rawBody || !signature || !Number.isFinite(ts)) throw new UnauthorizedException('Missing signature');
+    if (Math.abs(Date.now() / 1000 - ts) > 15 * 60) throw new UnauthorizedException('Stale request');
+    const expected = Buffer.from(
+      `sha256=${createHmac('sha256', secret).update(`${timestamp}.`).update(rawBody).digest('hex')}`,
+    );
+    const given = Buffer.from(String(signature).trim());
+    if (expected.length !== given.length || !timingSafeEqual(expected, given)) {
+      throw new UnauthorizedException('Invalid signature');
+    }
+  }
+
+  /**
+   * The buyer's answer on the thank-you page, added to their Notes as a
+   * bullet. Found by the order (the order webhook stored its key on the
+   * contact), else by email, else by phone. Not found yet → 'retry', so the
+   * plugin tries again once the order itself has reached the CRM.
+   */
+  async recordThankYouAnswer(integration: Integration, body: any): Promise<'saved' | 'duplicate' | 'retry' | 'empty'> {
+    const answer = String(body?.answer || '').trim();
+    if (!answer) return 'empty';
+    const workspaceId = integration.workspaceId;
+    const orderKey = `${integration.id}:${Number(body?.order_id) || ''}`;
+
+    let contact = await this.contactRepository
+      .createQueryBuilder('c')
+      .where('c.workspaceId = :workspaceId', { workspaceId })
+      .andWhere('c.deletedAt IS NULL')
+      .andWhere(`c."customFields" -> 'wooOrderKeys' @> CAST(:key AS jsonb)`, { key: JSON.stringify([orderKey]) })
+      .getOne();
+    if (!contact) {
+      const email = String(body?.customer?.email || '').trim().toLowerCase();
+      contact = await this.findExistingContact(workspaceId, email, normalizePhoneE164(String(body?.customer?.phone || '')));
+    }
+    if (!contact) return 'retry';
+
+    const ref = String(body?.ref || orderKey);
+    const custom: any = contact.customFields ?? {};
+    const refs: string[] = Array.isArray(custom.thankyouAnswerRefs) ? custom.thankyouAnswerRefs : [];
+    if (refs.includes(ref)) return 'duplicate';
+
+    const notes = withAnswerNotes(
+      contact.notes,
+      'Răspuns pe pagina de mulțumire',
+      [{ question: String(body?.question || ''), answer }],
+      body?.answered_at ? new Date(body.answered_at) : new Date(),
+    );
+    await this.contactRepository.update(
+      { id: contact.id, workspaceId },
+      {
+        ...(notes ? { notes } : {}),
+        customFields: { ...custom, thankyouAnswerRefs: [...refs, ref].slice(-20) },
+      },
+    );
+    this.logger.log(`[woocommerce] thank-you answer for order ${orderKey} → contact ${contact.id}`);
+    return 'saved';
   }
 
   // ── store API helpers ──

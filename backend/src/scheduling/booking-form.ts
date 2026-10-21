@@ -102,6 +102,21 @@ export function bookingFormError(form: BookingForm, answers: Record<string, any>
   return null;
 }
 
+/** Question and answer pairs, in the form's order — for the contact's Notes. */
+export function answeredPairs(
+  form: BookingForm,
+  answers: Record<string, any> | null | undefined,
+): Array<{ question: string; answer: string }> {
+  const given = answers && typeof answers === 'object' ? answers : {};
+  const pairs = form.questions
+    .map((q) => ({ question: q.label, answer: text(given[q.id], 2000) }))
+    .filter((p) => p.answer);
+  if (form.ageGate.enabled && given.ageConfirmed === true) {
+    pairs.unshift({ question: 'Vârstă', answer: `${form.ageGate.minAge}+ confirmat` });
+  }
+  return pairs;
+}
+
 /** The answers as lines a closer reads in the booking's notes. */
 export function answersAsNotes(form: BookingForm, answers: Record<string, any> | null | undefined): string {
   const given = answers && typeof answers === 'object' ? answers : {};

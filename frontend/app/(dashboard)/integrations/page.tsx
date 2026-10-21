@@ -8,6 +8,7 @@ import { BillingAccess, PLAN_NAMES, fetchBillingOverview, integrationLock } from
 import PayflowConnect from '@/components/integrations/PayflowConnect';
 import LeadGraceSettings from '@/components/integrations/LeadGraceSettings';
 import WooLeadProducts from '@/components/integrations/WooLeadProducts';
+import WooThankYouSetup from '@/components/integrations/WooThankYouSetup';
 import api from '@/lib/api';
 import { integrationIcons } from '@/lib/integration-icons';
 import GoogleSheetsSync from '@/components/integrations/GoogleSheetsSync';
@@ -2595,6 +2596,9 @@ export default function IntegrationsPage() {
                 config={connectedIntegrations[managingIntegration.id].config}
                 onSaved={() => void refreshIntegrationCatalog()}
               />
+            )}
+            {managingIntegration.id === 'woocommerce' && connectedIntegrations[managingIntegration.id]?.id && (
+              <WooThankYouSetup integrationId={connectedIntegrations[managingIntegration.id].id} />
             )}
 
             {/* Typeform Forms Management */}
