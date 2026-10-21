@@ -101,8 +101,17 @@ export default function ClosedList({
 
   // What the whole list is worth, so the tab answers "how much did we sell?"
   // without a calculator. Only paid money counts here.
-  const paidTotal = rows.reduce((sum, r) => sum + (r.payment?.paid ?? 0), 0);
-  const currency = rows.find((r) => r.payment?.currency)?.payment?.currency ?? 'EUR';
+  // Per currency: RON from the shop and EUR from Payflow must not be added up.
+  const paidByCurrency = rows.reduce<Record<string, number>>((acc, r) => {
+    if (r.payment && r.payment.paid > 0) {
+      acc[r.payment.currency] = (acc[r.payment.currency] ?? 0) + r.payment.paid;
+    }
+    return acc;
+  }, {});
+  const paidLabel = Object.entries(paidByCurrency)
+    .sort((a, b) => b[1] - a[1])
+    .map(([cur, value]) => money(value, cur))
+    .join(' + ');
 
   let body: JSX.Element | null = null;
   if (loading) {
@@ -146,9 +155,9 @@ export default function ClosedList({
           <span className="text-sm font-semibold text-gray-700 dark:text-gray-200">
             {loading ? '…' : total} {won ? (total === 1 ? 'vânzare' : 'vânzări') : 'pierdute'}
           </span>
-          {won && paidTotal > 0 && (
+          {won && paidLabel && (
             <span className="text-sm font-semibold text-green-700 dark:text-green-400">
-              {money(paidTotal, currency)} încasat
+              {paidLabel} încasat
             </span>
           )}
         </div>
