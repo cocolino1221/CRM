@@ -1,0 +1,8 @@
+{
+  "android": {
+    "package": "com.coco1221.slackcrmmonorepo"
+  },
+  "ios": {
+    "bundleIdentifier": "com.coco1221.slackcrmmonorepo"
+  }
+}
