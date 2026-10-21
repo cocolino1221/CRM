@@ -9,6 +9,8 @@ import { PipelineStage } from '../../database/entities/pipeline-stage.entity';
 import { GoogleIntegrationHandler } from '../handlers/google.handler';
 import { normalizePhoneE164 } from '../../common/utils/phone.util';
 import { NotificationsService } from '../../notifications/notifications.service';
+import { User, UserRole, UserStatus } from '../../database/entities/user.entity';
+import { appendDatedNote } from '../../common/utils/lead-notes.util';
 
 // CRM fields a sheet column can map to. "stage" moves the contact between
 // pipeline stages by stage NAME. Keys are stored in integration.config.
@@ -54,6 +56,7 @@ export class GoogleSheetsService {
     @InjectRepository(PipelineStage) private readonly stageRepository: Repository<PipelineStage>,
     private readonly googleHandler: GoogleIntegrationHandler,
     private readonly notificationsService: NotificationsService,
+    @InjectRepository(User) private readonly userRepository: Repository<User>,
   ) {}
 
   private async getGoogleIntegration(workspaceId: string): Promise<Integration> {
@@ -384,7 +387,15 @@ export class GoogleSheetsService {
             if (cell(colOf.preluat)) c.preluat = /^(true|1|yes|da)$/i.test(cell(colOf.preluat));
             const custom = { ...(c.customFields as any || {}) };
             if (cell(colOf.company)) custom.company = cell(colOf.company);
-            if (cell(colOf.notes)) custom.sheetNotes = cell(colOf.notes);
+            if (cell(colOf.notes)) {
+              custom.sheetNotes = cell(colOf.notes);
+              // sheetNotes alone is invisible: no screen reads customFields.
+              // The same note also goes where a person looks for it. The guard
+              // inside appendDatedNote is what stops a ten-minute sync from
+              // stacking the same sentence forever.
+              const withNote = appendDatedNote(c.notes, cell(colOf.notes));
+              if (withNote !== null) c.notes = withNote;
+            }
             c.customFields = custom;
           };
 
@@ -407,22 +418,9 @@ export class GoogleSheetsService {
             contact = await this.contactRepository.save(contact);
             result.fromSheet++;
 
-            // New lead from the sheet — notify (gated by the user's
-            // `lead:sheets` push preference). Fire-and-forget.
-            if (integration.userId) {
-              const displayName = `${contact.firstName || ''} ${contact.lastName === '-' ? '' : contact.lastName || ''}`.trim()
-                || contact.phone || contact.email;
-              this.notificationsService
-                .notifyLead(
-                  integration.workspaceId,
-                  integration.userId,
-                  'sheets',
-                  'New lead from Google Sheets',
-                  `${displayName} — added from Google Sheet "${config.spreadsheetName || 'sheet'}"${config.sheetName ? `, tab "${config.sheetName}"` : ''}`,
-                  `/leads/${contact.id}`,
-                )
-                .catch(() => undefined);
-            }
+            // New lead from the sheet — tell the people who work leads.
+            // Fire-and-forget: a sync must not stall on a push.
+            void this.notifyNewSheetLead(integration, contact, config);
           } else {
             apply(contact);
             await this.contactRepository.save(contact);
@@ -530,5 +528,59 @@ export class GoogleSheetsService {
     } finally {
       this.syncing.delete(integration.id);
     }
+  }
+
+  /**
+   * Who hears about a lead that just arrived from the sheet.
+   *
+   * It used to be one person: whoever ran the Google OAuth. In production that
+   * meant all 145 `lead:sheets` notifications went to the same admin while the
+   * closers had none. Now every active caller and closer is told, the way
+   * scheduling.service's alertCallers does it — plus the connector, who was
+   * getting these before and should not quietly lose them.
+   *
+   * Each notification is gated by its own user's `lead:sheets` push
+   * preference inside NotificationsService.
+   */
+  async notifyNewSheetLead(
+    integration: Integration,
+    contact: Contact,
+    config: SheetsSyncConfig,
+  ): Promise<void> {
+    const team = await this.userRepository.find({
+      where: [
+        { workspaceId: integration.workspaceId, status: UserStatus.ACTIVE, role: UserRole.CALLER },
+        { workspaceId: integration.workspaceId, status: UserStatus.ACTIVE, role: UserRole.CLOSER },
+      ],
+      select: ['id'],
+    });
+
+    const recipients = new Set<string>(team.map((user) => user.id).filter(Boolean));
+    if (integration.userId) recipients.add(integration.userId);
+    if (recipients.size === 0) return;
+
+    const displayName =
+      `${contact.firstName || ''} ${contact.lastName === '-' ? '' : contact.lastName || ''}`.trim() ||
+      contact.phone ||
+      contact.email;
+    const where = `Google Sheet "${config.spreadsheetName || 'sheet'}"${config.sheetName ? `, tab "${config.sheetName}"` : ''}`;
+
+    await Promise.all(
+      Array.from(recipients).map((userId) =>
+        this.notificationsService
+          .notifyLead(
+            integration.workspaceId,
+            userId,
+            'sheets',
+            'New lead from Google Sheets',
+            `${displayName} — added from ${where}`,
+            `/leads/${contact.id}`,
+          )
+          // One teammate's push failing must not cost the rest of them the lead.
+          .catch((err: any) =>
+            this.logger.warn(`Sheet lead alert failed for ${userId}: ${err?.message}`),
+          ),
+      ),
+    );
   }
 }
