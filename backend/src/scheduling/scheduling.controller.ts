@@ -313,7 +313,7 @@ export class SchedulingController {
   @HttpCode(HttpStatus.CREATED)
   async requestCallback(
     @Param('slug') slug: string,
-    @Body() body: { name: string; phone: string; email?: string; notes?: string },
+    @Body() body: { name: string; phone: string; email?: string; notes?: string; tracking?: unknown },
   ) {
     if (!String(body?.name || '').trim() || !String(body?.phone || '').trim()) {
       throw new BadRequestException('Numele și telefonul sunt necesare.');

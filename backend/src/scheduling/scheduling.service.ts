@@ -21,6 +21,7 @@ import { BookingFormService } from './booking-form.service';
 import { answeredPairs, answersAsNotes, bookingFormError } from './booking-form';
 import { withAnswerNotes } from '../contacts/contact-notes';
 import { blockedDaysOf, hostZoneOf, isBlockedAt, normalizeBlockedDays } from './blocked-days';
+import { cleanTracking, sourceFromTracking, type BookingTracking } from './booking-source';
 
 @Injectable()
 export class SchedulingService {
@@ -402,10 +403,12 @@ export class SchedulingService {
    */
   async requestCallback(
     slug: string,
-    dto: { name: string; phone: string; email?: string; notes?: string },
+    dto: { name: string; phone: string; email?: string; notes?: string; tracking?: unknown },
   ): Promise<{ contactId: string; alerted: number }> {
     const entry = await this.getMeetingTypeBySlug(slug);
     const workspaceId = entry.workspaceId;
+    const tracking = cleanTracking(dto.tracking);
+    const { source, label } = sourceFromTracking(tracking);
 
     const [firstName, ...rest] = String(dto.name || '').trim().split(/\s+/);
     const digits = String(dto.phone || '').replace(/\D/g, '') || Date.now().toString();
@@ -420,9 +423,10 @@ export class SchedulingService {
         email: dto.email?.trim() || `callback.${digits}@booking.placeholder.invalid`,
         phone: dto.phone,
         status: ContactStatus.LEAD,
-        source: ContactSource.WEBSITE,
+        source,
         tags: ['callback'],
-        notes: dto.notes?.trim() || 'A cerut să fie sunat pentru programare.',
+        notes: `${dto.notes?.trim() || 'A cerut să fie sunat pentru programare.'} Sursă: ${label}.`,
+        customFields: { bookingSource: { label, ...(tracking ?? {}) } },
       } as any);
     } catch (err: any) {
       // Asking twice is not an error. They are already in the CRM, and the
@@ -451,9 +455,12 @@ export class SchedulingService {
     workspaceId: string,
     hostId: string,
     dto: { guestName?: string; guestEmail?: string; guestPhone?: string },
+    tracking: BookingTracking | null = null,
   ): Promise<Contact | null> {
     const [firstName, ...rest] = String(dto.guestName || '').trim().split(/\s+/);
     const digits = String(dto.guestPhone || '').replace(/\D/g, '') || Date.now().toString();
+    // Where they came from becomes the lead's source: "Instagram · bio".
+    const { source, label } = sourceFromTracking(tracking);
     try {
       return (await this.contactsService.create(workspaceId, {
         firstName: firstName || dto.guestPhone || 'Lead',
@@ -461,10 +468,11 @@ export class SchedulingService {
         email: dto.guestEmail?.trim() || `booking.${digits}@booking.placeholder.invalid`,
         phone: dto.guestPhone,
         status: ContactStatus.LEAD,
-        source: ContactSource.WEBSITE,
+        source,
         tags: ['programare'],
         closerId: hostId,
-        notes: 'S-a programat singur de pe pagina de programare.',
+        notes: `S-a programat singur de pe pagina de programare. Sursă: ${label}.`,
+        customFields: { bookingSource: { label, ...(tracking ?? {}) } },
       } as any)) as any;
     } catch (err: any) {
       this.logger.warn(`Could not create a lead for a public booking: ${err?.message}`);
@@ -561,12 +569,13 @@ export class SchedulingService {
     // The lead almost always exists already — Typeform or a WooCommerce order
     // created them. Missing them here books a stranger and leaves the real
     // lead in De sunat forever, so the match is forgiving on both keys.
+    const tracking = cleanTracking(dto.tracking);
     const existingContact =
       (await this.findLeadForBooking(meetingType.workspaceId, dto.guestEmail, dto.guestPhone)) ??
       // Someone who found the link elsewhere (Instagram bio, an ad, a message)
       // is not in the CRM yet. Without a lead the booking showed as "Contact"
       // and the person never reached the leads list.
-      (await this.createLeadForBooking(meetingType.workspaceId, meetingType.userId, dto));
+      (await this.createLeadForBooking(meetingType.workspaceId, meetingType.userId, dto, tracking));
     const contactId = existingContact?.id ?? null;
 
     // The answers go into the notes as plain lines, so the closer reads them
@@ -574,10 +583,12 @@ export class SchedulingService {
     const answered = form ? answersAsNotes(form, dto.customAnswers) : '';
     const notes = [answered, dto.notes?.trim()].filter(Boolean).join('\n\n') || undefined;
 
-    // `variant` only chose the form above; it is not a column.
-    const { variant: _variant, ...fields } = dto;
+    // `variant` only chose the form above; it is not a column. `tracking` is
+    // stored cleaned, never as sent.
+    const { variant: _variant, tracking: _tracking, ...fields } = dto;
     const booking = this.bookingRepository.create({
       ...fields,
+      tracking: tracking as Record<string, string> | null,
       notes,
       workspaceId: meetingType.workspaceId,
       hostId: meetingType.userId,

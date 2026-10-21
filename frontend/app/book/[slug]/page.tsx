@@ -33,6 +33,7 @@ import {
   type BookingForm,
 } from '@/lib/booking-form';
 import { unglueBookingLink } from '@/lib/glued-link';
+import { trackingFromPage } from '@/lib/booking-tracking';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'https://slackcrm-backend.fly.dev/api/v1';
 const DAYS_OFFERED = 14;
@@ -202,8 +203,8 @@ export default function PublicBookingPage() {
       const res = await fetch(`${API_BASE}/scheduling/public/bookings`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(
-          buildBookingPayload({
+        body: JSON.stringify({
+          ...buildBookingPayload({
             // The hour decides the person, so the booking belongs to their
             // meeting type, not to whoever's link was pasted into Typeform.
             meetingTypeId: target.meetingTypeId,
@@ -213,7 +214,9 @@ export default function PublicBookingPage() {
             customAnswers: customAnswersFor(form, answers, age === 'ok'),
             variant: new URLSearchParams(window.location.search).get('v') || undefined,
           }),
-        ),
+          // Where they came from: becomes the new lead's source.
+          tracking: trackingFromPage(window.location.search, document.referrer, window.location.hostname),
+        }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -251,7 +254,10 @@ export default function PublicBookingPage() {
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(buildCallbackPayload(form)),
+          body: JSON.stringify({
+            ...buildCallbackPayload(form),
+            tracking: trackingFromPage(window.location.search, document.referrer, window.location.hostname),
+          }),
         },
       );
       if (!res.ok) throw new Error('Nu am putut trimite cererea.');

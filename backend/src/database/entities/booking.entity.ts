@@ -157,6 +157,13 @@ export class Booking extends WorkspaceEntity {
   customAnswers?: Record<string, any>;
 
   @Column({
+    type: 'jsonb',
+    nullable: true,
+    comment: 'Where the guest came from: utm_* on the link and the referring page',
+  })
+  tracking?: Record<string, string | undefined> | null;
+
+  @Column({
     type: 'timestamptz',
     nullable: true,
     comment: 'When the host was pushed a reminder for this booking; cleared when it moves',

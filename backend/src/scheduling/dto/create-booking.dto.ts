@@ -45,4 +45,9 @@ export class CreateBookingDto {
   @IsString()
   @MaxLength(40)
   variant?: string;
+
+  /** Where they came from: utm_* on the link and the referring page. Cleaned server-side. */
+  @IsOptional()
+  @IsObject()
+  tracking?: Record<string, unknown>;
 }
