@@ -12,7 +12,7 @@ import { Deal, DealStage } from '../database/entities/deal.entity';
 import { CreateDealDto } from './dto/create-deal.dto';
 import { UpdateDealDto } from './dto/update-deal.dto';
 import { QueryDealsDto } from './dto/query-deals.dto';
-import { normalizeTagFilter, tagsOverlapCondition } from '../common/utils/simple-array-tags.util';
+import { normalizeTagFilter, normalizeTags, tagsOverlapCondition } from '../common/utils/simple-array-tags.util';
 
 @Injectable()
 export class DealsService {
@@ -185,6 +185,8 @@ export class DealsService {
     try {
       const deal = this.dealRepository.create({
         ...createDealDto,
+        // A tag may not hold a comma: the column joins its values with one.
+        ...(createDealDto.tags === undefined ? {} : { tags: normalizeTags(createDealDto.tags) }),
         workspaceId,
       });
 
@@ -215,6 +217,9 @@ export class DealsService {
 
     try {
       Object.assign(deal, updateDealDto);
+      if (updateDealDto.tags !== undefined) {
+        deal.tags = normalizeTags(updateDealDto.tags);
+      }
       const updatedDeal = await this.dealRepository.save(deal);
 
       this.logger.log(`Deal updated: ${id} in workspace ${workspaceId}`);

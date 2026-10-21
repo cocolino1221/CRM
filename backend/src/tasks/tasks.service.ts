@@ -11,7 +11,7 @@ import { Task, TaskStatus } from '../database/entities/task.entity';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { QueryTasksDto } from './dto/query-tasks.dto';
-import { normalizeTagFilter, tagsOverlapCondition } from '../common/utils/simple-array-tags.util';
+import { normalizeTagFilter, normalizeTags, tagsOverlapCondition } from '../common/utils/simple-array-tags.util';
 
 @Injectable()
 export class TasksService {
@@ -130,6 +130,8 @@ export class TasksService {
     try {
       const task = this.taskRepository.create({
         ...createTaskDto,
+        // A tag may not hold a comma: the column joins its values with one.
+        ...(createTaskDto.tags === undefined ? {} : { tags: normalizeTags(createTaskDto.tags) }),
         workspaceId,
         creatorId,
       });
@@ -157,6 +159,9 @@ export class TasksService {
 
     try {
       Object.assign(task, updateTaskDto);
+      if (updateTaskDto.tags !== undefined) {
+        task.tags = normalizeTags(updateTaskDto.tags);
+      }
       const updatedTask = await this.taskRepository.save(task);
 
       this.logger.log(`Task updated: ${id} in workspace ${workspaceId}`);
