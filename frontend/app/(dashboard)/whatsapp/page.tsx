@@ -186,6 +186,24 @@ interface WhatsAppSenderAccount {
   isDefault?: boolean;
 }
 
+const INVALID_WHATSAPP_CONTACT_NAMES = new Set([
+  'online',
+  'online contact',
+  'offline',
+  'unknown',
+  'customer',
+  'whatsapp',
+  'whatsapp contact',
+]);
+
+function getWhatsAppContactDisplayName(contact: WhatsAppActivity['contact'], phone: string): string {
+  const fullName = `${contact?.firstName || ''} ${contact?.lastName || ''}`.replace(/\s+/g, ' ').trim();
+  if (!fullName || INVALID_WHATSAPP_CONTACT_NAMES.has(fullName.toLowerCase())) {
+    return phone;
+  }
+  return fullName;
+}
+
 // ─── Constants ──────────────────────────────────────────────
 
 const WHATSAPP_TEMPLATES: WhatsAppTemplate[] = [
@@ -1606,7 +1624,7 @@ export default function WhatsAppPage() {
       for (const act of activities) {
         const waId = act.metadata?.waId || act.contact?.phone?.replace('+', '') || 'unknown';
         const phone = act.contact?.phone || `+${waId}`;
-        const contactName = act.contact ? `${act.contact.firstName} ${act.contact.lastName}`.trim() : phone;
+        const contactName = getWhatsAppContactDisplayName(act.contact, phone);
         const contactSource = act.contact?.source || null;
 
         if (!convMap.has(waId)) {
