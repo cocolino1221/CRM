@@ -443,6 +443,36 @@ export class SchedulingService {
   }
 
   /**
+   * A lead for a stranger who booked, put on the closer who will take the
+   * meeting. Never blocks the booking: a lead that cannot be made leaves the
+   * booking with its guest details, as before.
+   */
+  private async createLeadForBooking(
+    workspaceId: string,
+    hostId: string,
+    dto: { guestName?: string; guestEmail?: string; guestPhone?: string },
+  ): Promise<Contact | null> {
+    const [firstName, ...rest] = String(dto.guestName || '').trim().split(/\s+/);
+    const digits = String(dto.guestPhone || '').replace(/\D/g, '') || Date.now().toString();
+    try {
+      return (await this.contactsService.create(workspaceId, {
+        firstName: firstName || dto.guestPhone || 'Lead',
+        lastName: rest.join(' ') || '-',
+        email: dto.guestEmail?.trim() || `booking.${digits}@booking.placeholder.invalid`,
+        phone: dto.guestPhone,
+        status: ContactStatus.LEAD,
+        source: ContactSource.WEBSITE,
+        tags: ['programare'],
+        closerId: hostId,
+        notes: 'S-a programat singur de pe pagina de programare.',
+      } as any)) as any;
+    } catch (err: any) {
+      this.logger.warn(`Could not create a lead for a public booking: ${err?.message}`);
+      return null;
+    }
+  }
+
+  /**
    * Everyone who works the phone hears about it, not the whole workspace:
    * this is a job for whoever picks it up, not news for the accountant.
    */
@@ -531,11 +561,12 @@ export class SchedulingService {
     // The lead almost always exists already — Typeform or a WooCommerce order
     // created them. Missing them here books a stranger and leaves the real
     // lead in De sunat forever, so the match is forgiving on both keys.
-    const existingContact = await this.findLeadForBooking(
-      meetingType.workspaceId,
-      dto.guestEmail,
-      dto.guestPhone,
-    );
+    const existingContact =
+      (await this.findLeadForBooking(meetingType.workspaceId, dto.guestEmail, dto.guestPhone)) ??
+      // Someone who found the link elsewhere (Instagram bio, an ad, a message)
+      // is not in the CRM yet. Without a lead the booking showed as "Contact"
+      // and the person never reached the leads list.
+      (await this.createLeadForBooking(meetingType.workspaceId, meetingType.userId, dto));
     const contactId = existingContact?.id ?? null;
 
     // The answers go into the notes as plain lines, so the closer reads them

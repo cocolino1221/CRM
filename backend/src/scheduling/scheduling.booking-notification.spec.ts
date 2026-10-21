@@ -19,6 +19,8 @@ let hostRow: any = null;
 describe('SchedulingService — booking notifies its host', () => {
   let service: SchedulingService;
   let create: jest.Mock;
+  let createContact: jest.Mock;
+  let found: any;
 
   const HOST = 'user-host';
   const meetingType = {
@@ -42,6 +44,8 @@ describe('SchedulingService — booking notifies its host', () => {
 
   beforeEach(async () => {
     create = jest.fn().mockResolvedValue(undefined);
+    createContact = jest.fn().mockResolvedValue({ id: 'new-lead' });
+    found = { id: 'c1' };
 
     const moduleRef = await Test.createTestingModule({
       providers: [
@@ -65,13 +69,13 @@ describe('SchedulingService — booking notifies its host', () => {
           provide: getRepositoryToken(Contact),
           useValue: {
             createQueryBuilder: () => {
-              const qb: any = { where: () => qb, andWhere: () => qb, orderBy: () => qb, getOne: async () => ({ id: 'c1' }) };
+              const qb: any = { where: () => qb, andWhere: () => qb, orderBy: () => qb, getOne: async () => found };
               return qb;
             },
           },
         },
         { provide: NotificationsService, useValue: { create } },
-        { provide: ContactsService, useValue: {} },
+        { provide: ContactsService, useValue: { create: createContact } },
       ],
     }).compile();
 
@@ -102,6 +106,37 @@ describe('SchedulingService — booking notifies its host', () => {
 
     const [, payload] = create.mock.calls[0];
     expect(payload.metadata).toEqual(expect.objectContaining({ contactId: 'c1', bookingId: 'b1' }));
+  });
+
+  // Someone who found the link on Instagram is not in the CRM yet: the
+  // booking showed as "Contact" and the person never reached the leads list.
+  it('makes a lead for a stranger who booked, on the closer of the meeting', async () => {
+    found = null;
+    await service.createBooking(dto);
+
+    expect(createContact).toHaveBeenCalledWith(
+      'ws1',
+      expect.objectContaining({
+        firstName: 'Vlad',
+        lastName: 'Popescu',
+        email: 'vlad@example.com',
+        phone: '+40700000000',
+        closerId: HOST,
+      }),
+    );
+    const [, payload] = create.mock.calls[0];
+    expect(payload.metadata).toEqual(expect.objectContaining({ contactId: 'new-lead' }));
+  });
+
+  it('does not make a second lead for someone already in the CRM', async () => {
+    await service.createBooking(dto);
+    expect(createContact).not.toHaveBeenCalled();
+  });
+
+  it('still books when the lead cannot be made', async () => {
+    found = null;
+    createContact.mockRejectedValueOnce(new Error('db down'));
+    await expect(service.createBooking(dto)).resolves.toEqual(expect.objectContaining({ id: 'b1', contactId: null }));
   });
 
   it('still returns the booking when notifying fails', async () => {
