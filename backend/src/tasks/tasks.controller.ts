@@ -148,12 +148,14 @@ export class TasksController {
   @ApiResponse({ status: 204, description: 'Task deleted successfully' })
   @ApiResponse({ status: 404, description: 'Task not found' })
   @HttpCode(HttpStatus.NO_CONTENT)
-  @Roles('admin', 'manager')
+  // Everyone may clear their own reminders; the service refuses anyone else's.
+  @Roles('super_admin', 'admin', 'manager', 'sales_rep', 'closer', 'setter', 'caller', 'support_agent')
   async remove(
     @CurrentWorkspace('id') workspaceId: string,
     @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: any,
   ) {
-    await this.tasksService.remove(workspaceId, id);
+    await this.tasksService.remove(workspaceId, id, user);
   }
 
   @Patch(':id/complete')

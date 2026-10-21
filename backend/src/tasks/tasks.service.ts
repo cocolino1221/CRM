@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -182,8 +183,15 @@ export class TasksService {
     }
   }
 
-  async remove(workspaceId: string, id: string) {
+  async remove(workspaceId: string, id: string, actor?: { id?: string; role?: string }) {
     const task = await this.findOne(workspaceId, id);
+    // Whoever runs the team may delete any task; everyone else only the ones
+    // given to them or that they made.
+    const role = String(actor?.role || '').toLowerCase();
+    const lead = ['super_admin', 'admin', 'manager'].includes(role);
+    if (actor && !lead && task.assigneeId !== actor.id && task.creatorId !== actor.id) {
+      throw new ForbiddenException('Poți șterge doar task-urile tale.');
+    }
     await this.taskRepository.softDelete(id);
 
     this.logger.log(`Task deleted: ${id} in workspace ${workspaceId}`);

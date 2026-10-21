@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import {
   View, Text, TouchableOpacity, FlatList, RefreshControl,
-  ActivityIndicator, Modal, TextInput, ScrollView, KeyboardAvoidingView, Platform, Linking,
+  ActivityIndicator, Modal, TextInput, ScrollView, KeyboardAvoidingView, Platform, Linking, Alert,
 } from 'react-native';
 import {
   Calendar, ChevronLeft, ChevronRight, CheckCircle, Clock,
@@ -144,6 +144,43 @@ export default function CalendarScreen() {
     } finally {
       setIsSaving(false);
     }
+  };
+
+  /**
+   * A reminder that is done, or should never have been there (a duplicate),
+   * leaves the calendar from here. The server lets each person delete only
+   * their own; whoever runs the team, any.
+   */
+  const taskActions = (task: CalendarTask) => {
+    const drop = () => setTasks((prev) => prev.filter((t) => t.id !== task.id));
+    const failed = (err: any) =>
+      toast.show(err?.response?.data?.message || 'Nu s-a putut salva.', 'error');
+    Alert.alert(task.title, 'Ce faci cu acest task?', [
+      {
+        text: 'Făcut',
+        onPress: () =>
+          api
+            .patch(`/tasks/${task.id}/complete`)
+            .then(() => {
+              drop();
+              toast.show('Marcat ca făcut', 'success');
+            })
+            .catch(failed),
+      },
+      {
+        text: 'Șterge',
+        style: 'destructive',
+        onPress: () =>
+          api
+            .delete(`/tasks/${task.id}`)
+            .then(() => {
+              drop();
+              toast.show('Task șters', 'success');
+            })
+            .catch(failed),
+      },
+      { text: 'Renunță', style: 'cancel' },
+    ]);
   };
 
   const loadMonth = async (refDate: Date) => {
@@ -360,7 +397,11 @@ export default function CalendarScreen() {
             const task = item.task;
             const taskDueDate = parseDate(task.dueDate);
             return (
-              <View className="bg-white rounded-2xl p-3 mb-2.5 border border-slate-100">
+              <TouchableOpacity
+                onPress={() => taskActions(task)}
+                activeOpacity={0.7}
+                className="bg-white rounded-2xl p-3 mb-2.5 border border-slate-100"
+              >
                 <View className="flex-row items-start justify-between gap-2">
                   <Text className="text-sm font-semibold text-slate-900 flex-1" numberOfLines={2}>{task.title}</Text>
                   <View className={`px-2 py-0.5 rounded-full ${
@@ -394,7 +435,7 @@ export default function CalendarScreen() {
                     </View>
                   )}
                 </View>
-              </View>
+              </TouchableOpacity>
             );
           }}
           ListEmptyComponent={

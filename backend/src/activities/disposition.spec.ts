@@ -15,7 +15,7 @@ const CONTACT = 'contact-1';
  * The disposition runs entirely through the transaction manager's repositories,
  * so the test mocks the manager rather than individual injected repositories.
  */
-function buildHarness(options: { activity?: Partial<Activity> | null; role?: string; contact?: Partial<Contact>; openTask?: any } = {}) {
+function buildHarness(options: { activity?: Partial<Activity> | null; role?: string; contact?: Partial<Contact>; openTask?: any; staleTasks?: any[] } = {}) {
   const activity = options.activity === null
     ? null
     : Object.assign(new Activity(), {
@@ -32,7 +32,7 @@ function buildHarness(options: { activity?: Partial<Activity> | null; role?: str
     tasks: [], deals: [], activities: [], contacts: [],
   };
 
-  const repoFor = (bucket: keyof typeof saved, findOneResult: any) => ({
+  const repoFor = (bucket: keyof typeof saved, findOneResult: any, many: any[] = []) => ({
     findOne: jest.fn().mockResolvedValue(findOneResult),
     // The earlier-attempt lookup goes through a query builder; record what it filtered on.
     lookups: [] as Array<Record<string, any>>,
@@ -44,6 +44,7 @@ function buildHarness(options: { activity?: Partial<Activity> | null; role?: str
         andWhere: jest.fn((_sql: string, p?: any) => (Object.assign(params, p), qb)),
         orderBy: jest.fn(() => qb),
         getOne: jest.fn(() => (repo.lookups.push(params), Promise.resolve(findOneResult))),
+        getMany: jest.fn(() => Promise.resolve(many)),
       };
       return qb;
     }),
@@ -58,7 +59,7 @@ function buildHarness(options: { activity?: Partial<Activity> | null; role?: str
   const repos = new Map<any, any>([
     [Activity, repoFor('activities', activity)],
     [Contact, repoFor('contacts', contact)],
-    [Task, repoFor('tasks', options.openTask ?? null)],
+    [Task, repoFor('tasks', options.openTask ?? null, options.staleTasks ?? [])],
     [Deal, repoFor('deals', null)],
     [User, repoFor('contacts', { id: USER, role: options.role ?? 'closer' })],
   ]);
@@ -123,6 +124,35 @@ describe('ActivitiesService.applyDisposition', () => {
     expect(saved.tasks[0].id).toBe('task-open');
     expect(new Date(saved.tasks[0].dueDate).toISOString()).toBe(at);
     expect(saved.activities[0].metadata.dispositionTaskId).toBe('task-open');
+  });
+
+  // Left pending, earlier call-backs sat in the calendar for days after the
+  // lead had been rung — two of each when a save had been pressed twice.
+  it('closes the lead\'s earlier call-backs when it is called again', async () => {
+    const make = (id: string) =>
+      Object.assign(new Task(), { id, status: 'pending', customFields: { origin: 'disposition' } });
+    const staleTasks = [make('old-1'), make('old-2')];
+    const { service, saved } = buildHarness({ staleTasks });
+
+    await service.applyDisposition(WORKSPACE, USER, ACTIVITY, baseDto);
+
+    expect(saved.tasks.map((t) => [t.id, t.status])).toEqual([
+      ['old-1', 'completed'],
+      ['old-2', 'completed'],
+    ]);
+  });
+
+  it('keeps open the call-back this call sets, and closes its duplicate', async () => {
+    const make = (id: string) =>
+      Object.assign(new Task(), { id, status: 'pending', customFields: { origin: 'disposition' } });
+    const openTask = make('task-open');
+    const { service, saved } = buildHarness({ openTask, staleTasks: [openTask, make('dup')] });
+
+    await service.applyDisposition(WORKSPACE, USER, ACTIVITY, { ...baseDto, followUp: { at: '2026-10-25T08:00:00.000Z' } });
+
+    const byId = Object.fromEntries(saved.tasks.map((t) => [t.id, t.status]));
+    expect(byId['task-open']).toBe('pending');
+    expect(byId.dup).toBe('completed');
   });
 
   it('creates a Deal with the given value', async () => {

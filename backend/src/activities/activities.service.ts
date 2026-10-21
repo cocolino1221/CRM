@@ -246,6 +246,24 @@ export class ActivitiesService {
       delete metadata.dispositionTaskId;
     }
 
+    // A new call answers the call-backs set before it. Left pending they sat in
+    // the calendar for days after the lead was rung — two of each when a
+    // save had been pressed twice. The one this call keeps stays open.
+    if (activity.contactId) {
+      const stale = await taskRepository
+        .createQueryBuilder('task')
+        .where('task.workspaceId = :workspaceId', { workspaceId })
+        .andWhere('task.contactId = :contactId', { contactId: activity.contactId })
+        .andWhere(`task.status IN ('pending', 'in_progress', 'overdue')`)
+        .andWhere(`task."customFields"->>'origin' = 'disposition'`)
+        .getMany();
+      for (const task of stale ?? []) {
+        if ((task as any).id === metadata.dispositionTaskId) continue;
+        task.complete('Închis automat: leadul a fost sunat din nou.');
+        await taskRepository.save(task);
+      }
+    }
+
     // Only ever one deal per call: a correction re-states the outcome, it does
     // not sell the same thing twice.
     if (dto.deal && !activity.dealId) {

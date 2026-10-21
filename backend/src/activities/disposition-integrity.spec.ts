@@ -37,6 +37,8 @@ function buildHarness(options: { existingByRequestId?: any; contact?: any; exist
         andWhere: jest.fn((_sql: string, p?: any) => (Object.assign(params, p), qb)),
         orderBy: jest.fn(() => qb),
         getOne: jest.fn(() => (repo.lookups.push(params), Promise.resolve(findOneResult))),
+        // Earlier call-backs to close: none in these cases.
+        getMany: jest.fn(() => Promise.resolve([])),
       };
       return qb;
     }),
