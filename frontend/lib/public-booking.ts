@@ -149,7 +149,9 @@ export function guestFromQuery(params: URLSearchParams): { guest: Guest; complet
   const read = (...keys: string[]) => {
     for (const key of keys) {
       const value = (params.get(key) ?? '').trim();
-      if (value && !/^\{\{.*\}\}$/.test(value)) return value;
+      // A placeholder the form never filled in — {{email}}, {email},
+      // [email], <email>, @email — is no answer at all.
+      if (value && !/^(\{+[^{}]*\}+|\[[^\]]*\]|<[^>]*>|@\w+)$/.test(value)) return value;
     }
     return '';
   };

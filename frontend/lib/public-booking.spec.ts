@@ -158,6 +158,16 @@ describe('hostsLabel', () => {
 describe('guestFromQuery', () => {
   const q = (s: string) => guestFromQuery(new URLSearchParams(s));
 
+  // A redirect typed with {nume} as plain text instead of Typeform's recall
+  // filled the form with "{nume}", "{email}", "{telefon}".
+  it('ignores placeholders the form never filled in', () => {
+    for (const raw of ['{nume}', '{{nume}}', '[nume]', '<nume>', '@nume']) {
+      const { guest, complete } = q(`name=${encodeURIComponent(raw)}&email=%7Bemail%7D&phone=%7Btelefon%7D`);
+      expect(guest).toEqual({ name: '', email: '', phone: '' });
+      expect(complete).toBe(false);
+    }
+  });
+
   it('reads what Typeform put in the link', () => {
     expect(q('name=Oana%20Tocos&email=TocosOana@gmail.com&phone=%2B40749767923')).toEqual({
       guest: { name: 'Oana Tocos', email: 'tocosoana@gmail.com', phone: '+40749767923' },
