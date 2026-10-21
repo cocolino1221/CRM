@@ -279,7 +279,7 @@ export class WorkQueuesService {
   private static readonly PAID_DEAL_SQL = `COALESCE(deal."customFields" ->> 'source', '') IN ('payflow', 'woocommerce')
       OR COALESCE(deal."customFields" ->> 'wooOrderKey', '') <> ''`;
 
-  async attachPaymentSummaries<T extends { id: string; payment?: PaymentSummary }>(
+  async attachPaymentSummaries<T extends { id: string; payment?: PaymentSummary; payments?: PaymentSummary[] }>(
     workspaceId: string,
     rows: T[],
   ): Promise<T[]> {
@@ -301,33 +301,40 @@ export class WorkQueuesService {
         'contracted',
       )
       .addSelect(`BOOL_OR(deal."paymentMethod" = 'rate')`, 'ininstalments')
-      .addSelect('MIN(deal.currency)', 'currency')
+      .addSelect('deal.currency', 'currency')
       .where('deal.workspaceId = :workspaceId', { workspaceId })
       .andWhere('deal.contactId IN (:...contactIds)', { contactIds: rows.map((r) => r.id) })
       .andWhere('deal.deletedAt IS NULL')
       .setParameter('won', DealStage.CLOSED_WON)
+      // One summary per currency: a guide in RON and a programme in EUR are
+      // two amounts, not one sum labelled with whichever currency came first.
       .groupBy('deal.contactId')
+      .addGroupBy('deal.currency')
       .getRawMany();
 
-    const byContact = new Map<string, PaymentSummary>();
+    const byContact = new Map<string, PaymentSummary[]>();
     for (const row of raw) {
       const paid = Number(row.paid) || 0;
       const contracted = Number(row.contracted) || 0;
       // A contract smaller than what cleared would show a negative remainder,
       // so the larger of the two wins: money in the bank is not in dispute.
       const total = Math.max(contracted, paid);
-      byContact.set(row.contactid, {
+      const list = byContact.get(row.contactid) ?? [];
+      list.push({
         currency: row.currency || 'EUR',
         total,
         paid,
         remaining: Math.max(total - paid, 0),
         inInstalments: row.ininstalments === true || row.ininstalments === 'true',
       });
+      byContact.set(row.contactid, list);
     }
 
-    return rows.map((row) =>
-      byContact.has(row.id) ? { ...row, payment: byContact.get(row.id) } : row,
-    );
+    return rows.map((row) => {
+      const payments = (byContact.get(row.id) ?? []).filter((p) => p.total > 0).sort((a, b) => b.total - a.total);
+      // `payment` stays the main currency for anything that reads one summary.
+      return payments.length ? { ...row, payment: payments[0], payments } : row;
+    });
   }
 
   /**

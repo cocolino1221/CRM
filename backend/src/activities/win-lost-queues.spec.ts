@@ -20,6 +20,7 @@ function build(dealRows: any[]) {
     andWhere: jest.fn().mockReturnThis(),
     setParameter: jest.fn().mockReturnThis(),
     groupBy: jest.fn().mockReturnThis(),
+    addGroupBy: jest.fn().mockReturnThis(),
     getRawMany: jest.fn().mockResolvedValue(dealRows),
   };
   const repo = { createQueryBuilder: jest.fn(() => builder) };
@@ -28,6 +29,22 @@ function build(dealRows: any[]) {
 }
 
 describe('WorkQueuesService.attachPaymentSummaries', () => {
+  // A guide in RON and a programme in EUR are two amounts, never one sum.
+  it('keeps each currency apart for a client who paid in two', async () => {
+    const { service } = build([
+      { contactid: 'c1', paid: '1590', contracted: '0', ininstalments: false, currency: 'RON' },
+      { contactid: 'c1', paid: '200', contracted: '500', ininstalments: true, currency: 'EUR' },
+    ]);
+
+    const [row]: any = await service.attachPaymentSummaries(WORKSPACE, [{ id: 'c1' }] as any);
+
+    expect(row.payments.map((p: any) => [p.currency, p.paid, p.remaining])).toEqual([
+      ['RON', 1590, 0],
+      ['EUR', 200, 300],
+    ]);
+    expect(row.payment.currency).toBe('RON');
+  });
+
   it('splits an instalment sale into total, paid and remaining', async () => {
     const { service } = build([
       { contactid: 'c1', paid: '400', contracted: '1000', ininstalments: true, currency: 'EUR' },
