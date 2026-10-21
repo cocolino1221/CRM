@@ -42,6 +42,8 @@ interface Row {
   updatedAt?: string;
   pipelineStage?: { name?: string; color?: string };
   payment?: PaymentSummary;
+  /** One per currency the client paid in. */
+  payments?: PaymentSummary[];
 }
 
 /** Money as the office says it: no decimals when there are none to show. */
@@ -103,8 +105,8 @@ export default function ClosedList({
   // without a calculator. Only paid money counts here.
   // Per currency: RON from the shop and EUR from Payflow must not be added up.
   const paidByCurrency = rows.reduce<Record<string, number>>((acc, r) => {
-    if (r.payment && r.payment.paid > 0) {
-      acc[r.payment.currency] = (acc[r.payment.currency] ?? 0) + r.payment.paid;
+    for (const p of r.payments ?? (r.payment ? [r.payment] : [])) {
+      if (p.paid > 0) acc[p.currency] = (acc[p.currency] ?? 0) + p.paid;
     }
     return acc;
   }, {});
@@ -189,7 +191,7 @@ export default function ClosedList({
           {rows.map((r) => {
             const name = contactDisplayName(r);
             const sourceLabel = queueSourceLabel(r.source);
-            const p = r.payment;
+            const payments = (r.payments ?? (r.payment ? [r.payment] : [])).filter((x) => x.total > 0);
             return (
               <li
                 key={r.id}
@@ -213,36 +215,35 @@ export default function ClosedList({
 
                 {won ? (
                   <div className="text-right">
-                    {p && p.total > 0 ? (
-                      <>
-                        <p className="font-semibold text-gray-900 dark:text-gray-100">
-                          {money(p.total, p.currency)}
-                        </p>
-                        {p.inInstalments || p.remaining > 0 ? (
-                          <p className="mt-0.5 text-xs">
-                            <span className="text-green-700 dark:text-green-400">
-                              achitat {money(p.paid, p.currency)}
-                            </span>
-                            <span className="text-gray-400"> · </span>
-                            <span
-                              className={
-                                p.remaining > 0
-                                  ? 'text-amber-700 dark:text-amber-400'
-                                  : 'text-gray-500'
-                              }
-                            >
-                              rest {money(p.remaining, p.currency)}
-                            </span>
+                    {payments.length > 0 ? (
+                      // One line per currency the client paid in.
+                      payments.map((p) => (
+                        <div key={p.currency} className="mb-1 last:mb-0">
+                          <p className="font-semibold text-gray-900 dark:text-gray-100">
+                            {money(p.total, p.currency)}
                           </p>
-                        ) : (
-                          <p className="mt-0.5 text-xs text-green-700 dark:text-green-400">
-                            achitat integral
-                          </p>
-                        )}
-                      </>
+                          {p.inInstalments || p.remaining > 0 ? (
+                            <p className="mt-0.5 text-xs">
+                              <span className="text-green-700 dark:text-green-400">
+                                achitat {money(p.paid, p.currency)}
+                              </span>
+                              <span className="text-gray-400"> · </span>
+                              <span
+                                className={
+                                  p.remaining > 0 ? 'text-amber-700 dark:text-amber-400' : 'text-gray-500'
+                                }
+                              >
+                                rest {money(p.remaining, p.currency)}
+                              </span>
+                            </p>
+                          ) : (
+                            <p className="mt-0.5 text-xs text-green-700 dark:text-green-400">achitat integral</p>
+                          )}
+                        </div>
+                      ))
                     ) : (
-                      // Won in the CRM, but Payflow has confirmed nothing and
-                      // no deal carries a figure. Saying "0" would be a lie.
+                      // Won in the CRM, but nothing paid is recorded and no
+                      // deal carries a figure. Saying "0" would be a lie.
                       <p className="text-xs text-gray-400">fără plată înregistrată</p>
                     )}
                   </div>
