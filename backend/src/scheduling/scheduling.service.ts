@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException, Logger, Optional } from '@nestjs/common';
 import { BookingMeetingsService } from '../bookings/booking-meetings.service';
+import { canHostMeetings } from '../bookings/calendar-access';
 import { isSlotBookable, LEAD_BOOKING, LEAD_MIN_NOTICE_HOURS, type LeadTimeOptions } from './booking-lead-time';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Between, LessThan, MoreThan, Not } from 'typeorm';
@@ -205,6 +206,12 @@ export class SchedulingService {
       // their row behind, and TypeORM will not load a soft-deleted relation.
       // Without this a lead is offered an hour with someone who has left.
       if (!meetingType.user) continue;
+
+      // It also outlives what the account is for: an admin account in this
+      // workspace carries ten public meeting types. Offering it as free puts a
+      // lead in front of someone who takes no meetings, and POST /bookings now
+      // refuses that host — so the hour must not be offered either.
+      if (!canHostMeetings(meetingType.user)) continue;
 
       const slots = await this.slotsForMeetingType(meetingType, date);
       for (const slot of slots) {

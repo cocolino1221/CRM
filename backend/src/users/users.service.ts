@@ -5,7 +5,7 @@ import {
   BadRequestException,
   ForbiddenException, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Not, Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
 import { User, UserRole, UserStatus } from '../database/entities/user.entity';
@@ -182,7 +182,33 @@ export class UsersService {
     }
 
     if (currentUserId === id && dto.role && dto.role !== user.role) {
-      throw new ForbiddenException('You cannot change your own role from this screen');
+      // What must never happen is a workspace left with nobody who can
+      // administer it. Refusing every self-change was a blunt way to prevent
+      // that: it also blocked a super_admin with an admin colleague, who is
+      // not the dangerous case.
+      const keepsAdministering = [UserRole.SUPER_ADMIN, UserRole.ADMIN].includes(dto.role);
+      if (!keepsAdministering) {
+        const cover = await this.userRepository.count({
+          where: {
+            workspaceId,
+            status: UserStatus.ACTIVE,
+            role: In([UserRole.SUPER_ADMIN, UserRole.ADMIN]),
+            id: Not(id),
+          },
+        });
+        if (cover === 0) {
+          throw new ForbiddenException(
+            'You are the only administrator left. Give someone else an admin role first.',
+          );
+        }
+      }
+
+      // Below super_admin this stays a screen you cannot re-role yourself
+      // from: an admin dropping their own rights is almost always a mistake,
+      // and a colleague can do it for them.
+      if (currentUserRole !== UserRole.SUPER_ADMIN) {
+        throw new ForbiddenException('You cannot change your own role from this screen');
+      }
     }
 
     if (dto.preferences) {
