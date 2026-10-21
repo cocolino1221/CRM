@@ -79,3 +79,51 @@ export function formatBlockedDay(ymd: string): string {
 export function upcomingDays(days: string[], now: Date = new Date()): string[] {
   return days.filter((d) => !isPastDay(d, now)).sort();
 }
+
+const addDaysTo = (ymd: string, n: number): string => {
+  const d = fromYmd(ymd);
+  d.setDate(d.getDate() + n);
+  return toYmd(d);
+};
+
+/** The Monday of the week `ymd` falls in. */
+export function weekStartOf(ymd: string): string {
+  const dow = (fromYmd(ymd).getDay() + 6) % 7;
+  return addDaysTo(ymd, -dow);
+}
+
+/** The seven days of the week starting `monday`. */
+export function weekDays(monday: string): string[] {
+  return Array.from({ length: 7 }, (_, i) => addDaysTo(monday, i));
+}
+
+/** "20 – 26 oct." */
+export function formatWeek(monday: string): string {
+  const days = weekDays(monday);
+  const first = fromYmd(days[0]);
+  const last = fromYmd(days[6]);
+  return first.getMonth() === last.getMonth()
+    ? `${first.getDate()} – ${last.getDate()} ${MONTHS_SHORT_RO[last.getMonth()]}`
+    : `${first.getDate()} ${MONTHS_SHORT_RO[first.getMonth()]} – ${last.getDate()} ${MONTHS_SHORT_RO[last.getMonth()]}`;
+}
+
+/** Blocks every day of the week starting `monday`. */
+export function blockWeek(days: string[], monday: string): string[] {
+  return addDays(days, weekDays(monday));
+}
+
+/**
+ * Repeats the week starting `monday` on the `weeks` weeks after it: each of
+ * those weeks ends up with exactly the same days blocked, so a day freed in
+ * the source is freed in the copies too.
+ */
+export function copyWeek(days: string[], monday: string, weeks: number): string[] {
+  const pattern = weekDays(monday).map((d) => days.includes(d));
+  let next = [...days];
+  for (let w = 1; w <= weeks; w++) {
+    const target = weekDays(addDaysTo(monday, 7 * w));
+    next = next.filter((d) => !target.includes(d));
+    next.push(...target.filter((_, i) => pattern[i]));
+  }
+  return [...new Set(next)].sort();
+}

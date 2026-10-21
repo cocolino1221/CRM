@@ -1,8 +1,9 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import {
+  ArrowLeft,
   Search,
   Bell,
   Plus,
@@ -26,6 +27,7 @@ interface HeaderProps {
 
 export default function Header({ onMenuClick }: HeaderProps) {
   const router = useRouter();
+  const pathname = usePathname();
   const { currentTheme, setTheme } = useTheme();
   const [user, setUser] = useState<any>(null);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
@@ -99,6 +101,19 @@ export default function Header({ onMenuClick }: HeaderProps) {
           aria-label="Open menu"
         >
           <Menu className="h-5 w-5 text-gray-700" />
+        </button>
+      )}
+
+      {/* One step back. Opened straight from a link there is no step to go
+          back to, so it falls back to the dashboard. Pointless on the dashboard itself. */}
+      {pathname !== '/dashboard' && (
+        <button
+          onClick={() => (window.history.length > 1 ? router.back() : router.push('/dashboard'))}
+          className="flex items-center justify-center h-9 w-9 rounded-xl bg-white/50 hover:bg-white shadow-sm transition-all shrink-0 dark:bg-gray-800/60 dark:hover:bg-gray-800"
+          aria-label="Înapoi"
+          title="Înapoi"
+        >
+          <ArrowLeft className="h-4 w-4 text-gray-700 dark:text-gray-200" />
         </button>
       )}
 

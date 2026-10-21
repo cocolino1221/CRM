@@ -5,9 +5,10 @@ import {
 } from 'react-native';
 import {
   Calendar, ChevronLeft, ChevronRight, CheckCircle, Clock,
-  AlertTriangle, Plus, X, Video, User, Phone,
+  AlertTriangle, Plus, X, Video, User, Phone, History,
 } from 'lucide-react-native';
 import { toCalendarBookings, type CalendarBooking } from '../lib/calendar-bookings';
+import PastBookingsSheet from '../components/PastBookingsSheet';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import api from '../lib/api';
 import { useToastStore } from '../stores/toast-store';
@@ -78,6 +79,7 @@ export default function CalendarScreen() {
   const [monthDate, setMonthDate] = useState(new Date());
   const [tasks, setTasks] = useState<CalendarTask[]>([]);
   const [bookings, setBookings] = useState<CalendarBooking[]>([]);
+  const [showPast, setShowPast] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const insets = useSafeAreaInsets();
@@ -171,7 +173,8 @@ export default function CalendarScreen() {
             endDate: endOfMonth(refDate).toISOString(),
           },
         });
-        setBookings(toCalendarBookings(bookingRes.data));
+        // Meetings already over leave the diary; they live under "Trecute".
+        setBookings(toCalendarBookings(bookingRes.data, new Date()));
       } catch {
         setBookings([]);
       }
@@ -269,6 +272,14 @@ export default function CalendarScreen() {
           <View className="bg-white/15 border border-white/20 px-2.5 py-1 rounded-full">
             <Text className="text-[11px] font-semibold text-white">{pendingCount} pending</Text>
           </View>
+          <TouchableOpacity
+            onPress={() => setShowPast(true)}
+            className="flex-row items-center gap-1 bg-white px-2.5 py-1 rounded-full"
+            accessibilityLabel="Programări trecute"
+          >
+            <History size={12} color="#334155" />
+            <Text className="text-[11px] font-semibold text-slate-700">Trecute</Text>
+          </TouchableOpacity>
         </View>
       </View>
 
@@ -397,6 +408,8 @@ export default function CalendarScreen() {
           }
         />
       )}
+
+      <PastBookingsSheet visible={showPast} onClose={() => setShowPast(false)} />
 
       {/* New Task Modal */}
       <Modal visible={showForm} animationType="slide" transparent>

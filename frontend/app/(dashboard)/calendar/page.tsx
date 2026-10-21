@@ -1,11 +1,12 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { ChevronLeft, ChevronRight, Plus, Clock, MapPin, Users, Video, Phone, Mail, Calendar as CalendarIcon, Filter, Search, X, Edit, Trash2, CheckCircle, Loader2, AlertCircle } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Plus, Clock, MapPin, Users, Video, Phone, Mail, Calendar as CalendarIcon, Filter, Search, X, Edit, Trash2, CheckCircle, Loader2, AlertCircle, History } from 'lucide-react';
 import api from '@/lib/api';
 
 import { toCalendarBookings, type CalendarBooking } from '@/lib/calendar-bookings';
 import BookingDetailsModal from '@/components/bookings/BookingDetailsModal';
+import PastBookingsPanel from '@/components/bookings/PastBookingsPanel';
 
 interface Event {
   id: string;
@@ -87,6 +88,7 @@ export default function CalendarPage() {
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [events, setEvents] = useState<Event[]>([]);
   const [bookings, setBookings] = useState<CalendarBooking[]>([]);
+  const [showPast, setShowPast] = useState(false);
   const [openBooking, setOpenBooking] = useState<CalendarBooking | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -180,7 +182,8 @@ export default function CalendarPage() {
             endDate: new Date(endOfMonth.getTime() + 86_399_999).toISOString(),
           },
         })
-        .then((res) => setBookings(toCalendarBookings(res.data)))
+        // Meetings already over leave the diary; they live under "Trecute".
+        .then((res) => setBookings(toCalendarBookings(res.data, new Date())))
         .catch(() => setBookings([]));
     } catch (err: any) {
       console.error('Failed to fetch events:', err);
@@ -623,6 +626,7 @@ export default function CalendarPage() {
   return (
     <div className="space-y-6">
       {openBooking && <BookingDetailsModal booking={openBooking} onClose={() => setOpenBooking(null)} />}
+      {showPast && <PastBookingsPanel onClose={() => setShowPast(false)} />}
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -633,6 +637,14 @@ export default function CalendarPage() {
             Manage your meetings, calls, and deadlines
           </p>
         </div>
+        <div className="flex items-center gap-2">
+        <button
+          onClick={() => setShowPast(true)}
+          className="flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
+        >
+          <History className="h-4 w-4" />
+          Trecute
+        </button>
         <button
           onClick={() => {
             setSelectedDate(new Date());
@@ -644,6 +656,7 @@ export default function CalendarPage() {
           <Plus className="h-4 w-4" />
           New Event
         </button>
+        </div>
       </div>
 
       {/* Stats */}

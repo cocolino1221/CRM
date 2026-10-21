@@ -126,10 +126,12 @@ function endTime(minutes: number): string {
 }
 
 export function weekFromRows(
-  rows: Array<{ dayOfWeek: Weekday; startTime: string; endTime: string }>,
+  rows: Array<{ dayOfWeek: Weekday; startTime: string; endTime: string; isActive?: boolean }>,
 ): WeekUnits {
   const week = emptyWeek();
   for (const row of rows) {
+    // A switched-off row is the "closed all week" marker, not hours.
+    if (row.isActive === false) continue;
     if (!week[row.dayOfWeek]) continue;
     for (const m of intervalToUnits(row)) week[row.dayOfWeek].add(m);
   }
@@ -144,9 +146,16 @@ export function cellState(units: Set<number>, start: number, step: number): 'all
 }
 
 export interface AvailabilityChange {
-  create: Array<{ dayOfWeek: Weekday; startTime: string; endTime: string; isActive: true }>;
+  create: Array<{ dayOfWeek: Weekday; startTime: string; endTime: string; isActive: boolean }>;
   remove: string[];
 }
+
+/**
+ * Saved when a closer clears the whole week. Without it no rows are left,
+ * which reads back as "never set up" and the screen fills the default week
+ * again — the closer's "I am off" was lost on every save.
+ */
+export const CLOSED_WEEK_MARKER = { dayOfWeek: 'monday' as Weekday, startTime: '00:00', endTime: '00:15', isActive: false };
 
 /**
  * What to send so the server ends up matching the grid.
@@ -157,7 +166,7 @@ export interface AvailabilityChange {
  * nobody can see in the grid is what puts a lead on a Sunday call.
  */
 export function planAvailabilityChanges(
-  existing: Array<{ id: string; dayOfWeek: Weekday; startTime: string; endTime: string }>,
+  existing: Array<{ id: string; dayOfWeek: Weekday; startTime: string; endTime: string; isActive?: boolean }>,
   week: WeekUnits,
 ): AvailabilityChange {
   const key = (day: string, start: string, end: string) => `${day}|${start.slice(0, 5)}|${end.slice(0, 5)}`;
@@ -169,13 +178,22 @@ export function planAvailabilityChanges(
   }
 
   const change: AvailabilityChange = { create: [], remove: [] };
+  const closed = wanted.size === 0;
+  let markerKept = false;
   for (const row of existing) {
+    if (row.isActive === false) {
+      // Keep one marker while the week is closed; drop it once hours return.
+      if (closed && !markerKept) markerKept = true;
+      else change.remove.push(row.id);
+      continue;
+    }
     const k = key(row.dayOfWeek, row.startTime, row.endTime);
     // A second identical row is a duplicate: keep the first, drop the rest.
     if (wanted.has(k)) wanted.delete(k);
     else change.remove.push(row.id);
   }
   for (const row of wanted.values()) change.create.push({ ...row, isActive: true });
+  if (closed && !markerKept) change.create.push({ ...CLOSED_WEEK_MARKER });
   return change;
 }
 

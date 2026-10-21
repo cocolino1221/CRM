@@ -63,7 +63,10 @@ export class UserReportService {
       this.q(
         `SELECT "hostId" AS uid,
            count(*) FILTER (WHERE "createdAt" BETWEEN $2 AND $3)::int AS received,
-           count(*) FILTER (WHERE "startTime" BETWEEN $2 AND $3 AND status = 'completed')::int AS held,
+           -- Held: marked so, or over and still confirmed — closers rarely mark
+           -- a meeting that went fine, and only a no-show is worth flagging.
+           count(*) FILTER (WHERE "startTime" BETWEEN $2 AND $3
+             AND (status = 'completed' OR (status = 'confirmed' AND "endTime" < now())))::int AS held,
            count(*) FILTER (WHERE "startTime" BETWEEN $2 AND $3 AND status = 'no_show')::int AS "noShow",
            count(*) FILTER (WHERE "startTime" BETWEEN $2 AND $3 AND status = 'cancelled')::int AS cancelled
          FROM bookings

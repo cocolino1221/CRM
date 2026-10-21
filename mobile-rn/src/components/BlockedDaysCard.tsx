@@ -7,13 +7,18 @@ import {
   MONTHS_RO,
   WEEKDAYS_SHORT_RO,
   addDays,
+  blockWeek,
+  copyWeek,
   formatBlockedDay,
+  formatWeek,
   isPastDay,
   monthGrid,
   nextWeekend,
   toggleDay,
   toYmd,
   upcomingDays,
+  weekDays,
+  weekStartOf,
 } from '../lib/blocked-days';
 
 /**
@@ -27,6 +32,8 @@ export default function BlockedDaysCard() {
   const [saving, setSaving] = useState(false);
   const now = new Date();
   const [cursor, setCursor] = useState({ year: now.getFullYear(), month: now.getMonth() });
+  // The week the copy buttons act on: the one of the last day tapped.
+  const [focusWeek, setFocusWeek] = useState(() => weekStartOf(toYmd(now)));
 
   useEffect(() => {
     api
@@ -124,8 +131,13 @@ export default function BlockedDaysCard() {
                   <TouchableOpacity
                     key={ymd}
                     disabled={past || saving}
-                    onPress={() => persist(toggleDay(days, ymd))}
-                    className="flex-1 h-10 items-center justify-center"
+                    onPress={() => {
+                      setFocusWeek(weekStartOf(ymd));
+                      persist(toggleDay(days, ymd));
+                    }}
+                    className={`flex-1 h-10 items-center justify-center ${
+                      weekStartOf(ymd) === focusWeek ? 'bg-slate-50' : ''
+                    }`}
                     accessibilityLabel={`${formatBlockedDay(ymd)}${blocked ? ', blocată' : ''}`}
                   >
                     <View
@@ -152,6 +164,34 @@ export default function BlockedDaysCard() {
               })}
             </View>
           ))}
+
+          {/* The week last tapped: block it all, or repeat it on the next weeks. */}
+          <View className="mt-2 rounded-xl border border-slate-100 p-3">
+            <View className="flex-row items-center justify-between">
+              <Text className="text-xs font-semibold text-slate-700">Săptămâna {formatWeek(focusWeek)}</Text>
+              <TouchableOpacity
+                onPress={() => persist(blockWeek(days, focusWeek))}
+                disabled={saving || weekDays(focusWeek).every((d) => days.includes(d) || isPastDay(d, now))}
+                className="px-2.5 py-1 rounded-full bg-rose-600"
+              >
+                <Text className="text-[11px] font-semibold text-white">Blochează toată</Text>
+              </TouchableOpacity>
+            </View>
+            <View className="flex-row items-center gap-2 mt-2.5">
+              <Text className="text-[11px] text-slate-500">Copiază pe următoarele:</Text>
+              {[1, 2, 3].map((n) => (
+                <TouchableOpacity
+                  key={n}
+                  onPress={() => persist(copyWeek(days, focusWeek, n))}
+                  disabled={saving}
+                  className="px-3 py-1 rounded-full bg-slate-100"
+                  accessibilityLabel={`Copiază săptămâna pe următoarele ${n}`}
+                >
+                  <Text className="text-[11px] font-semibold text-slate-700">{n} săpt.</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
 
           <TouchableOpacity
             onPress={() => persist(addDays(days, nextWeekend(now)))}

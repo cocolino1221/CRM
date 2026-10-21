@@ -7,13 +7,18 @@ import {
   MONTHS_RO,
   WEEKDAYS_SHORT_RO,
   addDays,
+  blockWeek,
+  copyWeek,
   formatBlockedDay,
+  formatWeek,
   isPastDay,
   monthGrid,
   nextWeekend,
   toggleDay,
   toYmd,
   upcomingDays,
+  weekDays,
+  weekStartOf,
 } from '@/lib/blocked-days';
 
 /**
@@ -27,6 +32,8 @@ export default function BlockedDaysCard() {
   const [error, setError] = useState('');
   const now = new Date();
   const [cursor, setCursor] = useState({ year: now.getFullYear(), month: now.getMonth() });
+  // The week the copy buttons act on: the one of the last day clicked.
+  const [focusWeek, setFocusWeek] = useState(() => weekStartOf(toYmd(now)));
 
   useEffect(() => {
     api
@@ -125,7 +132,10 @@ export default function BlockedDaysCard() {
                       key={ymd}
                       type="button"
                       disabled={past || saving}
-                      onClick={() => persist(toggleDay(days, ymd))}
+                      onClick={() => {
+                        setFocusWeek(weekStartOf(ymd));
+                        persist(toggleDay(days, ymd));
+                      }}
                       title={formatBlockedDay(ymd)}
                       className={`mx-auto flex h-8 w-8 items-center justify-center rounded-full text-xs transition ${
                         blocked
@@ -140,6 +150,37 @@ export default function BlockedDaysCard() {
                   );
                 })}
             </div>
+            {/* The week last clicked: block it all, or repeat it on the next weeks. */}
+            <div className="mt-3 rounded-xl border border-gray-100 p-3 dark:border-gray-700">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-semibold text-gray-700 dark:text-gray-200">
+                  Săptămâna {formatWeek(focusWeek)}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => persist(blockWeek(days, focusWeek))}
+                  disabled={saving || weekDays(focusWeek).every((d) => days.includes(d) || isPastDay(d, now))}
+                  className="rounded-full bg-rose-600 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-rose-700 disabled:opacity-40"
+                >
+                  Blochează toată
+                </button>
+              </div>
+              <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                <span className="text-[11px] text-gray-500">Copiază pe următoarele:</span>
+                {[1, 2, 3].map((n) => (
+                  <button
+                    key={n}
+                    type="button"
+                    onClick={() => persist(copyWeek(days, focusWeek, n))}
+                    disabled={saving}
+                    className="rounded-full bg-gray-100 px-2.5 py-1 text-[11px] font-semibold text-gray-700 hover:bg-gray-200 disabled:opacity-40 dark:bg-gray-700 dark:text-gray-200"
+                  >
+                    {n} săpt.
+                  </button>
+                ))}
+              </div>
+            </div>
+
             <button
               type="button"
               onClick={() => persist(addDays(days, weekend))}

@@ -31,10 +31,15 @@ function fullName(person: any): string {
 }
 
 export function toCalendarBooking(row: any): CalendarBooking | null {
+  // Cancelled and no-show bookings are not appointments any more.
+  if (row?.status && row.status !== 'confirmed' && row.status !== 'pending') return null;
+  return describeBooking(row);
+}
+
+/** A booking row as the screens show it, whatever its status. */
+function describeBooking(row: any): CalendarBooking | null {
   if (!row?.id || !row?.startTime) return null;
   if (Number.isNaN(new Date(row.startTime).getTime())) return null;
-  // Cancelled and no-show bookings are not appointments any more.
-  if (row.status && row.status !== 'confirmed' && row.status !== 'pending') return null;
 
   const link = /^https?:\/\//i.test(String(row.location || '')) ? String(row.location) : undefined;
   const type = String(row.locationType || '').toLowerCase();
@@ -60,10 +65,81 @@ export function toCalendarBooking(row: any): CalendarBooking | null {
   };
 }
 
-export function toCalendarBookings(rows: unknown): CalendarBooking[] {
+/**
+ * The bookings for the calendar. Given `now`, meetings already over are left
+ * out: they move to the "Trecute" list instead of cluttering the diary.
+ */
+export function toCalendarBookings(rows: unknown, now?: Date): CalendarBooking[] {
   if (!Array.isArray(rows)) return [];
   return rows
+    .filter((row) => !now || !isPastBooking(row, now))
     .map(toCalendarBooking)
     .filter((b): b is CalendarBooking => Boolean(b))
     .sort((a, b) => a.startTime.localeCompare(b.startTime));
 }
+
+/** When the meeting ends: its end time, else start + duration (an hour if unknown). */
+export function bookingEndMs(row: any): number {
+  const end = row?.endTime ? new Date(row.endTime).getTime() : NaN;
+  if (!Number.isNaN(end)) return end;
+  const start = new Date(row?.startTime).getTime();
+  return start + (Number(row?.duration) || 60) * 60_000;
+}
+
+export function isPastBooking(row: any, now: Date = new Date()): boolean {
+  return bookingEndMs(row) <= now.getTime();
+}
+
+export type BookingStatus = 'confirmed' | 'pending' | 'completed' | 'no_show' | 'cancelled';
+
+export interface PastBooking extends CalendarBooking {
+  status: BookingStatus;
+}
+
+/** Meetings already over, newest first, with what became of them. */
+export function toPastBookings(rows: unknown, now: Date = new Date()): PastBooking[] {
+  if (!Array.isArray(rows)) return [];
+  return rows
+    .filter((row) => isPastBooking(row, now))
+    .map((row) => {
+      const b = describeBooking(row);
+      return b ? { ...b, status: (String(row.status || 'confirmed') as BookingStatus) } : null;
+    })
+    .filter((b): b is PastBooking => Boolean(b))
+    .sort((a, b) => b.startTime.localeCompare(a.startTime));
+}
+
+export interface PastStats {
+  /** Every meeting that was due, cancelled ones included. */
+  total: number;
+  /** Took place: marked held, or still confirmed (nobody said otherwise). */
+  held: number;
+  /** Still "confirmed": nobody marked it held or no-show yet. */
+  unmarked: number;
+  noShow: number;
+  cancelled: number;
+  /** Held with a Zoom or Meet link. */
+  online: number;
+}
+
+export function pastStats(list: PastBooking[]): PastStats {
+  const stats: PastStats = { total: list.length, held: 0, unmarked: 0, noShow: 0, cancelled: 0, online: 0 };
+  for (const b of list) {
+    if (b.status === 'cancelled') stats.cancelled++;
+    else if (b.status === 'no_show') stats.noShow++;
+    else {
+      stats.held++;
+      if (b.status !== 'completed') stats.unmarked++;
+      if (b.link) stats.online++;
+    }
+  }
+  return stats;
+}
+
+export const PAST_STATUS_LABEL: Record<BookingStatus, string> = {
+  completed: 'Ținută',
+  confirmed: 'Nemarcată',
+  pending: 'Nemarcată',
+  no_show: 'No-show',
+  cancelled: 'Anulată',
+};
