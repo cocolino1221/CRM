@@ -19,7 +19,7 @@ import { buildLeadNotification, shouldNotifyLeadSource } from './lead-notificati
 import { GoogleSheetsService } from '../integrations/google-sheets/google-sheets.service';
 import { MetaConversionsService } from '../integrations/meta-conversions/meta-conversions.service';
 import { applyLeadBucket, outcomesFor } from './lead-bucket';
-import { normalizeTagFilter, tagsOverlapCondition } from '../common/utils/simple-array-tags.util';
+import { mergeTags, normalizeTagFilter, normalizeTags, tagKey, tagsOverlapCondition } from '../common/utils/simple-array-tags.util';
 
 export interface ContactsListResult {
   contacts: Contact[];
@@ -235,31 +235,6 @@ export class ContactsService {
     ContactSource.WOOCOMMERCE,
   ]);
 
-  private normalizeTag(tag: unknown): string {
-    return String(tag || '').trim().replace(/\s+/g, ' ');
-  }
-
-  private dedupeTags(tags?: unknown[]): string[] {
-    if (!Array.isArray(tags)) return [];
-    const seen = new Set<string>();
-    const result: string[] = [];
-
-    for (const tag of tags) {
-      const normalized = this.normalizeTag(tag);
-      if (!normalized) continue;
-      const key = normalized.toLowerCase();
-      if (seen.has(key)) continue;
-      seen.add(key);
-      result.push(normalized);
-    }
-
-    return result;
-  }
-
-  private mergeTags(existing?: unknown[], incoming?: unknown[]): string[] {
-    return this.dedupeTags([...(Array.isArray(existing) ? existing : []), ...(Array.isArray(incoming) ? incoming : [])]);
-  }
-
   private async moveTaggedContactToContactedStage(workspaceId: string, contact: Contact): Promise<boolean> {
     if (!Array.isArray(contact.tags) || contact.tags.length === 0) {
       return false;
@@ -396,9 +371,9 @@ export class ContactsService {
     if (typeof dto.leadScore === 'number') next.leadScore = dto.leadScore;
     if (typeof dto.emailOptIn === 'boolean') next.emailOptIn = dto.emailOptIn;
 
-    const incomingTags = this.dedupeTags(dto.tags);
+    const incomingTags = normalizeTags(dto.tags);
     if (incomingTags.length > 0) {
-      next.tags = this.mergeTags(next.tags, incomingTags);
+      next.tags = mergeTags(next.tags, incomingTags);
     }
 
     if (dto.leadScore === undefined) {
@@ -525,7 +500,7 @@ export class ContactsService {
     const contact = this.contactRepository.create({
       ...dto,
       phoneNormalized: normalizedPhone || undefined,
-      tags: this.dedupeTags(dto.tags),
+      tags: normalizeTags(dto.tags),
       workspaceId,
       pipelineId: pipelineId || dto.pipelineId,
       pipelineStageId: pipelineStageId || dto.pipelineStageId,
@@ -641,7 +616,7 @@ export class ContactsService {
     // Update contact
     Object.assign(contact, dto);
     if (dto.tags !== undefined) {
-      contact.tags = this.dedupeTags(dto.tags);
+      contact.tags = normalizeTags(dto.tags);
     }
 
     // Recalculate lead score if relevant fields changed
@@ -1150,7 +1125,7 @@ export class ContactsService {
     for (const contact of contactsToMerge) {
       // Merge tags
       if (contact.tags && contact.tags.length > 0) {
-        primaryContact.tags = [...new Set([...(primaryContact.tags || []), ...contact.tags])];
+        primaryContact.tags = mergeTags(primaryContact.tags, contact.tags);
       }
 
       // Keep the best lead score
@@ -1224,7 +1199,7 @@ export class ContactsService {
   async addTags(workspaceId: string, contactId: string, tags: string[]): Promise<Contact> {
     const contact = await this.findOne(workspaceId, contactId);
 
-    const mergedTags = this.mergeTags(contact.tags, tags);
+    const mergedTags = mergeTags(contact.tags, tags);
     if (mergedTags.length !== (contact.tags || []).length) {
       contact.tags = mergedTags;
       await this.moveTaggedContactToContactedStage(workspaceId, contact);
@@ -1239,8 +1214,8 @@ export class ContactsService {
     const contact = await this.findOne(workspaceId, contactId);
 
     if (contact.tags && contact.tags.length > 0) {
-      const toRemove = new Set(this.dedupeTags(tags).map(tag => tag.toLowerCase()));
-      contact.tags = contact.tags.filter(tag => !toRemove.has(this.normalizeTag(tag).toLowerCase()));
+      const toRemove = new Set(normalizeTags(tags).map(tagKey));
+      contact.tags = contact.tags.filter(tag => !toRemove.has(tagKey(tag)));
       await this.contactRepository.save(contact);
       this.logger.log(`Removed tags from contact ${contactId}`);
     }

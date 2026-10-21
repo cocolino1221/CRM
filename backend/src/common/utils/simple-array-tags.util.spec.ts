@@ -1,4 +1,71 @@
-import { normalizeTagFilter, tagsOverlapCondition } from './simple-array-tags.util';
+import {
+  mergeTags,
+  normalizeTagFilter,
+  normalizeTags,
+  tagKey,
+  tagsOverlapCondition,
+} from './simple-array-tags.util';
+
+// A `simple-array` column joins its values with a comma and escapes nothing, so
+// a comma inside a tag reads back as two tags. Splitting on write is what makes
+// what was stored and what is read agree.
+describe('normalizeTags', () => {
+  it('splits a tag that contains a comma, because the column cannot hold one', () => {
+    expect(normalizeTags(['Oradea, Bihor'])).toEqual(['Oradea', 'Bihor']);
+  });
+
+  it('splits a comma-separated string pasted as a single tag', () => {
+    expect(normalizeTags('vip,urgent')).toEqual(['vip', 'urgent']);
+  });
+
+  it('drops the empty pieces a stray comma leaves behind', () => {
+    expect(normalizeTags([',vip,', ',,'])).toEqual(['vip']);
+  });
+
+  it('keeps the case the tag was typed in', () => {
+    expect(normalizeTags(['VIP', 'Typeform'])).toEqual(['VIP', 'Typeform']);
+  });
+
+  it('trims and collapses whitespace, including around a comma', () => {
+    expect(normalizeTags([' de   sunat ', 'a ,  b '])).toEqual(['de sunat', 'a', 'b']);
+  });
+
+  it('keeps the first spelling when two tags differ only in case', () => {
+    expect(normalizeTags(['VIP', 'vip', 'Vip'])).toEqual(['VIP']);
+  });
+
+  it('drops blanks and non-strings', () => {
+    expect(normalizeTags(['', '   ', null, undefined])).toEqual([]);
+    expect(normalizeTags(undefined)).toEqual([]);
+  });
+});
+
+describe('mergeTags', () => {
+  it('adds only what is new, case-insensitively', () => {
+    expect(mergeTags(['VIP', 'typeform'], ['vip', 'urgent'])).toEqual(['VIP', 'typeform', 'urgent']);
+  });
+
+  it('splits commas in what is being added', () => {
+    expect(mergeTags(['vip'], ['urgent, nou'])).toEqual(['vip', 'urgent', 'nou']);
+  });
+
+  it('cleans up a list that was stored before this was enforced', () => {
+    expect(mergeTags(['vip', 'VIP', ''], [])).toEqual(['vip']);
+  });
+
+  it('copes with either side missing', () => {
+    expect(mergeTags(undefined, ['vip'])).toEqual(['vip']);
+    expect(mergeTags(['vip'], undefined)).toEqual(['vip']);
+  });
+});
+
+describe('tagKey', () => {
+  it('is what makes two spellings of one tag compare equal', () => {
+    expect(tagKey('  De   Sunat ')).toBe('de sunat');
+    expect(tagKey('VIP')).toBe(tagKey('vip'));
+  });
+});
+
 
 describe('normalizeTagFilter', () => {
   it('lowercases every tag, because tags are stored in whatever case they were typed', () => {
@@ -15,6 +82,10 @@ describe('normalizeTagFilter', () => {
 
   it('accepts a single tag that did not arrive as an array', () => {
     expect(normalizeTagFilter('VIP')).toEqual(['vip']);
+  });
+
+  it('splits a comma-separated search the same way a write does', () => {
+    expect(normalizeTagFilter(['VIP, Urgent'])).toEqual(['vip', 'urgent']);
   });
 
   it('returns nothing for no input', () => {
