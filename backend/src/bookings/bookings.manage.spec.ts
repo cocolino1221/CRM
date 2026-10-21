@@ -79,7 +79,10 @@ describe('BookingsService — moving and cancelling', () => {
               };
               return qb;
             },
-            findOne: jest.fn(async () => stored),
+            // A host who was deleted loads as host: null, the way TypeORM does it.
+            findOne: jest.fn(async ({ relations }: any = {}) =>
+              relations?.includes('host') ? { ...stored, host: stored.hostDeleted ? null : { id: stored.hostId } } : stored,
+            ),
             save: jest.fn(async (b) => (saved.push({ ...b }), b)),
           },
         },
@@ -99,7 +102,7 @@ describe('BookingsService — moving and cancelling', () => {
             ]),
           },
         },
-        { provide: getRepositoryToken(User), useValue: { findOne: jest.fn(async ({ where }) => where.id === 'closer-1' ? closer : other) } },
+        { provide: getRepositoryToken(User), useValue: { findOne: jest.fn(async ({ where }) => where.id === 'closer-1' ? closer : where.id === 'boss' ? { id: 'boss', role: 'admin' } : other) } },
       ],
     }).compile();
 
@@ -137,6 +140,17 @@ describe('BookingsService — moving and cancelling', () => {
     await expect(service.cancel(WORKSPACE, 'b1', 'closer-2', 'x')).rejects.toBeInstanceOf(ForbiddenException);
     const result = await service.cancel(WORKSPACE, 'b1', 'closer-1', 'Lead-ul a cerut');
     expect(result.status).toBe(BookingStatus.CANCELLED);
+  });
+
+  // Saving a booking whose host relation loaded as null wrote hostId = NULL
+  // and Postgres refused it: an admin could not cancel a deleted closer's booking.
+  it('cancels a booking whose closer was deleted', async () => {
+    stored.hostDeleted = true;
+    await service.cancel(WORKSPACE, 'b1', 'boss', 'Closerul a plecat');
+    const written = saved[saved.length - 1];
+    expect(written.status).toBe(BookingStatus.CANCELLED);
+    expect(written.hostId).toBe('closer-1');
+    expect(written.host).not.toBeNull();
   });
 
   it('lets only its closer change its status', async () => {

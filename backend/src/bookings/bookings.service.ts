@@ -246,9 +246,11 @@ export class BookingsService {
   }
 
   async cancel(workspaceId: string, id: string, userId: string, reason?: string) {
+    // No host relation: a deleted closer loads as host: null, and saving that
+    // writes hostId = NULL, which Postgres refuses — the booking could never
+    // be cancelled.
     const booking = await this.bookingRepository.findOne({
       where: { id, workspaceId, deletedAt: null },
-      relations: ['host'],
     });
 
     if (!booking) {
