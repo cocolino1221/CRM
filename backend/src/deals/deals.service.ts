@@ -12,6 +12,7 @@ import { Deal, DealStage } from '../database/entities/deal.entity';
 import { CreateDealDto } from './dto/create-deal.dto';
 import { UpdateDealDto } from './dto/update-deal.dto';
 import { QueryDealsDto } from './dto/query-deals.dto';
+import { normalizeTagFilter, tagsOverlapCondition } from '../common/utils/simple-array-tags.util';
 
 @Injectable()
 export class DealsService {
@@ -89,8 +90,9 @@ export class DealsService {
       queryBuilder.andWhere('deal.companyId = :companyId', { companyId });
     }
 
-    if (tag) {
-      queryBuilder.andWhere(':tag = ANY(deal.tags)', { tag });
+    const tagFilter = normalizeTagFilter(tag);
+    if (tagFilter.length > 0) {
+      queryBuilder.andWhere(tagsOverlapCondition('deal.tags'), { tags: tagFilter });
     }
 
     if (minValue !== undefined) {

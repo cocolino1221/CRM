@@ -19,6 +19,7 @@ import { buildLeadNotification, shouldNotifyLeadSource } from './lead-notificati
 import { GoogleSheetsService } from '../integrations/google-sheets/google-sheets.service';
 import { MetaConversionsService } from '../integrations/meta-conversions/meta-conversions.service';
 import { applyLeadBucket, outcomesFor } from './lead-bucket';
+import { normalizeTagFilter, tagsOverlapCondition } from '../common/utils/simple-array-tags.util';
 
 export interface ContactsListResult {
   contacts: Contact[];
@@ -975,8 +976,9 @@ export class ContactsService {
       queryBuilder.andWhere('contact.pipelineStageId = :pipelineStageId', { pipelineStageId });
     }
 
-    if (tags && tags.length > 0) {
-      queryBuilder.andWhere('contact.tags && :tags', { tags });
+    const tagFilter = normalizeTagFilter(tags);
+    if (tagFilter.length > 0) {
+      queryBuilder.andWhere(tagsOverlapCondition('contact.tags'), { tags: tagFilter });
     }
 
     if (minLeadScore !== undefined) {
