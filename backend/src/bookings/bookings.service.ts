@@ -7,6 +7,7 @@ import { User } from '../database/entities/user.entity';
 import { canManageBooking } from './booking-permissions';
 import { CALENDAR_ROLES, canHostMeetings, hasTimeOfDay } from './calendar-access';
 import { BookingMeetingsService } from './booking-meetings.service';
+import { blockedDaysOf, hostZoneOf, isBlockedAt } from '../scheduling/blocked-days';
 
 @Injectable()
 export class BookingsService {
@@ -79,6 +80,12 @@ export class BookingsService {
     });
 
     if (availabilities.length === 0) {
+      return [];
+    }
+
+    // A whole day the host took off.
+    const host = await this.userRepository.findOne({ where: { id: hostId } });
+    if (blockedDaysOf(host).includes(date.toISOString().slice(0, 10))) {
       return [];
     }
 
@@ -402,6 +409,9 @@ export class BookingsService {
     const rows = await this.availabilityRepository.find({
       where: { workspaceId, userId: hostId },
     });
+    // A whole day off beats the weekly hours.
+    const host = await this.userRepository.findOne({ where: { id: hostId } });
+    if (isBlockedAt(blockedDaysOf(host), startTime, hostZoneOf(rows))) return false;
     // Zero rows means the host never configured a week. A row switched off is
     // the opposite: a deliberate "not then", which must still be enforced.
     if (rows.length === 0) return true;

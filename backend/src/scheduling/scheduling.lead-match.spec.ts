@@ -13,6 +13,8 @@ import { ContactsService } from '../contacts/contacts.service';
  * A public booking must land on the lead Typeform or WooCommerce already
  * created. A miss books a stranger and leaves the real lead in De sunat.
  */
+let hostRow: any = null;
+
 describe('SchedulingService — which lead a booking belongs to', () => {
   let service: SchedulingService;
   let results: Array<Contact | null>;
@@ -39,7 +41,7 @@ describe('SchedulingService — which lead a booking belongs to', () => {
         { provide: getRepositoryToken(Availability), useValue: {} },
         { provide: getRepositoryToken(MeetingType), useValue: {} },
         { provide: getRepositoryToken(Booking), useValue: {} },
-        { provide: getRepositoryToken(User), useValue: {} },
+        { provide: getRepositoryToken(User), useValue: { findOne: jest.fn(async () => hostRow) } },
         { provide: getRepositoryToken(Contact), useValue: { createQueryBuilder } },
         { provide: NotificationsService, useValue: {} },
         { provide: ContactsService, useValue: {} },

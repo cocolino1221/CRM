@@ -17,6 +17,8 @@ import { ContactsService } from '../contacts/contacts.service';
  * back empty. Found on a real page, where a departed colleague was offered
  * for booking under the label "Coleg".
  */
+let hostRow: any = null;
+
 describe('SchedulingService — getTeamSlots only offers people who are still here', () => {
   let service: SchedulingService;
   let meetingTypes: any[];
@@ -40,7 +42,7 @@ describe('SchedulingService — getTeamSlots only offers people who are still he
           },
         },
         { provide: getRepositoryToken(Booking), useValue: {} },
-        { provide: getRepositoryToken(User), useValue: {} },
+        { provide: getRepositoryToken(User), useValue: { findOne: jest.fn(async () => hostRow) } },
         { provide: getRepositoryToken(Contact), useValue: {} },
         { provide: NotificationsService, useValue: {} },
         { provide: ContactsService, useValue: {} },

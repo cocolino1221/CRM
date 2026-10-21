@@ -12,6 +12,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { CalendarClock, ChevronLeft, Copy, Eraser, Info } from 'lucide-react-native';
 import api from '../lib/api';
+import BlockedDaysCard from '../components/BlockedDaysCard';
 import { useToastStore } from '../stores/toast-store';
 import {
   SLOT_INTERVALS,
@@ -387,6 +388,9 @@ export default function AvailabilityScreen() {
               </Text>
             </TouchableOpacity>
           </View>
+
+          {/* ---------- whole days off ---------- */}
+          <BlockedDaysCard />
 
           {/* ---------- the week at a glance ---------- */}
           <View className="rounded-2xl bg-white border border-slate-100 overflow-hidden">

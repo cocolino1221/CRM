@@ -18,6 +18,8 @@ import { ContactsService } from '../contacts/contacts.service';
  * would let any of them move or delete a colleague's week — a lead would then
  * be offered an hour that colleague never agreed to, and nobody would see why.
  */
+let hostRow: any = null;
+
 describe('SchedulingService — availability belongs to one person', () => {
   let service: SchedulingService;
   let rows: any[];
@@ -96,7 +98,7 @@ describe('SchedulingService — availability belongs to one person', () => {
           },
         },
         { provide: getRepositoryToken(Booking), useValue: {} },
-        { provide: getRepositoryToken(User), useValue: {} },
+        { provide: getRepositoryToken(User), useValue: { findOne: jest.fn(async () => hostRow) } },
         { provide: getRepositoryToken(Contact), useValue: {} },
         { provide: NotificationsService, useValue: {} },
         { provide: ContactsService, useValue: {} },

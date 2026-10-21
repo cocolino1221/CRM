@@ -14,6 +14,8 @@ import { ContactsService } from '../contacts/contacts.service';
  * their calendar. The person who has to take the call is the one who needs to
  * know, so the notification goes to them alone, not to the workspace.
  */
+let hostRow: any = null;
+
 describe('SchedulingService — booking notifies its host', () => {
   let service: SchedulingService;
   let create: jest.Mock;
@@ -58,7 +60,7 @@ describe('SchedulingService — booking notifies its host', () => {
             save: jest.fn().mockImplementation((b) => Promise.resolve({ ...b, id: 'b1' })),
           },
         },
-        { provide: getRepositoryToken(User), useValue: {} },
+        { provide: getRepositoryToken(User), useValue: { findOne: jest.fn(async () => hostRow) } },
         {
           provide: getRepositoryToken(Contact),
           useValue: {

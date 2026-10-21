@@ -17,6 +17,8 @@ import { ContactsService } from '../contacts/contacts.service';
  * lead in front of someone who takes no meetings, and the booking endpoint
  * now refuses exactly that — so the hour must not be offered either.
  */
+let hostRow: any = null;
+
 describe('SchedulingService — only calendar roles are offered as hosts', () => {
   let service: SchedulingService;
   let meetingTypes: any[];
@@ -59,7 +61,7 @@ describe('SchedulingService — only calendar roles are offered as hosts', () =>
           useValue: { find: jest.fn().mockImplementation(async () => meetingTypes) },
         },
         { provide: getRepositoryToken(Booking), useValue: { find: jest.fn().mockResolvedValue([]) } },
-        { provide: getRepositoryToken(User), useValue: {} },
+        { provide: getRepositoryToken(User), useValue: { findOne: jest.fn(async () => hostRow) } },
         { provide: getRepositoryToken(Contact), useValue: {} },
         { provide: NotificationsService, useValue: {} },
         { provide: ContactsService, useValue: {} },

@@ -15,6 +15,8 @@ import { ContactsService } from '../contacts/contacts.service';
  * A closer types their day in their own clock, in as many windows as they
  * like; the lead must see exactly those windows, cut at the closer's step.
  */
+let hostRow: any = null;
+
 describe('SchedulingService — public slots', () => {
   let service: SchedulingService;
   let rows: any[];
@@ -22,6 +24,7 @@ describe('SchedulingService — public slots', () => {
   let meetingType: any;
 
   beforeEach(async () => {
+    hostRow = null;
     rows = [];
     bookings = [];
     meetingType = {
@@ -41,7 +44,7 @@ describe('SchedulingService — public slots', () => {
         { provide: getRepositoryToken(Availability), useValue: { find: jest.fn(async () => rows) } },
         { provide: getRepositoryToken(MeetingType), useValue: { findOne: jest.fn(async () => meetingType) } },
         { provide: getRepositoryToken(Booking), useValue: { find: jest.fn(async () => bookings) } },
-        { provide: getRepositoryToken(User), useValue: {} },
+        { provide: getRepositoryToken(User), useValue: { findOne: jest.fn(async () => hostRow) } },
         { provide: getRepositoryToken(Contact), useValue: {} },
         { provide: NotificationsService, useValue: {} },
         { provide: ContactsService, useValue: {} },
@@ -61,6 +64,15 @@ describe('SchedulingService — public slots', () => {
 
     // Bucharest is UTC+2 in January.
     expect(await starts()).toEqual(['2030-01-07T07:00:00.000Z', '2030-01-07T07:30:00.000Z']);
+  });
+
+  it('offers nothing on a day the closer blocked, and the usual hours the day after', async () => {
+    rows = [{ dayOfWeek: 'monday', startTime: '09:00', endTime: '10:00', timezone: 'UTC' }];
+    hostRow = { id: 'closer-1', preferences: { blockedDays: [DAY] } };
+    expect(await starts()).toEqual([]);
+
+    hostRow = { id: 'closer-1', preferences: { blockedDays: ['2030-01-08'] } };
+    expect(await starts()).toHaveLength(2);
   });
 
   it('offers every window of a split day, in order', async () => {

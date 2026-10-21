@@ -20,6 +20,7 @@ import { UserRole, UserStatus } from '../database/entities/user.entity';
 import { BookingFormService } from './booking-form.service';
 import { answeredPairs, answersAsNotes, bookingFormError } from './booking-form';
 import { withAnswerNotes } from '../contacts/contact-notes';
+import { blockedDaysOf, hostZoneOf, isBlockedAt, normalizeBlockedDays } from './blocked-days';
 
 @Injectable()
 export class SchedulingService {
@@ -41,6 +42,35 @@ export class SchedulingService {
     @Optional() private readonly meetings?: BookingMeetingsService,
     @Optional() private readonly bookingForms?: BookingFormService,
   ) {}
+
+  // ========== Days off ==========
+
+  async getBlockedDays(workspaceId: string, userId: string): Promise<string[]> {
+    const user = await this.userRepository.findOne({ where: { id: userId, workspaceId } });
+    return normalizeBlockedDays(blockedDaysOf(user));
+  }
+
+  /** Replaces the host's list of whole days off. */
+  async setBlockedDays(workspaceId: string, userId: string, days: unknown): Promise<string[]> {
+    const user = await this.userRepository.findOne({ where: { id: userId, workspaceId } });
+    if (!user) throw new NotFoundException('User not found');
+    const blockedDays = normalizeBlockedDays(days);
+    await this.userRepository.update(
+      { id: userId, workspaceId },
+      { preferences: { ...(user.preferences ?? {}), blockedDays } },
+    );
+    this.logger.log(`Blocked days set for ${userId}: ${blockedDays.length}`);
+    return blockedDays;
+  }
+
+  /** True when `at` lands on a day the host blocked, read in the host's zone. */
+  private async isHostDayBlocked(hostId: string, at: Date): Promise<boolean> {
+    const host = await this.userRepository.findOne({ where: { id: hostId } });
+    const days = blockedDaysOf(host);
+    if (!days.length) return false;
+    const rows = await this.availabilityRepository.find({ where: { userId: hostId, deletedAt: null as any } });
+    return isBlockedAt(days, at, hostZoneOf(rows));
+  }
 
   // ========== Availability Management ==========
 
@@ -252,6 +282,12 @@ export class SchedulingService {
       return [];
     }
 
+    // A whole day the closer took off: nothing to offer.
+    const host = await this.userRepository.findOne({ where: { id: meetingType.userId } });
+    if (blockedDaysOf(host).includes(ymd)) {
+      return [];
+    }
+
     // The closer's day can start up to 14h either side of UTC midnight, so the
     // bookings window is widened by a day each way; the overlap check below is
     // exact.
@@ -458,6 +494,10 @@ export class SchedulingService {
       );
     }
 
+    if (await this.isHostDayBlocked(meetingType.userId, startTime)) {
+      throw new BadRequestException('Closerul nu lucrează în această zi. Alege altă zi.');
+    }
+
     // Check if slot is still available
     const existingBooking = await this.bookingRepository.findOne({
       where: {
@@ -643,6 +683,10 @@ export class SchedulingService {
       throw new BadRequestException(
         `Programarea se poate muta doar cu cel puțin ${LEAD_MIN_NOTICE_HOURS} ore înainte de noua oră.`,
       );
+    }
+
+    if (await this.isHostDayBlocked(booking.hostId, newStartTime)) {
+      throw new BadRequestException('Closerul nu lucrează în această zi. Alege altă zi.');
     }
 
     const endTime = new Date(newStartTime.getTime() + booking.duration * 60000);

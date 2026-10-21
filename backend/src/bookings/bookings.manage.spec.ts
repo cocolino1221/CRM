@@ -116,6 +116,16 @@ describe('BookingsService — moving and cancelling', () => {
     expect(excluded).toBe('b1');
   });
 
+  it('refuses to move it onto a day the closer blocked', async () => {
+    (closer as any).preferences = { blockedDays: ['2030-01-07'] };
+    try {
+      await expect(service.reschedule(WORKSPACE, 'b1', closer, MONDAY_11)).rejects.toBeInstanceOf(BadRequestException);
+      expect(saved).toHaveLength(0);
+    } finally {
+      delete (closer as any).preferences;
+    }
+  });
+
   it('refuses another closer', async () => {
     await expect(service.reschedule(WORKSPACE, 'b1', other, MONDAY_11)).rejects.toBeInstanceOf(ForbiddenException);
     expect(saved).toHaveLength(0);

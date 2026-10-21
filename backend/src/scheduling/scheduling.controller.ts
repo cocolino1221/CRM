@@ -86,6 +86,33 @@ export class SchedulingController {
     return this.brandingService.set(workspaceId, body);
   }
 
+  // ========== Days off ==========
+
+  @Get('blocked-days')
+  @UseGuards(JwtAuthGuard, WorkspaceGuard, RolesGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'My whole days off (YYYY-MM-DD), today onwards' })
+  @Roles('super_admin', 'admin', 'manager', 'sales_rep', 'closer', 'setter', 'caller', 'support_agent')
+  async getBlockedDays(
+    @CurrentWorkspace('id') workspaceId: string,
+    @CurrentUser('id') userId: string,
+  ) {
+    return { days: await this.schedulingService.getBlockedDays(workspaceId, userId) };
+  }
+
+  @Put('blocked-days')
+  @UseGuards(JwtAuthGuard, WorkspaceGuard, RolesGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Replace my whole days off: no bookings land on them' })
+  @Roles('super_admin', 'admin', 'manager', 'sales_rep', 'closer', 'setter', 'caller', 'support_agent')
+  async setBlockedDays(
+    @CurrentWorkspace('id') workspaceId: string,
+    @CurrentUser('id') userId: string,
+    @Body('days') days: unknown,
+  ) {
+    return { days: await this.schedulingService.setBlockedDays(workspaceId, userId, days) };
+  }
+
   // ========== Availability Endpoints ==========
 
   @Post('availability')
