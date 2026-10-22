@@ -595,7 +595,14 @@ export class GoogleIntegrationHandler implements IntegrationHandler {
     event: { summary: string; description?: string; startTime: string; endTime: string; timezone?: string; attendeeEmails?: string[] },
   ): Promise<any> {
     const url = 'https://www.googleapis.com/calendar/v3/calendars/primary/events';
-    return this.sheetsRequest(integration, 'post', url, { conferenceDataVersion: '1' }, {
+    // sendUpdates: Google's own invitation reaches the lead, so the meeting
+    // lands in their calendar instead of waiting behind the "add to calendar"
+    // link in our email. Without it the API notifies nobody, and the lead was
+    // an attendee on an event they never heard about.
+    //
+    // They do get two emails for a Meet booking — ours and Google's — which
+    // is the price of the meeting being in their calendar without a click.
+    return this.sheetsRequest(integration, 'post', url, { conferenceDataVersion: '1', sendUpdates: 'all' }, {
       summary: event.summary,
       description: event.description,
       start: { dateTime: event.startTime, timeZone: event.timezone || 'UTC' },
