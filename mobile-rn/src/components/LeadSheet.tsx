@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Linking,
-  Modal,
   Platform,
   ScrollView,
   Text,
@@ -11,6 +10,7 @@ import {
   View,
 } from 'react-native';
 import { useKeyboardSheet } from '../lib/use-keyboard-sheet';
+import SheetHost from './SheetHost';
 import { Mail, MessageCircle, Phone } from 'lucide-react-native';
 import api from '../lib/api';
 import {
@@ -252,7 +252,7 @@ export default function LeadSheet({
 
   const wa = whatsappDigits(contact.phone);
 
-  const { keyboardHeight, sheetMaxHeight } = useKeyboardSheet();
+  const { keyboardHeight } = useKeyboardSheet();
 
   // The sheet rises above the keyboard, but Notițe is the last thing in the
   // scroll and the sheet shrinks by exactly the keyboard's height — so the
@@ -271,9 +271,10 @@ export default function LeadSheet({
   }, [notesFocused, keyboardHeight]);
 
   return (
-    <Modal visible animationType="slide" transparent onRequestClose={onClose}>
-      {/* Kept above the keyboard: on Android a Modal is not resized for it. */}
-      <View className="flex-1 bg-black/60 justify-end" style={{ paddingBottom: keyboardHeight }}>
+    <SheetHost onRequestClose={onClose}>
+      {({ keyboardPadding, sheetMaxHeight }) => (
+      // Kept above the keyboard — see SheetHost for why Android is not a Modal.
+      <View className="flex-1 bg-black/60 justify-end" style={{ paddingBottom: keyboardPadding }}>
         <View className="bg-white rounded-t-3xl" style={{ maxHeight: sheetMaxHeight }}>
           {/* Who this is */}
           <View className="px-5 pt-5 pb-3 border-b border-gray-100">
@@ -624,6 +625,7 @@ export default function LeadSheet({
           </View>
         </View>
       </View>
-    </Modal>
+      )}
+    </SheetHost>
   );
 }

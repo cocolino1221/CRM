@@ -1,14 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Modal,
   ScrollView,
   Text,
   TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
-import { useKeyboardSheet } from '../lib/use-keyboard-sheet';
+import SheetHost from './SheetHost';
 import { Audio } from 'expo-av';
 import { Pause, Play, Phone } from 'lucide-react-native';
 import api from '../lib/api';
@@ -198,14 +197,13 @@ export default function DispositionDialog({
       : null;
 
   const scrollRef = useRef<ScrollView>(null);
-  const { keyboardHeight, sheetMaxHeight } = useKeyboardSheet();
 
   return (
-    <Modal visible animationType="slide" transparent onRequestClose={onClose}>
-      {/* The sheet sits above the keyboard. Android does not resize a Modal's
-          content for the keyboard, so on a phone the note field and the
-          Salvează button were hidden behind it while someone typed. */}
-      <View className="flex-1 bg-black/60 justify-end" style={{ paddingBottom: keyboardHeight }}>
+    <SheetHost onRequestClose={onClose}>
+      {({ keyboardPadding, sheetMaxHeight }) => (
+      // The sheet sits above the keyboard: without it, on a phone the note
+      // field and the Salvează button were hidden while someone typed.
+      <View className="flex-1 bg-black/60 justify-end" style={{ paddingBottom: keyboardPadding }}>
         <View className="bg-white rounded-t-3xl" style={{ maxHeight: sheetMaxHeight }}>
           <View className="px-5 pt-5 pb-3 border-b border-gray-100">
             <Text className="text-lg font-bold text-gray-900">
@@ -377,6 +375,7 @@ export default function DispositionDialog({
           </View>
         </View>
       </View>
-    </Modal>
+      )}
+    </SheetHost>
   );
 }
