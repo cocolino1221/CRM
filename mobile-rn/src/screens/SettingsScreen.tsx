@@ -7,6 +7,7 @@ import { useAuthStore } from '../stores/auth-store';
 import Avatar from '../components/Avatar';
 import NotificationPreferencesScreen from './NotificationPreferencesScreen';
 import ReminderLeadSetting from '../components/ReminderLeadSetting';
+import MeetingPlatformSetting from '../components/MeetingPlatformSetting';
 
 export default function SettingsScreen() {
   const { user, logout } = useAuthStore();
@@ -40,6 +41,7 @@ export default function SettingsScreen() {
         </View>
 
         <ReminderLeadSetting />
+        <MeetingPlatformSetting />
 
         {/* Settings list */}
         <View className="bg-white rounded-2xl mt-3 border border-slate-100 overflow-hidden">
