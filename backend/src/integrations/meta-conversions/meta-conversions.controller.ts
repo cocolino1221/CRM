@@ -3,6 +3,7 @@ import { BillingService } from '../../billing/billing.service';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { MetaConversionsService } from './meta-conversions.service';
+import { SaveMetaCapiConfigDto } from './dto/save-meta-capi-config.dto';
 
 @ApiTags('Meta Conversions API')
 @Controller('integrations/meta-capi')
@@ -24,7 +25,7 @@ export class MetaConversionsController {
   @ApiOperation({ summary: 'Connect or update this workspace\'s Meta Conversions API dataset' })
   async saveConfig(
     @Req() req: any,
-    @Body() dto: { datasetId: string; accessToken?: string; enabled?: boolean },
+    @Body() dto: SaveMetaCapiConfigDto,
   ) {
     await this.billingService?.assertIntegrationAllowed(req.user.workspaceId, 'meta-conversions');
     const config = await this.metaConversionsService.saveConfig(req.user.workspaceId, req.user.id, dto);
