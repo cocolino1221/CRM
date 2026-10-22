@@ -189,6 +189,19 @@ export default function AnalyticsScreen() {
             </View>
           </View>
 
+          {/* Per person, per day / week / month: what each closer, setter
+              and caller did. */}
+          <TouchableOpacity
+            onPress={() => navigation.navigate('Reports')}
+            className="mt-4 flex-row items-center justify-between rounded-2xl bg-white px-4 py-3"
+          >
+            <View className="flex-row items-center gap-2">
+              <Users size={16} color="#3730a3" />
+              <Text className="text-sm font-bold text-indigo-900">Rapoarte pe oameni</Text>
+            </View>
+            <Text className="text-xs text-indigo-700">Zi · Săptămână · Lună →</Text>
+          </TouchableOpacity>
+
           <View className="mt-4 rounded-3xl border border-white/10 bg-white/10 px-4 py-4">
             <Text className="text-xs font-semibold uppercase tracking-wide text-indigo-200">Overview</Text>
             <Text className="mt-1 text-xl font-bold text-white">

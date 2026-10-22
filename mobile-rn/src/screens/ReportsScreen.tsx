@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   RefreshControl,
   ScrollView,
+  Share,
   Text,
   TextInput,
   TouchableOpacity,
@@ -10,7 +11,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
-import { ArrowLeft, ChevronLeft, ChevronRight } from 'lucide-react-native';
+import { ArrowLeft, ChevronLeft, ChevronRight, Share2 } from 'lucide-react-native';
 import api from '../lib/api';
 import { useAuthStore } from '../stores/auth-store';
 import {
@@ -24,6 +25,16 @@ import {
   type Period,
   type PeriodKind,
 } from '../lib/report-period';
+import {
+  ROLE_FILTERS,
+  dayLabel,
+  daysOf,
+  filterByRole,
+  hasActivity,
+  reportAsText,
+  type ReportRow,
+  type RoleFilter,
+} from '../lib/report-export';
 
 /**
  * Rapoarte: what each caller and closer did in a day, a week, a month or a
@@ -32,17 +43,6 @@ import {
  * their own numbers (the server enforces it, this screen just doesn't offer
  * the picker).
  */
-
-type ReportRow = {
-  userId: string;
-  name: string;
-  role: string | null;
-  calls: { total: number; answered: number; notAnswered: number; refused: number; booked: number };
-  bookings: { set: number; received: number; held: number; noShow: number; cancelled: number };
-  sales: { won: number; lost: number; revenue: number; revenueByCurrency: Record<string, number> };
-  followUps: { created: number; done: number; overdue: number };
-  rates: { answer: number | null; booking: number | null; show: number | null; close: number | null };
-};
 
 type Report = { users: ReportRow[]; totals: ReportRow };
 
@@ -129,6 +129,7 @@ export default function ReportsScreen() {
   const [toText, setToText] = useState(formatTypedDate(new Date()));
   const [customError, setCustomError] = useState('');
   const [selectedUser, setSelectedUser] = useState<string>('');
+  const [roleFilter, setRoleFilter] = useState<RoleFilter>('');
   const [report, setReport] = useState<Report | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -191,6 +192,50 @@ export default function ReportsScreen() {
     return report.totals;
   }, [report, selectedUser, isManager]);
 
+  // The people listed under the totals, in the role picked.
+  const listed = useMemo(() => filterByRole(report?.users ?? [], roleFilter), [report, roleFilter]);
+
+  // A week, day by day: one report per day for whoever is on screen. Only for
+  // a week — seven small requests, not thirty.
+  const [daily, setDaily] = useState<Array<{ day: Date; row: ReportRow | null }>>([]);
+  useEffect(() => {
+    if (period.kind !== 'week') {
+      setDaily([]);
+      return;
+    }
+    let alive = true;
+    const days = daysOf(period);
+    Promise.all(
+      days.map((d) =>
+        api
+          .get('/analytics/user-report', {
+            params: {
+              from: d.from.toISOString(),
+              to: d.to.toISOString(),
+              ...(isManager && selectedUser ? { userId: selectedUser } : {}),
+            },
+          })
+          .then((res) => {
+            const r = res.data as Report;
+            return selectedUser || !isManager ? r.users?.[0] ?? null : r.totals ?? null;
+          })
+          .catch(() => null),
+      ),
+    ).then((rows) => alive && setDaily(days.map((d, i) => ({ day: d.from, row: rows[i] }))));
+    return () => {
+      alive = false;
+    };
+  }, [period, selectedUser, isManager]);
+
+  // Sends the period's report — totals and every person shown — as text.
+  const exportReport = () => {
+    if (!report) return;
+    const people = selectedUser || !isManager ? report.users.slice(0, 1) : listed;
+    const title = `${periodLabel(period)}${roleFilter ? ` · ${ROLE_FILTERS.find((r) => r.id === roleFilter)?.label}` : ''}`;
+    const totals = selectedUser || !isManager || roleFilter ? null : report.totals;
+    void Share.share({ message: reportAsText(title, totals, people) });
+  };
+
   return (
     <View className="flex-1 bg-slate-50">
       <View className="px-4 pb-4 bg-indigo-800" style={{ paddingTop: insets.top + 12 }}>
@@ -198,10 +243,19 @@ export default function ReportsScreen() {
           <TouchableOpacity onPress={() => navigation.goBack()} className="p-2 rounded-xl bg-white/15 border border-white/20">
             <ArrowLeft size={18} color="#fff" />
           </TouchableOpacity>
-          <View>
+          <View className="flex-1">
             <Text className="text-[11px] uppercase tracking-widest text-indigo-200">KPI</Text>
             <Text className="text-2xl font-extrabold text-white">Rapoarte</Text>
           </View>
+          <TouchableOpacity
+            onPress={exportReport}
+            disabled={!report}
+            className="flex-row items-center gap-1.5 px-3 py-2 rounded-xl bg-white"
+            accessibilityLabel="Exportă raportul"
+          >
+            <Share2 size={14} color="#3730a3" />
+            <Text className="text-xs font-bold text-indigo-800">Exportă</Text>
+          </TouchableOpacity>
         </View>
 
         <View className="flex-row gap-1.5 mt-3">
@@ -255,6 +309,23 @@ export default function ReportsScreen() {
       </View>
 
       {isManager && (
+        <View className="flex-row gap-1.5 px-3 pt-2.5 bg-white">
+          {ROLE_FILTERS.map((r) => (
+            <TouchableOpacity
+              key={r.id || 'all'}
+              onPress={() => {
+                setRoleFilter(r.id);
+                setSelectedUser('');
+              }}
+              className={`flex-1 items-center py-1.5 rounded-lg ${roleFilter === r.id ? 'bg-indigo-100' : 'bg-slate-100'}`}
+            >
+              <Text className={`text-[11px] font-semibold ${roleFilter === r.id ? 'text-indigo-800' : 'text-slate-600'}`}>{r.label}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
+
+      {isManager && (
         <ScrollView horizontal showsHorizontalScrollIndicator={false} className="max-h-14 bg-white border-b border-slate-100" contentContainerStyle={{ paddingHorizontal: 12, paddingVertical: 10, gap: 8 }}>
           <TouchableOpacity
             onPress={() => setSelectedUser('')}
@@ -262,7 +333,9 @@ export default function ReportsScreen() {
           >
             <Text className={`text-xs font-semibold ${!selectedUser ? 'text-white' : 'text-slate-600'}`}>Toată echipa</Text>
           </TouchableOpacity>
-          {people.map((p) => (
+          {people
+            .filter((p) => !roleFilter || filterByRole(report?.users ?? [], roleFilter).some((u) => u.userId === p.id) || p.id === selectedUser)
+            .map((p) => (
             <TouchableOpacity
               key={p.id}
               onPress={() => setSelectedUser(p.id)}
@@ -289,15 +362,45 @@ export default function ReportsScreen() {
         ) : shown ? (
           <>
             <Text className="text-base font-bold text-slate-900 px-1">
-              {shown.userId === 'total' ? 'Toată echipa' : shown.name}
+              {shown.userId === 'total'
+                ? roleFilter
+                  ? ROLE_FILTERS.find((r) => r.id === roleFilter)?.label
+                  : 'Toată echipa'
+                : shown.name}
               {shown.role ? <Text className="text-xs font-normal text-slate-500">  {ROLE_LABELS[shown.role] || shown.role}</Text> : null}
             </Text>
-            <KpiBlock row={shown} />
+            {!(isManager && !selectedUser && roleFilter) && <KpiBlock row={shown} />}
 
-            {isManager && !selectedUser && report && report.users.length > 0 && (
+            {daily.some((d) => hasActivity(d.row)) && (
+              <View className="mt-4">
+                <Text className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2 px-1">Pe zile</Text>
+                {daily.map(({ day, row }) =>
+                  row && hasActivity(row) ? (
+                    <View key={day.toISOString()} className="bg-white rounded-2xl border border-slate-100 p-3 mb-2">
+                      <Text className="text-sm font-semibold text-slate-900">{dayLabel(day)}</Text>
+                      <View className="flex-row flex-wrap gap-x-4 gap-y-1 mt-1.5">
+                        <Text className="text-[12px] text-slate-600">📞 {row.calls.total} ({row.calls.answered} răsp.)</Text>
+                        <Text className="text-[12px] text-slate-600">📅 {row.bookings.set + row.bookings.received}</Text>
+                        <Text className="text-[12px] text-slate-600">🤝 {row.bookings.held}</Text>
+                        <Text className="text-[12px] text-emerald-700">✓ {row.sales.won}</Text>
+                        <Text className="text-[12px] text-rose-700">✗ {row.sales.lost + row.calls.refused}</Text>
+                        <Text className="text-[12px] text-amber-700">↻ {row.followUps.created}/{row.followUps.done}</Text>
+                      </View>
+                    </View>
+                  ) : (
+                    <Text key={day.toISOString()} className="text-[11px] text-slate-400 px-1 mb-2">
+                      {dayLabel(day)} — nimic
+                    </Text>
+                  ),
+                )}
+                <Text className="text-[10px] text-slate-400 px-1">📞 apeluri · 📅 programări · 🤝 întâlniri ținute · ✓ vândut · ✗ pierdut · ↻ follow-up create/făcute</Text>
+              </View>
+            )}
+
+            {isManager && !selectedUser && report && listed.length > 0 && (
               <View className="mt-4">
                 <Text className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2 px-1">Pe oameni</Text>
-                {report.users.map((u) => (
+                {listed.map((u) => (
                   <TouchableOpacity
                     key={u.userId}
                     onPress={() => setSelectedUser(u.userId)}
@@ -319,7 +422,7 @@ export default function ReportsScreen() {
                 ))}
               </View>
             )}
-            {isManager && !selectedUser && report && report.users.length === 0 && (
+            {isManager && !selectedUser && report && listed.length === 0 && (
               <Text className="text-sm text-slate-500 text-center mt-6">Nimeni n-a avut activitate în perioada asta.</Text>
             )}
           </>

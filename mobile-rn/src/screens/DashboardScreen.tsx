@@ -270,7 +270,7 @@ export default function DashboardScreen() {
         detail: `${dashboard.tasks.completed} completed`,
         icon: CheckSquare,
         accent: '#7c3aed',
-        onPress: () => navigation.navigate('Workspace', { screen: 'Calendar' }),
+        onPress: () => navigation.navigate('Workspace', { screen: 'Calendar', initial: false }),
       },
       {
         id: 'analytics',
@@ -279,7 +279,7 @@ export default function DashboardScreen() {
         detail: `${dashboard.deals.total.toLocaleString()} total deals`,
         icon: TrendingUp,
         accent: '#ea580c',
-        onPress: () => navigation.navigate('Workspace', { screen: 'Analytics' }),
+        onPress: () => navigation.navigate('Workspace', { screen: 'Analytics', initial: false }),
       },
     ];
   }, [dashboard, navigation]);
@@ -299,7 +299,7 @@ export default function DashboardScreen() {
       subtitle: 'Leads, tags, conversion funnel',
       icon: BarChart3,
       accent: '#4338ca',
-      onPress: () => navigation.navigate('Workspace', { screen: 'Analytics' }),
+      onPress: () => navigation.navigate('Workspace', { screen: 'Analytics', initial: false }),
     },
     {
       id: 'calendar',
@@ -307,7 +307,7 @@ export default function DashboardScreen() {
       subtitle: 'Today tasks and due items',
       icon: CalendarDays,
       accent: '#0f766e',
-      onPress: () => navigation.navigate('Workspace', { screen: 'Calendar' }),
+      onPress: () => navigation.navigate('Workspace', { screen: 'Calendar', initial: false }),
     },
     {
       id: 'documents',
@@ -315,7 +315,7 @@ export default function DashboardScreen() {
       subtitle: 'Contracts, signatures, status',
       icon: FileText,
       accent: '#0369a1',
-      onPress: () => navigation.navigate('Workspace', { screen: 'Documents' }),
+      onPress: () => navigation.navigate('Workspace', { screen: 'Documents', initial: false }),
     },
     {
       id: 'payments',
@@ -323,7 +323,7 @@ export default function DashboardScreen() {
       subtitle: 'Collections and risk follow-up',
       icon: CreditCard,
       accent: '#b45309',
-      onPress: () => navigation.navigate('Workspace', { screen: 'Payments' }),
+      onPress: () => navigation.navigate('Workspace', { screen: 'Payments', initial: false }),
     },
     {
       id: 'automations',
@@ -331,7 +331,7 @@ export default function DashboardScreen() {
       subtitle: 'Workflows and execution status',
       icon: Sparkles,
       accent: '#be185d',
-      onPress: () => navigation.navigate('Workspace', { screen: 'Automations' }),
+      onPress: () => navigation.navigate('Workspace', { screen: 'Automations', initial: false }),
     },
   ], [navigation]);
 
@@ -441,7 +441,7 @@ export default function DashboardScreen() {
             <View className="mx-4 mt-4 rounded-3xl border border-slate-200 bg-white px-4 py-4">
               <View className="flex-row items-center justify-between">
                 <Text className="text-lg font-bold text-slate-900">Your Tasks Today</Text>
-                <TouchableOpacity onPress={() => navigation.navigate('Workspace', { screen: 'Calendar' })}>
+                <TouchableOpacity onPress={() => navigation.navigate('Workspace', { screen: 'Calendar', initial: false })}>
                   <Text className="text-xs font-semibold text-sky-700">Open calendar</Text>
                 </TouchableOpacity>
               </View>
@@ -521,7 +521,7 @@ export default function DashboardScreen() {
             <View className="mx-4 mt-4 rounded-3xl border border-slate-200 bg-white px-4 py-4">
               <View className="flex-row items-center justify-between">
                 <Text className="text-lg font-bold text-slate-900">Open Deals</Text>
-                <TouchableOpacity onPress={() => navigation.navigate('Workspace', { screen: 'Analytics' })}>
+                <TouchableOpacity onPress={() => navigation.navigate('Workspace', { screen: 'Analytics', initial: false })}>
                   <Text className="text-xs font-semibold text-sky-700">See metrics</Text>
                 </TouchableOpacity>
               </View>

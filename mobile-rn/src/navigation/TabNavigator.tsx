@@ -64,6 +64,14 @@ export default function TabNavigator() {
       <Tab.Screen
         name="Workspace"
         component={WorkspaceStack}
+        // The tab is the hub. A shortcut from Home (Analytics, Calendar…) left
+        // that screen on top, so the tab reopened it instead of the menu.
+        listeners={({ navigation }) => ({
+          tabPress: (e) => {
+            e.preventDefault();
+            navigation.navigate('Workspace', { screen: 'WorkspaceHub' });
+          },
+        })}
         options={{
           tabBarIcon: ({ color, size }) => (
             <Briefcase size={size} color={color} />

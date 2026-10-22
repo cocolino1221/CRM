@@ -61,7 +61,7 @@ export default function SettingsScreen() {
             onPress={() =>
               // The hours live in the Workspace stack; a closer looking for
               // them starts here, where every other personal setting is.
-              navigation.navigate('Workspace', { screen: 'Availability' })
+              navigation.navigate('Workspace', { screen: 'Availability', initial: false })
             }
             className="flex-row items-center justify-between px-4 py-3.5 border-b border-slate-100"
             activeOpacity={0.7}
