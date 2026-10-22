@@ -9,8 +9,9 @@ import { canHostMeetings, hasTimeOfDay, CALENDAR_ROLES } from './calendar-access
  * host booking themselves skipped the availability check entirely.
  */
 describe('canHostMeetings', () => {
-  it('accepts the three roles that work the calendar', () => {
-    for (const role of ['closer', 'caller', 'setter']) {
+  it('accepts the roles that work the calendar', () => {
+    // A manager runs their own calls in a small team, so they are bookable.
+    for (const role of ['closer', 'caller', 'setter', 'manager']) {
       expect(canHostMeetings({ role })).toBe(true);
     }
   });
@@ -19,7 +20,6 @@ describe('canHostMeetings', () => {
     // The test super_admin that collected the 03:00 booking.
     expect(canHostMeetings({ role: 'super_admin' })).toBe(false);
     expect(canHostMeetings({ role: 'admin' })).toBe(false);
-    expect(canHostMeetings({ role: 'manager' })).toBe(false);
     expect(canHostMeetings({ role: 'support_agent' })).toBe(false);
   });
 
@@ -30,7 +30,7 @@ describe('canHostMeetings', () => {
   });
 
   it('names the roles in one place so the list can be read off', () => {
-    expect([...CALENDAR_ROLES].sort()).toEqual(['caller', 'closer', 'setter']);
+    expect([...CALENDAR_ROLES].sort()).toEqual(['caller', 'closer', 'manager', 'setter']);
   });
 });
 
