@@ -8,8 +8,15 @@
  * appointment at three in the morning.
  */
 
-/** The roles that work the calendar: they book, they are booked, they show up. */
-export const CALENDAR_ROLES = ['closer', 'caller', 'setter'] as const;
+/**
+ * The roles that work the calendar: they book, they are booked, they show up.
+ *
+ * A manager is on the list because in a small team they run their own calls
+ * beside the closers. An `admin` or `super_admin` is not: those accounts
+ * administer the workspace and declare no hours, which is how a test account
+ * came to hold a lead's appointment at three in the morning.
+ */
+export const CALENDAR_ROLES = ['closer', 'caller', 'setter', 'manager'] as const;
 
 export function canHostMeetings(user: { role?: string } | null | undefined): boolean {
   const role = String(user?.role || '').toLowerCase();

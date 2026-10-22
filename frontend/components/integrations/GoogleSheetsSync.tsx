@@ -42,6 +42,7 @@ export default function GoogleSheetsSync({ autoOpen = false }: { autoOpen?: bool
   const [pipelineId, setPipelineId] = useState('');
   const [pipelineStageId, setPipelineStageId] = useState('');
   const [direction, setDirection] = useState('two-way');
+  const [leadSource, setLeadSource] = useState('');
   const [busy, setBusy] = useState('');
   const [message, setMessage] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
 
@@ -77,6 +78,7 @@ export default function GoogleSheetsSync({ autoOpen = false }: { autoOpen?: bool
     setPipelineId('');
     setPipelineStageId('');
     setDirection('two-way');
+    setLeadSource('');
   };
 
   // Pass an existing config to edit it in place; omit to connect a new sheet.
@@ -106,6 +108,7 @@ export default function GoogleSheetsSync({ autoOpen = false }: { autoOpen?: bool
         setPipelineId(existing.pipelineId || '');
         setPipelineStageId(existing.pipelineStageId || '');
         setDirection(existing.direction || 'two-way');
+        setLeadSource(existing.leadSource || '');
         if (existing.spreadsheetId) await loadSpreadsheetInfo(existing.spreadsheetId);
       }
     } catch (err: any) {
@@ -149,6 +152,7 @@ export default function GoogleSheetsSync({ autoOpen = false }: { autoOpen?: bool
         mapping,
         pipelineId: pipelineId || undefined,
         pipelineStageId: pipelineStageId || undefined,
+        leadSource: leadSource || undefined,
         direction,
       });
       setConfigs(Array.isArray(res.data?.configs) ? res.data.configs : []);
@@ -357,10 +361,13 @@ export default function GoogleSheetsSync({ autoOpen = false }: { autoOpen?: bool
                 Map „Preluat (checkmark)” to a column and that column updates in the sheet the instant a setter/closer taps the preluat checkmark on a lead — no need to wait for the ~10-minute sync.
               </p>
               <p className="mt-1 text-xs text-slate-400">A „CRM ID” column is managed automatically for exact matching — don't delete it.</p>
+              <p className="mt-1 text-xs text-slate-400">
+                Rows from a sheet go straight to the callers' „De sunat” list, like a lead typed in by hand — pick „Other” only for a sheet nobody should ring. Map „Source” to a column and each row decides for itself (manual, typeform, woocommerce; anything else falls back to the choice here). That list is built from the source, never from the pipeline stage.
+              </p>
             </div>
           )}
 
-          <div className="grid gap-3 sm:grid-cols-3">
+          <div className="grid gap-3 sm:grid-cols-4">
             <div>
               <label className="text-xs font-semibold text-slate-500">Pipeline (target)</label>
               <select value={pipelineId} onChange={(e) => { setPipelineId(e.target.value); setPipelineStageId(''); }}
@@ -375,6 +382,16 @@ export default function GoogleSheetsSync({ autoOpen = false }: { autoOpen?: bool
                 className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-emerald-400 disabled:opacity-50">
                 <option value="">— first stage —</option>
                 {(selectedPipeline?.stages || []).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-slate-500">Lead source (new rows)</label>
+              <select value={leadSource} onChange={(e) => setLeadSource(e.target.value)}
+                className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-emerald-400">
+                <option value="">Manual → „De sunat" (default)</option>
+                <option value="typeform">Typeform → „De sunat"</option>
+                <option value="woocommerce">WooCommerce → „De sunat"</option>
+                <option value="other">Other — keep out of „De sunat"</option>
               </select>
             </div>
             <div>

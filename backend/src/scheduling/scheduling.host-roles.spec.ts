@@ -85,8 +85,8 @@ describe('SchedulingService — only calendar roles are offered as hosts', () =>
     await expect(service.getTeamSlotsForWorkspace('ws-1', DAY, NOW)).resolves.toEqual([]);
   });
 
-  it('keeps offering a caller and a setter', async () => {
-    for (const role of ['caller', 'setter']) {
+  it('keeps offering a caller, a setter and a manager', async () => {
+    for (const role of ['caller', 'setter', 'manager']) {
       meetingTypes = [{ ...meetingTypes[0], user: { ...meetingTypes[0].user, role } }];
       const slots = await service.getTeamSlotsForWorkspace('ws-1', DAY, NOW);
       expect(slots.length).toBeGreaterThan(0);
