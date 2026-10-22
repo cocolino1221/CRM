@@ -224,6 +224,10 @@ export class PushNotificationService implements OnModuleInit {
       notificationId: notification.notificationId || '',
       waId: String(notification.metadata?.waId || ''),
       contactId: String(notification.metadata?.contactId || ''),
+      // So a tap opens the booking itself, or the right social inbox.
+      bookingId: String(notification.metadata?.bookingId || ''),
+      category: String(notification.metadata?.category || ''),
+      channel: String(notification.metadata?.channel || ''),
     };
 
     const iosTokens = tokens.filter((t) => t.platform === DevicePlatform.IOS);

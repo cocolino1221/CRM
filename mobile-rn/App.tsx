@@ -5,6 +5,7 @@ import { NavigationContainer, useNavigationContainerRef } from '@react-navigatio
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import * as Notifications from 'expo-notifications';
+import { navigationFor, notificationRoute } from './src/lib/notification-route';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { useAuthStore } from './src/stores/auth-store';
 import { useNotificationsStore } from './src/stores/notifications-store';
@@ -62,9 +63,6 @@ export default function App() {
     // Listen for notification taps
     responseListener.current = Notifications.addNotificationResponseReceivedListener(async (response) => {
       const data = (response.notification.request.content.data || {}) as Record<string, any>;
-      const link = String(data.link || '').trim();
-      const waId = String(data.waId || '').replace(/[^0-9]/g, '');
-      const contactId = String(data.contactId || '').trim();
       fetchNotifications();
       fetchUnreadCount();
       clearDeviceNotifications();
@@ -73,44 +71,15 @@ export default function App() {
 
       if (!navigationRef.isReady()) return;
 
-      if (link.startsWith('/whatsapp')) {
-        if (waId) {
-          const phone = `+${waId}`;
-          await openConversation({ waId, phone, contactName: phone });
-          (navigationRef as any).navigate('Messages', {
-            screen: 'Chat',
-            params: { waId, contactName: phone, phone },
-          });
-          return;
-        }
-        (navigationRef as any).navigate('Messages', { screen: 'WhatsAppInbox' });
-        return;
+      // The same place a tap in the Notifications list goes: the lead, the
+      // booking, the chat — not just the right tab.
+      const route = notificationRoute(data);
+      if (!route) return;
+      if (route.kind === 'chat') {
+        const phone = `+${route.waId}`;
+        await openConversation({ waId: route.waId, phone, contactName: phone });
       }
-
-      if (link.startsWith('/contacts')) {
-        if (contactId) {
-          (navigationRef as any).navigate('Leads', {
-            screen: 'LeadDetail',
-            params: { contactId },
-          });
-          return;
-        }
-        (navigationRef as any).navigate('Leads');
-        return;
-      }
-
-      if (link.startsWith('/documents')) {
-        (navigationRef as any).navigate('Workspace', {
-          screen: 'Documents',
-        });
-        return;
-      }
-
-      if (link.startsWith('/payments')) {
-        (navigationRef as any).navigate('Workspace', {
-          screen: 'Payments',
-        });
-      }
+      (navigationRef as any).navigate(...navigationFor(route));
     });
 
     const appStateSubscription = AppState.addEventListener('change', (nextState) => {

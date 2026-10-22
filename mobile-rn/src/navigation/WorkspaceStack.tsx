@@ -11,7 +11,7 @@ import WorkspaceHubScreen from '../screens/WorkspaceHubScreen';
 export type WorkspaceStackParams = {
   WorkspaceHub: undefined;
   Analytics: undefined;
-  Calendar: undefined;
+  Calendar: { focusBookingId?: string } | undefined;
   Documents: undefined;
   Payments: undefined;
   Automations: undefined;

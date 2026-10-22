@@ -4,6 +4,9 @@ import { Bell, MessageCircle, Users, Calendar, CheckCircle, WifiOff, RefreshCw, 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNotificationsStore } from '../stores/notifications-store';
 import type { Notification } from '../types';
+import { useNavigation } from '@react-navigation/native';
+import { useWhatsAppStore } from '../stores/whatsapp-store';
+import { navigationFor, notificationRoute } from '../lib/notification-route';
 
 function timeAgo(dateStr: string): string {
   const diff = Date.now() - new Date(dateStr).getTime();
@@ -43,6 +46,20 @@ export default function NotificationsScreen() {
     notifications, isLoading, fetchError, fetchNotifications, fetchUnreadCount, markAsRead, markAllAsRead,
   } = useNotificationsStore();
   const insets = useSafeAreaInsets();
+  const navigation = useNavigation<any>();
+  const openConversation = useWhatsAppStore((s) => s.openConversation);
+
+  // A tap opens what the notification is about: the lead, the booking, the chat.
+  const openNotification = async (n: Notification) => {
+    if (!n.isRead) markAsRead(n.id);
+    const route = notificationRoute(n as unknown as Record<string, unknown>);
+    if (!route) return;
+    if (route.kind === 'chat') {
+      const phone = `+${route.waId}`;
+      await openConversation({ waId: route.waId, phone, contactName: phone });
+    }
+    navigation.navigate(...navigationFor(route));
+  };
 
   useEffect(() => {
     fetchNotifications();
@@ -69,7 +86,7 @@ export default function NotificationsScreen() {
 
     return (
     <TouchableOpacity
-      onPress={() => { if (!n.isRead) markAsRead(n.id); }}
+      onPress={() => void openNotification(n)}
       className={`bg-white/90 border rounded-2xl p-3.5 mb-2.5 flex-row items-start gap-3 ${
         !n.isRead ? 'border-sky-200' : 'border-slate-100'
       }`}

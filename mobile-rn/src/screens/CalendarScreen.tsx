@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState, useCallback } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { useRoute } from '@react-navigation/native';
 import {
   View, Text, TouchableOpacity, FlatList, RefreshControl,
   ActivityIndicator, Modal, TextInput, ScrollView, KeyboardAvoidingView, Platform, Linking, Alert,
@@ -77,6 +78,34 @@ const normalizeTask = (raw: unknown): CalendarTask | null => {
 
 export default function CalendarScreen() {
   const [monthDate, setMonthDate] = useState(new Date());
+  // Opened from a notification about one booking: go to its month and mark it.
+  const route = useRoute<any>();
+  const focusBookingId: string | undefined = route.params?.focusBookingId;
+  const [focusedId, setFocusedId] = useState<string | null>(null);
+  const listRef = useRef<FlatList<any>>(null);
+  useEffect(() => {
+    if (!focusBookingId) return;
+    let alive = true;
+    const now = Date.now();
+    api
+      .get('/bookings', {
+        params: {
+          startDate: new Date(now - 120 * 86_400_000).toISOString(),
+          endDate: new Date(now + 365 * 86_400_000).toISOString(),
+        },
+      })
+      .then((res) => {
+        const rows = Array.isArray(res.data) ? res.data : [];
+        const found = rows.find((r: any) => r?.id === focusBookingId);
+        if (!alive || !found?.startTime) return;
+        setMonthDate(new Date(found.startTime));
+        setFocusedId(focusBookingId);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [focusBookingId]);
   const [tasks, setTasks] = useState<CalendarTask[]>([]);
   const [bookings, setBookings] = useState<CalendarBooking[]>([]);
   const [showPast, setShowPast] = useState(false);
@@ -330,7 +359,14 @@ export default function CalendarScreen() {
         </View>
       ) : (
         <FlatList
+          ref={listRef}
           data={flatItems}
+          onContentSizeChange={() => {
+            if (!focusedId) return;
+            const index = flatItems.findIndex((it) => it.type === 'booking' && it.booking.id === focusedId);
+            if (index > 0) listRef.current?.scrollToIndex({ index: Math.max(0, index - 1), animated: true });
+          }}
+          onScrollToIndexFailed={() => {}}
           keyExtractor={item => item.key}
           contentContainerStyle={{ padding: 12, paddingBottom: 20 }}
           refreshControl={
@@ -347,7 +383,11 @@ export default function CalendarScreen() {
             if (item.type === 'booking') {
               const b = item.booking;
               return (
-                <View className="bg-violet-50 rounded-2xl p-3 mb-2.5 border border-violet-200">
+                <View
+                  className={`bg-violet-50 rounded-2xl p-3 mb-2.5 border ${
+                    b.id === focusedId ? 'border-violet-600 border-2' : 'border-violet-200'
+                  }`}
+                >
                   <View className="flex-row items-center justify-between gap-2">
                     <Text className="text-sm font-semibold text-violet-900 flex-1" numberOfLines={1}>
                       Programare: {b.leadName}
