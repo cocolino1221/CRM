@@ -5,6 +5,7 @@ import { Repository, MoreThan } from 'typeorm';
 import { Interval } from '@nestjs/schedule';
 import { Integration, IntegrationType, IntegrationStatus } from '../../database/entities/integration.entity';
 import { Contact, ContactSource } from '../../database/entities/contact.entity';
+import { DEFAULT_SHEET_LEAD_SOURCE, parseLeadSource } from './sheet-lead-source';
 import { PipelineStage } from '../../database/entities/pipeline-stage.entity';
 import { GoogleIntegrationHandler } from '../handlers/google.handler';
 import { normalizePhoneE164 } from '../../common/utils/phone.util';
@@ -28,6 +29,11 @@ export interface SheetsSyncConfig {
   mapping: Partial<Record<MappableField, string>>;
   pipelineId?: string;
   pipelineStageId?: string; // default stage for new rows
+  /**
+   * What new rows are filed as. Left out, they are `other`, which keeps them
+   * out of the callers' "De sunat" list — see sheet-lead-source.ts.
+   */
+  leadSource?: ContactSource;
   direction: 'two-way' | 'sheet-to-crm' | 'crm-to-sheet';
   lastSyncAt?: string;
   lastResult?: { fromSheet: number; toSheet: number; skipped: number; error?: string };
@@ -170,6 +176,9 @@ export class GoogleSheetsService {
       mapping: dto.mapping,
       pipelineId: dto.pipelineId,
       pipelineStageId: dto.pipelineStageId,
+      // An unknown value is dropped rather than stored: a source the queues do
+      // not know would quietly hide every row this sheet brings in.
+      leadSource: parseLeadSource(dto.leadSource),
       direction: dto.direction || 'two-way',
       lastSyncAt: existingIdx !== -1 ? configs[existingIdx].lastSyncAt : undefined,
       lastResult: existingIdx !== -1 ? configs[existingIdx].lastResult : undefined,
@@ -381,6 +390,13 @@ export class GoogleSheetsService {
             if (cell(colOf.firstName)) c.firstName = cell(colOf.firstName);
             if (cell(colOf.lastName)) c.lastName = cell(colOf.lastName);
             if (cell(colOf.phone)) c.phone = cell(colOf.phone);
+            // Rows imported before this sheet had a source are sitting in
+            // `other`, invisible to the callers. The sheet may correct that,
+            // but it may not relabel a lead whose origin is already known —
+            // a WooCommerce buyer matched by e-mail stays a WooCommerce buyer.
+            const rowSource =
+              parseLeadSource(cell(colOf.source)) ?? config.leadSource ?? DEFAULT_SHEET_LEAD_SOURCE;
+            if (rowSource && (!c.source || c.source === ContactSource.OTHER)) c.source = rowSource;
             if (config.pipelineId) c.pipelineId = config.pipelineId;
             if (stageId) c.pipelineStageId = stageId;
             else if (!c.pipelineStageId && config.pipelineStageId) c.pipelineStageId = config.pipelineStageId;
@@ -411,7 +427,12 @@ export class GoogleSheetsService {
               phone: phone || undefined,
               firstName: cell(colOf.firstName) || (email ? email.split('@')[0] : phone) || '-',
               lastName: cell(colOf.lastName) || '-',
-              source: ContactSource.OTHER,
+              // The row's own column wins, then the sheet's setting, then the
+              // default — which puts the lead in front of a caller.
+              source:
+                parseLeadSource(cell(colOf.source)) ??
+                config.leadSource ??
+                DEFAULT_SHEET_LEAD_SOURCE,
               pipelineStageId: config.pipelineStageId,
             } as Partial<Contact>);
             apply(contact);
