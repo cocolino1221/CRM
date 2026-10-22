@@ -54,11 +54,12 @@ describe('formatSlotTime', () => {
 });
 
 describe('guestError', () => {
-  const guest = { name: 'Vlad Popescu', email: 'vlad@example.com' };
+  const guest = { name: 'Vlad Popescu', email: 'vlad@example.com', phone: '0722000111' };
 
   it('passes a filled-in form', () => {
     expect(guestError(guest)).toBeNull();
     expect(guestError({ ...guest, phone: '+40 722 000 111' })).toBeNull();
+    expect(guestError({ ...guest, phone: '(0722) 000-111' })).toBeNull();
   });
 
   it('asks for a name', () => {
@@ -75,8 +76,16 @@ describe('guestError', () => {
     expect(guestError({ ...guest, phone: 'sună-mă' })).toMatch(/telefon/);
   });
 
-  it('treats a blank phone as simply not given', () => {
-    expect(guestError({ ...guest, phone: '  ' })).toBeNull();
+  // The callers ring everyone who books, so a booking with no number is one
+  // nobody can work.
+  it('asks for a phone that was left out', () => {
+    expect(guestError({ ...guest, phone: '  ' })).toMatch(/telefon/);
+    expect(guestError({ ...guest, phone: undefined })).toMatch(/telefon/);
+  });
+
+  it('refuses a number too short to ring', () => {
+    expect(guestError({ ...guest, phone: '0' })).toMatch(/incomplet/);
+    expect(guestError({ ...guest, phone: '07 22' })).toMatch(/incomplet/);
   });
 });
 

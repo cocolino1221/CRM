@@ -62,12 +62,23 @@ export interface Guest {
 }
 
 /** The backend validates these too; saying it here saves a round trip. */
+/** Shortest number anyone can actually be reached on, country code included. */
+const MIN_PHONE_DIGITS = 8;
+
 export function guestError(guest: Guest): string | null {
   if (!guest.name.trim()) return 'Spune-ne cum te cheamă.';
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(guest.email.trim())) return 'Adresa de email nu pare validă.';
-  // Matches the DTO's own pattern, so a refusal never comes as a surprise.
-  if (guest.phone?.trim() && !/^[+]?[\d\s\-()]+$/.test(guest.phone.trim())) {
+  // Required: whoever books is rung back, and a booking with no number is one
+  // the callers cannot work. Checked here first so the DTO's refusal never
+  // comes as a surprise, and with the same pattern.
+  const phone = guest.phone?.trim() ?? '';
+  if (!phone) return 'Avem nevoie de numărul tău de telefon.';
+  if (!/^[+]?[\d\s\-()]+$/.test(phone)) {
     return 'Numărul de telefon conține caractere nepermise.';
+  }
+  // "0" and "07" pass the pattern above and are worth nothing to a caller.
+  if ((phone.match(/\d/g) ?? []).length < MIN_PHONE_DIGITS) {
+    return 'Numărul de telefon pare incomplet.';
   }
   return null;
 }

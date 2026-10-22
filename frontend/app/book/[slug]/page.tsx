@@ -535,9 +535,11 @@ export default function PublicBookingPage() {
               className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
             />
             <input
+              type="tel"
+              inputMode="tel"
               value={guest.phone}
               onChange={(e) => setGuest({ ...guest, phone: e.target.value })}
-              placeholder="Telefon (opțional)"
+              placeholder="Telefon"
               className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
             />
             <textarea

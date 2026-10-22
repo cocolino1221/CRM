@@ -21,10 +21,13 @@ export class CreateBookingDto {
   @IsEmail()
   guestEmail: string;
 
-  @IsOptional()
+  // Required: this form is the one the public books from, and a booking with
+  // no number is one the callers cannot work. Only createPublicBooking uses
+  // this DTO, so nothing else is tightened by it.
   @IsString()
-  @Matches(/^[+]?[\d\s\-\(\)]+$/)
-  guestPhone?: string;
+  @Matches(/^[+]?[\d\s\-\(\)]+$/, { message: 'guestPhone contains characters that are not allowed' })
+  @Matches(/(\D*\d){8,}/, { message: 'guestPhone looks incomplete' })
+  guestPhone: string;
 
   @IsDateString()
   startTime: string;
