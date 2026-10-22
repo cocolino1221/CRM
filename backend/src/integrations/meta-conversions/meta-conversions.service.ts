@@ -6,6 +6,7 @@ import { createHash } from 'crypto';
 import { Integration, IntegrationType, IntegrationStatus, IntegrationAuthType } from '../../database/entities/integration.entity';
 import { Contact } from '../../database/entities/contact.entity';
 import { normalizePhoneE164 } from '../../common/utils/phone.util';
+import { accessTokenProblem, cleanAccessToken, redactToken } from './meta-access-token';
 
 // Meta's Conversions API for CRM: reports pipeline stage changes back to
 // Meta so the ad algorithm learns which ad audiences actually convert to
@@ -68,12 +69,29 @@ export class MetaConversionsService {
     userId: string,
     dto: { datasetId: string; accessToken?: string; enabled?: boolean },
   ): Promise<MetaCapiConfig> {
-    if (!dto.datasetId?.trim()) {
+    const datasetId = dto.datasetId?.trim();
+    if (!datasetId) {
       throw new BadRequestException('datasetId is required');
     }
+    if (!/^\d{5,25}$/.test(datasetId)) {
+      throw new BadRequestException(
+        'The dataset ID is the numeric id shown in Events Manager → your dataset → Settings.',
+      );
+    }
+
+    // Check the token before touching the integration: a token Meta will not
+    // accept must not reach the database, or the next pipeline stage change
+    // fails against Graph with nothing but "Bad signature" to go on.
+    const cleanToken = cleanAccessToken(dto.accessToken);
+    if (cleanToken) {
+      const problem = accessTokenProblem(cleanToken);
+      if (problem) throw new BadRequestException(problem);
+      await this.verifyAccessToken(cleanToken);
+    }
+
     let integration = await this.getIntegration(workspaceId);
     if (!integration) {
-      if (!dto.accessToken?.trim()) {
+      if (!cleanToken) {
         throw new BadRequestException('accessToken is required to connect Meta Conversions API');
       }
       integration = this.integrationRepository.create({
@@ -86,14 +104,12 @@ export class MetaConversionsService {
       });
     }
 
-    integration.config = { ...(integration.config as any), datasetId: dto.datasetId.trim() };
-    if (dto.accessToken?.trim()) {
-      // Meta system-user tokens are ~200+ chars and routinely pick up stray
-      // whitespace/newlines on copy-paste (line-wrapping, etc.), which makes
-      // Graph reject them with an auth error ("Bad signature" / "Cannot
-      // parse access token"). Strip ALL whitespace, not just leading/trailing.
-      const cleanToken = dto.accessToken.replace(/\s+/g, '');
+    integration.config = { ...(integration.config as any), datasetId };
+    if (cleanToken) {
       integration.credentials = { ...(integration.credentials as any), accessToken: cleanToken };
+      // The error on screen belongs to the token that was just replaced, so
+      // stop showing it next to the new one.
+      integration.lastSync = null as any;
     }
     if (dto.enabled !== undefined) {
       integration.status = dto.enabled ? IntegrationStatus.ACTIVE : IntegrationStatus.DISABLED;
@@ -139,6 +155,44 @@ export class MetaConversionsService {
     return userData.lead_id || userData.em || userData.ph ? userData : null;
   }
 
+  /**
+   * Asks Graph whether this token is actually valid, so a bad paste is caught
+   * at save time instead of surfacing as a failed event later on.
+   *
+   * Only Meta's own verdict blocks the save. If Graph cannot be reached at all
+   * (timeout, DNS, our own network), the token is stored anyway: our
+   * connectivity is not the person's problem, and the test-event button is
+   * still there to prove the connection.
+   */
+  private async verifyAccessToken(token: string): Promise<void> {
+    let data: any;
+    try {
+      const response = await this.httpService.axiosRef.get(
+        `https://graph.facebook.com/${META_CAPI_VERSION}/debug_token`,
+        { params: { input_token: token, access_token: token }, timeout: 10000 },
+      );
+      data = response.data?.data;
+    } catch (error: any) {
+      const metaMessage = error?.response?.data?.error?.message;
+      if (metaMessage) {
+        throw new BadRequestException(
+          `Meta rejected this access token: ${redactToken(String(metaMessage), token)}. ` +
+            'Generate a new one in Events Manager → Settings → Conversions API and paste only the token.',
+        );
+      }
+      this.logger.warn(`[meta-capi] could not reach Graph to verify the token: ${error?.message || error}`);
+      return;
+    }
+
+    if (!data?.is_valid) {
+      const metaMessage = data?.error?.message;
+      throw new BadRequestException(
+        `Meta says this access token is not valid${metaMessage ? `: ${redactToken(String(metaMessage), token)}` : ''}. ` +
+          'Generate a new one in Events Manager → Settings → Conversions API and paste only the token.',
+      );
+    }
+  }
+
   private async postEvent(integration: Integration, event: Record<string, any>, testEventCode?: string): Promise<void> {
     const datasetId = integration.config?.datasetId;
     const accessToken = integration.credentials?.accessToken;
@@ -163,7 +217,12 @@ export class MetaConversionsService {
       integration.lastSync = { timestamp: new Date(), status: 'success' } as any;
       await this.integrationRepository.save(integration);
     } catch (error: any) {
-      const message = error?.response?.data?.error?.message || error?.message || 'unknown error';
+      // This message is stored and shown under "Last event", so the token must
+      // not be in it — Graph echoes it back in some errors.
+      const message = redactToken(
+        String(error?.response?.data?.error?.message || error?.message || 'unknown error'),
+        accessToken,
+      );
       integration.lastSync = { timestamp: new Date(), status: 'error', error: message } as any;
       await this.integrationRepository.save(integration);
       throw new Error(message);

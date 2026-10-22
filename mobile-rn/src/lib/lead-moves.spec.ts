@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { LEAD_MOVES, buildMovePayloads, moveById } from './lead-moves';
+import { LEAD_MOVES, bookingProviderOf, buildMovePayloads, isOnlineMeeting, moveById } from './lead-moves';
 
 const contact = { id: 'c-1', firstName: 'Ionela', lastName: 'Pop' };
 const base = { contact, notes: '', clientRequestId: 'req-1' };
@@ -162,5 +162,32 @@ describe('buildMovePayloads', () => {
       expect(out.disposition.contactId).toBe('c-1');
       expect(out.disposition.clientRequestId).toBe('req-1');
     }
+  });
+});
+
+describe('platforma întâlnirii', () => {
+  it('trimite Google Meet ca google_meet, nu ca phone', () => {
+    const out = buildMovePayloads({
+      move: 'scheduled',
+      contact,
+      meetingKind: 'meet',
+      at: '2026-11-02T10:00:00.000Z',
+      hostId: 'closer-1',
+      clientRequestId: 'r-meet',
+    });
+    expect(out.error).toBeUndefined();
+    expect(out.booking?.meetingProvider).toBe('google_meet');
+  });
+
+  it('cere o oră liberă pentru ambele întâlniri online, nu și pentru apel', () => {
+    expect(isOnlineMeeting('meet')).toBe(true);
+    expect(isOnlineMeeting('zoom')).toBe(true);
+    expect(isOnlineMeeting('call')).toBe(false);
+    expect(isOnlineMeeting(null)).toBe(false);
+  });
+
+  it('nu cere link pentru un apel', () => {
+    expect(bookingProviderOf('call')).toBe('phone');
+    expect(bookingProviderOf(null)).toBe('phone');
   });
 });

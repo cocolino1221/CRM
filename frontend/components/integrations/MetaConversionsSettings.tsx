@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Target, LoaderCircle, Save, CheckCircle2, AlertTriangle, Trash2, Send } from 'lucide-react';
 import api from '@/lib/api';
+import { apiErrorMessage } from '@/lib/api-error';
 
 // Reports pipeline stage changes to Meta's Conversions API for CRM, so
 // Meta's ad algorithm can optimize toward audiences that actually convert
@@ -71,9 +72,14 @@ export default function MetaConversionsSettings({ autoOpen = false }: { autoOpen
       setConfig(res.data?.config || null);
       setEditing(false);
       setAccessToken('');
-      setMessage({ kind: 'ok', text: 'Connected. Stage changes will now report to Meta.' });
+      setMessage({
+        kind: 'ok',
+        text: accessToken.trim()
+          ? 'Token verified with Meta. Stage changes will now report to your dataset.'
+          : 'Saved. Stage changes will now report to Meta.',
+      });
     } catch (err: any) {
-      setMessage({ kind: 'err', text: err?.response?.data?.message || 'Could not save the configuration.' });
+      setMessage({ kind: 'err', text: apiErrorMessage(err, 'Could not save the configuration.') });
     } finally {
       setBusy('');
     }
@@ -90,7 +96,7 @@ export default function MetaConversionsSettings({ autoOpen = false }: { autoOpen
       });
       setConfig(res.data?.config || null);
     } catch (err: any) {
-      setMessage({ kind: 'err', text: err?.response?.data?.message || 'Could not update.' });
+      setMessage({ kind: 'err', text: apiErrorMessage(err, 'Could not update.') });
     } finally {
       setBusy('');
     }
@@ -104,7 +110,7 @@ export default function MetaConversionsSettings({ autoOpen = false }: { autoOpen
       setMessage({ kind: 'ok', text: 'Test event sent — check Events Manager → Test Events tab.' });
       await loadConfig();
     } catch (err: any) {
-      setMessage({ kind: 'err', text: err?.response?.data?.message || 'Test event failed to send.' });
+      setMessage({ kind: 'err', text: apiErrorMessage(err, 'Test event failed to send.') });
     } finally {
       setBusy('');
     }
@@ -118,7 +124,7 @@ export default function MetaConversionsSettings({ autoOpen = false }: { autoOpen
       setConfig(null);
       setEditing(false);
     } catch (err: any) {
-      setMessage({ kind: 'err', text: err?.response?.data?.message || 'Could not disconnect.' });
+      setMessage({ kind: 'err', text: apiErrorMessage(err, 'Could not disconnect.') });
     } finally {
       setBusy('');
     }
@@ -203,6 +209,10 @@ export default function MetaConversionsSettings({ autoOpen = false }: { autoOpen
               placeholder={config?.hasAccessToken ? '••••••••••••' : 'Generated in Events Manager → Settings → Conversions API'}
               className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-400"
             />
+            <p className="mt-1 text-xs text-slate-400">
+              Paste only the token — about 200 characters, no cURL command around it.
+              {accessToken.trim() ? ` Pasted: ${accessToken.trim().length} characters.` : ''}
+            </p>
           </div>
           <div className="flex items-center gap-2">
             <button onClick={save} disabled={!!busy}

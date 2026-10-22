@@ -16,6 +16,7 @@ import api from '../lib/api';
 import {
   LEAD_MOVES,
   MEETING_KINDS,
+  isOnlineMeeting,
   buildMovePayloads,
   moveById,
   type LeadMoveId,
@@ -213,7 +214,7 @@ export default function LeadSheet({
   // loadingSlots stays out of the dependencies: setting it re-ran this effect,
   // whose cleanup cancelled the request in flight, so the spinner never ended.
   useEffect(() => {
-    if (move !== 'scheduled' || meetingKind !== 'zoom' || days.length) return;
+    if (move !== 'scheduled' || !isOnlineMeeting(meetingKind) || days.length) return;
 
     let cancelled = false;
     setLoadingSlots(true);
@@ -428,7 +429,7 @@ export default function LeadSheet({
                         }`}
                       >
                         <Text className={`text-base font-semibold ${on ? 'text-indigo-800' : 'text-slate-900'}`}>
-                          {kind.id === 'zoom' ? '🎥 ' : '📞 '}
+                          {kind.id === 'call' ? '📞 ' : '🎥 '}
                           {kind.label}
                         </Text>
                         <Text className="text-xs text-slate-500">{kind.hint}</Text>
@@ -455,9 +456,11 @@ export default function LeadSheet({
               </View>
             )}
 
-            {selected?.needs === 'datetime' && move === 'scheduled' && meetingKind === 'zoom' && (
+            {selected?.needs === 'datetime' && move === 'scheduled' && isOnlineMeeting(meetingKind) && (
               <View className="mt-4">
-                <Text className="text-sm font-medium text-slate-700 mb-1.5">Când e întâlnirea Zoom</Text>
+                <Text className="text-sm font-medium text-slate-700 mb-1.5">
+                  {meetingKind === 'meet' ? 'Când e întâlnirea Meet' : 'Când e întâlnirea Zoom'}
+                </Text>
 
                 {loadingSlots && (
                   <View className="py-4 items-center">

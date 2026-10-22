@@ -4,8 +4,9 @@ import {
   googleCalendarUrl,
   isDeliverableEmail,
   normalizeProvider,
+  UNUSABLE_MEETING_STATUSES,
 } from './booking-meetings.service';
-import { IntegrationType } from '../database/entities/integration.entity';
+import { IntegrationStatus, IntegrationType } from '../database/entities/integration.entity';
 
 const START = new Date('2026-11-02T10:00:00.000Z');
 const END = new Date('2026-11-02T10:30:00.000Z');
@@ -41,8 +42,23 @@ function build(options: { booking?: any; google?: boolean; zoom?: boolean } = {}
     [IntegrationType.GOOGLE]: options.google ? { id: 'g', workspaceId: 'ws' } : null,
     [IntegrationType.ZOOM]: options.zoom ? { id: 'z', workspaceId: 'ws' } : null,
   };
+  // The service asks for a connection with a query builder (it accepts a stale
+  // `error` status), so the stub answers on the `type` parameter it binds.
   const integrationRepository = {
-    findOne: jest.fn(async ({ where }: any) => integrations[where.type] ?? null),
+    createQueryBuilder: jest.fn(() => {
+      let wanted: string | undefined;
+      const qb: any = {
+        where: () => qb,
+        andWhere: (_sql: string, params?: any) => {
+          if (params?.type) wanted = params.type;
+          return qb;
+        },
+        orderBy: () => qb,
+        addOrderBy: () => qb,
+        getOne: async () => (wanted ? integrations[wanted] ?? null : null),
+      };
+      return qb;
+    }),
   };
   const workspaceRepository = { findOne: jest.fn().mockResolvedValue({ settings: {} }) };
   const googleHandler = {
@@ -210,5 +226,20 @@ describe('cancelling and moving', () => {
     const out = await service.moveMeeting(moved as any);
     expect(googleHandler.deleteCalendarEvent).toHaveBeenCalledWith(expect.anything(), 'evt0');
     expect(out?.link).toBe('https://meet.google.com/abc-defg-hij');
+  });
+});
+
+describe('which connections count as usable', () => {
+  it('does not write off a platform over a stale error status', () => {
+    // Google sat on `error` from a January Gmail sync while its token was
+    // being refreshed hourly; Meet was offered to nobody for nine months.
+    expect(UNUSABLE_MEETING_STATUSES).not.toContain(IntegrationStatus.ERROR);
+    expect(UNUSABLE_MEETING_STATUSES).not.toContain(IntegrationStatus.ACTIVE);
+    expect(UNUSABLE_MEETING_STATUSES).not.toContain(IntegrationStatus.EXPIRED);
+  });
+
+  it('leaves out the ones somebody switched off', () => {
+    expect(UNUSABLE_MEETING_STATUSES).toContain(IntegrationStatus.DISABLED);
+    expect(UNUSABLE_MEETING_STATUSES).toContain(IntegrationStatus.SUSPENDED);
   });
 });
