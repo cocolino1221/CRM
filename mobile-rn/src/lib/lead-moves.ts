@@ -63,19 +63,35 @@ export interface MoveInput {
   /** ISO, for a booking or a follow-up. */
   at?: string;
   hostId?: string;
-  /** Programat only: a phone call, or a Zoom meeting with a link. */
+  /** Programat only: a phone call, or an online meeting with a link. */
   meetingKind?: MeetingKind | null;
   /** Revenire only: who rings back; the caller when omitted. */
   assigneeId?: string;
   clientRequestId: string;
 }
 
-export type MeetingKind = 'call' | 'zoom';
+export type MeetingKind = 'call' | 'zoom' | 'meet';
 
 export const MEETING_KINDS: Array<{ id: MeetingKind; label: string; hint: string }> = [
   { id: 'call', label: 'Apel', hint: 'Sunați la ora stabilită, fără link.' },
-  { id: 'zoom', label: 'Zoom', hint: 'Cu link Zoom trimis pe email.' },
+  { id: 'zoom', label: 'Zoom', hint: 'Cu link Zoom pe email.' },
+  { id: 'meet', label: 'Meet', hint: 'Cu link Google Meet pe email.' },
 ];
+
+/** Both online kinds need an hour out of the closer's free slots. */
+export function isOnlineMeeting(kind?: MeetingKind | null): boolean {
+  return kind === 'zoom' || kind === 'meet';
+}
+
+/**
+ * What the booking endpoint calls the platform. "phone" tells the server not
+ * to create a link at all.
+ */
+export function bookingProviderOf(kind?: MeetingKind | null): 'zoom' | 'google_meet' | 'phone' {
+  if (kind === 'zoom') return 'zoom';
+  if (kind === 'meet') return 'google_meet';
+  return 'phone';
+}
 
 export interface MovePayloads {
   disposition: Record<string, any>;
@@ -127,8 +143,7 @@ export function buildMovePayloads(input: MoveInput): MovePayloads {
           startTime: input.at,
           duration: DEFAULT_BOOKING_MINUTES,
           notes: notes || undefined,
-          // "phone" tells the server not to create a meeting link.
-          meetingProvider: input.meetingKind === 'zoom' ? 'zoom' : 'phone',
+          meetingProvider: bookingProviderOf(input.meetingKind),
         },
       };
     }

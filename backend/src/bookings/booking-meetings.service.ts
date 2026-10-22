@@ -12,6 +12,16 @@ import { EmailService } from '../email/email.service';
 
 export type MeetingProvider = 'google_meet' | 'zoom' | 'none';
 
+/**
+ * The only states that mean "do not try this platform". Everything else —
+ * including `error`, which some unrelated sync may have written months ago —
+ * is worth an attempt: the failure is reported to the caller in words.
+ */
+export const UNUSABLE_MEETING_STATUSES: IntegrationStatus[] = [
+  IntegrationStatus.DISABLED,
+  IntegrationStatus.SUSPENDED,
+];
+
 export interface MeetingOutcome {
   provider: MeetingProvider;
   link?: string;
@@ -91,17 +101,38 @@ export class BookingMeetingsService {
     private readonly configService: ConfigService,
   ) {}
 
-  private findActive(workspaceId: string, type: IntegrationType): Promise<Integration | null> {
-    return this.integrationRepository.findOne({
-      where: { workspaceId, type, status: IntegrationStatus.ACTIVE },
-      order: { createdAt: 'ASC' },
-    });
+  /**
+   * A connection we can try to create a meeting on.
+   *
+   * `status` is not a verdict on the credentials: it carries the result of
+   * whatever ran last. A Gmail sync that failed in January left Google on
+   * `error` for nine months, with a live token that Sheets kept refreshing
+   * every hour — and because this looked only for ACTIVE, Google Meet was
+   * never offered to anyone, with nothing on screen to explain why.
+   *
+   * So a connection counts while it is enabled and still holds credentials.
+   * Being wrong this way costs a warning the caller can read ("reconnect
+   * Google") instead of a platform that silently does not exist.
+   */
+  private findUsable(workspaceId: string, type: IntegrationType): Promise<Integration | null> {
+    return this.integrationRepository
+      .createQueryBuilder('integration')
+      .where('integration.workspaceId = :workspaceId', { workspaceId })
+      .andWhere('integration.type = :type', { type })
+      .andWhere('integration.deletedAt IS NULL')
+      .andWhere('integration.isEnabled = true')
+      .andWhere('integration.credentials IS NOT NULL')
+      .andWhere('integration.status NOT IN (:...unusable)', { unusable: UNUSABLE_MEETING_STATUSES })
+      // An active one first when a workspace has several rows for a platform.
+      .orderBy(`CASE WHEN integration.status = '${IntegrationStatus.ACTIVE}' THEN 0 ELSE 1 END`, 'ASC')
+      .addOrderBy('integration.createdAt', 'ASC')
+      .getOne();
   }
 
   async availableProviders(workspaceId: string): Promise<{ google_meet: boolean; zoom: boolean }> {
     const [google, zoom] = await Promise.all([
-      this.findActive(workspaceId, IntegrationType.GOOGLE),
-      this.findActive(workspaceId, IntegrationType.ZOOM),
+      this.findUsable(workspaceId, IntegrationType.GOOGLE),
+      this.findUsable(workspaceId, IntegrationType.ZOOM),
     ]);
     return { google_meet: !!google, zoom: !!zoom };
   }
@@ -194,7 +225,7 @@ export class BookingMeetingsService {
     const title = `${booking.meetingType?.name || 'Întâlnire'} — ${lead.name}`;
 
     if (provider === 'zoom') {
-      const integration = await this.findActive(booking.workspaceId, IntegrationType.ZOOM);
+      const integration = await this.findUsable(booking.workspaceId, IntegrationType.ZOOM);
       if (!integration) throw new Error('Zoom is not connected');
       const meeting = await this.zoomHandler.createMeetingForIntegration(integration, {
         topic: title,
@@ -208,7 +239,7 @@ export class BookingMeetingsService {
       return { link: meeting.join_url, externalId: meeting.id ? String(meeting.id) : undefined };
     }
 
-    const integration = await this.findActive(booking.workspaceId, IntegrationType.GOOGLE);
+    const integration = await this.findUsable(booking.workspaceId, IntegrationType.GOOGLE);
     if (!integration) throw new Error('Google is not connected');
     const attendees = [booking.host?.email, leadEmail].filter((e): e is string => isDeliverableEmail(e));
     const event = await this.googleHandler.createMeetEvent(integration, {
@@ -334,10 +365,10 @@ export class BookingMeetingsService {
     const provider = normalizeProvider(booking.locationType);
     try {
       if (provider === 'zoom') {
-        const integration = await this.findActive(booking.workspaceId, IntegrationType.ZOOM);
+        const integration = await this.findUsable(booking.workspaceId, IntegrationType.ZOOM);
         if (integration) await this.zoomHandler.deleteMeetingForIntegration(integration, booking.externalMeetingId);
       } else if (provider === 'google_meet') {
-        const integration = await this.findActive(booking.workspaceId, IntegrationType.GOOGLE);
+        const integration = await this.findUsable(booking.workspaceId, IntegrationType.GOOGLE);
         if (integration) await this.googleHandler.deleteCalendarEvent(integration, booking.externalMeetingId);
       }
     } catch (error: any) {
