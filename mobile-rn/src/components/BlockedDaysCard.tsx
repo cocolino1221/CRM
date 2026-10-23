@@ -25,10 +25,15 @@ import {
  * Whole days off. Tap a day to block it, tap again to free it; each change is
  * saved at once, so a closer cannot forget to press Save before the weekend.
  */
-export default function BlockedDaysCard() {
+export default function BlockedDaysCard({ onChange }: { onChange?: (days: string[]) => void } = {}) {
   const showToast = useToastStore((s) => s.show);
   const [days, setDays] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // The screen's date picker closes the days blocked here, as soon as they are.
+  useEffect(() => {
+    if (!loading) onChange?.(days);
+  }, [days, loading, onChange]);
   const [saving, setSaving] = useState(false);
   const now = new Date();
   const [cursor, setCursor] = useState({ year: now.getFullYear(), month: now.getMonth() });

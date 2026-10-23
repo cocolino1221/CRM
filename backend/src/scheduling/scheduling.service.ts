@@ -22,6 +22,7 @@ import { answeredPairs, answersAsNotes, bookingFormError } from './booking-form'
 import { withAnswerNotes } from '../contacts/contact-notes';
 import { blockedDaysOf, hostZoneOf, isBlockedAt, normalizeBlockedDays } from './blocked-days';
 import { cleanTracking, sourceFromTracking, type BookingTracking } from './booking-source';
+import { applyDayHoursChanges, dayHoursOf, overrideRowsFor, type DayHours } from './day-hours';
 
 @Injectable()
 export class SchedulingService {
@@ -62,6 +63,24 @@ export class SchedulingService {
     );
     this.logger.log(`Blocked days set for ${userId}: ${blockedDays.length}`);
     return blockedDays;
+  }
+
+  async getDayHours(workspaceId: string, userId: string): Promise<DayHours> {
+    const user = await this.userRepository.findOne({ where: { id: userId, workspaceId } });
+    return applyDayHoursChanges(dayHoursOf(user), []);
+  }
+
+  /** Sets or clears the hours of single dates: `[{ date, intervals | null }]`. */
+  async setDayHours(workspaceId: string, userId: string, changes: unknown, timezone?: string): Promise<DayHours> {
+    const user = await this.userRepository.findOne({ where: { id: userId, workspaceId } });
+    if (!user) throw new NotFoundException('User not found');
+    const dayHours = applyDayHoursChanges(dayHoursOf(user), changes);
+    const zone = typeof timezone === 'string' && timezone.trim() ? timezone.trim().slice(0, 64) : user.preferences?.dayHoursZone;
+    await this.userRepository.update(
+      { id: userId, workspaceId },
+      { preferences: { ...(user.preferences ?? {}), dayHours, ...(zone ? { dayHoursZone: zone } : {}) } },
+    );
+    return dayHours;
   }
 
   /** True when `at` lands on a day the host blocked, read in the host's zone. */
@@ -283,22 +302,26 @@ export class SchedulingService {
     // local getters would shift the day on any server not running in UTC.
     const ymd = date.toISOString().slice(0, 10);
     const dayOfWeek = this.getDayOfWeek(new Date(`${ymd}T12:00:00Z`));
-    const availabilities = await this.availabilityRepository.find({
-      where: {
-        userId: meetingType.userId,
-        dayOfWeek,
-        isActive: true,
-        deletedAt: null as any,
-      },
-    });
-
-    if (availabilities.length === 0) {
-      return [];
-    }
 
     // A whole day the closer took off: nothing to offer.
     const host = await this.userRepository.findOne({ where: { id: meetingType.userId } });
     if (blockedDaysOf(host).includes(ymd)) {
+      return [];
+    }
+
+    // Hours set for this very date win over the weekday's.
+    const availabilities =
+      overrideRowsFor(host, ymd) ??
+      (await this.availabilityRepository.find({
+        where: {
+          userId: meetingType.userId,
+          dayOfWeek,
+          isActive: true,
+          deletedAt: null as any,
+        },
+      }));
+
+    if (availabilities.length === 0) {
       return [];
     }
 

@@ -89,6 +89,31 @@ export class SchedulingController {
     return this.brandingService.set(workspaceId, body);
   }
 
+  // ========== Hours for single dates ==========
+
+  @Get('day-hours')
+  @UseGuards(JwtAuthGuard, WorkspaceGuard, RolesGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'My hours for single dates (override the weekday), today onwards' })
+  @Roles('super_admin', 'admin', 'manager', 'sales_rep', 'closer', 'setter', 'caller', 'support_agent')
+  async getDayHours(@CurrentWorkspace('id') workspaceId: string, @CurrentUser('id') userId: string) {
+    return { days: await this.schedulingService.getDayHours(workspaceId, userId) };
+  }
+
+  @Put('day-hours')
+  @UseGuards(JwtAuthGuard, WorkspaceGuard, RolesGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Set or clear my hours for single dates: { changes: [{ date, intervals | null }] }' })
+  @Roles('super_admin', 'admin', 'manager', 'sales_rep', 'closer', 'setter', 'caller', 'support_agent')
+  async setDayHours(
+    @CurrentWorkspace('id') workspaceId: string,
+    @CurrentUser('id') userId: string,
+    @Body('changes') changes: unknown,
+    @Body('timezone') timezone?: string,
+  ) {
+    return { days: await this.schedulingService.setDayHours(workspaceId, userId, changes, timezone) };
+  }
+
   // ========== Days off ==========
 
   @Get('blocked-days')

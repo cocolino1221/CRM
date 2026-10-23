@@ -326,7 +326,15 @@ export default function ReportsScreen() {
       )}
 
       {isManager && (
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} className="max-h-14 bg-white border-b border-slate-100" contentContainerStyle={{ paddingHorizontal: 12, paddingVertical: 10, gap: 8 }}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          // A fixed height and no grow: left to flex, the row was squeezed by
+          // the list below until the names in the chips disappeared.
+          style={{ height: 56, flexGrow: 0, flexShrink: 0 }}
+          className="bg-white border-b border-slate-100"
+          contentContainerStyle={{ paddingHorizontal: 12, alignItems: "center", gap: 8 }}
+        >
           <TouchableOpacity
             onPress={() => setSelectedUser('')}
             className={`px-3 py-1.5 rounded-full border ${!selectedUser ? 'bg-slate-900 border-slate-900' : 'border-slate-200'}`}

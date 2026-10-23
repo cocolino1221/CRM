@@ -75,6 +75,21 @@ describe('SchedulingService — public slots', () => {
     expect(await starts()).toHaveLength(2);
   });
 
+  it('offers the hours set for that very date instead of the weekday', async () => {
+    rows = [{ dayOfWeek: 'monday', startTime: '09:00', endTime: '10:00', timezone: 'UTC' }];
+    hostRow = { id: 'closer-1', preferences: { dayHours: { [DAY]: [{ startTime: '14:00', endTime: '15:00' }] }, dayHoursZone: 'UTC' } };
+    expect(await starts()).toEqual(['2030-01-07T14:00:00.000Z', '2030-01-07T14:30:00.000Z']);
+
+    // A weekday with no hours still opens on a date given its own.
+    rows = [];
+    expect(await starts()).toHaveLength(2);
+
+    // An empty list for the date closes it.
+    rows = [{ dayOfWeek: 'monday', startTime: '09:00', endTime: '10:00', timezone: 'UTC' }];
+    hostRow = { id: 'closer-1', preferences: { dayHours: { [DAY]: [] } } };
+    expect(await starts()).toEqual([]);
+  });
+
   it('offers every window of a split day, in order', async () => {
     rows = [
       { dayOfWeek: 'monday', startTime: '11:30', endTime: '12:30', timezone: 'UTC' },

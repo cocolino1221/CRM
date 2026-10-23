@@ -7,7 +7,8 @@ import { User } from '../database/entities/user.entity';
 import { canManageBooking } from './booking-permissions';
 import { CALENDAR_ROLES, canHostMeetings, hasTimeOfDay } from './calendar-access';
 import { BookingMeetingsService } from './booking-meetings.service';
-import { blockedDaysOf, hostZoneOf, isBlockedAt } from '../scheduling/blocked-days';
+import { blockedDaysOf, hostZoneOf, isBlockedAt, ymdInZone } from '../scheduling/blocked-days';
+import { overrideRowsFor, withinIntervals } from '../scheduling/day-hours';
 
 @Injectable()
 export class BookingsService {
@@ -69,23 +70,28 @@ export class BookingsService {
   async findAvailableSlots(workspaceId: string, hostId: string, date: Date) {
     // Get user availability for the day
     const dayOfWeek = this.getDayOfWeek(date) as any;
-    const availabilities = await this.availabilityRepository.find({
-      where: {
-        workspaceId,
-        userId: hostId,
-        dayOfWeek,
-        isActive: true,
-        deletedAt: null as any,
-      },
-    });
-
-    if (availabilities.length === 0) {
-      return [];
-    }
+    const ymd = date.toISOString().slice(0, 10);
 
     // A whole day the host took off.
     const host = await this.userRepository.findOne({ where: { id: hostId } });
-    if (blockedDaysOf(host).includes(date.toISOString().slice(0, 10))) {
+    if (blockedDaysOf(host).includes(ymd)) {
+      return [];
+    }
+
+    // Hours set for this very date win over the weekday's.
+    const availabilities: any[] =
+      overrideRowsFor(host, ymd) ??
+      (await this.availabilityRepository.find({
+        where: {
+          workspaceId,
+          userId: hostId,
+          dayOfWeek,
+          isActive: true,
+          deletedAt: null as any,
+        },
+      }));
+
+    if (availabilities.length === 0) {
       return [];
     }
 
@@ -412,6 +418,16 @@ export class BookingsService {
     // A whole day off beats the weekly hours.
     const host = await this.userRepository.findOne({ where: { id: hostId } });
     if (isBlockedAt(blockedDaysOf(host), startTime, hostZoneOf(rows))) return false;
+
+    // Hours set for this very date win over the weekday's.
+    const zone = String(host?.preferences?.dayHoursZone || hostZoneOf(rows));
+    const dated = overrideRowsFor(host, ymdInZone(startTime, zone), zone);
+    if (dated) {
+      const start = this.zonedParts(startTime, zone);
+      const end = this.zonedParts(endTime, zone);
+      if (end.minutes <= start.minutes) return false;
+      return withinIntervals(dated, start.minutes, end.minutes);
+    }
     // Zero rows means the host never configured a week. A row switched off is
     // the opposite: a deliberate "not then", which must still be enforced.
     if (rows.length === 0) return true;

@@ -10,9 +10,23 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
-import { CalendarClock, ChevronLeft, Copy, Eraser, Info } from 'lucide-react-native';
+import { CalendarClock, CalendarOff, ChevronLeft, ChevronRight, Copy, Eraser, Info } from 'lucide-react-native';
 import api from '../lib/api';
 import BlockedDaysCard from '../components/BlockedDaysCard';
+import { formatWeek, isPastDay, toYmd, weekDays, weekStartOf } from '../lib/blocked-days';
+import {
+  clearDate,
+  copyDateTo,
+  dateChip,
+  dateTitle,
+  dateUnitsFrom,
+  dayHoursChanges,
+  resetDate,
+  toggleDateCell,
+  unitsForDate,
+  weekdayOf,
+  type DateUnits,
+} from '../lib/date-hours';
 import { useToastStore } from '../stores/toast-store';
 import {
   SLOT_INTERVALS,
@@ -81,7 +95,17 @@ export default function AvailabilityScreen() {
   const [duration, setDuration] = useState(30);
   const [step, setStep] = useState<SlotInterval>(30);
 
-  const [day, setDay] = useState<Weekday>(todayWeekday);
+  // A real week of dates, not Monday–Sunday in the abstract: "next Friday"
+  // is a date. Its weekday's hours apply unless the date has its own.
+  const today = toYmd(new Date());
+  const [selectedDate, setSelectedDate] = useState(today);
+  const [weekStart, setWeekStart] = useState(() => weekStartOf(today));
+  const day: Weekday = weekdayOf(selectedDate);
+  const [dated, setDated] = useState<DateUnits>({});
+  const [savedDated, setSavedDated] = useState<DateUnits>({});
+  const [blocked, setBlocked] = useState<string[]>([]);
+  // Off: a tap changes only this date. On: every week's same weekday.
+  const [repeatWeekly, setRepeatWeekly] = useState(false);
   const [fullDay, setFullDay] = useState(false);
 
   const timezone = useMemo(
@@ -96,6 +120,16 @@ export default function AvailabilityScreen() {
         api.get<AvailabilityRow[]>('/scheduling/availability'),
         api.get<MeetingTypeRow[]>('/scheduling/meeting-types'),
       ]);
+
+      // Hours for single dates and days off: a failure here still shows the week.
+      const [dayHoursRes, blockedRes] = await Promise.all([
+        api.get('/scheduling/day-hours').catch(() => null),
+        api.get('/scheduling/blocked-days').catch(() => null),
+      ]);
+      const loadedDated = dateUnitsFrom(dayHoursRes?.data?.days);
+      setDated(loadedDated);
+      setSavedDated(dateUnitsFrom(dayHoursRes?.data?.days));
+      setBlocked(Array.isArray(blockedRes?.data?.days) ? blockedRes!.data.days : []);
 
       const rows = Array.isArray(availabilityRes.data) ? availabilityRes.data : [];
       setExisting(rows);
@@ -134,7 +168,8 @@ export default function AvailabilityScreen() {
     meeting.name !== meetingName.trim() ||
     Number(meeting.duration) !== duration ||
     Number(meeting.slotInterval ?? 15) !== step;
-  const dirty = plan.create.length > 0 || plan.remove.length > 0 || meetingChanged;
+  const dayChanges = useMemo(() => dayHoursChanges(savedDated, dated), [savedDated, dated]);
+  const dirty = plan.create.length > 0 || plan.remove.length > 0 || meetingChanged || dayChanges.length > 0;
   const invalid = validateMeeting(meetingName, duration);
   const hours = weekHours(week);
 
@@ -173,6 +208,9 @@ export default function AvailabilityScreen() {
       for (const id of plan.remove) {
         await api.delete(`/scheduling/availability/${id}`);
       }
+      if (dayChanges.length) {
+        await api.put('/scheduling/day-hours', { changes: dayChanges, timezone });
+      }
 
       await load();
       showToast('Program salvat', 'success');
@@ -187,6 +225,35 @@ export default function AvailabilityScreen() {
   };
 
   const dayLabel = WEEKDAYS.find((d) => d.value === day)?.label ?? '';
+  const shownDates = weekDays(weekStart);
+  const selectedBlocked = blocked.includes(selectedDate);
+  const ownHours = selectedDate in dated;
+  const selectedUnits = unitsForDate(selectedDate, week, dated);
+
+  const tapCell = (start: number) => {
+    if (repeatWeekly) {
+      setWeek((prev) => toggleCell(prev, day, start, step));
+      setDated((prev) => resetDate(prev, selectedDate));
+    } else {
+      setDated((prev) => toggleDateCell(prev, selectedDate, week, start, step));
+    }
+  };
+  const pickDate = (ymd: string) => {
+    if (isPastDay(ymd)) return;
+    if (blocked.includes(ymd)) {
+      showToast('Zi blocată. Deblocheaz-o din „Zile libere” ca să-i setezi orele.', 'error');
+    }
+    setSelectedDate(ymd);
+  };
+  const shiftWeek = (delta: number) => {
+    const d = new Date(`${weekStart}T12:00:00`);
+    d.setDate(d.getDate() + 7 * delta);
+    const next = toYmd(d);
+    if (delta < 0 && next < weekStartOf(today)) return;
+    setWeekStart(next);
+    const firstOpen = weekDays(next).find((x) => !isPastDay(x)) ?? next;
+    setSelectedDate(firstOpen);
+  };
 
   return (
     <View className="flex-1 bg-slate-50">
@@ -291,130 +358,219 @@ export default function AvailabilityScreen() {
             </View>
           </View>
 
-          {/* ---------- day picker ---------- */}
-          <View className="mb-3 flex-row flex-wrap gap-2">
-            {WEEKDAYS.map(({ value, label }) => {
-              const busy = week[value].size > 0;
-              return (
-                <TouchableOpacity
-                  key={value}
-                  onPress={() => setDay(value)}
-                  className={`px-3 py-2 rounded-xl border flex-row items-center gap-1.5 ${
-                    day === value ? 'bg-slate-900 border-slate-900' : 'bg-white border-slate-200'
-                  }`}
-                >
-                  <Text
-                    className={`text-xs font-semibold ${
-                      day === value ? 'text-white' : 'text-slate-600'
-                    }`}
-                  >
-                    {label.slice(0, 3)}
-                  </Text>
-                  <View
-                    className={`w-1.5 h-1.5 rounded-full ${
-                      busy ? 'bg-emerald-400' : day === value ? 'bg-white/30' : 'bg-slate-200'
-                    }`}
-                  />
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-
-          {/* ---------- the day being edited ---------- */}
-          <View className="mb-3 rounded-2xl bg-white border border-slate-100 overflow-hidden">
-            <View className="px-4 py-3 border-b border-slate-100 flex-row items-center justify-between">
-              <View className="flex-1 pr-2">
-                <Text className="text-sm font-bold text-slate-900">{dayLabel}</Text>
-                <Text className="text-xs text-slate-500 mt-0.5">{daySummary(week[day])}</Text>
-              </View>
+          {/* ---------- the week, as real dates ---------- */}
+          <View className="mb-3 rounded-2xl bg-white border border-slate-100 p-3">
+            <View className="flex-row items-center justify-between mb-2">
               <TouchableOpacity
-                onPress={() => setWeek((prev) => clearDay(prev, day))}
-                className="flex-row items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-slate-50 border border-slate-200"
+                onPress={() => shiftWeek(-1)}
+                disabled={weekStart <= weekStartOf(today)}
+                className="w-8 h-8 items-center justify-center rounded-full"
+                accessibilityLabel="Săptămâna anterioară"
               >
-                <Eraser size={14} color="#64748b" />
-                <Text className="text-[11px] font-semibold text-slate-600">Golește</Text>
+                <ChevronLeft size={18} color={weekStart <= weekStartOf(today) ? '#cbd5e1' : '#334155'} />
+              </TouchableOpacity>
+              <Text className="text-sm font-semibold text-slate-800">{formatWeek(weekStart)}</Text>
+              <TouchableOpacity
+                onPress={() => shiftWeek(1)}
+                className="w-8 h-8 items-center justify-center rounded-full"
+                accessibilityLabel="Săptămâna următoare"
+              >
+                <ChevronRight size={18} color="#334155" />
               </TouchableOpacity>
             </View>
-
-            <View className="px-4 py-2.5 flex-row items-center justify-between border-b border-slate-100">
-              <Text className="text-xs text-slate-600">Arată toată ziua (00:00–24:00)</Text>
-              <Switch
-                value={fullDay}
-                onValueChange={setFullDay}
-                trackColor={{ true: '#0f766e', false: '#cbd5e1' }}
-                thumbColor="#ffffff"
-              />
-            </View>
-
-            <View className="p-3 flex-row flex-wrap gap-2">
-              {starts.map((start) => {
-                const state = cellState(week[day], start, step);
+            <View className="flex-row gap-1">
+              {shownDates.map((ymd) => {
+                const chip = dateChip(ymd);
+                const past = isPastDay(ymd);
+                const off = blocked.includes(ymd);
+                const on = ymd === selectedDate;
+                const busy = !off && unitsForDate(ymd, week, dated).size > 0;
                 return (
                   <TouchableOpacity
-                    key={start}
-                    onPress={() => setWeek((prev) => toggleCell(prev, day, start, step))}
-                    className={`px-3 py-2 rounded-xl border ${
-                      state === 'all'
-                        ? 'bg-emerald-600 border-emerald-600'
-                        : state === 'some'
-                          ? 'bg-emerald-50 border-emerald-300'
+                    key={ymd}
+                    disabled={past}
+                    onPress={() => pickDate(ymd)}
+                    className={`flex-1 items-center py-2 rounded-xl border ${
+                      on
+                        ? off
+                          ? 'bg-rose-600 border-rose-600'
+                          : 'bg-slate-900 border-slate-900'
+                        : off
+                          ? 'bg-rose-50 border-rose-200'
                           : 'bg-white border-slate-200'
                     }`}
-                    style={{ minWidth: 72 }}
+                    accessibilityLabel={`${dateTitle(ymd)}${off ? ', zi blocată' : ''}`}
                   >
-                    <Text
-                      className={`text-xs font-semibold text-center ${
-                        state === 'all'
-                          ? 'text-white'
-                          : state === 'some'
-                            ? 'text-emerald-700'
-                            : 'text-slate-500'
-                      }`}
-                    >
-                      {cellLabel(start)}
+                    <Text className={`text-[10px] font-semibold ${on ? 'text-white/80' : past ? 'text-slate-300' : off ? 'text-rose-400' : 'text-slate-500'}`}>
+                      {chip.day}
                     </Text>
+                    <Text
+                      className={`text-sm font-bold ${on ? 'text-white' : past ? 'text-slate-300' : off ? 'text-rose-600 line-through' : 'text-slate-800'}`}
+                    >
+                      {chip.date}
+                    </Text>
+                    <View
+                      className={`w-1.5 h-1.5 rounded-full mt-1 ${
+                        busy ? (on ? 'bg-emerald-300' : 'bg-emerald-500') : 'bg-transparent'
+                      }`}
+                    />
                   </TouchableOpacity>
                 );
               })}
             </View>
+          </View>
 
-            <TouchableOpacity
-              onPress={() => setWeek((prev) => copyDayToWorkdays(prev, day))}
-              className="mx-3 mb-3 flex-row items-center justify-center gap-2 px-3 py-2.5 rounded-xl bg-slate-50 border border-slate-200"
-            >
-              <Copy size={14} color="#0f766e" />
-              <Text className="text-xs font-semibold text-teal-700">
-                Copiază {dayLabel} pe Luni–Vineri
-              </Text>
-            </TouchableOpacity>
+          {/* ---------- the date being edited ---------- */}
+          <View className="mb-3 rounded-2xl bg-white border border-slate-100 overflow-hidden">
+            <View className="px-4 py-3 border-b border-slate-100 flex-row items-center justify-between">
+              <View className="flex-1 pr-2">
+                <Text className="text-sm font-bold text-slate-900">{dateTitle(selectedDate)}</Text>
+                <Text className="text-xs text-slate-500 mt-0.5">
+                  {selectedBlocked
+                    ? 'Zi blocată — nu te poate programa nimeni'
+                    : `${daySummary(selectedUnits)}${ownHours ? ' · doar în această zi' : ` · programul de ${dayLabel.toLowerCase()}`}`}
+                </Text>
+              </View>
+              {!selectedBlocked && (
+                <TouchableOpacity
+                  onPress={() =>
+                    repeatWeekly ? setWeek((prev) => clearDay(prev, day)) : setDated((prev) => clearDate(prev, selectedDate))
+                  }
+                  className="flex-row items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-slate-50 border border-slate-200"
+                >
+                  <Eraser size={14} color="#64748b" />
+                  <Text className="text-[11px] font-semibold text-slate-600">Golește</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+
+            {selectedBlocked ? (
+              <View className="px-4 py-5 items-center">
+                <CalendarOff size={22} color="#be123c" />
+                <Text className="text-sm text-slate-700 text-center mt-2">
+                  Ziua e blocată. Ca să-i setezi orele, deblocheaz-o din „Zile libere” de mai jos.
+                </Text>
+              </View>
+            ) : (
+              <>
+                <View className="px-4 py-2.5 flex-row items-center justify-between border-b border-slate-100">
+                  <View className="flex-1 pr-3">
+                    <Text className="text-xs font-semibold text-slate-700">
+                      Și în fiecare {dayLabel.toLowerCase()}
+                    </Text>
+                    <Text className="text-[11px] text-slate-400">
+                      {repeatWeekly ? 'Schimbi programul obișnuit al zilei' : 'Schimbi doar data aleasă'}
+                    </Text>
+                  </View>
+                  <Switch
+                    value={repeatWeekly}
+                    onValueChange={setRepeatWeekly}
+                    trackColor={{ true: '#0f766e', false: '#cbd5e1' }}
+                    thumbColor="#ffffff"
+                  />
+                </View>
+
+                <View className="px-4 py-2.5 flex-row items-center justify-between border-b border-slate-100">
+                  <Text className="text-xs text-slate-600">Arată toată ziua (00:00–24:00)</Text>
+                  <Switch
+                    value={fullDay}
+                    onValueChange={setFullDay}
+                    trackColor={{ true: '#0f766e', false: '#cbd5e1' }}
+                    thumbColor="#ffffff"
+                  />
+                </View>
+
+                <View className="p-3 flex-row flex-wrap gap-2">
+                  {starts.map((start) => {
+                    const state = cellState(repeatWeekly ? week[day] : selectedUnits, start, step);
+                    return (
+                      <TouchableOpacity
+                        key={start}
+                        onPress={() => tapCell(start)}
+                        className={`px-3 py-2 rounded-xl border ${
+                          state === 'all'
+                            ? 'bg-emerald-600 border-emerald-600'
+                            : state === 'some'
+                              ? 'bg-emerald-50 border-emerald-300'
+                              : 'bg-white border-slate-200'
+                        }`}
+                        style={{ minWidth: 72 }}
+                      >
+                        <Text
+                          className={`text-xs font-semibold text-center ${
+                            state === 'all' ? 'text-white' : state === 'some' ? 'text-emerald-700' : 'text-slate-500'
+                          }`}
+                        >
+                          {cellLabel(start)}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+
+                {ownHours && !repeatWeekly && (
+                  <TouchableOpacity
+                    onPress={() => setDated((prev) => resetDate(prev, selectedDate))}
+                    className="mx-3 mb-2 items-center px-3 py-2 rounded-xl bg-slate-50 border border-slate-200"
+                  >
+                    <Text className="text-xs font-semibold text-slate-600">
+                      Revino la programul obișnuit de {dayLabel.toLowerCase()}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+
+                <TouchableOpacity
+                  onPress={() =>
+                    repeatWeekly
+                      ? setWeek((prev) => copyDayToWorkdays(prev, day))
+                      : setDated((prev) =>
+                          copyDateTo(
+                            prev,
+                            selectedDate,
+                            week,
+                            shownDates.slice(0, 5).filter((d) => !isPastDay(d) && !blocked.includes(d)),
+                          ),
+                        )
+                  }
+                  className="mx-3 mb-3 flex-row items-center justify-center gap-2 px-3 py-2.5 rounded-xl bg-slate-50 border border-slate-200"
+                >
+                  <Copy size={14} color="#0f766e" />
+                  <Text className="text-xs font-semibold text-teal-700">
+                    {repeatWeekly ? `Copiază ${dayLabel} pe Luni–Vineri, în fiecare săptămână` : 'Copiază pe Luni–Vineri din săptămâna asta'}
+                  </Text>
+                </TouchableOpacity>
+              </>
+            )}
           </View>
 
           {/* ---------- whole days off ---------- */}
-          <BlockedDaysCard />
+          <BlockedDaysCard onChange={setBlocked} />
 
-          {/* ---------- the week at a glance ---------- */}
+          {/* ---------- the shown week at a glance ---------- */}
           <View className="rounded-2xl bg-white border border-slate-100 overflow-hidden">
             <Text className="px-4 py-3 text-sm font-semibold text-slate-700 border-b border-slate-100">
-              Săptămâna
+              Săptămâna {formatWeek(weekStart)}
             </Text>
-            {WEEKDAYS.map(({ value, label }) => (
-              <TouchableOpacity
-                key={value}
-                onPress={() => setDay(value)}
-                className="px-4 py-2.5 flex-row items-center justify-between border-b border-slate-50"
-              >
-                <Text className="text-xs font-semibold text-slate-600 w-20">{label}</Text>
-                <Text className="flex-1 text-xs text-slate-500 text-right" numberOfLines={1}>
-                  {daySummary(week[value])}
-                </Text>
-              </TouchableOpacity>
-            ))}
-            <View className="px-4 py-2.5 flex-row items-center justify-between bg-slate-50">
-              <Text className="text-xs text-slate-500">
-                {WEEKDAYS.reduce((n, { value }) => n + unitsToIntervals(week[value]).length, 0)}{' '}
-                intervale
-              </Text>
-              <Text className="text-xs font-semibold text-slate-700">{hours} ore</Text>
+            {shownDates.map((ymd) => {
+              const off = blocked.includes(ymd);
+              return (
+                <TouchableOpacity
+                  key={ymd}
+                  disabled={isPastDay(ymd)}
+                  onPress={() => pickDate(ymd)}
+                  className="px-4 py-2.5 flex-row items-center justify-between border-b border-slate-50"
+                >
+                  <Text className={`text-xs font-semibold w-28 ${isPastDay(ymd) ? 'text-slate-300' : 'text-slate-600'}`}>
+                    {dateTitle(ymd)}
+                  </Text>
+                  <Text className={`flex-1 text-xs text-right ${off ? 'text-rose-600' : 'text-slate-500'}`} numberOfLines={1}>
+                    {off ? 'Zi blocată' : `${daySummary(unitsForDate(ymd, week, dated))}${ymd in dated ? ' ★' : ''}`}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+            <View className="px-4 py-2.5 bg-slate-50">
+              <Text className="text-[11px] text-slate-500">★ = program doar pentru acea zi</Text>
             </View>
           </View>
         </ScrollView>
