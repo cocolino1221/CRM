@@ -70,3 +70,37 @@ export function outcomeSummary(outcome?: MeetingOutcome | null): string {
   const missingLead = !outcome.emailed.lead ? ' Lead-ul nu are email valid, trimite-i linkul pe WhatsApp.' : '';
   return `Link ${platform} creat și trimis pe email la ${who.join(' și ')}.${missingLead}`;
 }
+
+/**
+ * The platform buttons to offer for ONE TEAMMATE, as an admin or manager sets
+ * them up from Team — so the order and the selection follow that person's own
+ * choice, not the admin's. Saved on their `preferences.meetingProvider`, the
+ * same field they would set themselves.
+ *
+ * "Automat" is spelled out plainly here: the person being configured is not the
+ * one reading the screen, so naming their current platform in the label would
+ * only be confusing.
+ */
+export function teammatePlatformOptions(
+  connected: { google_meet: boolean; zoom: boolean } | null,
+  theirs?: MeetingProvider | null,
+): Array<{ value: '' | MeetingProvider; label: string; disabled: boolean }> {
+  // null means "not known yet" — a pending or failed lookup must not leave an
+  // admin unable to set anyone's platform — while an explicit false means the
+  // workspace really has not connected that one.
+  const info: MeetingProvidersInfo = {
+    google_meet: connected ? !!connected.google_meet : true,
+    zoom: connected ? !!connected.zoom : true,
+    preference: theirs ?? null,
+  };
+
+  return [
+    { value: '', label: 'Automat', disabled: false },
+    ...orderedPlatforms(info).map((platform) => ({
+      value: platform,
+      label: info[platform] ? PROVIDER_LABELS[platform] : `${PROVIDER_LABELS[platform]} (neconectat)`,
+      disabled: !info[platform],
+    })),
+    { value: 'none', label: 'Fără link', disabled: false },
+  ];
+}
