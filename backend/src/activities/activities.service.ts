@@ -1,4 +1,6 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Optional, NotFoundException } from '@nestjs/common';
+import { MetaConversionsService } from '../integrations/meta-conversions/meta-conversions.service';
+import { outcomeEvent, outcomeEventId } from '../integrations/meta-conversions/outcome-events';
 import { User } from '../database/entities/user.entity';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, FindOptionsWhere, Repository } from 'typeorm';
@@ -22,7 +24,22 @@ export class ActivitiesService {
     @InjectRepository(Activity)
     private readonly activityRepository: Repository<Activity>,
     private readonly dataSource: DataSource,
+    @Optional() private readonly metaConversions?: MetaConversionsService,
   ) {}
+
+  /**
+   * Tells Meta what became of the lead — Programat, Vândut, Pierdut — so ads
+   * learn which leads turn into sales. After the save, never in its way.
+   */
+  private reportOutcome(workspaceId: string, activity: Activity, dto: { outcome?: string | null; deal?: unknown }): void {
+    const event = outcomeEvent(dto);
+    if (!event || !activity?.contactId || !this.metaConversions) return;
+    void this.dataSource
+      .getRepository(Contact)
+      .findOne({ where: { id: activity.contactId, workspaceId } })
+      .then((contact) => contact && this.metaConversions!.reportStageChange(contact, event, outcomeEventId(activity.id, event)))
+      .catch(() => undefined);
+  }
 
   async findAll(
     workspaceId: string,
@@ -72,7 +89,7 @@ export class ActivitiesService {
     activityId: string,
     dto: DispositionDto,
   ): Promise<Activity> {
-    return this.dataSource.transaction(async (manager) => {
+    const saved = await this.dataSource.transaction(async (manager) => {
       const activityRepository = manager.getRepository(Activity);
       const activity = await activityRepository.findOne({
         where: { workspaceId, id: activityId },
@@ -81,6 +98,8 @@ export class ActivitiesService {
 
       return this.writeDisposition(manager, workspaceId, userId, activity, dto);
     });
+    this.reportOutcome(workspaceId, saved, dto);
+    return saved;
   }
 
   /**
@@ -93,7 +112,7 @@ export class ActivitiesService {
     contactId: string,
     dto: CreateAndDispositionDto | (DispositionDto & { occurredAt?: string; durationSeconds?: number }),
   ): Promise<Activity> {
-    return this.dataSource.transaction(async (manager) => {
+    const saved = await this.dataSource.transaction(async (manager) => {
       const activityRepository = manager.getRepository(Activity);
 
       // The guard inside writeDisposition compares against the activity's own
@@ -136,6 +155,10 @@ export class ActivitiesService {
 
       return this.writeDisposition(manager, workspaceId, userId, activity as Activity, dto);
     });
+    // A retry of an earlier save comes back with the same activity id, and so
+    // the same event id: Meta counts it once.
+    this.reportOutcome(workspaceId, saved, dto);
+    return saved;
   }
 
   private async writeDisposition(

@@ -14,8 +14,11 @@ import { NotificationsModule } from '../notifications/notifications.module';
 import { ContactsModule } from '../contacts/contacts.module';
 import { BookingsModule } from '../bookings/bookings.module';
 
+import { MetaConversionsModule } from '../integrations/meta-conversions/meta-conversions.module';
+
 @Module({
   imports: [
+    MetaConversionsModule,
     TypeOrmModule.forFeature([
       Availability,
       MeetingType,

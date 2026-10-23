@@ -12,8 +12,10 @@ import { WorkQueuesService } from './work-queues.service';
 import { ReminderDispatchService } from './reminder-dispatch.service';
 import { NotificationsModule } from '../notifications/notifications.module';
 
+import { MetaConversionsModule } from '../integrations/meta-conversions/meta-conversions.module';
+
 @Module({
-  imports: [TypeOrmModule.forFeature([Activity, Contact, Deal, Task, Booking, Workspace]), NotificationsModule],
+  imports: [TypeOrmModule.forFeature([Activity, Contact, Deal, Task, Booking, Workspace]), NotificationsModule, MetaConversionsModule],
   controllers: [ActivitiesController],
   providers: [ActivitiesService, WorkQueuesService, ReminderDispatchService],
   exports: [ActivitiesService, WorkQueuesService],

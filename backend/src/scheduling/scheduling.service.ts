@@ -22,6 +22,8 @@ import { answeredPairs, answersAsNotes, bookingFormError } from './booking-form'
 import { withAnswerNotes } from '../contacts/contact-notes';
 import { blockedDaysOf, hostZoneOf, isBlockedAt, normalizeBlockedDays } from './blocked-days';
 import { cleanTracking, sourceFromTracking, type BookingTracking } from './booking-source';
+import { MetaConversionsService } from '../integrations/meta-conversions/meta-conversions.service';
+import { META_EVENT, outcomeEventId } from '../integrations/meta-conversions/outcome-events';
 import { applyDayHoursChanges, dayHoursOf, overrideRowsFor, type DayHours } from './day-hours';
 
 @Injectable()
@@ -43,6 +45,7 @@ export class SchedulingService {
     private readonly contactsService: ContactsService,
     @Optional() private readonly meetings?: BookingMeetingsService,
     @Optional() private readonly bookingForms?: BookingFormService,
+    @Optional() private readonly metaConversions?: MetaConversionsService,
   ) {}
 
   // ========== Days off ==========
@@ -634,6 +637,12 @@ export class SchedulingService {
       if (notes) await this.contactRepository.update({ id: contactId }, { notes });
     }
     await this.notifyHostOfBooking(saved, meetingType, dto);
+    // Tell Meta the lead booked — ads learn which leads get that far.
+    if (existingContact && this.metaConversions) {
+      void this.metaConversions
+        .reportStageChange(existingContact as Contact, META_EVENT.scheduled, outcomeEventId(saved.id, META_EVENT.scheduled))
+        .catch(() => undefined);
+    }
     // Meet/Zoom link, emailed to the lead and the closer.
     const meeting = await this.meetings?.setUpMeeting(saved.id);
     return meeting?.link ? { ...saved, location: meeting.link, locationType: meeting.provider } : saved;

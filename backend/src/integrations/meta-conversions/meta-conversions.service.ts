@@ -236,7 +236,7 @@ export class MetaConversionsService {
    * connected, disabled, Meta API error, no usable match key) can never
    * block the actual stage change it's reporting on.
    */
-  async reportStageChange(contact: Contact, stageName: string): Promise<void> {
+  async reportStageChange(contact: Contact, stageName: string, eventId?: string): Promise<void> {
     if (!stageName?.trim()) return;
     const integration = await this.getIntegration(contact.workspaceId);
     if (!integration || integration.status !== IntegrationStatus.ACTIVE) return;
@@ -252,6 +252,8 @@ export class MetaConversionsService {
       action_source: 'system_generated',
       custom_data: { event_source: 'crm', lead_event_source: 'EasyTeamCRM' },
       user_data: userData,
+      // Meta keeps one event per id: an outcome saved twice counts once.
+      ...(eventId ? { event_id: eventId } : {}),
     };
 
     try {
