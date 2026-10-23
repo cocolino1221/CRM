@@ -25,6 +25,24 @@ export const PROVIDER_LABELS: Record<MeetingProvider, string> = {
   none: 'Fără link',
 };
 
+/**
+ * The two platforms in the order to offer them: the one already chosen first,
+ * then whatever is connected, then Meet before Zoom — the same tie-break the
+ * backend's "Automat" applies, so the list matches what a booking would get.
+ *
+ * Ordered from the SAVED preference, not from whatever was just clicked, so the
+ * buttons do not jump out from under the cursor mid-choice; the new order shows
+ * the next time the page opens.
+ */
+export function orderedPlatforms(info: MeetingProvidersInfo | null): Array<'google_meet' | 'zoom'> {
+  // Sort is stable, so equal ranks keep this order: Meet, then Zoom.
+  const rank = (platform: 'google_meet' | 'zoom') => {
+    if (info?.preference === platform) return 0;
+    return info?.[platform] ? 1 : 2;
+  };
+  return (['google_meet', 'zoom'] as const).slice().sort((a, b) => rank(a) - rank(b));
+}
+
 export function providerOptions(info: MeetingProvidersInfo | null): Array<{
   value: '' | MeetingProvider;
   label: string;
@@ -34,12 +52,11 @@ export function providerOptions(info: MeetingProvidersInfo | null): Array<{
   const auto = info?.preference ? `Automat (${PROVIDER_LABELS[info.preference]})` : 'Automat';
   return [
     { value: '', label: auto },
-    {
-      value: 'google_meet',
-      label: connected('google_meet') ? 'Google Meet' : 'Google Meet (neconectat)',
-      disabled: !connected('google_meet'),
-    },
-    { value: 'zoom', label: connected('zoom') ? 'Zoom' : 'Zoom (neconectat)', disabled: !connected('zoom') },
+    ...orderedPlatforms(info).map((platform) => ({
+      value: platform,
+      label: connected(platform) ? PROVIDER_LABELS[platform] : `${PROVIDER_LABELS[platform]} (neconectat)`,
+      disabled: !connected(platform),
+    })),
     { value: 'none', label: 'Fără link' },
   ];
 }

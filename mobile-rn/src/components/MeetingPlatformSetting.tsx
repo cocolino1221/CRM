@@ -3,6 +3,7 @@ import { ActivityIndicator, Text, TouchableOpacity, View } from 'react-native';
 import { Video } from 'lucide-react-native';
 import api from '../lib/api';
 import { useAuthStore } from '../stores/auth-store';
+import { PLATFORM_OPTIONS, type Provider, type ProvidersInfo } from '../lib/meeting-platforms';
 
 /**
  * "Platforma mea de întâlniri" — which link a closer's bookings get.
@@ -12,21 +13,6 @@ import { useAuthStore } from '../stores/auth-store';
  * open a laptop to change it. Whoever books can still pick another platform
  * for a single meeting; this is only the default.
  */
-
-type Provider = 'google_meet' | 'zoom' | 'none';
-
-interface ProvidersInfo {
-  google_meet: boolean;
-  zoom: boolean;
-  preference: Provider | null;
-}
-
-const OPTIONS: Array<{ value: Provider | ''; label: string }> = [
-  { value: '', label: 'Automat' },
-  { value: 'google_meet', label: 'Google Meet' },
-  { value: 'zoom', label: 'Zoom' },
-  { value: 'none', label: 'Fără link' },
-];
 
 export default function MeetingPlatformSetting() {
   const [info, setInfo] = useState<ProvidersInfo | null>(null);
@@ -94,7 +80,7 @@ export default function MeetingPlatformSetting() {
         </View>
       ) : (
         <View className="flex-row flex-wrap gap-2 mt-3">
-          {OPTIONS.map((o) => {
+          {PLATFORM_OPTIONS(info).map((o) => {
             const off = unavailable(o.value);
             const on = value === o.value;
             return (

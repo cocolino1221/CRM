@@ -10,7 +10,12 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Video } from 'lucide-react';
 import api from '@/lib/api';
-import { PROVIDER_LABELS, type MeetingProvider, type MeetingProvidersInfo } from '@/lib/meeting-providers';
+import {
+  PROVIDER_LABELS,
+  orderedPlatforms,
+  type MeetingProvider,
+  type MeetingProvidersInfo,
+} from '@/lib/meeting-providers';
 
 export default function MeetingPreferenceCard() {
   const [info, setInfo] = useState<MeetingProvidersInfo | null>(null);
@@ -42,8 +47,12 @@ export default function MeetingPreferenceCard() {
 
   const options: Array<{ value: MeetingProvider | ''; label: string; disabled?: boolean }> = [
     { value: '', label: 'Automat (Google Meet dacă e conectat, altfel Zoom)' },
-    { value: 'google_meet', label: PROVIDER_LABELS.google_meet, disabled: !info?.google_meet },
-    { value: 'zoom', label: PROVIDER_LABELS.zoom, disabled: !info?.zoom },
+    // The platform already chosen comes first — see orderedPlatforms.
+    ...orderedPlatforms(info).map((platform) => ({
+      value: platform,
+      label: PROVIDER_LABELS[platform],
+      disabled: !info?.[platform],
+    })),
     { value: 'none', label: 'Fără link (sun eu)' },
   ];
   const nothingConnected = info && !info.google_meet && !info.zoom;
