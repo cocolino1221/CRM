@@ -34,6 +34,7 @@ import {
 } from 'lucide-react';
 import api from '@/lib/api';
 import { authService } from '@/lib/auth';
+import { PROVIDER_LABELS, teammatePlatformOptions, type MeetingProvider } from '@/lib/meeting-providers';
 import {
   CHANNEL_LABELS,
   ChannelAccess,
@@ -61,6 +62,7 @@ interface User {
   createdAt: string;
   preferences?: {
     channelAccess?: Partial<ChannelAccess>;
+    meetingProvider?: MeetingProvider | null;
   };
 }
 
@@ -128,6 +130,8 @@ export default function UsersPage() {
     DEFAULT_WORKSPACE_CHANNEL_AVAILABILITY,
   );
   const [channelsResolved, setChannelsResolved] = useState(false);
+  // Workspace-level: which meeting platforms anyone here can be put on.
+  const [meetingConnected, setMeetingConnected] = useState<{ google_meet: boolean; zoom: boolean } | null>(null);
   const [currentUserRole, setCurrentUserRole] = useState<string>('');
   const canManageTeam = ['admin', 'manager', 'super_admin'].includes(currentUserRole);
 
@@ -154,6 +158,7 @@ export default function UsersPage() {
     role: 'sales_rep' as UserRole,
     password: '',
     channelAccess: getDefaultChannelAccessForRole('sales_rep'),
+    meetingProvider: '' as '' | MeetingProvider,
   });
 
   useEffect(() => {
@@ -185,6 +190,25 @@ export default function UsersPage() {
         if (mounted) {
           setChannelsResolved(true);
         }
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+
+    void api
+      .get<{ google_meet: boolean; zoom: boolean }>('/bookings/meeting-providers')
+      .then((res) => {
+        if (mounted) setMeetingConnected({ google_meet: !!res.data?.google_meet, zoom: !!res.data?.zoom });
+      })
+      .catch(() => {
+        // Not knowing is not the same as nothing being connected: leave it
+        // null so the buttons stay usable rather than all showing "neconectat".
+        if (mounted) setMeetingConnected(null);
       });
 
     return () => {
@@ -293,6 +317,7 @@ export default function UsersPage() {
       role: 'sales_rep',
       password: '',
       channelAccess: getDefaultChannelAccessForRole('sales_rep'),
+      meetingProvider: '',
     });
     setModalError('');
     setShowPassword(false);
@@ -341,6 +366,9 @@ export default function UsersPage() {
         role: formData.role,
         preferences: {
           channelAccess: formData.channelAccess,
+          // The backend merges preferences, so sending just these two keys
+          // leaves everything else on the user untouched.
+          meetingProvider: formData.meetingProvider || null,
         },
       };
 
@@ -425,6 +453,7 @@ export default function UsersPage() {
       role: user.role as UserRole,
       password: '',
       channelAccess: resolveChannelAccess(user),
+      meetingProvider: user.preferences?.meetingProvider ?? '',
     });
     setShowEditModal(true);
   };
@@ -658,6 +687,12 @@ export default function UsersPage() {
                           {roleInfo.icon}
                           {roleInfo.label}
                         </span>
+                        <p className="mt-1.5 text-[11px] text-gray-500">
+                          Întâlniri:{' '}
+                          {user.preferences?.meetingProvider
+                            ? PROVIDER_LABELS[user.preferences.meetingProvider]
+                            : 'Automat'}
+                        </p>
                       </td>
                       <td className="px-6 py-4">
                         <div className="flex flex-wrap gap-2">
@@ -1164,6 +1199,32 @@ export default function UsersPage() {
                         <span className="font-semibold text-gray-900">{role.label}</span>
                       </div>
                       <p className="text-xs text-gray-600">{role.description}</p>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <h3 className="text-sm font-semibold text-slate-900">Platforma de întâlniri</h3>
+                <p className="mt-1 text-xs leading-5 text-slate-500">
+                  Pe ce platformă primesc link programările făcute cu{' '}
+                  {formData.firstName || 'acest coleg'}. Automat înseamnă Google Meet dacă e conectat,
+                  altfel Zoom. Își poate schimba singur alegerea din aplicație sau de pe Disponibilitate.
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {teammatePlatformOptions(meetingConnected, formData.meetingProvider || null).map((option) => (
+                    <button
+                      key={option.value || 'auto'}
+                      type="button"
+                      disabled={option.disabled}
+                      onClick={() => setFormData({ ...formData, meetingProvider: option.value })}
+                      className={`rounded-xl border px-3 py-2 text-sm transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                        formData.meetingProvider === option.value
+                          ? 'border-indigo-600 bg-indigo-50 font-semibold text-indigo-700'
+                          : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
+                      }`}
+                    >
+                      {option.label}
                     </button>
                   ))}
                 </div>
